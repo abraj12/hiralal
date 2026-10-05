@@ -125,6 +125,12 @@ services:
       - uploads:/app/uploads
     networks:
       - hiralal_net
+    healthcheck:
+      test: ['CMD', 'node', '-e', 'fetch("http://localhost:5000/health/live").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))']
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     logging:
       driver: 'json-file'
       options:
@@ -150,7 +156,7 @@ services:
       redis:
         condition: service_healthy
       backend:
-        condition: service_started
+        condition: service_healthy
     environment:
       NODE_ENV: production
       NODE_OPTIONS: '--max-old-space-size=384'
@@ -183,7 +189,8 @@ services:
         reservations:
           memory: 128M
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     environment:
       PORT: 3000
       NEXT_PUBLIC_API_URL: /api
@@ -191,6 +198,12 @@ services:
       - '3000'
     networks:
       - hiralal_net
+    healthcheck:
+      test: ['CMD', 'node', '-e', 'fetch("http://localhost:3000").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))']
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
     logging:
       driver: 'json-file'
       options:
@@ -214,8 +227,15 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
-      - backend
-      - admin
+      backend:
+        condition: service_healthy
+      admin:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '-', 'http://localhost/health']
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       - hiralal_net
     logging:

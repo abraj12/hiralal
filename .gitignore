@@ -66,3 +66,10 @@ uploads/
 # Coverage reports
 coverage/
 backend/coverage/
+
+# SSL certificates and keys (Security: never commit private keys)
+nginx/ssl/*.pem
+nginx/ssl/*.key
+nginx/ssl/*.crt
+!nginx/ssl/.gitkeep
+

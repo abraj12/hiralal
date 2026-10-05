@@ -1,0 +1,2 @@
+# Directory for Cloudflare Origin CA or Let's Encrypt certificates
+# Run scripts/generate-origin-certs.sh for local dev/staging fallback certificates

@@ -113,3 +113,105 @@ jobs:
           platforms: linux/arm64
           push: false
           tags: hiralal-backend:ci-arm64-test
+
+      - name: Build Admin Panel Docker Image for linux/arm64
+        uses: docker/build-push-action@v5
+        with:
+          context: ./admin
+          file: ./admin/Dockerfile
+          platforms: linux/arm64
+          push: false
+          tags: hiralal-admin:ci-arm64-test
+
+  full-stack-compose-smoke-test:
+    name: Full 6-Container Docker Compose Stack Smoke Test
+    runs-on: ubuntu-latest
+    needs: backend-test
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Generate Fallback SSL Certificates for Nginx
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/generate-origin-certs.sh
+
+      - name: Run Cloudflare Origin SSL Precheck
+        run: |
+          ./scripts/verify-nginx-ssl.sh ./nginx/ssl
+
+      - name: Prepare Docker Environment Configuration
+        run: |
+          cp .env.example .env
+
+      - name: Validate Docker Compose Configuration
+        run: |
+          docker compose config
+
+      - name: Build and Start Full Multi-Container Production Stack
+        run: |
+          docker compose up -d --build
+
+      - name: Wait for Stack Health and Readiness (Postgres, Redis, API, Worker, Admin, Nginx)
+        timeout-minutes: 5
+        run: |
+          echo "Waiting for services to become healthy..."
+          for i in {1..30}; do
+            UNHEALTHY=$(docker ps --filter "health=unhealthy" -q)
+            STARTING=$(docker ps --filter "health=starting" -q)
+            if [ -n "$UNHEALTHY" ]; then
+              echo "Error: Containers reported unhealthy status!"
+              docker compose ps
+              docker compose logs
+              exit 1
+            fi
+            if [ -z "$STARTING" ]; then
+              echo "All containers with health checks have reached healthy status."
+              break
+            fi
+            echo "Waiting for containers to initialize ($i/30)..."
+            sleep 5
+          done
+
+      - name: Verify All 6 Stack Containers Running
+        run: |
+          docker compose ps
+          RUNNING_COUNT=$(docker compose ps --services --filter "status=running" | wc -l)
+          echo "Running services count: $RUNNING_COUNT / 6"
+          if [ "$RUNNING_COUNT" -lt 6 ]; then
+            echo "Error: Not all 6 services are running!"
+            docker compose logs
+            exit 1
+          fi
+
+      - name: Smoke Test - HTTP Health Probe through Nginx
+        run: |
+          echo "Testing HTTP /health through Nginx..."
+          curl -f -s http://localhost/health | grep -i "ok"
+
+      - name: Smoke Test - HTTPS Health Probe through Nginx (TLS Termination)
+        run: |
+          echo "Testing HTTPS /health through Nginx..."
+          curl -k -f -s https://localhost/health | grep -i "ok"
+
+      - name: Smoke Test - API Reverse Proxy Routing (/api)
+        run: |
+          echo "Testing HTTPS /api/auth routing to backend through Nginx..."
+          HTTP_STATUS=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost/api/auth/login -X POST -H "Content-Type: application/json" -d '{}')
+          echo "HTTP Response Status from API via Nginx: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" -ne 400 ] && [ "$HTTP_STATUS" -ne 401 ]; then
+            echo "Unexpected HTTP status: $HTTP_STATUS"
+            docker compose logs backend
+            exit 1
+          fi
+
+      - name: Smoke Test - Admin Panel Reverse Proxy Routing (/)
+        run: |
+          echo "Testing HTTPS / routing to Next.js admin frontend through Nginx..."
+          curl -k -f -s https://localhost/ | grep -i "<html" || curl -k -f -s https://localhost/ | grep -i "login"
+
+      - name: Compose Stack Teardown
+        if: always()
+        run: |
+          docker compose down -v
