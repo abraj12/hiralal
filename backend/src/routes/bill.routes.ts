@@ -4,14 +4,17 @@ import fs from 'fs';
 import { BillService } from '../services/bill.service';
 import { StorageService } from '../services/storage.service';
 import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
+import { BillStatus } from '@prisma/client';
 
 const router = Router();
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
 });
 
-// Upload Bill
+/**
+ * Upload Bill Invoice
+ */
 router.post('/', authenticate, upload.single('invoiceFile'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
@@ -26,7 +29,7 @@ router.post('/', authenticate, upload.single('invoiceFile'), async (req: Authent
 
     const parsedAmount = parseFloat(billAmount);
     if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      return res.status(400).json({ success: false, message: 'Valid bill amount is required.' });
+      return res.status(400).json({ success: false, message: 'Valid bill amount greater than zero is required.' });
     }
 
     let fileBuffer: Buffer;
@@ -38,15 +41,14 @@ router.post('/', authenticate, upload.single('invoiceFile'), async (req: Authent
       fileName = req.file.originalname;
       mimeType = req.file.mimetype;
     } else if (req.body.fileBase64) {
-      // Allow base64 upload for mobile/API
       fileBuffer = Buffer.from(req.body.fileBase64, 'base64');
       fileName = req.body.fileName || 'invoice.jpg';
       mimeType = req.body.mimeType || 'image/jpeg';
     } else {
-      // Mock invoice image fallback if none provided in test/dev
-      fileBuffer = Buffer.from('Mock Invoice Document Content for Hiralal & Sons');
-      fileName = 'invoice_sample.pdf';
-      mimeType = 'application/pdf';
+      return res.status(400).json({
+        success: false,
+        message: 'A real invoice file document (PDF, JPG, PNG) must be attached to submit a bill.',
+      });
     }
 
     const bill = await BillService.submitBill({
@@ -62,27 +64,37 @@ router.post('/', authenticate, upload.single('invoiceFile'), async (req: Authent
 
     res.status(201).json({
       success: true,
-      message: 'Bill uploaded successfully and submitted for verification.',
-      bill,
+      message: 'Bill uploaded successfully and submitted for administrator verification.',
+      bill: {
+        ...bill,
+        billAmount: Number(bill.billAmount),
+        calculatedReward: Number(bill.calculatedReward),
+        rewardPercentage: Number(bill.rewardPercentage),
+      },
     });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }
 });
 
-// Get User's bills
+/**
+ * Get User's bills
+ */
 router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
-    const status = (req.query.status as string) || 'ALL';
-    const bills = BillService.getUserBills(user.id, status);
+    const statusQuery = req.query.status as string;
+    const status = statusQuery && statusQuery !== 'ALL' ? (statusQuery as BillStatus) : undefined;
+    const bills = await BillService.getUserBills(user.id, status);
     res.json({ success: true, bills });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// Secure signed URL document retrieval
+/**
+ * Secure signed URL document retrieval
+ */
 router.get('/file', async (req: Request, res: Response) => {
   try {
     const key = req.query.key as string;
@@ -103,9 +115,7 @@ router.get('/file', async (req: Request, res: Response) => {
       return res.sendFile(localPath);
     }
 
-    // Default mock response if file placeholder
-    res.setHeader('Content-Type', 'image/png');
-    res.send(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    res.status(404).json({ success: false, message: 'Document file not found in storage.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }

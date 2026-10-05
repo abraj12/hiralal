@@ -15,7 +15,6 @@ enum Profession {
 enum UserRole {
   USER
   ADMIN
-  SUPER_ADMIN
 }
 
 enum UserStatus {
@@ -29,6 +28,7 @@ enum BillStatus {
   APPROVED
   REJECTED
   DUPLICATE
+  CANCELLED
 }
 
 enum TransactionType {
@@ -36,6 +36,7 @@ enum TransactionType {
   PAYOUT_DEBIT
   PAYOUT_REVERSAL
   MANUAL_ADJUSTMENT
+  REFUND
 }
 
 enum KycStatus {
@@ -136,6 +137,9 @@ model Bill {
   status            BillStatus @default(PENDING)
   fileUrl           String
   fileKey           String
+  fileHash          String?
+  fileSize          Int?
+  mimeType          String?
   rejectionReason   String?
   verifiedByAdminId String?
   remarks           String?
@@ -146,6 +150,7 @@ model Bill {
   @@index([userId])
   @@index([status])
   @@index([invoiceNumber])
+  @@index([fileHash])
   @@index([createdAt])
 }
 
@@ -163,14 +168,26 @@ model RewardPool {
 }
 
 model RewardRule {
-  id                  String     @id @default(uuid())
+  id                  String      @id @default(uuid())
   profession          Profession?
-  percentage          Decimal    @default(0.50) @db.Decimal(5, 2)
-  monthlyPoolLimit    Decimal    @default(50000.00) @db.Decimal(12, 2)
-  minRedemptionAmount Decimal    @default(500.00) @db.Decimal(12, 2)
-  isActive            Boolean    @default(true)
+  percentage          Decimal     @default(0.50) @db.Decimal(5, 2)
+  monthlyPoolLimit    Decimal     @default(50000.00) @db.Decimal(12, 2)
+  minRedemptionAmount Decimal     @default(500.00) @db.Decimal(12, 2)
+  isActive            Boolean     @default(true)
   updatedByAdminId    String?
-  updatedAt           DateTime   @updatedAt
+  updatedAt           DateTime    @updatedAt
+}
+
+model RedemptionSettings {
+  id               String    @id @default("default")
+  isEnabled        Boolean   @default(false)
+  startAt          DateTime?
+  endAt            DateTime?
+  minimumAmount    Decimal   @default(500.00) @db.Decimal(12, 2)
+  maximumAmount    Decimal   @default(10000.00) @db.Decimal(12, 2)
+  message          String    @default("Rewards redemption window is currently closed.")
+  updatedByAdminId String?
+  updatedAt        DateTime  @updatedAt
 }
 
 model KycRecord {
@@ -239,11 +256,12 @@ model Payout {
 model OtpRequest {
   id            String     @id @default(uuid())
   mobile        String
-  otpCode       String
+  otpHash       String
   purpose       OtpPurpose
   attemptsCount Int        @default(0)
   isUsed        Boolean    @default(false)
   expiresAt     DateTime
+  cooldownUntil DateTime?
   createdAt     DateTime   @default(now())
 
   @@index([mobile])

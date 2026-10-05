@@ -1,22 +1,50 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
-import { Wallet, ArrowDownRight, ArrowUpRight, ShieldCheck, CheckCircle2 } from 'lucide-react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, RefreshControl } from 'react-native';
+import { Wallet, ArrowDownRight, ArrowUpRight, ShieldAlert, CheckCircle2, Clock } from 'lucide-react-native';
 import Header from '../components/Header';
 import RedemptionModal from '../components/RedemptionModal';
 import { useApp } from '../context/AppContext';
+import { MobileApiClient } from '../services/api';
 
 export default function WalletScreen() {
-  const { theme, wallet } = useApp();
+  const { theme, wallet, transactions, refreshData } = useApp();
   const [showRedeemModal, setShowRedeemModal] = useState(false);
+  const [eligibility, setEligibility] = useState<any>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const canRedeem = wallet.availableBalance >= 500;
+  const fetchEligibility = async () => {
+    try {
+      const res = await MobileApiClient.getPayoutEligibility();
+      setEligibility(res);
+    } catch (e) {
+      // Ignore
+    }
+  };
+
+  useEffect(() => {
+    fetchEligibility();
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([refreshData(), fetchEligibility()]);
+    setRefreshing(false);
+  };
+
+  const isWindowOpen = eligibility?.windowSettings?.isEnabled ?? false;
+  const minAmount = eligibility?.minimumAmount ?? 500;
+  const canRedeem = (wallet.availableBalance >= minAmount) && isWindowOpen;
 
   return (
     <View style={styles.container}>
       <Header />
 
-      <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 30 }}>
-        {/* Main Balance Box */}
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={{ paddingBottom: 30 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
+        {/* Main Balance Card */}
         <View style={styles.balanceCard}>
           <Text style={styles.balanceLabel}>Available Balance</Text>
           <Text style={styles.balanceValue}>₹{wallet.availableBalance.toLocaleString('en-IN')}</Text>
@@ -33,12 +61,42 @@ export default function WalletScreen() {
             </View>
           </View>
 
+          {/* Redemption Window Info Banner */}
+          <View
+            style={[
+              styles.windowBanner,
+              { backgroundColor: isWindowOpen ? '#F0FDF4' : '#FEF2F2', borderColor: isWindowOpen ? '#BBF7D0' : '#FECACA' },
+            ]}
+          >
+            <View style={styles.windowBannerHeader}>
+              {isWindowOpen ? (
+                <CheckCircle2 size={16} color="#16A34A" />
+              ) : (
+                <Clock size={16} color="#DC2626" />
+              )}
+              <Text
+                style={[
+                  styles.windowBannerTitle,
+                  { color: isWindowOpen ? '#15803D' : '#B91C1C' },
+                ]}
+              >
+                {isWindowOpen ? 'Redemption Window Active' : 'Redemption Window Inactive'}
+              </Text>
+            </View>
+            <Text style={styles.windowBannerMessage}>
+              {eligibility?.windowSettings?.message ||
+                (isWindowOpen
+                  ? `Min payout: ₹${minAmount} • Direct transfer to verified account`
+                  : 'Payout requests are currently disabled by administration.')}
+            </Text>
+          </View>
+
           {/* Primary CTA: Redeem Rewards */}
           <TouchableOpacity
             style={[
               styles.redeemBtn,
               { backgroundColor: theme.primaryColor },
-              !canRedeem && { opacity: 0.6 },
+              (!canRedeem) && { opacity: 0.6 },
             ]}
             onPress={() => setShowRedeemModal(true)}
             activeOpacity={0.85}
@@ -46,9 +104,14 @@ export default function WalletScreen() {
             <Text style={styles.redeemBtnText}>Redeem Rewards</Text>
           </TouchableOpacity>
 
-          {!canRedeem && (
+          {!isWindowOpen && (
             <Text style={styles.minRedeemNotice}>
-              Minimum balance of ₹500 required for payout
+              Redemption is currently closed by administration
+            </Text>
+          )}
+          {isWindowOpen && wallet.availableBalance < minAmount && (
+            <Text style={styles.minRedeemNotice}>
+              Minimum balance of ₹{minAmount} required for payout
             </Text>
           )}
         </View>
@@ -57,57 +120,78 @@ export default function WalletScreen() {
         <View style={styles.ledgerSection}>
           <Text style={styles.ledgerTitle}>Transaction History</Text>
 
-          <View style={styles.txList}>
-            {/* Seeded / sample transactions */}
-            <View style={styles.txItem}>
-              <View style={[styles.txIconBox, { backgroundColor: '#F0FDF4' }]}>
-                <ArrowDownRight size={18} color="#16A34A" />
-              </View>
-              <View style={styles.txInfo}>
-                <Text style={styles.txTitle}>Reward Credited</Text>
-                <Text style={styles.txDesc}>Approved Bill INV-2026-001</Text>
-              </View>
-              <View style={styles.txAmountCol}>
-                <Text style={[styles.txAmount, { color: '#16A34A' }]}>+₹250.00</Text>
-                <Text style={styles.txDate}>02 Oct 2026</Text>
-              </View>
+          {transactions.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Image
+                source={require('../../assets/state_no_transactions.png')}
+                style={styles.emptyImage}
+                resizeMode="contain"
+              />
+              <Text style={styles.emptyTitle}>No Transactions Yet</Text>
+              <Text style={styles.emptySubtitle}>Approved reward points and payouts will appear here</Text>
             </View>
-
-            <View style={styles.txItem}>
-              <View style={[styles.txIconBox, { backgroundColor: '#F0FDF4' }]}>
-                <ArrowDownRight size={18} color="#16A34A" />
-              </View>
-              <View style={styles.txInfo}>
-                <Text style={styles.txTitle}>Reward Credited</Text>
-                <Text style={styles.txDesc}>Approved Bill INV-2026-003</Text>
-              </View>
-              <View style={styles.txAmountCol}>
-                <Text style={[styles.txAmount, { color: '#16A34A' }]}>+₹125.00</Text>
-                <Text style={styles.txDate}>28 Sep 2026</Text>
-              </View>
+          ) : (
+            <View style={styles.txList}>
+              {transactions.map((t: any) => {
+                const isCredit = t.type === 'CREDIT' || t.type === 'REWARD' || t.type === 'REFUND';
+                return (
+                  <View key={t.id} style={styles.txItem}>
+                    <View
+                      style={[
+                        styles.txIconBox,
+                        { backgroundColor: isCredit ? '#F0FDF4' : '#EFF6FF' },
+                      ]}
+                    >
+                      {isCredit ? (
+                        <ArrowDownRight size={18} color="#16A34A" />
+                      ) : (
+                        <ArrowUpRight size={18} color="#2563EB" />
+                      )}
+                    </View>
+                    <View style={styles.txInfo}>
+                      <Text style={styles.txTitle}>
+                        {t.type === 'CREDIT' || t.type === 'REWARD'
+                          ? 'Reward Credited'
+                          : t.type === 'REFUND'
+                          ? 'Payout Reversed / Refunded'
+                          : 'Payout Disbursed'}
+                      </Text>
+                      <Text style={styles.txDesc} numberOfLines={1}>
+                        {t.description || (isCredit ? 'Reward earned' : 'Transferred to account')}
+                      </Text>
+                    </View>
+                    <View style={styles.txAmountCol}>
+                      <Text
+                        style={[
+                          styles.txAmount,
+                          { color: isCredit ? '#16A34A' : '#0F172A' },
+                        ]}
+                      >
+                        {isCredit ? '+' : '-'}₹{Number(t.amount).toFixed(2)}
+                      </Text>
+                      <Text style={styles.txDate}>
+                        {new Date(t.createdAt).toLocaleDateString('en-IN', {
+                          day: '2-digit',
+                          month: 'short',
+                          year: 'numeric',
+                        })}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })}
             </View>
-
-            <View style={styles.txItem}>
-              <View style={[styles.txIconBox, { backgroundColor: '#EFF6FF' }]}>
-                <ArrowUpRight size={18} color="#2563EB" />
-              </View>
-              <View style={styles.txInfo}>
-                <Text style={styles.txTitle}>Payout Redeemed</Text>
-                <Text style={styles.txDesc}>Transferred via UPI</Text>
-              </View>
-              <View style={styles.txAmountCol}>
-                <Text style={[styles.txAmount, { color: '#0F172A' }]}>-₹1,000.00</Text>
-                <Text style={styles.txDate}>25 Sep 2026</Text>
-              </View>
-            </View>
-          </View>
+          )}
         </View>
       </ScrollView>
 
       {/* Redemption Wizard Modal */}
       <RedemptionModal
         visible={showRedeemModal}
-        onClose={() => setShowRedeemModal(false)}
+        onClose={() => {
+          setShowRedeemModal(false);
+          fetchEligibility();
+        }}
       />
     </View>
   );
@@ -157,7 +241,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingVertical: 12,
     marginTop: 14,
-    marginBottom: 18,
+    marginBottom: 16,
   },
   balanceSubItem: {
     flex: 1,
@@ -177,6 +261,28 @@ const styles = StyleSheet.create({
   balanceDivider: {
     width: 1,
     backgroundColor: '#E2E8F0',
+  },
+  windowBanner: {
+    width: '100%',
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+  },
+  windowBannerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  windowBannerTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  windowBannerMessage: {
+    fontSize: 11,
+    color: '#475569',
+    lineHeight: 16,
   },
   redeemBtn: {
     width: '100%',
@@ -209,6 +315,26 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0F172A',
     marginBottom: 12,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    paddingVertical: 36,
+  },
+  emptyImage: {
+    width: 110,
+    height: 110,
+    marginBottom: 14,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  emptySubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
   },
   txList: {},
   txItem: {

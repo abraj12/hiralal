@@ -17,8 +17,8 @@ import { MobileApiClient } from '../services/api';
 export default function LoginScreen() {
   const { setCurrentScreen, login } = useApp();
 
-  const [mobile, setMobile] = useState('9876543210');
-  const [password, setPassword] = useState('Password@123');
+  const [mobile, setMobile] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -26,9 +26,10 @@ export default function LoginScreen() {
   const [showForgot, setShowForgot] = useState(false);
   const [forgotMobile, setForgotMobile] = useState('');
   const [otpSent, setOtpSent] = useState(false);
-  const [otpCode, setOtpCode] = useState('123456');
+  const [otpCode, setOtpCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
+  const [forgotLoading, setForgotLoading] = useState(false);
 
   const handleLogin = async () => {
     if (!mobile || !password) {
@@ -49,14 +50,20 @@ export default function LoginScreen() {
   };
 
   const handleSendForgotOtp = async () => {
-    if (!forgotMobile) return;
+    if (!forgotMobile || forgotMobile.length !== 10) {
+      setForgotMsg('Please enter a valid 10-digit mobile number.');
+      return;
+    }
+    setForgotLoading(true);
+    setForgotMsg(null);
     try {
       await MobileApiClient.sendOtp(forgotMobile, 'FORGOT_PASSWORD');
       setOtpSent(true);
-      setForgotMsg('OTP sent to your mobile: 123456');
+      setForgotMsg('OTP sent to your registered mobile number.');
     } catch (e: any) {
-      setOtpSent(true);
-      setForgotMsg('OTP sent to your mobile: 123456');
+      setForgotMsg(e.message || 'Failed to send OTP. Please check the mobile number.');
+    } finally {
+      setForgotLoading(false);
     }
   };
 
@@ -154,32 +161,6 @@ export default function LoginScreen() {
             )}
           </TouchableOpacity>
 
-          {/* Quick Demo Pre-fills */}
-          <View style={styles.demoBox}>
-            <Text style={styles.demoTitle}>Quick Demo Switcher:</Text>
-            <View style={styles.demoChips}>
-              <TouchableOpacity
-                style={styles.demoChip}
-                onPress={() => {
-                  setMobile('9876543210');
-                  setPassword('Password@123');
-                }}
-              >
-                <Text style={styles.demoChipText}>Raj (Plumber)</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.demoChip}
-                onPress={() => {
-                  setMobile('9876543211');
-                  setPassword('Password@123');
-                }}
-              >
-                <Text style={styles.demoChipText}>Amit (Tiles)</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
           <View style={styles.createAccountRow}>
             <Text style={styles.noAccountText}>Don't have an account yet? </Text>
             <TouchableOpacity onPress={() => setCurrentScreen('REGISTER')}>
@@ -215,8 +196,16 @@ export default function LoginScreen() {
                     keyboardType="phone-pad"
                     maxLength={10}
                   />
-                  <TouchableOpacity style={styles.modalBtn} onPress={handleSendForgotOtp}>
-                    <Text style={styles.modalBtnText}>Send Verification OTP</Text>
+                  <TouchableOpacity
+                    style={styles.modalBtn}
+                    onPress={handleSendForgotOtp}
+                    disabled={forgotLoading}
+                  >
+                    {forgotLoading ? (
+                      <ActivityIndicator color="#ffffff" />
+                    ) : (
+                      <Text style={styles.modalBtnText}>Send Verification OTP</Text>
+                    )}
                   </TouchableOpacity>
                 </>
               ) : (
@@ -225,7 +214,7 @@ export default function LoginScreen() {
                     style={styles.modalInput}
                     value={otpCode}
                     onChangeText={setOtpCode}
-                    placeholder="Enter 6-digit OTP (e.g. 123456)"
+                    placeholder="Enter 6-digit OTP received"
                     keyboardType="numeric"
                   />
                   <TextInput

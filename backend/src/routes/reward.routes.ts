@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
-import { dbStore } from '../db/store';
+import { prisma } from '../db';
 import { RewardService } from '../services/reward.service';
 
 const router = Router();
@@ -8,41 +8,56 @@ const router = Router();
 router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
-    const wallet = Array.from(dbStore.wallets.values()).find(w => w.userId === user.id);
-    const userBills = Array.from(dbStore.bills.values()).filter(b => b.userId === user.id);
 
-    const approvedBills = userBills.filter(b => b.status === 'APPROVED');
-    const pendingBills = userBills.filter(b => b.status === 'PENDING' || b.status === 'UNDER_REVIEW');
+    const wallet = await prisma.wallet.findUnique({
+      where: { userId: user.id },
+    });
 
-    const totalApprovedRewards = approvedBills.reduce((acc, b) => acc + b.calculatedReward, 0);
-    const processingAmount = pendingBills.reduce((acc, b) => acc + b.calculatedReward, 0);
+    const userBills = await prisma.bill.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+    });
 
-    // Ledger transactions
-    const ledgerTx = Array.from(dbStore.walletTransactions.values())
-      .filter(t => t.userId === user.id)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    const approvedBills = userBills.filter((b) => b.status === 'APPROVED');
+    const pendingBills = userBills.filter((b) => b.status === 'PENDING' || b.status === 'UNDER_REVIEW');
+
+    const totalApprovedRewards = approvedBills.reduce((acc, b) => acc + Number(b.calculatedReward), 0);
+    const processingAmount = pendingBills.reduce((acc, b) => acc + Number(b.calculatedReward), 0);
+
+    const ledgerTx = await prisma.walletTransaction.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
 
     res.json({
       success: true,
       summary: {
         totalRewards: Math.round(totalApprovedRewards * 100) / 100,
         processingAmount: Math.round(processingAmount * 100) / 100,
-        availableBalance: wallet ? wallet.availableBalance : 0,
-        totalRedeemed: wallet ? wallet.totalRedeemed : 0,
+        availableBalance: wallet ? Number(wallet.availableBalance) : 0,
+        totalRedeemed: wallet ? Number(wallet.totalRedeemed) : 0,
         billsApprovedCount: approvedBills.length,
         billsPendingCount: pendingBills.length,
         totalBillsCount: userBills.length,
       },
-      recentRewards: approvedBills.slice(0, 10).map(b => ({
+      recentRewards: approvedBills.slice(0, 10).map((b) => ({
         id: b.id,
         invoiceNumber: b.invoiceNumber,
         invoiceDate: b.invoiceDate,
-        billAmount: b.billAmount,
-        rewardAmount: b.calculatedReward,
+        billAmount: Number(b.billAmount),
+        rewardAmount: Number(b.calculatedReward),
         status: b.status,
         createdAt: b.createdAt,
       })),
-      ledger: ledgerTx,
+      ledger: ledgerTx.map((t) => ({
+        id: t.id,
+        amount: Number(t.amount),
+        type: t.type,
+        balanceAfter: Number(t.balanceAfter),
+        description: t.description,
+        createdAt: t.createdAt,
+      })),
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
@@ -51,7 +66,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
 
 router.get('/pool', async (req, res) => {
   try {
-    const analytics = RewardService.getPoolAnalytics();
+    const analytics = await RewardService.getPoolAnalytics();
     res.json({ success: true, pool: analytics });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });

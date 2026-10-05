@@ -11,13 +11,14 @@ interface AppContextType {
     processingAmount: number;
     totalRedeemed: number;
   };
+  transactions: any[];
   bills: any[];
   activeTab: 'HOME' | 'BILLS' | 'REWARDS' | 'WALLET' | 'PROFILE';
   currentScreen: 'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL';
+  isLoading: boolean;
   setActiveTab: (tab: 'HOME' | 'BILLS' | 'REWARDS' | 'WALLET' | 'PROFILE') => void;
   setCurrentScreen: (screen: 'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL') => void;
   setProfession: (profession: ProfessionType) => void;
-  switchProfessionLive: (newProf: ProfessionType) => Promise<void>;
   login: (mobile: string, pass: string) => Promise<void>;
   logout: () => void;
   refreshData: () => Promise<void>;
@@ -26,56 +27,20 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Pre-seed with Raj Kumar (Plumber) for instant rich presentation
-  const [user, setUser] = useState<any>({
-    id: 'user-plumber-raj',
-    fullName: 'Raj Kumar',
-    mobile: '9876543210',
-    profession: 'PLUMBER',
-  });
-
+  const [user, setUser] = useState<any>(null);
   const [profession, setProfessionState] = useState<ProfessionType>('PLUMBER');
   const [activeTab, setActiveTab] = useState<'HOME' | 'BILLS' | 'REWARDS' | 'WALLET' | 'PROFILE'>('HOME');
-  const [currentScreen, setCurrentScreen] = useState<'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL'>('MAIN');
+  const [currentScreen, setCurrentScreen] = useState<'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL'>('WELCOME');
+  const [isLoading, setIsLoading] = useState(true);
 
   const [wallet, setWallet] = useState({
-    availableBalance: 1600.0,
-    processingAmount: 850.0,
-    totalRedeemed: 2000.0,
+    availableBalance: 0,
+    processingAmount: 0,
+    totalRedeemed: 0,
   });
 
-  const [bills, setBills] = useState<any[]>([
-    {
-      id: 'bill-1024',
-      invoiceNumber: 'INV-2026-001',
-      invoiceDate: '2026-10-02',
-      billAmount: 12500,
-      calculatedReward: 250,
-      status: 'APPROVED',
-      remarks: 'PVC Pipes & fittings',
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: 'bill-1023',
-      invoiceNumber: 'INV-2026-002',
-      invoiceDate: '2026-09-30',
-      billAmount: 8000,
-      calculatedReward: 400,
-      status: 'UNDER_REVIEW',
-      remarks: 'Brass taps and valves',
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: 'bill-1022',
-      invoiceNumber: 'INV-2026-003',
-      invoiceDate: '2026-09-28',
-      billAmount: 5200,
-      calculatedReward: 125,
-      status: 'APPROVED',
-      remarks: 'Elbows & Tees',
-      createdAt: new Date().toISOString(),
-    },
-  ]);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [bills, setBills] = useState<any[]>([]);
 
   const refreshData = async () => {
     try {
@@ -87,90 +52,98 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (walletRes && walletRes.wallet) {
         setWallet(walletRes.wallet);
+        if (walletRes.transactions) {
+          setTransactions(walletRes.transactions);
+        }
       }
       if (billsRes && billsRes.bills) {
         setBills(billsRes.bills);
       }
       if (profileRes && profileRes.user) {
         setUser(profileRes.user);
-        if (profileRes.user.profession && THEMES[profileRes.user.profession as ProfessionType]) {
+        if (profileRes.user.profession && (profileRes.user.profession === 'PLUMBER' || profileRes.user.profession === 'TILE_INSTALLER')) {
           setProfessionState(profileRes.user.profession as ProfessionType);
         }
       }
     } catch (e) {
-      console.warn('Backend sync failed, maintaining local state');
+      console.warn('Backend sync failed:', e);
     }
   };
 
-  const switchProfessionLive = async (newProf: ProfessionType) => {
-    setProfessionState(newProf);
-    if (newProf === 'TILE_INSTALLER') {
-      setUser((prev: any) => ({
-        ...prev,
-        fullName: prev?.fullName === 'Raj Kumar' ? 'Amit Kumar' : prev?.fullName,
-        profession: 'TILE_INSTALLER',
-      }));
-      setWallet({
-        availableBalance: 2170.0,
-        processingAmount: 950.0,
-        totalRedeemed: 3500.0,
-      });
-    } else if (newProf === 'PLUMBER') {
-      setUser((prev: any) => ({
-        ...prev,
-        fullName: prev?.fullName === 'Amit Kumar' ? 'Raj Kumar' : prev?.fullName,
-        profession: 'PLUMBER',
-      }));
-      setWallet({
-        availableBalance: 1600.0,
-        processingAmount: 850.0,
-        totalRedeemed: 2000.0,
-      });
-    }
+  // Initial authentication check on application boot
+  useEffect(() => {
+    let mounted = true;
 
-    try {
-      if (MobileApiClient.getToken()) {
-        await MobileApiClient.updateProfile({ profession: newProf });
+    async function checkExistingSession() {
+      try {
+        const token = MobileApiClient.getToken();
+        if (token) {
+          const profileRes = await MobileApiClient.getProfile();
+          if (profileRes && profileRes.user && mounted) {
+            setUser(profileRes.user);
+            if (profileRes.user.profession && (profileRes.user.profession === 'PLUMBER' || profileRes.user.profession === 'TILE_INSTALLER')) {
+              setProfessionState(profileRes.user.profession as ProfessionType);
+            }
+            // Load wallet and bills
+            const [walletRes, billsRes] = await Promise.all([
+              MobileApiClient.getWallet().catch(() => null),
+              MobileApiClient.getBills().catch(() => null),
+            ]);
+            if (walletRes && walletRes.wallet && mounted) {
+              setWallet(walletRes.wallet);
+              if (walletRes.transactions) setTransactions(walletRes.transactions);
+            }
+            if (billsRes && billsRes.bills && mounted) {
+              setBills(billsRes.bills);
+            }
+            setCurrentScreen('MAIN');
+          } else {
+            MobileApiClient.setToken(null);
+            if (mounted) setCurrentScreen('WELCOME');
+          }
+        } else {
+          if (mounted) setCurrentScreen('WELCOME');
+        }
+      } catch (e) {
+        MobileApiClient.setToken(null);
+        if (mounted) setCurrentScreen('WELCOME');
+      } finally {
+        if (mounted) setIsLoading(false);
       }
-    } catch (e) {
-      // Ignore if offline
     }
-  };
+
+    checkExistingSession();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const login = async (mobile: string, pass: string) => {
-    try {
-      const res = await MobileApiClient.login(mobile, pass);
-      MobileApiClient.setToken(res.token);
-      setUser(res.user);
-      if (res.user.profession && THEMES[res.user.profession as ProfessionType]) {
-        setProfessionState(res.user.profession as ProfessionType);
-      }
-      if (res.wallet) {
-        setWallet(res.wallet);
-      }
-      setCurrentScreen('MAIN');
-      setActiveTab('HOME');
-      refreshData();
-    } catch (err: any) {
-      // Fallback local demo login
-      if (mobile.endsWith('11')) {
-        setUser({ fullName: 'Amit Kumar', mobile, profession: 'TILE_INSTALLER' });
-        setProfessionState('TILE_INSTALLER');
-        setWallet({ availableBalance: 2170.0, processingAmount: 950.0, totalRedeemed: 3500.0 });
-      } else {
-        setUser({ fullName: 'Raj Kumar', mobile, profession: 'PLUMBER' });
-        setProfessionState('PLUMBER');
-        setWallet({ availableBalance: 1600.0, processingAmount: 850.0, totalRedeemed: 2000.0 });
-      }
-      setCurrentScreen('MAIN');
-      setActiveTab('HOME');
+    // Authenticate with real server-side endpoint. NO mock/offline fallback.
+    const res = await MobileApiClient.login(mobile, pass);
+    MobileApiClient.setToken(res.token);
+    setUser(res.user);
+
+    if (res.user.profession && (res.user.profession === 'PLUMBER' || res.user.profession === 'TILE_INSTALLER')) {
+      setProfessionState(res.user.profession as ProfessionType);
     }
+    if (res.wallet) {
+      setWallet(res.wallet);
+    }
+
+    setCurrentScreen('MAIN');
+    setActiveTab('HOME');
+    await refreshData();
   };
 
   const logout = () => {
     MobileApiClient.setToken(null);
     setUser(null);
+    setWallet({ availableBalance: 0, processingAmount: 0, totalRedeemed: 0 });
+    setTransactions([]);
+    setBills([]);
     setCurrentScreen('WELCOME');
+    setActiveTab('HOME');
   };
 
   const theme = THEMES[profession] || THEMES.PLUMBER;
@@ -182,13 +155,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         profession,
         theme,
         wallet,
+        transactions,
         bills,
         activeTab,
         currentScreen,
+        isLoading,
         setActiveTab,
         setCurrentScreen,
         setProfession: setProfessionState,
-        switchProfessionLive,
         login,
         logout,
         refreshData,

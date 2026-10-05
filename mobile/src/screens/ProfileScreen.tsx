@@ -23,11 +23,26 @@ import {
 } from 'lucide-react-native';
 import Header from '../components/Header';
 import { useApp } from '../context/AppContext';
+import { MobileApiClient } from '../services/api';
 
 export default function ProfileScreen() {
-  const { user, theme, profession, switchProfessionLive, logout } = useApp();
+  const { user, theme, logout } = useApp();
+  const [eligibility, setEligibility] = React.useState<any>(null);
 
-  const isPlumber = profession === 'PLUMBER';
+  React.useEffect(() => {
+    let mounted = true;
+    MobileApiClient.getPayoutEligibility()
+      .then((res) => {
+        if (mounted) setEligibility(res);
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const hasKyc = !!eligibility?.verifiedKyc;
+  const hasAccount = !!eligibility?.verifiedAccount;
 
   return (
     <View style={styles.container}>
@@ -43,50 +58,13 @@ export default function ProfileScreen() {
           />
 
           <View style={styles.profileDetails}>
-            <Text style={styles.userName}>{user?.fullName || 'Raj Kumar'}</Text>
-            <Text style={styles.userMobile}>+91 {user?.mobile || '9876543210'}</Text>
+            <Text style={styles.userName}>{user?.fullName || 'Member'}</Text>
+            <Text style={styles.userMobile}>+91 {user?.mobile || '----------'}</Text>
             <View style={[styles.professionPill, { backgroundColor: theme.primaryLight }]}>
               <Text style={[styles.professionPillText, { color: theme.primaryColor }]}>
                 {theme.displayName}
               </Text>
             </View>
-          </View>
-        </View>
-
-        {/* Live Dynamic Theme Switcher Card */}
-        <View style={styles.themeSwitcherBox}>
-          <View style={styles.themeSwitcherHeader}>
-            <RefreshCw size={15} color={theme.primaryColor} />
-            <Text style={styles.themeSwitcherTitle}>Dynamic Profession Switcher</Text>
-          </View>
-          <Text style={styles.themeSwitcherDesc}>
-            Switch modes to observe dynamic changes in themes, typography, and illustrations:
-          </Text>
-
-          <View style={styles.themeButtonsRow}>
-            <TouchableOpacity
-              style={[
-                styles.themeBtn,
-                profession === 'PLUMBER' && { backgroundColor: '#1E60D5', borderColor: '#1E60D5' },
-              ]}
-              onPress={() => switchProfessionLive('PLUMBER')}
-            >
-              <Text style={[styles.themeBtnText, profession === 'PLUMBER' && { color: '#ffffff' }]}>
-                Plumber (Blue)
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.themeBtn,
-                profession === 'TILE_INSTALLER' && { backgroundColor: '#E65100', borderColor: '#E65100' },
-              ]}
-              onPress={() => switchProfessionLive('TILE_INSTALLER')}
-            >
-              <Text style={[styles.themeBtnText, profession === 'TILE_INSTALLER' && { color: '#ffffff' }]}>
-                Tiles (Orange)
-              </Text>
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -96,29 +74,37 @@ export default function ProfileScreen() {
 
           <View style={styles.statusRow}>
             <View style={styles.statusLeft}>
-              <ShieldCheck size={18} color="#16A34A" />
+              <ShieldCheck size={18} color={hasKyc ? '#16A34A' : '#94A3B8'} />
               <View>
                 <Text style={styles.statusTitle}>PAN Identity KYC</Text>
-                <Text style={styles.statusSub}>ABCDE••••F</Text>
+                <Text style={styles.statusSub}>
+                  {hasKyc ? eligibility.verifiedKyc.maskedPan : 'Not verified yet'}
+                </Text>
               </View>
             </View>
-            <View style={styles.greenBadge}>
-              <Text style={styles.greenBadgeText}>✓ Verified</Text>
+            <View style={hasKyc ? styles.greenBadge : styles.pendingBadge}>
+              <Text style={hasKyc ? styles.greenBadgeText : styles.pendingBadgeText}>
+                {hasKyc ? '✓ Verified' : 'Action Required'}
+              </Text>
             </View>
           </View>
 
           <View style={styles.statusRow}>
             <View style={styles.statusLeft}>
-              <CreditCard size={18} color="#16A34A" />
+              <CreditCard size={18} color={hasAccount ? '#16A34A' : '#94A3B8'} />
               <View>
-                <Text style={styles.statusTitle}>Payment Account</Text>
+                <Text style={styles.statusTitle}>Disbursement Account</Text>
                 <Text style={styles.statusSub}>
-                  {isPlumber ? 'raj****@okhdfcbank' : 'HDFC Bank ••••••9012'}
+                  {hasAccount
+                    ? eligibility.verifiedAccount.maskedInfo
+                    : 'Add bank account or UPI'}
                 </Text>
               </View>
             </View>
-            <View style={styles.greenBadge}>
-              <Text style={styles.greenBadgeText}>✓ Verified</Text>
+            <View style={hasAccount ? styles.greenBadge : styles.pendingBadge}>
+              <Text style={hasAccount ? styles.greenBadgeText : styles.pendingBadgeText}>
+                {hasAccount ? '✓ Verified' : 'Action Required'}
+              </Text>
             </View>
           </View>
         </View>
@@ -302,6 +288,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     color: '#15803D',
+  },
+  pendingBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  pendingBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#B45309',
   },
   menuItem: {
     flexDirection: 'row',

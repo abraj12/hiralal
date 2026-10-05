@@ -10,10 +10,10 @@ router.post('/pan/verify', authenticate, async (req: AuthenticatedRequest, res: 
     const { panNumber, panName } = req.body;
 
     if (!panNumber || !panName) {
-      return res.status(400).json({ success: false, message: 'PAN number and full name are required.' });
+      return res.status(400).json({ success: false, message: 'PAN number and full name on PAN card are required.' });
     }
 
-    const record = await KycService.verifyPan(user.id, panNumber, panName);
+    const record = await KycService.submitPan(user.id, panNumber, panName);
 
     res.json({
       success: true,
@@ -33,19 +33,8 @@ router.post('/pan/verify', authenticate, async (req: AuthenticatedRequest, res: 
 router.get('/status', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
-    const record = KycService.getUserKyc(user.id);
-
-    res.json({
-      success: true,
-      kyc: record
-        ? {
-            panStatus: record.panStatus,
-            maskedPan: record.maskedPan,
-            panName: record.panName,
-            verifiedAt: record.verifiedAt,
-          }
-        : null,
-    });
+    const result = await KycService.getUserKyc(user.id);
+    res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }

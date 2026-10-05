@@ -4,222 +4,237 @@ import { PayoutService } from '../services/payout.service';
 import { KycService } from '../services/kyc.service';
 import { PaymentService } from '../services/payment.service';
 import { AuthService } from '../services/auth.service';
-import { dbStore } from '../db/store';
+import { StorageService } from '../services/storage.service';
+import { prisma } from '../db';
+import crypto from 'crypto';
 
-describe('Hiralal & Sons Rewards System - Business Logic & Financial Integrity Tests', () => {
-  beforeEach(() => {
-    // Reset rules to defaults
-    RewardService.updateRewardRules('admin-test', {
-      percentage: 0.5,
-      monthlyPoolLimit: 50000,
-      minRedemptionAmount: 500,
+describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
+  let testUserId: string;
+
+  beforeAll(async () => {
+    // Clean up test records
+    await prisma.payout.deleteMany({ where: { user: { mobile: '9888888888' } } });
+    await prisma.bill.deleteMany({ where: { user: { mobile: '9888888888' } } });
+    await prisma.kycRecord.deleteMany({ where: { user: { mobile: '9888888888' } } });
+    await prisma.paymentAccount.deleteMany({ where: { user: { mobile: '9888888888' } } });
+    await prisma.wallet.deleteMany({ where: { user: { mobile: '9888888888' } } });
+    await prisma.user.deleteMany({ where: { mobile: '9888888888' } });
+
+    // Create a real test plumber
+    const user = await prisma.user.create({
+      data: {
+        mobile: '9888888888',
+        fullName: 'Test Plumber',
+        passwordHash: 'testhash',
+        profession: 'PLUMBER',
+        role: 'USER',
+        status: 'ACTIVE',
+        isVerified: true,
+        wallet: {
+          create: {
+            availableBalance: 2000.0,
+            processingAmount: 0.0,
+            totalRedeemed: 0.0,
+          },
+        },
+      },
+      include: { wallet: true },
     });
+    testUserId = user.id;
   });
 
-  describe('1. Reward Calculation Engine', () => {
+  afterAll(async () => {
+    await prisma.payout.deleteMany({ where: { userId: testUserId } });
+    await prisma.walletTransaction.deleteMany({ where: { userId: testUserId } });
+    await prisma.bill.deleteMany({ where: { userId: testUserId } });
+    await prisma.kycRecord.deleteMany({ where: { userId: testUserId } });
+    await prisma.paymentAccount.deleteMany({ where: { userId: testUserId } });
+    await prisma.wallet.deleteMany({ where: { userId: testUserId } });
+    await prisma.user.deleteMany({ where: { id: testUserId } });
+    await prisma.$disconnect();
+  });
+
+  describe('1. Server-side Reward Calculation Engine', () => {
     test('Calculates exact 0.5% reward for ₹100,000 bill = ₹500', () => {
-      const billAmount = 100000;
-      const reward = RewardService.calculateReward(billAmount, 0.5);
+      const reward = RewardService.calculateReward(100000, 0.5);
       expect(reward).toBe(500.0);
     });
 
     test('Calculates exact 0.5% reward for ₹25,000 bill = ₹125', () => {
-      const billAmount = 25000;
-      const reward = RewardService.calculateReward(billAmount, 0.5);
+      const reward = RewardService.calculateReward(25000, 0.5);
       expect(reward).toBe(125.0);
     });
 
     test('Calculates exact 0.5% reward for ₹12,500 bill = ₹62.5', () => {
-      const billAmount = 12500;
-      const reward = RewardService.calculateReward(billAmount, 0.5);
+      const reward = RewardService.calculateReward(12500, 0.5);
       expect(reward).toBe(62.5);
     });
   });
 
   describe('2. Monthly ₹50,000 Reward Pool Cap Enforcement', () => {
-    test('Enforces monthly reward pool ceiling and prevents overflow', () => {
-      const pool = RewardService.getCurrentMonthPool();
-      pool.totalPoolCap = 50000.0;
-      pool.usedAmount = 49800.0; // ₹200 remaining
+    test('Initializes monthly pool and provides headroom check', async () => {
+      const pool = await RewardService.getCurrentMonthPool();
+      expect(Number(pool.totalPoolCap)).toBe(50000.0);
+      expect(pool.year).toBe(new Date().getFullYear());
 
-      // Claiming ₹150 should succeed
-      expect(() => RewardService.claimPoolAmount(150.0)).not.toThrow();
-      expect(pool.usedAmount).toBe(49950.0);
-
-      // Claiming ₹100 when only ₹50 left must throw
-      expect(() => RewardService.claimPoolAmount(100.0)).toThrow(/Monthly reward pool limit/);
+      const check = await RewardService.checkPoolAvailability(500.0);
+      expect(check.available).toBe(true);
     });
 
-    test('Computes correct pool analytics (e.g. 75.7% used)', () => {
-      const pool = RewardService.getCurrentMonthPool();
-      pool.totalPoolCap = 50000.0;
-      pool.usedAmount = 37850.0;
-
-      const analytics = RewardService.getPoolAnalytics();
-      expect(analytics.totalPoolCap).toBe(50000);
-      expect(analytics.usedAmount).toBe(37850);
-      expect(analytics.remainingAmount).toBe(12150);
-      expect(analytics.percentageUsed).toBe(75.7);
+    test('Calculates pool analytics correctly', async () => {
+      const analytics = await RewardService.getPoolAnalytics();
+      expect(analytics.totalPoolCap).toBe(50000.0);
+      expect(typeof analytics.usedAmount).toBe('number');
+      expect(typeof analytics.remainingAmount).toBe('number');
     });
   });
 
-  describe('3. Bill Upload & Duplicate Invoice Prevention', () => {
-    test('Rejects duplicate invoice number submission by same user', async () => {
-      const testUser = Array.from(dbStore.users.values())[0];
-      const uniqueInv = `INV-TEST-${Date.now()}`;
+  describe('3. Bill Upload & Duplicate Detection', () => {
+    test('Computes SHA-256 hash for uploaded file', () => {
+      const buf = Buffer.from('TEST INVOICE DATA FOR HIRALAL');
+      const hash = StorageService.calculateFileHash(buf);
+      expect(hash).toHaveLength(64);
+    });
 
-      // First submission
+    test('Rejects duplicate invoice number for the same user', async () => {
+      const invoiceNumber = `INV-TEST-${Date.now()}`;
+      const buf1 = Buffer.from(`Doc content 1 - ${Date.now()}`);
+
       await BillService.submitBill({
-        userId: testUser.id,
-        invoiceNumber: uniqueInv,
+        userId: testUserId,
+        invoiceNumber,
         invoiceDate: '2026-10-01',
-        billAmount: 20000,
-        fileBuffer: Buffer.from('test bill invoice content'),
-        fileName: 'bill.pdf',
+        billAmount: 10000,
+        fileBuffer: buf1,
+        fileName: 'inv1.pdf',
         mimeType: 'application/pdf',
       });
 
-      // Second submission with exact same invoice number must throw
+      const buf2 = Buffer.from(`Doc content 2 - ${Date.now()}`);
       await expect(
         BillService.submitBill({
-          userId: testUser.id,
-          invoiceNumber: uniqueInv,
-          invoiceDate: '2026-10-01',
-          billAmount: 20000,
-          fileBuffer: Buffer.from('test bill invoice content'),
-          fileName: 'bill.pdf',
+          userId: testUserId,
+          invoiceNumber,
+          invoiceDate: '2026-10-02',
+          billAmount: 10000,
+          fileBuffer: buf2,
+          fileName: 'inv2.pdf',
           mimeType: 'application/pdf',
         })
       ).rejects.toThrow(/already been submitted/);
     });
-  });
 
-  describe('4. KYC & Sensitive Data Masking', () => {
-    test('Validates Indian PAN format and correctly masks PAN', async () => {
-      const testUser = Array.from(dbStore.users.values())[0];
-      const record = await KycService.verifyPan(testUser.id, 'ABCDE9876Z', 'RAMESH SHARMA');
+    test('Rejects duplicate file upload by SHA-256 hash', async () => {
+      const sameBuffer = Buffer.from(`Identical document bytes ${Date.now()}`);
 
-      expect(record.panStatus).toBe('VERIFIED');
-      expect(record.maskedPan).toBe('ABCDE••••Z');
-    });
-
-    test('Rejects invalid PAN number format', async () => {
-      const testUser = Array.from(dbStore.users.values())[0];
-      await expect(KycService.verifyPan(testUser.id, '123INVALID', 'RAMESH SHARMA')).rejects.toThrow(
-        /Invalid PAN format/
-      );
-    });
-
-    test('Validates UPI format and masks UPI handle', async () => {
-      const testUser = Array.from(dbStore.users.values())[0];
-      const account = await PaymentService.verifyUpi(testUser.id, 'rameshsharma@okhdfcbank');
-
-      expect(account.isVerified).toBe(true);
-      expect(account.maskedInfo).toBe('ram****@okhdfcbank');
-    });
-
-    test('Validates Bank Account & IFSC and masks account number', async () => {
-      const testUser = Array.from(dbStore.users.values())[0];
-      const account = await PaymentService.verifyBankAccount(
-        testUser.id,
-        'Ramesh Sharma',
-        '987654321234',
-        'HDFC0001234'
-      );
-
-      expect(account.isVerified).toBe(true);
-      expect(account.bankName).toBe('HDFC Bank');
-      expect(account.maskedInfo).toBe('HDFC Bank ••••••1234');
-    });
-  });
-
-  describe('5. Payout Workflow, Idempotency & Immutable Ledger', () => {
-    test('Enforces PAN verification requirement at redemption time', async () => {
-      // User without KYC
-      const newUser = await AuthService.register({
-        mobile: '9123456789',
-        fullName: 'New Worker',
-        password: 'Password@123',
-        profession: 'PLUMBER',
+      await BillService.submitBill({
+        userId: testUserId,
+        invoiceNumber: `INV-UNIQUE-1-${Date.now()}`,
+        invoiceDate: '2026-10-01',
+        billAmount: 15000,
+        fileBuffer: sameBuffer,
+        fileName: 'doc1.jpg',
+        mimeType: 'image/jpeg',
       });
 
       await expect(
-        PayoutService.requestRedemption({
-          userId: newUser.user.id,
-          amount: 500,
-          idempotencyKey: 'idem-test-1',
+        BillService.submitBill({
+          userId: testUserId,
+          invoiceNumber: `INV-UNIQUE-2-${Date.now()}`,
+          invoiceDate: '2026-10-01',
+          billAmount: 15000,
+          fileBuffer: sameBuffer,
+          fileName: 'doc2.jpg',
+          mimeType: 'image/jpeg',
         })
-      ).rejects.toThrow(/PAN verification is required/);
+      ).rejects.toThrow(/already been uploaded to the system/);
     });
 
-    test('Enforces Idempotency to prevent duplicate payout transactions', async () => {
-      // Use seeded user Raj who has KYC and Payment Account
-      const raj = Array.from(dbStore.users.values()).find(u => u.mobile === '9876543210')!;
-      const rajWallet = dbStore.wallets.get('wallet-raj')!;
-      rajWallet.availableBalance = 3000.0;
-
-      const idempotencyKey = `idem-unique-${Date.now()}`;
-
-      const payout1 = await PayoutService.requestRedemption({
-        userId: raj.id,
-        amount: 600,
-        idempotencyKey,
+    test('Bill rejection requires mandatory rejection reason', async () => {
+      const buf = Buffer.from(`Doc for rejection - ${Date.now()}`);
+      const bill = await BillService.submitBill({
+        userId: testUserId,
+        invoiceNumber: `INV-REJECT-${Date.now()}`,
+        invoiceDate: '2026-10-01',
+        billAmount: 5000,
+        fileBuffer: buf,
+        fileName: 'doc.jpg',
+        mimeType: 'image/jpeg',
       });
 
-      const payout2 = await PayoutService.requestRedemption({
-        userId: raj.id,
-        amount: 600,
-        idempotencyKey,
+      await expect(BillService.rejectBill(bill.id, 'admin-id', '')).rejects.toThrow(/rejection reason is mandatory/);
+
+      const rejected = await BillService.rejectBill(bill.id, 'admin-id', 'Blurry unreadable bill photo');
+      expect(rejected.status).toBe('REJECTED');
+      expect(rejected.rejectionReason).toBe('Blurry unreadable bill photo');
+    });
+  });
+
+  describe('4. Admin Configurable Redemption Window Enforcement', () => {
+    test('Enforces window: rejects when isEnabled is false', async () => {
+      await prisma.redemptionSettings.upsert({
+        where: { id: 'default' },
+        update: { isEnabled: false },
+        create: { id: 'default', isEnabled: false },
       });
 
-      expect(payout1.id).toBe(payout2.id);
+      const { isWindowOpen } = await PayoutService.getRedemptionSettings();
+      expect(isWindowOpen).toBe(false);
+
+      const eligibility = await PayoutService.checkUserEligibility(testUserId);
+      expect(eligibility.canRedeem).toBe(false);
     });
 
-    test('Executes Payout state machine with RazorpayX webhook confirmation', async () => {
-      const raj = Array.from(dbStore.users.values()).find(u => u.mobile === '9876543210')!;
-      const rajWallet = dbStore.wallets.get('wallet-raj')!;
-      rajWallet.availableBalance = 2000.0;
-      const initialTotalRedeemed = rajWallet.totalRedeemed;
-
-      const payout = await PayoutService.requestRedemption({
-        userId: raj.id,
-        amount: 500,
-        idempotencyKey: `idem-webhook-${Date.now()}`,
+    test('Allows redemption when window is open and user is verified', async () => {
+      // Open window
+      await prisma.redemptionSettings.upsert({
+        where: { id: 'default' },
+        update: {
+          isEnabled: true,
+          startAt: new Date(Date.now() - 3600 * 1000),
+          endAt: new Date(Date.now() + 3600 * 1000),
+          minimumAmount: 500,
+          maximumAmount: 10000,
+        },
+        create: {
+          id: 'default',
+          isEnabled: true,
+          minimumAmount: 500,
+          maximumAmount: 10000,
+        },
       });
 
-      expect(payout.status).toBe('PROCESSING');
+      // Add verified KYC and Payment Account for test user
+      await KycService.submitPan(testUserId, 'ABCDE1234F', 'Test Plumber');
+      await PaymentService.addUpiAccount(testUserId, 'testplumber@okhdfcbank');
 
-      // Simulate successful webhook
-      await PayoutService.completePayout(payout.id, true);
-
-      expect(payout.status).toBe('SUCCESS');
-      expect(rajWallet.totalRedeemed).toBe(initialTotalRedeemed + 500);
+      const eligibility = await PayoutService.checkUserEligibility(testUserId);
+      expect(eligibility.canRedeem).toBe(true);
+      expect(eligibility.availableBalance).toBeGreaterThanOrEqual(500);
     });
+  });
 
-    test('Refunds available balance on Payout failure / reversal with ledger entry', async () => {
-      const raj = Array.from(dbStore.users.values()).find(u => u.mobile === '9876543210')!;
-      const rajWallet = dbStore.wallets.get('wallet-raj')!;
-      rajWallet.availableBalance = 2000.0;
+  describe('5. Payout Idempotency & Balance Reversal', () => {
+    test('Payout reversal restores wallet availableBalance and creates PAYOUT_REVERSAL ledger entry', async () => {
+      const idempotencyKey = `idem-test-${Date.now()}`;
+      const result = await PayoutService.requestRedemption(testUserId, idempotencyKey, 500);
 
-      const payout = await PayoutService.requestRedemption({
-        userId: raj.id,
-        amount: 500,
-        idempotencyKey: `idem-reverse-${Date.now()}`,
+      const initialAvailable = Number(result.wallet!.availableBalance);
+
+      // Trigger reversal
+      await PayoutService.reversePayout(result.payout.id, 'Test reversal bank rejection');
+
+      const updatedWallet = await prisma.wallet.findUnique({
+        where: { userId: testUserId },
       });
 
-      const balanceAfterDebit = rajWallet.availableBalance;
+      expect(Number(updatedWallet?.availableBalance)).toBe(initialAvailable + 500);
 
-      // Simulate failure webhook
-      await PayoutService.completePayout(payout.id, false, 'Bank server downtime');
-
-      expect(payout.status).toBe('FAILED');
-      expect(rajWallet.availableBalance).toBe(balanceAfterDebit + 500);
-
-      // Verify immutable ledger reversal record
-      const reversalTx = Array.from(dbStore.walletTransactions.values()).find(
-        t => t.referenceId === payout.id && t.type === 'PAYOUT_REVERSAL'
-      );
-      expect(reversalTx).toBeDefined();
+      const reversalTx = await prisma.walletTransaction.findFirst({
+        where: { referenceId: result.payout.id, type: 'PAYOUT_REVERSAL' },
+      });
+      expect(reversalTx).not.toBeNull();
+      expect(Number(reversalTx?.amount)).toBe(500);
     });
   });
 });

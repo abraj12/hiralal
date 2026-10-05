@@ -1,88 +1,130 @@
 import { Router, Response } from 'express';
 import { authenticate, requireRole, AuthenticatedRequest } from '../middleware/auth.middleware';
-import { dbStore, AuditLogRecord } from '../db/store';
+import { prisma } from '../db';
 import { RewardService } from '../services/reward.service';
 import { BillService } from '../services/bill.service';
-import { PayoutService } from '../services/payout.service';
+import { StorageService } from '../services/storage.service';
+import { BillStatus, Profession, UserStatus } from '@prisma/client';
 
 const router = Router();
 
-// Protect all admin routes
+// Protect all admin endpoints with strict ADMIN role check
 router.use(authenticate);
-router.use(requireRole(['ADMIN', 'SUPER_ADMIN']));
+router.use(requireRole(['ADMIN']));
 
-// 1. Dashboard Overview
+/**
+ * 1. Dashboard Overview Stats
+ */
 router.get('/dashboard', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const users = Array.from(dbStore.users.values()).filter(u => u.role === 'USER');
-    const bills = Array.from(dbStore.bills.values());
-    const payouts = Array.from(dbStore.payouts.values());
+    const totalUsers = await prisma.user.count({ where: { role: 'USER' } });
+    const plumbersCount = await prisma.user.count({ where: { role: 'USER', profession: 'PLUMBER' } });
+    const tilesCount = await prisma.user.count({ where: { role: 'USER', profession: 'TILE_INSTALLER' } });
 
-    const pendingBills = bills.filter(b => b.status === 'PENDING' || b.status === 'UNDER_REVIEW');
-    const pendingPayouts = payouts.filter(p => p.status === 'PENDING' || p.status === 'PROCESSING');
+    const pendingBills = await prisma.bill.count({
+      where: { status: { in: ['PENDING', 'UNDER_REVIEW'] } },
+    });
+    const approvedBillsCount = await prisma.bill.count({ where: { status: 'APPROVED' } });
+    const rejectedBillsCount = await prisma.bill.count({ where: { status: 'REJECTED' } });
 
-    // Rewards this month
-    const currentMonth = new Date().getMonth();
-    const currentYear = new Date().getFullYear();
-    const thisMonthApproved = bills.filter(
-      b =>
-        b.status === 'APPROVED' &&
-        b.createdAt.getMonth() === currentMonth &&
-        b.createdAt.getFullYear() === currentYear
-    );
-    const rewardsThisMonth = thisMonthApproved.reduce((acc, b) => acc + b.calculatedReward, 0);
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const pool = RewardService.getPoolAnalytics();
+    const monthBills = await prisma.bill.findMany({
+      where: {
+        status: 'APPROVED',
+        updatedAt: { gte: startOfMonth },
+      },
+      select: { calculatedReward: true },
+    });
+    const rewardsThisMonth = monthBills.reduce((acc, b) => acc + Number(b.calculatedReward), 0);
 
-    // Recent 10 bills
-    const recentBills = BillService.getAllBills('ALL').slice(0, 10);
+    const pendingPayouts = await prisma.payout.count({
+      where: { status: { in: ['PENDING', 'PROCESSING', 'PAYOUT_INITIATED'] } },
+    });
+    const successfulPayouts = await prisma.payout.count({ where: { status: 'SUCCESS' } });
+
+    const totalRedeemedAgg = await prisma.wallet.aggregate({
+      _sum: { totalRedeemed: true },
+    });
+    const totalRedeemed = Number(totalRedeemedAgg._sum.totalRedeemed || 0);
+
+    const pool = await RewardService.getPoolAnalytics();
+
+    // 10 most recent bills
+    const recentBills = await prisma.bill.findMany({
+      take: 10,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: { select: { fullName: true, mobile: true, profession: true } },
+      },
+    });
 
     res.json({
       success: true,
       stats: {
-        totalUsers: users.length,
-        plumbersCount: users.filter(u => u.profession === 'PLUMBER').length,
-        tilesCount: users.filter(u => u.profession === 'TILE_INSTALLER').length,
-        pendingBills: pendingBills.length,
+        totalUsers,
+        plumbersCount,
+        tilesCount,
+        pendingBills,
+        approvedBillsCount,
+        rejectedBillsCount,
         rewardsThisMonth: Math.round(rewardsThisMonth * 100) / 100,
-        pendingPayouts: pendingPayouts.length,
+        pendingPayouts,
+        successfulPayouts,
+        totalRedeemed,
         pool,
       },
-      recentBills,
+      recentBills: recentBills.map((b) => ({
+        ...b,
+        billAmount: Number(b.billAmount),
+        calculatedReward: Number(b.calculatedReward),
+        rewardPercentage: Number(b.rewardPercentage),
+        fileUrl: StorageService.generateSignedUrl(b.fileKey, 30),
+      })),
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 2. User Management
+/**
+ * 2. User Directory
+ */
 router.get('/users', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const profession = (req.query.profession as string) || 'ALL';
-    const status = (req.query.status as string) || 'ALL';
-    const search = ((req.query.search as string) || '').toLowerCase();
+    const profession = req.query.profession as string;
+    const status = req.query.status as string;
+    const search = req.query.search as string;
 
-    let users = Array.from(dbStore.users.values()).filter(u => u.role === 'USER');
-
-    if (profession !== 'ALL') {
-      users = users.filter(u => u.profession === profession);
+    const where: any = { role: 'USER' };
+    if (profession && profession !== 'ALL') {
+      where.profession = profession as Profession;
     }
-
-    if (status !== 'ALL') {
-      users = users.filter(u => u.status === status);
+    if (status && status !== 'ALL') {
+      where.status = status as UserStatus;
     }
-
     if (search) {
-      users = users.filter(
-        u => u.fullName.toLowerCase().includes(search) || u.mobile.includes(search)
-      );
+      where.OR = [
+        { fullName: { contains: search, mode: 'insensitive' } },
+        { mobile: { contains: search } },
+      ];
     }
 
-    const result = users.map(u => {
-      const wallet = Array.from(dbStore.wallets.values()).find(w => w.userId === u.id);
-      const kyc = Array.from(dbStore.kycRecords.values()).find(k => k.userId === u.id);
-      const payment = Array.from(dbStore.paymentAccounts.values()).find(p => p.userId === u.id && p.isDefault);
-      const billsCount = Array.from(dbStore.bills.values()).filter(b => b.userId === u.id).length;
+    const users = await prisma.user.findMany({
+      where,
+      include: {
+        wallet: true,
+        kycRecords: { orderBy: { createdAt: 'desc' }, take: 1 },
+        paymentAccounts: { where: { isDefault: true }, take: 1 },
+        _count: { select: { bills: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const result = users.map((u) => {
+      const kyc = u.kycRecords[0] || null;
+      const payment = u.paymentAccounts[0] || null;
 
       return {
         id: u.id,
@@ -91,10 +133,10 @@ router.get('/users', async (req: AuthenticatedRequest, res: Response) => {
         profession: u.profession,
         status: u.status,
         createdAt: u.createdAt,
-        walletBalance: wallet ? wallet.availableBalance : 0,
+        walletBalance: u.wallet ? Number(u.wallet.availableBalance) : 0,
         panStatus: kyc ? kyc.panStatus : 'PENDING',
         paymentStatus: payment ? (payment.isVerified ? 'VERIFIED' : 'PENDING') : 'NOT_ADDED',
-        billsCount,
+        billsCount: u._count.bills,
       };
     });
 
@@ -104,112 +146,297 @@ router.get('/users', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// 3. User Details
+/**
+ * 3. User Details
+ */
 router.get('/users/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const user = dbStore.users.get(req.params.id);
+    const user = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      include: {
+        wallet: true,
+        kycRecords: { orderBy: { createdAt: 'desc' } },
+        paymentAccounts: { orderBy: { createdAt: 'desc' } },
+        bills: { orderBy: { createdAt: 'desc' } },
+        payouts: { orderBy: { createdAt: 'desc' } },
+      },
+    });
+
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    const wallet = Array.from(dbStore.wallets.values()).find(w => w.userId === user.id);
-    const kyc = Array.from(dbStore.kycRecords.values()).find(k => k.userId === user.id);
-    const paymentAccounts = Array.from(dbStore.paymentAccounts.values()).filter(p => p.userId === user.id);
-    const bills = BillService.getUserBills(user.id);
-    const payouts = PayoutService.getUserPayouts(user.id);
-    const ledger = Array.from(dbStore.walletTransactions.values())
-      .filter(t => t.userId === user.id)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    const ledger = await prisma.walletTransaction.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
 
     res.json({
       success: true,
-      user,
-      wallet,
-      kyc,
-      paymentAccounts,
-      bills,
-      payouts,
-      ledger,
+      user: {
+        id: user.id,
+        fullName: user.fullName,
+        mobile: user.mobile,
+        profession: user.profession,
+        status: user.status,
+        createdAt: user.createdAt,
+      },
+      wallet: user.wallet
+        ? {
+            availableBalance: Number(user.wallet.availableBalance),
+            processingAmount: Number(user.wallet.processingAmount),
+            totalRedeemed: Number(user.wallet.totalRedeemed),
+          }
+        : null,
+      kyc: user.kycRecords[0] || null,
+      paymentAccounts: user.paymentAccounts,
+      bills: user.bills.map((b) => ({
+        ...b,
+        billAmount: Number(b.billAmount),
+        calculatedReward: Number(b.calculatedReward),
+        fileUrl: StorageService.generateSignedUrl(b.fileKey, 30),
+      })),
+      payouts: user.payouts,
+      ledger: ledger.map((l) => ({
+        ...l,
+        amount: Number(l.amount),
+        balanceAfter: Number(l.balanceAfter),
+      })),
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 4. Bills Management
+/**
+ * 4. Bills Management
+ */
 router.get('/bills', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const status = (req.query.status as string) || 'ALL';
-    const profession = (req.query.profession as string) || 'ALL';
-    const bills = BillService.getAllBills(status, profession);
-    res.json({ success: true, bills });
+    const status = req.query.status as string;
+    const profession = req.query.profession as string;
+
+    const where: any = {};
+    if (status && status !== 'ALL') {
+      where.status = status as BillStatus;
+    }
+    if (profession && profession !== 'ALL') {
+      where.user = { profession: profession as Profession };
+    }
+
+    const bills = await prisma.bill.findMany({
+      where,
+      include: {
+        user: { select: { id: true, fullName: true, mobile: true, profession: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({
+      success: true,
+      bills: bills.map((b) => ({
+        ...b,
+        billAmount: Number(b.billAmount),
+        calculatedReward: Number(b.calculatedReward),
+        rewardPercentage: Number(b.rewardPercentage),
+        fileUrl: StorageService.generateSignedUrl(b.fileKey, 30),
+      })),
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 5. Bill Verification (Approve / Reject)
+/**
+ * 5. Bill Verification (Approve / Reject)
+ */
 router.post('/bills/:id/verify', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { action, rejectionReason } = req.body;
+    const { action, rejectionReason, remarks } = req.body;
     const admin = req.user!;
 
     if (!action || !['APPROVE', 'REJECT'].includes(action)) {
       return res.status(400).json({ success: false, message: 'Action must be APPROVE or REJECT.' });
     }
 
-    const bill = await BillService.verifyBill(req.params.id, action, admin.id, rejectionReason);
+    if (action === 'APPROVE') {
+      const result = await BillService.approveBill(req.params.id, admin.id, remarks);
+      res.json({
+        success: true,
+        message: 'Bill approved and reward credited to wallet.',
+        bill: result.bill,
+        rewardCredited: result.rewardCredited,
+      });
+    } else {
+      const updatedBill = await BillService.rejectBill(req.params.id, admin.id, rejectionReason);
+      res.json({
+        success: true,
+        message: 'Bill rejected.',
+        bill: updatedBill,
+      });
+    }
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * 6. Payouts Management
+ */
+router.get('/payouts', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const status = req.query.status as string;
+    const where: any = {};
+    if (status && status !== 'ALL') {
+      where.status = status;
+    }
+
+    const payouts = await prisma.payout.findMany({
+      where,
+      include: {
+        user: { select: { fullName: true, mobile: true, profession: true } },
+        paymentAccount: { select: { accountType: true, maskedInfo: true, bankName: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
     res.json({
       success: true,
-      message: action === 'APPROVE' ? 'Bill approved and reward credited to wallet.' : 'Bill rejected.',
-      bill,
+      payouts: payouts.map((p) => ({
+        id: p.id,
+        userName: p.user.fullName,
+        userMobile: p.user.mobile,
+        profession: p.user.profession,
+        amount: Number(p.amount),
+        status: p.status,
+        paymentType: p.paymentType,
+        maskedAccount: p.paymentAccount.maskedInfo,
+        bankName: p.paymentAccount.bankName,
+        razorpayPayoutId: p.razorpayPayoutId,
+        failureReason: p.failureReason,
+        createdAt: p.createdAt,
+        completedAt: p.completedAt,
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * 7. Redemption Settings (Admin Control Window)
+ */
+router.get('/settings/redemption', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const settings = await prisma.redemptionSettings.findUnique({
+      where: { id: 'default' },
+    });
+
+    res.json({
+      success: true,
+      settings: settings
+        ? {
+            ...settings,
+            minimumAmount: Number(settings.minimumAmount),
+            maximumAmount: Number(settings.maximumAmount),
+          }
+        : null,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.put('/settings/redemption', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const admin = req.user!;
+    const { isEnabled, startAt, endAt, minimumAmount, maximumAmount, message } = req.body;
+
+    const startDate = startAt ? new Date(startAt) : null;
+    const endDate = endAt ? new Date(endAt) : null;
+
+    if (startDate && endDate && endDate <= startDate) {
+      return res.status(400).json({ success: false, message: 'End date and time must be after the start date.' });
+    }
+
+    const minAmt = minimumAmount !== undefined ? parseFloat(minimumAmount) : 500;
+    const maxAmt = maximumAmount !== undefined ? parseFloat(maximumAmount) : 10000;
+
+    if (minAmt <= 0 || maxAmt < minAmt) {
+      return res.status(400).json({ success: false, message: 'Maximum redemption must be greater than or equal to minimum amount.' });
+    }
+
+    const prevSettings = await prisma.redemptionSettings.findUnique({ where: { id: 'default' } });
+
+    const updated = await prisma.redemptionSettings.upsert({
+      where: { id: 'default' },
+      update: {
+        isEnabled: Boolean(isEnabled),
+        startAt: startDate,
+        endAt: endDate,
+        minimumAmount: minAmt,
+        maximumAmount: maxAmt,
+        message: message || 'Rewards redemption window is open for verified craftsmen.',
+        updatedByAdminId: admin.id,
+      },
+      create: {
+        id: 'default',
+        isEnabled: Boolean(isEnabled),
+        startAt: startDate,
+        endAt: endDate,
+        minimumAmount: minAmt,
+        maximumAmount: maxAmt,
+        message: message || 'Rewards redemption window is open for verified craftsmen.',
+        updatedByAdminId: admin.id,
+      },
+    });
+
+    // Immutable Audit Log
+    await prisma.auditLog.create({
+      data: {
+        adminId: admin.id,
+        action: 'REDEMPTION_SETTINGS_UPDATED',
+        entityType: 'REDEMPTION_SETTINGS',
+        entityId: 'default',
+        oldValue: JSON.stringify(prevSettings),
+        newValue: JSON.stringify(updated),
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Redemption window settings updated successfully.',
+      settings: {
+        ...updated,
+        minimumAmount: Number(updated.minimumAmount),
+        maximumAmount: Number(updated.maximumAmount),
+      },
     });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }
 });
 
-// 6. Payouts Management
-router.get('/payouts', async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const status = (req.query.status as string) || 'ALL';
-    const payouts = PayoutService.getAllPayouts(status);
-    res.json({ success: true, payouts });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-router.post('/payouts/:id/action', async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const { action, reason } = req.body; // action: 'COMPLETE' or 'FAIL'
-    const isSuccess = action === 'COMPLETE';
-    const payout = await PayoutService.completePayout(req.params.id, isSuccess, reason);
-
-    // Audit Log
-    const audit: AuditLogRecord = {
-      id: `audit-${Date.now()}`,
-      adminId: req.user!.id,
-      action: isSuccess ? 'PAYOUT_COMPLETED' : 'PAYOUT_FAILED',
-      entityType: 'PAYOUT',
-      entityId: payout.id,
-      newValue: JSON.stringify({ status: payout.status, reason }),
-      createdAt: new Date(),
-    };
-    dbStore.auditLogs.set(audit.id, audit);
-
-    res.json({ success: true, payout, message: `Payout marked as ${payout.status}` });
-  } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
-  }
-});
-
-// 7. Settings / Reward Rules
+/**
+ * 8. Reward Rules Configuration
+ */
 router.get('/settings/reward-rules', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const rules = RewardService.getRewardRules();
-    const pool = RewardService.getPoolAnalytics();
-    res.json({ success: true, rules, pool });
+    const rules = await prisma.rewardRule.findMany({ where: { isActive: true } });
+    const pool = await RewardService.getPoolAnalytics();
+
+    res.json({
+      success: true,
+      rules: rules.map((r) => ({
+        id: r.id,
+        profession: r.profession,
+        percentage: Number(r.percentage),
+        monthlyPoolLimit: Number(r.monthlyPoolLimit),
+        minRedemptionAmount: Number(r.minRedemptionAmount),
+      })),
+      pool,
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -217,41 +444,50 @@ router.get('/settings/reward-rules', async (req: AuthenticatedRequest, res: Resp
 
 router.put('/settings/reward-rules', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { percentage, monthlyPoolLimit, minRedemptionAmount } = req.body;
+    const { percentage, monthlyPoolLimit, minRedemptionAmount, profession } = req.body;
     const admin = req.user!;
 
-    const prevRule = { ...RewardService.getRewardRules() };
-    const updatedRule = RewardService.updateRewardRules(admin.id, {
+    const updated = await RewardService.updateRewardRules(admin.id, {
       percentage: percentage ? parseFloat(percentage) : undefined,
       monthlyPoolLimit: monthlyPoolLimit ? parseFloat(monthlyPoolLimit) : undefined,
       minRedemptionAmount: minRedemptionAmount ? parseFloat(minRedemptionAmount) : undefined,
+      profession: profession || undefined,
     });
 
-    // Audit log
-    const audit: AuditLogRecord = {
-      id: `audit-${Date.now()}`,
-      adminId: admin.id,
-      action: 'REWARD_RULES_UPDATED',
-      entityType: 'REWARD_RULE',
-      entityId: updatedRule.id,
-      oldValue: JSON.stringify(prevRule),
-      newValue: JSON.stringify(updatedRule),
-      createdAt: new Date(),
-    };
-    dbStore.auditLogs.set(audit.id, audit);
+    // Audit Log
+    await prisma.auditLog.create({
+      data: {
+        adminId: admin.id,
+        action: 'REWARD_RULES_UPDATED',
+        entityType: 'REWARD_RULE',
+        entityId: updated.id,
+        newValue: JSON.stringify(updated),
+      },
+    });
 
-    res.json({ success: true, message: 'Reward settings updated successfully.', rules: updatedRule });
+    res.json({
+      success: true,
+      message: 'Reward rule settings updated successfully.',
+      rule: updated,
+    });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }
 });
 
-// 8. Audit Logs
+/**
+ * 9. Audit Logs
+ */
 router.get('/audit-logs', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const logs = Array.from(dbStore.auditLogs.values()).sort(
-      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
-    );
+    const logs = await prisma.auditLog.findMany({
+      take: 100,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        admin: { select: { fullName: true, mobile: true } },
+      },
+    });
+
     res.json({ success: true, logs });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });

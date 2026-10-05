@@ -14,9 +14,29 @@ export class MobileApiClient {
 
   static setToken(token: string | null) {
     this.token = token;
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        if (token) {
+          window.localStorage.setItem('hiralal_jwt_token', token);
+        } else {
+          window.localStorage.removeItem('hiralal_jwt_token');
+        }
+      }
+    } catch (e) {
+      // Storage access ignored
+    }
   }
 
   static getToken(): string | null {
+    if (!this.token) {
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          this.token = window.localStorage.getItem('hiralal_jwt_token');
+        }
+      } catch (e) {
+        // Storage access ignored
+      }
+    }
     return this.token;
   }
 
@@ -26,8 +46,9 @@ export class MobileApiClient {
       ...(options.headers as Record<string, string>),
     };
 
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
+    const currentToken = this.getToken();
+    if (currentToken) {
+      headers['Authorization'] = `Bearer ${currentToken}`;
     }
 
     try {
@@ -162,6 +183,10 @@ export class MobileApiClient {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  }
+
+  static getPayoutEligibility() {
+    return this.request('/payouts/eligibility');
   }
 
   static getPayouts() {

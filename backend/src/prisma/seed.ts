@@ -5,113 +5,27 @@ async function main() {
   console.log('🌱 Starting database seeding for Hiralal & Sons...');
 
   try {
-    const passwordHash = await bcrypt.hash('Password@123', 10);
-    const adminPasswordHash = await bcrypt.hash('Admin@123', 10);
+    const adminPasswordHash = await bcrypt.hash(process.env.ADMIN_INITIAL_PASSWORD || 'Admin@123', 10);
 
-    // 1. Seed Super Admin
+    // 1. Provision Secure Company Administrator
     const admin = await prisma.user.upsert({
       where: { mobile: '9999999999' },
-      update: {},
+      update: {
+        role: 'ADMIN',
+        status: 'ACTIVE',
+      },
       create: {
         mobile: '9999999999',
         fullName: 'Hiralal Admin',
         passwordHash: adminPasswordHash,
-        profession: 'NONE',
-        role: 'SUPER_ADMIN',
+        role: 'ADMIN',
         status: 'ACTIVE',
         isVerified: true,
       },
     });
-    console.log(`✅ Admin user seeded: ${admin.fullName} (${admin.mobile})`);
+    console.log(`✅ Company Admin provisioned: ${admin.fullName} (${admin.mobile})`);
 
-    // 2. Seed Plumber: Raj Kumar
-    const raj = await prisma.user.upsert({
-      where: { mobile: '9876543210' },
-      update: {},
-      create: {
-        mobile: '9876543210',
-        fullName: 'Raj Kumar',
-        passwordHash,
-        profession: 'PLUMBER',
-        role: 'USER',
-        status: 'ACTIVE',
-        isVerified: true,
-        wallet: {
-          create: {
-            availableBalance: 1600.0,
-            processingAmount: 850.0,
-            totalRedeemed: 2000.0,
-          },
-        },
-        kycRecords: {
-          create: {
-            panNumber: 'ABCDE1234F',
-            panName: 'RAJ KUMAR',
-            panStatus: 'VERIFIED',
-            maskedPan: 'ABCDE••••F',
-            verifiedAt: new Date(),
-          },
-        },
-        paymentAccounts: {
-          create: {
-            accountType: 'UPI',
-            upiId: 'rajkumar@okhdfcbank',
-            maskedInfo: 'raj****@okhdfcbank',
-            isVerified: true,
-            verifiedAt: new Date(),
-            isDefault: true,
-          },
-        },
-      },
-    });
-    console.log(`✅ Plumber user seeded: ${raj.fullName} (${raj.mobile})`);
-
-    // 3. Seed Tile Installer: Amit Kumar
-    const amit = await prisma.user.upsert({
-      where: { mobile: '9876543211' },
-      update: {},
-      create: {
-        mobile: '9876543211',
-        fullName: 'Amit Kumar',
-        passwordHash,
-        profession: 'TILE_INSTALLER',
-        role: 'USER',
-        status: 'ACTIVE',
-        isVerified: true,
-        wallet: {
-          create: {
-            availableBalance: 2170.0,
-            processingAmount: 950.0,
-            totalRedeemed: 3500.0,
-          },
-        },
-        kycRecords: {
-          create: {
-            panNumber: 'FGHIJ5678K',
-            panName: 'AMIT KUMAR',
-            panStatus: 'VERIFIED',
-            maskedPan: 'FGHIJ••••K',
-            verifiedAt: new Date(),
-          },
-        },
-        paymentAccounts: {
-          create: {
-            accountType: 'BANK_ACCOUNT',
-            bankName: 'HDFC Bank',
-            accountHolderName: 'Amit Kumar',
-            accountNumber: '50100234569012',
-            ifscCode: 'HDFC0001234',
-            maskedInfo: 'HDFC Bank ••••••9012',
-            isVerified: true,
-            verifiedAt: new Date(),
-            isDefault: true,
-          },
-        },
-      },
-    });
-    console.log(`✅ Tile Installer seeded: ${amit.fullName} (${amit.mobile})`);
-
-    // 4. Seed Monthly Reward Pool
+    // 2. Provision Initial Monthly Reward Pool
     const now = new Date();
     await prisma.rewardPool.upsert({
       where: {
@@ -125,26 +39,54 @@ async function main() {
         year: now.getFullYear(),
         month: now.getMonth() + 1,
         totalPoolCap: 50000.0,
-        usedAmount: 37850.0, // Matching spec: ₹37,850 / ₹50,000 (75.7% Used)
+        usedAmount: 0.0,
         isCapped: false,
       },
     });
-    console.log('✅ Monthly reward pool seeded: ₹37,850 / ₹50,000 (75.7% used)');
+    console.log('✅ Monthly reward pool provisioned: ₹50,000 monthly ceiling');
 
-    // 5. Seed Reward Rule
-    await prisma.rewardRule.create({
-      data: {
-        profession: 'NONE',
-        percentage: 0.5,
-        monthlyPoolLimit: 50000.0,
-        minRedemptionAmount: 500.0,
-        isActive: true,
-        updatedAt: new Date(),
+    // 3. Provision Reward Rules for Plumber & Tile Installer
+    const existingRules = await prisma.rewardRule.findMany();
+    if (existingRules.length === 0) {
+      await prisma.rewardRule.createMany({
+        data: [
+          {
+            profession: 'PLUMBER',
+            percentage: 0.5,
+            monthlyPoolLimit: 50000.0,
+            minRedemptionAmount: 500.0,
+            isActive: true,
+          },
+          {
+            profession: 'TILE_INSTALLER',
+            percentage: 0.5,
+            monthlyPoolLimit: 50000.0,
+            minRedemptionAmount: 500.0,
+            isActive: true,
+          },
+        ],
+      });
+      console.log('✅ Profession reward rules provisioned: 0.5% (Plumber & Tile Installer)');
+    }
+
+    // 4. Provision Initial Redemption Settings
+    await prisma.redemptionSettings.upsert({
+      where: { id: 'default' },
+      update: {},
+      create: {
+        id: 'default',
+        isEnabled: true,
+        startAt: new Date(Date.now() - 24 * 3600 * 1000), // Active by default
+        endAt: new Date(Date.now() + 60 * 24 * 3600 * 1000), // 60 days window
+        minimumAmount: 500.0,
+        maximumAmount: 10000.0,
+        message: 'Rewards redemption window is open for eligible verified craftsmen.',
+        updatedByAdminId: admin.id,
       },
     });
-    console.log('✅ Default reward rule seeded: 0.5% with ₹50,000 monthly limit');
+    console.log('✅ Redemption settings provisioned (Admin-controlled window)');
 
-    console.log('🎉 Seeding completed successfully!');
+    console.log('🎉 Production database initialization complete!');
   } catch (error) {
     console.error('Error seeding database:', error);
   } finally {

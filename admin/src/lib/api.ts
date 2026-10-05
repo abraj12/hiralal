@@ -101,6 +101,25 @@ export class AdminApiClient {
     });
   }
 
+  // Redemption Settings (Arbitrary Admin-Controlled Windows)
+  static getRedemptionSettings() {
+    return this.request('/admin/settings/redemption');
+  }
+
+  static updateRedemptionSettings(data: {
+    isEnabled: boolean;
+    startAt?: string | null;
+    endAt?: string | null;
+    minimumAmount?: number;
+    maximumAmount?: number;
+    message?: string;
+  }) {
+    return this.request('/admin/settings/redemption', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
   // Audit Logs
   static getAuditLogs() {
     return this.request('/admin/audit-logs');

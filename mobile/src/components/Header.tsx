@@ -4,35 +4,24 @@ import { Bell, RefreshCw } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 
 export default function Header() {
-  const { user, theme, profession, switchProfessionLive } = useApp();
-
-  const toggleProfession = () => {
-    if (profession === 'PLUMBER') {
-      switchProfessionLive('TILE_INSTALLER');
-    } else {
-      switchProfessionLive('PLUMBER');
-    }
-  };
+  const { user, theme } = useApp();
 
   return (
     <View style={styles.container}>
       <View>
-        <Text style={styles.greetingText}>Good morning,</Text>
-        <Text style={styles.nameText}>{user?.fullName || 'Valued Partner'} 👋</Text>
+        <Text style={styles.greetingText}>Welcome,</Text>
+        <Text style={styles.nameText}>{user?.fullName || 'Partner'} 👋</Text>
       </View>
 
       <View style={styles.rightActions}>
-        {/* Quick Profession Switcher for Live Demo */}
-        <TouchableOpacity
+        {/* Profession Badge */}
+        <View
           style={[styles.professionBadge, { backgroundColor: theme.primaryLight, borderColor: theme.primaryColor }]}
-          onPress={toggleProfession}
-          activeOpacity={0.8}
         >
           <Text style={[styles.professionBadgeText, { color: theme.primaryColor }]}>
             {theme.displayName}
           </Text>
-          <RefreshCw size={12} color={theme.primaryColor} style={{ marginLeft: 4 }} />
-        </TouchableOpacity>
+        </View>
 
         {/* Notification Bell */}
         <TouchableOpacity style={styles.bellButton}>

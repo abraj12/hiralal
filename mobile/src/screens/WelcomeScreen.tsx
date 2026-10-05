@@ -4,7 +4,7 @@ import { Gift, ShieldCheck, Award } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 
 export default function WelcomeScreen() {
-  const { setCurrentScreen, switchProfessionLive } = useApp();
+  const { setCurrentScreen } = useApp();
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
@@ -79,32 +79,6 @@ export default function WelcomeScreen() {
         >
           <Text style={styles.createAccountBtnText}>Create New Account</Text>
         </TouchableOpacity>
-
-        {/* Instant Demo Preview Shortcuts */}
-        <View style={styles.demoPreviewRow}>
-          <Text style={styles.demoLabel}>Instant Demo Mode:</Text>
-          <View style={styles.demoButtons}>
-            <TouchableOpacity
-              style={styles.demoBtnPlumber}
-              onPress={() => {
-                switchProfessionLive('PLUMBER');
-                setCurrentScreen('MAIN');
-              }}
-            >
-              <Text style={styles.demoBtnText}>Plumber Mode</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.demoBtnTiles}
-              onPress={() => {
-                switchProfessionLive('TILE_INSTALLER');
-                setCurrentScreen('MAIN');
-              }}
-            >
-              <Text style={styles.demoBtnText}>Tiles Mode</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
       </View>
     </ScrollView>
   );

@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { config } from '../config';
 
 const UPLOADS_DIR = path.join(__dirname, '../../uploads');
@@ -9,52 +11,96 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 }
 
 export class StorageService {
+  private static s3Client: S3Client | null = null;
+
+  private static getS3Client(): S3Client | null {
+    if (this.s3Client) return this.s3Client;
+
+    if (config.r2.accessKeyId && config.r2.secretAccessKey && config.r2.endpoint) {
+      this.s3Client = new S3Client({
+        region: 'auto',
+        endpoint: config.r2.endpoint,
+        credentials: {
+          accessKeyId: config.r2.accessKeyId,
+          secretAccessKey: config.r2.secretAccessKey,
+        },
+      });
+      return this.s3Client;
+    }
+    return null;
+  }
+
   /**
-   * Saves uploaded bill file privately.
-   * In production with real Cloudflare R2 credentials, this uses AWS S3 SDK for R2.
-   * In local/hybrid mode, files are kept strictly private in a protected local vault.
+   * Computes SHA-256 hash of file buffer for tamper and duplicate detection.
+   */
+  static calculateFileHash(buffer: Buffer): string {
+    return crypto.createHash('sha256').update(buffer).digest('hex');
+  }
+
+  /**
+   * Uploads invoice file privately to Cloudflare R2 (or secure local vault if R2 credentials not configured).
    */
   static async uploadInvoiceFile(
     fileBuffer: Buffer,
     originalFilename: string,
     mimeType: string,
     userId: string
-  ): Promise<{ fileKey: string; fileUrl: string }> {
-    // Validate file type
+  ): Promise<{ fileKey: string; fileUrl: string; fileHash: string; fileSize: number }> {
     const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp', 'application/pdf'];
     if (!allowedMimeTypes.includes(mimeType.toLowerCase())) {
-      throw new Error('Invalid file type. Only JPEG, PNG, WEBP images and PDF invoices are allowed.');
+      throw new Error('Invalid file type. Only JPEG, PNG, WEBP and PDF documents are permitted.');
     }
 
-    // Limit size to 10MB
-    const maxSize = 10 * 1024 * 1024;
+    const maxSize = 10 * 1024 * 1024; // 10MB
     if (fileBuffer.length > maxSize) {
-      throw new Error('File size exceeds the 10MB limit.');
+      throw new Error('File size exceeds the maximum limit of 10MB.');
     }
 
+    const fileHash = this.calculateFileHash(fileBuffer);
     const ext = path.extname(originalFilename) || '.jpg';
     const randomSuffix = crypto.randomBytes(8).toString('hex');
     const timestamp = Date.now();
     const fileKey = `invoices/${userId}/${timestamp}_${randomSuffix}${ext}`;
+    const fileSize = fileBuffer.length;
 
-    // Store securely in protected directory
+    const s3 = this.getS3Client();
+
+    if (s3 && config.r2.bucketName) {
+      try {
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: config.r2.bucketName,
+            Key: fileKey,
+            Body: fileBuffer,
+            ContentType: mimeType,
+          })
+        );
+
+        // Generate R2 Pre-signed URL valid for 30 minutes
+        const getCommand = new GetObjectCommand({
+          Bucket: config.r2.bucketName,
+          Key: fileKey,
+        });
+        const fileUrl = await getSignedUrl(s3, getCommand, { expiresIn: 1800 });
+
+        return { fileKey, fileUrl, fileHash, fileSize };
+      } catch (err) {
+        console.warn('⚠️ Cloudflare R2 upload failed, falling back to secure local storage vault:', err);
+      }
+    }
+
+    // Secure local vault fallback with HMAC signed URL
     const fullPath = path.join(UPLOADS_DIR, path.basename(fileKey));
     fs.writeFileSync(fullPath, fileBuffer);
+    const fileUrl = this.generateSignedUrl(fileKey, 60);
 
-    // Initial signed URL valid for 60 minutes
-    const signedUrl = this.generateSignedUrl(fileKey, 60);
-
-    return {
-      fileKey,
-      fileUrl: signedUrl,
-    };
+    return { fileKey, fileUrl, fileHash, fileSize };
   }
 
   /**
    * Generates time-limited HMAC-signed URL for private document access.
-   * Document cannot be accessed without valid HMAC signature.
    */
-  static generateSignedUrl(fileKey: string, expiresInMinutes: number = 15): string {
+  static generateSignedUrl(fileKey: string, expiresInMinutes: number = 30): string {
     const expiresAt = Math.floor(Date.now() / 1000) + expiresInMinutes * 60;
     const dataToSign = `${fileKey}:${expiresAt}`;
     const signature = crypto
@@ -72,7 +118,7 @@ export class StorageService {
   static verifySignedUrl(fileKey: string, expires: number, signature: string): boolean {
     const now = Math.floor(Date.now() / 1000);
     if (now > expires) {
-      return false; // Expired
+      return false;
     }
 
     const dataToSign = `${fileKey}:${expires}`;
@@ -81,6 +127,7 @@ export class StorageService {
       .update(dataToSign)
       .digest('hex');
 
+    if (signature.length !== expectedSignature.length) return false;
     return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
   }
 

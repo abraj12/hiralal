@@ -15,7 +15,7 @@ import { ProfessionType } from '../theme/professionTheme';
 import { MobileApiClient } from '../services/api';
 
 export default function RegisterScreen() {
-  const { setCurrentScreen, switchProfessionLive, login } = useApp();
+  const { setCurrentScreen, refreshData } = useApp();
 
   // Wizard Step: 1 = Profession Selection, 2 = Mobile & OTP, 3 = Name & Password
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -26,7 +26,7 @@ export default function RegisterScreen() {
   // Step 2: Mobile & OTP
   const [mobile, setMobile] = useState('');
   const [otpSent, setOtpSent] = useState(false);
-  const [otpCode, setOtpCode] = useState('123456');
+  const [otpCode, setOtpCode] = useState('');
 
   // Step 3: Name & Password
   const [fullName, setFullName] = useState('');
@@ -47,19 +47,28 @@ export default function RegisterScreen() {
       await MobileApiClient.sendOtp(mobile, 'REGISTRATION');
       setOtpSent(true);
     } catch (e: any) {
-      // Allow moving forward in demo mode
-      setOtpSent(true);
+      setErrorMsg(e.message || 'Failed to send OTP. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   const handleVerifyOtpAndNext = async () => {
-    if (!otpCode) {
+    if (!otpCode || otpCode.length !== 6) {
       setErrorMsg('Please enter the 6-digit OTP code.');
       return;
     }
-    setStep(3);
+
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      await MobileApiClient.verifyOtp(mobile, otpCode, 'REGISTRATION');
+      setStep(3);
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Invalid or expired OTP code.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleCompleteRegistration = async () => {
@@ -72,19 +81,20 @@ export default function RegisterScreen() {
     setErrorMsg(null);
 
     try {
-      await MobileApiClient.register({
+      const res = await MobileApiClient.register({
         mobile,
         fullName,
         password,
         profession: selectedProfession,
         otpCode,
       });
-      await switchProfessionLive(selectedProfession);
+      if (res.token) {
+        MobileApiClient.setToken(res.token);
+      }
+      await refreshData();
       setCurrentScreen('MAIN');
     } catch (e: any) {
-      // Local fallback
-      await switchProfessionLive(selectedProfession);
-      setCurrentScreen('MAIN');
+      setErrorMsg(e.message || 'Registration failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -268,10 +278,10 @@ export default function RegisterScreen() {
                     style={styles.inputBox}
                     value={otpCode}
                     onChangeText={setOtpCode}
-                    placeholder="Enter OTP (e.g. 123456)"
+                    placeholder="Enter 6-digit OTP received"
                     keyboardType="numeric"
+                    maxLength={6}
                   />
-                  <Text style={styles.otpHint}>Demo OTP: 123456</Text>
                 </View>
 
                 <TouchableOpacity

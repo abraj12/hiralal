@@ -1,55 +1,51 @@
 import { config } from '../config';
-import { dbStore, RewardPoolRecord, RewardRuleRecord } from '../db/store';
+import { prisma } from '../db';
+import { Profession } from '@prisma/client';
 
 export class RewardService {
   /**
    * Calculates reward for a given bill amount.
-   * STRICT RULE: Must always be computed on the backend.
-   * Formula: billAmount * (rewardPercentage / 100)
+   * STRICT RULE: Computed exclusively server-side with decimal safety.
    */
   static calculateReward(billAmount: number, percentage?: number): number {
     const rate = percentage !== undefined ? percentage : config.rewards.defaultPercentage;
     const reward = (billAmount * rate) / 100;
-    // Round to 2 decimal places
-    return Math.round(reward * 100) / 100;
+    return Math.floor(reward * 100) / 100; // Integer paise floor
   }
 
   /**
-   * Retrieves or initializes current month's RewardPool.
+   * Retrieves or atomically initializes current month's RewardPool record in PostgreSQL.
    */
-  static getCurrentMonthPool(): RewardPoolRecord {
+  static async getCurrentMonthPool() {
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
-    const poolId = `pool-${year}-${month}`;
 
-    let pool = dbStore.rewardPools.get(poolId);
-    if (!pool) {
-      pool = {
-        id: poolId,
+    return await prisma.rewardPool.upsert({
+      where: {
+        pool_year_month_unique: { year, month },
+      },
+      update: {},
+      create: {
         year,
         month,
         totalPoolCap: config.rewards.monthlyPoolCap,
         usedAmount: 0.0,
         isCapped: false,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      dbStore.rewardPools.set(poolId, pool);
-    }
-
-    return pool;
+      },
+    });
   }
 
   /**
-   * Atomically checks if the reward can be claimed without exceeding the monthly cap.
-   * Throws an error or returns false if exceeding pool.
+   * Atomically checks pool headroom against the configured monthly ceiling.
    */
-  static checkPoolAvailability(rewardAmount: number): { available: boolean; remaining: number } {
-    const pool = this.getCurrentMonthPool();
-    const remaining = Math.max(0, pool.totalPoolCap - pool.usedAmount);
+  static async checkPoolAvailability(rewardAmount: number): Promise<{ available: boolean; remaining: number }> {
+    const pool = await this.getCurrentMonthPool();
+    const used = Number(pool.usedAmount);
+    const cap = Number(pool.totalPoolCap);
+    const remaining = Math.max(0, cap - used);
 
-    if (pool.isCapped || pool.usedAmount + rewardAmount > pool.totalPoolCap) {
+    if (pool.isCapped || used + rewardAmount > cap) {
       return { available: false, remaining };
     }
 
@@ -57,43 +53,70 @@ export class RewardService {
   }
 
   /**
-   * Atomically claims amount from monthly pool.
+   * Atomically claims amount from monthly pool within a database transaction.
    */
-  static claimPoolAmount(rewardAmount: number): RewardPoolRecord {
-    const pool = this.getCurrentMonthPool();
-    if (pool.usedAmount + rewardAmount > pool.totalPoolCap) {
-      pool.isCapped = true;
+  static async claimPoolAmount(tx: any, rewardAmount: number) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+
+    const pool = await tx.rewardPool.upsert({
+      where: {
+        pool_year_month_unique: { year, month },
+      },
+      update: {},
+      create: {
+        year,
+        month,
+        totalPoolCap: config.rewards.monthlyPoolCap,
+        usedAmount: 0.0,
+        isCapped: false,
+      },
+    });
+
+    const used = Number(pool.usedAmount);
+    const cap = Number(pool.totalPoolCap);
+
+    if (used + rewardAmount > cap) {
+      await tx.rewardPool.update({
+        where: { id: pool.id },
+        data: { isCapped: true },
+      });
       throw new Error(
-        `Monthly reward pool limit of ₹${pool.totalPoolCap.toLocaleString('en-IN')} reached. Available remaining: ₹${Math.max(
+        `Monthly reward pool limit of ₹${cap.toLocaleString('en-IN')} reached. Remaining headroom: ₹${Math.max(
           0,
-          pool.totalPoolCap - pool.usedAmount
+          cap - used
         ).toFixed(2)}.`
       );
     }
 
-    pool.usedAmount = Math.round((pool.usedAmount + rewardAmount) * 100) / 100;
-    if (pool.usedAmount >= pool.totalPoolCap) {
-      pool.isCapped = true;
-    }
-    pool.updatedAt = new Date();
-    dbStore.rewardPools.set(pool.id, pool);
-    return pool;
+    const newUsed = Math.round((used + rewardAmount) * 100) / 100;
+    const isCapped = newUsed >= cap;
+
+    return await tx.rewardPool.update({
+      where: { id: pool.id },
+      data: {
+        usedAmount: newUsed,
+        isCapped,
+      },
+    });
   }
 
   /**
    * Returns current pool usage analytics for Admin Dashboard.
-   * e.g. ₹37,850 / ₹50,000 (75.7% Used, Remaining: ₹12,150)
    */
-  static getPoolAnalytics() {
-    const pool = this.getCurrentMonthPool();
-    const remaining = Math.max(0, pool.totalPoolCap - pool.usedAmount);
-    const percentageUsed = pool.totalPoolCap > 0 ? (pool.usedAmount / pool.totalPoolCap) * 100 : 0;
+  static async getPoolAnalytics() {
+    const pool = await this.getCurrentMonthPool();
+    const used = Number(pool.usedAmount);
+    const cap = Number(pool.totalPoolCap);
+    const remaining = Math.max(0, cap - used);
+    const percentageUsed = cap > 0 ? (used / cap) * 100 : 0;
 
     return {
       year: pool.year,
       month: pool.month,
-      totalPoolCap: pool.totalPoolCap,
-      usedAmount: pool.usedAmount,
+      totalPoolCap: cap,
+      usedAmount: used,
       remainingAmount: Math.round(remaining * 100) / 100,
       percentageUsed: Math.round(percentageUsed * 10) / 10,
       isCapped: pool.isCapped,
@@ -101,52 +124,74 @@ export class RewardService {
   }
 
   /**
-   * Returns active reward rule settings.
+   * Retrieves active reward rule for a given profession.
    */
-  static getRewardRules(): RewardRuleRecord {
-    let rule = dbStore.rewardRules.get('rule-default');
-    if (!rule) {
-      const newRule: RewardRuleRecord = {
-        id: 'rule-default',
-        percentage: config.rewards.defaultPercentage,
-        monthlyPoolLimit: config.rewards.monthlyPoolCap,
-        minRedemptionAmount: config.rewards.minRedemptionAmount,
-        isActive: true,
-        updatedAt: new Date(),
-      };
-      dbStore.rewardRules.set(newRule.id, newRule);
-      return newRule;
+  static async getRewardRule(profession?: Profession | null) {
+    if (profession) {
+      const rule = await prisma.rewardRule.findFirst({
+        where: { profession, isActive: true },
+      });
+      if (rule) return rule;
     }
-    return rule;
+
+    const defaultRule = await prisma.rewardRule.findFirst({
+      where: { isActive: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (defaultRule) return defaultRule;
+
+    return {
+      percentage: config.rewards.defaultPercentage,
+      monthlyPoolLimit: config.rewards.monthlyPoolCap,
+      minRedemptionAmount: config.rewards.minRedemptionAmount,
+    };
   }
 
   /**
-   * Admin updates reward rule configuration.
+   * Admin updates reward rule configuration with audit logging.
    */
-  static updateRewardRules(
+  static async updateRewardRules(
     adminId: string,
-    updates: { percentage?: number; monthlyPoolLimit?: number; minRedemptionAmount?: number }
-  ): RewardRuleRecord {
-    const rule = this.getRewardRules();
-    const pool = this.getCurrentMonthPool();
+    updates: { percentage?: number; monthlyPoolLimit?: number; minRedemptionAmount?: number; profession?: Profession }
+  ) {
+    const existing = await prisma.rewardRule.findFirst({
+      where: updates.profession ? { profession: updates.profession } : { isActive: true },
+    });
 
-    if (updates.percentage !== undefined && updates.percentage > 0) {
-      rule.percentage = updates.percentage;
-    }
-    if (updates.monthlyPoolLimit !== undefined && updates.monthlyPoolLimit > 0) {
-      rule.monthlyPoolLimit = updates.monthlyPoolLimit;
-      pool.totalPoolCap = updates.monthlyPoolLimit;
-      pool.isCapped = pool.usedAmount >= pool.totalPoolCap;
-      pool.updatedAt = new Date();
-    }
-    if (updates.minRedemptionAmount !== undefined && updates.minRedemptionAmount > 0) {
-      rule.minRedemptionAmount = updates.minRedemptionAmount;
+    let updated;
+    if (existing) {
+      updated = await prisma.rewardRule.update({
+        where: { id: existing.id },
+        data: {
+          ...(updates.percentage !== undefined && { percentage: updates.percentage }),
+          ...(updates.monthlyPoolLimit !== undefined && { monthlyPoolLimit: updates.monthlyPoolLimit }),
+          ...(updates.minRedemptionAmount !== undefined && { minRedemptionAmount: updates.minRedemptionAmount }),
+          updatedByAdminId: adminId,
+        },
+      });
+    } else {
+      updated = await prisma.rewardRule.create({
+        data: {
+          profession: updates.profession || null,
+          percentage: updates.percentage || config.rewards.defaultPercentage,
+          monthlyPoolLimit: updates.monthlyPoolLimit || config.rewards.monthlyPoolCap,
+          minRedemptionAmount: updates.minRedemptionAmount || config.rewards.minRedemptionAmount,
+          isActive: true,
+          updatedByAdminId: adminId,
+        },
+      });
     }
 
-    rule.updatedByAdminId = adminId;
-    rule.updatedAt = new Date();
-    dbStore.rewardRules.set(rule.id, rule);
+    // Sync monthly pool cap if updated
+    if (updates.monthlyPoolLimit !== undefined) {
+      const now = new Date();
+      await prisma.rewardPool.updateMany({
+        where: { year: now.getFullYear(), month: now.getMonth() + 1 },
+        data: { totalPoolCap: updates.monthlyPoolLimit },
+      });
+    }
 
-    return rule;
+    return updated;
   }
 }

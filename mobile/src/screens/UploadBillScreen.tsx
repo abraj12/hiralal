@@ -16,9 +16,9 @@ import { MobileApiClient } from '../services/api';
 export default function UploadBillScreen() {
   const { theme, setCurrentScreen, setActiveTab, refreshData } = useApp();
 
-  const [invoiceNumber, setInvoiceNumber] = useState(`INV-${Date.now().toString().slice(-6)}`);
-  const [invoiceDate, setInvoiceDate] = useState('2026-10-04');
-  const [billAmount, setBillAmount] = useState('15000');
+  const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [billAmount, setBillAmount] = useState('');
   const [remarks, setRemarks] = useState('');
   const [hasFile, setHasFile] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -30,7 +30,7 @@ export default function UploadBillScreen() {
     : '0.00';
 
   const handleSubmit = async () => {
-    if (!invoiceNumber || !invoiceDate || !billAmount) {
+    if (!invoiceNumber.trim() || !invoiceDate || !billAmount.trim()) {
       setErrorMsg('Please fill in Invoice Number, Date, and Amount.');
       return;
     }
@@ -46,17 +46,15 @@ export default function UploadBillScreen() {
 
     try {
       await MobileApiClient.uploadBill({
-        invoiceNumber,
+        invoiceNumber: invoiceNumber.trim(),
         invoiceDate,
         billAmount: amount,
-        remarks,
+        remarks: remarks.trim() || undefined,
       });
       setIsSuccess(true);
       refreshData();
     } catch (e: any) {
-      // Offline fallback: save locally
-      setIsSuccess(true);
-      refreshData();
+      setErrorMsg(e.message || 'Failed to upload bill. Please check the details.');
     } finally {
       setIsSubmitting(false);
     }

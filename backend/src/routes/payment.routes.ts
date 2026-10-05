@@ -7,17 +7,17 @@ const router = Router();
 router.post('/upi/verify', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
-    const { upiId } = req.body;
+    const { upiId, accountHolderName } = req.body;
 
     if (!upiId) {
       return res.status(400).json({ success: false, message: 'UPI ID is required.' });
     }
 
-    const account = await PaymentService.verifyUpi(user.id, upiId);
+    const account = await PaymentService.addUpiAccount(user.id, upiId, accountHolderName);
 
     res.json({
       success: true,
-      message: 'UPI ID verified successfully.',
+      message: 'UPI account verified successfully.',
       paymentAccount: {
         id: account.id,
         accountType: account.accountType,
@@ -34,7 +34,7 @@ router.post('/upi/verify', authenticate, async (req: AuthenticatedRequest, res: 
 router.post('/bank/verify', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
-    const { accountHolderName, accountNumber, ifscCode } = req.body;
+    const { accountHolderName, accountNumber, ifscCode, bankName } = req.body;
 
     if (!accountHolderName || !accountNumber || !ifscCode) {
       return res.status(400).json({
@@ -43,12 +43,13 @@ router.post('/bank/verify', authenticate, async (req: AuthenticatedRequest, res:
       });
     }
 
-    const account = await PaymentService.verifyBankAccount(
-      user.id,
+    const account = await PaymentService.addBankAccount({
+      userId: user.id,
       accountHolderName,
       accountNumber,
-      ifscCode
-    );
+      ifscCode,
+      bankName,
+    });
 
     res.json({
       success: true,
@@ -70,18 +71,11 @@ router.post('/bank/verify', authenticate, async (req: AuthenticatedRequest, res:
 router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
-    const accounts = PaymentService.getUserPaymentAccounts(user.id);
+    const accounts = await PaymentService.getUserAccounts(user.id);
 
     res.json({
       success: true,
-      paymentAccounts: accounts.map(a => ({
-        id: a.id,
-        accountType: a.accountType,
-        bankName: a.bankName,
-        maskedInfo: a.maskedInfo,
-        isVerified: a.isVerified,
-        isDefault: a.isDefault,
-      })),
+      paymentAccounts: accounts,
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
