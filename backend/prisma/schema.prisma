@@ -1,0 +1,283 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Profession {
+  PLUMBER
+  TILE_INSTALLER
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum BillStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  DUPLICATE
+}
+
+enum TransactionType {
+  REWARD_CREDIT
+  PAYOUT_DEBIT
+  PAYOUT_REVERSAL
+  MANUAL_ADJUSTMENT
+}
+
+enum KycStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum PaymentType {
+  UPI
+  BANK_ACCOUNT
+}
+
+enum PayoutStatus {
+  PENDING
+  APPROVED
+  PAYOUT_INITIATED
+  PROCESSING
+  SUCCESS
+  FAILED
+  REVERSED
+}
+
+enum OtpPurpose {
+  REGISTRATION
+  FORGOT_PASSWORD
+  LOGIN
+}
+
+model User {
+  id              String           @id @default(uuid())
+  mobile          String           @unique
+  fullName        String
+  passwordHash    String
+  profession      Profession?
+  role            UserRole         @default(USER)
+  status          UserStatus       @default(ACTIVE)
+  isVerified      Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  wallet          Wallet?
+  bills           Bill[]
+  kycRecords      KycRecord[]
+  paymentAccounts PaymentAccount[]
+  payouts         Payout[]
+  notifications   Notification[]
+  auditLogs       AuditLog[]
+
+  @@index([mobile])
+  @@index([profession])
+  @@index([role])
+}
+
+model Wallet {
+  id               String              @id @default(uuid())
+  userId           String              @unique
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  availableBalance Decimal             @default(0.0) @db.Decimal(12, 2)
+  processingAmount Decimal             @default(0.0) @db.Decimal(12, 2)
+  totalRedeemed    Decimal             @default(0.0) @db.Decimal(12, 2)
+  version          Int                 @default(1)
+  updatedAt        DateTime            @updatedAt
+
+  transactions     WalletTransaction[]
+  payouts          Payout[]
+
+  @@index([userId])
+}
+
+model WalletTransaction {
+  id            String          @id @default(uuid())
+  walletId      String
+  wallet        Wallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  userId        String
+  amount        Decimal         @db.Decimal(12, 2)
+  type          TransactionType
+  balanceAfter  Decimal         @db.Decimal(12, 2)
+  referenceType String          // BILL, PAYOUT, ADMIN
+  referenceId   String
+  description   String
+  createdAt     DateTime        @default(now())
+
+  @@index([walletId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Bill {
+  id                String     @id @default(uuid())
+  userId            String
+  user              User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoiceNumber     String
+  invoiceDate       DateTime
+  billAmount        Decimal    @db.Decimal(12, 2)
+  calculatedReward  Decimal    @db.Decimal(12, 2)
+  rewardPercentage  Decimal    @default(0.50) @db.Decimal(5, 2)
+  status            BillStatus @default(PENDING)
+  fileUrl           String
+  fileKey           String
+  rejectionReason   String?
+  verifiedByAdminId String?
+  remarks           String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@unique([userId, invoiceNumber], name: "user_invoice_unique")
+  @@index([userId])
+  @@index([status])
+  @@index([invoiceNumber])
+  @@index([createdAt])
+}
+
+model RewardPool {
+  id           String   @id @default(uuid())
+  year         Int
+  month        Int
+  totalPoolCap Decimal  @default(50000.00) @db.Decimal(12, 2)
+  usedAmount   Decimal  @default(0.00) @db.Decimal(12, 2)
+  isCapped     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([year, month], name: "pool_year_month_unique")
+}
+
+model RewardRule {
+  id                  String     @id @default(uuid())
+  profession          Profession?
+  percentage          Decimal    @default(0.50) @db.Decimal(5, 2)
+  monthlyPoolLimit    Decimal    @default(50000.00) @db.Decimal(12, 2)
+  minRedemptionAmount Decimal    @default(500.00) @db.Decimal(12, 2)
+  isActive            Boolean    @default(true)
+  updatedByAdminId    String?
+  updatedAt           DateTime   @updatedAt
+}
+
+model KycRecord {
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  panNumber       String
+  panName         String
+  panStatus       KycStatus @default(PENDING)
+  maskedPan       String
+  verifiedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([panNumber])
+}
+
+model PaymentAccount {
+  id                String      @id @default(uuid())
+  userId            String
+  user              User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountType       PaymentType
+  upiId             String?
+  accountHolderName String?
+  accountNumber     String?
+  ifscCode          String?
+  bankName          String?
+  maskedInfo        String
+  isVerified        Boolean     @default(false)
+  verifiedAt        DateTime?
+  isDefault         Boolean     @default(true)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  payouts           Payout[]
+
+  @@index([userId])
+}
+
+model Payout {
+  id                    String         @id @default(uuid())
+  userId                String
+  user                  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  walletId              String
+  wallet                Wallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount                Decimal        @db.Decimal(12, 2)
+  paymentAccountId      String
+  paymentAccount        PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Cascade)
+  paymentType           PaymentType
+  idempotencyKey        String         @unique
+  status                PayoutStatus   @default(PENDING)
+  razorpayPayoutId      String?
+  razorpayFundAccountId String?
+  failureReason         String?
+  initiatedAt           DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([idempotencyKey])
+}
+
+model OtpRequest {
+  id            String     @id @default(uuid())
+  mobile        String
+  otpCode       String
+  purpose       OtpPurpose
+  attemptsCount Int        @default(0)
+  isUsed        Boolean    @default(false)
+  expiresAt     DateTime
+  createdAt     DateTime   @default(now())
+
+  @@index([mobile])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  adminId    String?
+  admin      User?    @relation(fields: [adminId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String
+  oldValue   String?
+  newValue   String?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([adminId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String   @default("GENERAL")
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([isRead])
+}

@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Hiralal Rewards",
+    "slug": "hiralal-rewards",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/app_icon_red.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/welcome_neutral.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/app_icon_red.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "web": {
+      "favicon": "./assets/app_icon_red.png"
+    },
+    "plugins": [
+      "expo-asset"
+    ]
+  }
+}

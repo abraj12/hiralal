@@ -1,0 +1,19 @@
+{
+  "name": "hiralal-and-sons-rewards",
+  "version": "1.0.0",
+  "description": "Production-quality Plumber & Tiles Rewards Management Application for Hiralal & Sons Sales Pvt. Ltd.",
+  "scripts": {
+    "dev:backend": "cd backend && npm run dev",
+    "dev:admin": "cd admin && npm run dev",
+    "dev:mobile": "cd mobile && npx expo start --web",
+    "build:backend": "cd backend && npm run build",
+    "build:admin": "cd admin && npm run build",
+    "test:backend": "cd backend && npm test",
+    "seed:backend": "cd backend && npm run seed",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
+  },
+  "keywords": ["rewards", "plumber", "tiles", "fintech", "hiralal-and-sons"],
+  "author": "Hiralal and Sons Sales Pvt. Ltd.",
+  "license": "UNLICENSED"
+}
