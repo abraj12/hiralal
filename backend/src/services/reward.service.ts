@@ -1,27 +1,27 @@
 import { config } from '../config';
 import { prisma } from '../db';
 import { Profession } from '@prisma/client';
+import { getIstYearAndMonth } from '../utils/timezone.utils';
+import { calculateRewardAmount } from '../utils/money.utils';
 
 export class RewardService {
   /**
-   * Calculates reward for a given bill amount.
-   * STRICT RULE: Computed exclusively server-side with decimal safety.
+   * Deterministically calculates reward for a bill amount at 2-decimal paise precision.
+   * STRICT: Computed exclusively server-side.
    */
   static calculateReward(billAmount: number, percentage?: number): number {
     const rate = percentage !== undefined ? percentage : config.rewards.defaultPercentage;
-    const reward = (billAmount * rate) / 100;
-    return Math.floor(reward * 100) / 100; // Integer paise floor
+    return calculateRewardAmount(billAmount, rate);
   }
 
   /**
-   * Retrieves or atomically initializes current month's RewardPool record in PostgreSQL.
+   * Retrieves or atomically initializes current month's RewardPool record in PostgreSQL
+   * using business timezone Asia/Kolkata.
    */
-  static async getCurrentMonthPool() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
+  static async getCurrentMonthPool(tx: any = prisma) {
+    const { year, month } = getIstYearAndMonth();
 
-    return await prisma.rewardPool.upsert({
+    return await tx.rewardPool.upsert({
       where: {
         pool_year_month_unique: { year, month },
       },
@@ -54,73 +54,35 @@ export class RewardService {
 
   /**
    * Atomically claims amount from monthly pool within a database transaction.
+   * Uses atomic conditional SQL update to ensure strict concurrency protection.
    */
   static async claimPoolAmount(tx: any, rewardAmount: number) {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
-
-    const pool = await tx.rewardPool.upsert({
-      where: {
-        pool_year_month_unique: { year, month },
-      },
-      update: {},
-      create: {
-        year,
-        month,
-        totalPoolCap: config.rewards.monthlyPoolCap,
-        usedAmount: 0.0,
-        isCapped: false,
-      },
-    });
-
-    const used = Number(pool.usedAmount);
+    const pool = await this.getCurrentMonthPool(tx);
     const cap = Number(pool.totalPoolCap);
 
-    if (used + rewardAmount > cap) {
-      await tx.rewardPool.update({
-        where: { id: pool.id },
-        data: { isCapped: true },
-      });
+    // Atomic conditional SQL update: only succeeds if usedAmount + rewardAmount <= totalPoolCap
+    const result: any[] = await tx.$queryRaw`
+      UPDATE "RewardPool"
+      SET "usedAmount" = "usedAmount" + ${rewardAmount}::decimal,
+          "isCapped" = ("usedAmount" + ${rewardAmount}::decimal >= "totalPoolCap"),
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${pool.id}
+        AND ("usedAmount" + ${rewardAmount}::decimal) <= "totalPoolCap"
+      RETURNING *;
+    `;
+
+    if (!result || result.length === 0) {
+      // Re-read current usage for accurate remaining calculation
+      const current = await tx.rewardPool.findUnique({ where: { id: pool.id } });
+      const currentUsed = current ? Number(current.usedAmount) : cap;
+      const remaining = Math.max(0, cap - currentUsed);
+
       throw new Error(
-        `Monthly reward pool limit of ₹${cap.toLocaleString('en-IN')} reached. Remaining headroom: ₹${Math.max(
-          0,
-          cap - used
-        ).toFixed(2)}.`
+        `Monthly reward pool ceiling of ₹${cap.toLocaleString('en-IN')} reached. Available headroom: ₹${remaining.toFixed(2)}. Approval rejected.`
       );
     }
 
-    const newUsed = Math.round((used + rewardAmount) * 100) / 100;
-    const isCapped = newUsed >= cap;
-
-    return await tx.rewardPool.update({
-      where: { id: pool.id },
-      data: {
-        usedAmount: newUsed,
-        isCapped,
-      },
-    });
-  }
-
-  /**
-   * Returns current pool usage analytics for Admin Dashboard.
-   */
-  static async getPoolAnalytics() {
-    const pool = await this.getCurrentMonthPool();
-    const used = Number(pool.usedAmount);
-    const cap = Number(pool.totalPoolCap);
-    const remaining = Math.max(0, cap - used);
-    const percentageUsed = cap > 0 ? (used / cap) * 100 : 0;
-
-    return {
-      year: pool.year,
-      month: pool.month,
-      totalPoolCap: cap,
-      usedAmount: used,
-      remainingAmount: Math.round(remaining * 100) / 100,
-      percentageUsed: Math.round(percentageUsed * 10) / 10,
-      isCapped: pool.isCapped,
-    };
+    return result[0];
   }
 
   /**
@@ -128,15 +90,14 @@ export class RewardService {
    */
   static async getRewardRule(profession?: Profession | null) {
     if (profession) {
-      const rule = await prisma.rewardRule.findFirst({
+      const specificRule = await prisma.rewardRule.findFirst({
         where: { profession, isActive: true },
       });
-      if (rule) return rule;
+      if (specificRule) return specificRule;
     }
 
     const defaultRule = await prisma.rewardRule.findFirst({
       where: { isActive: true },
-      orderBy: { updatedAt: 'desc' },
     });
 
     if (defaultRule) return defaultRule;
@@ -149,46 +110,73 @@ export class RewardService {
   }
 
   /**
-   * Admin updates reward rule configuration with audit logging.
+   * Retrieves pool usage analytics for current month.
+   */
+  static async getPoolAnalytics() {
+    const pool = await this.getCurrentMonthPool();
+    const totalCap = Number(pool.totalPoolCap);
+    const used = Number(pool.usedAmount);
+    const remaining = Math.max(0, totalCap - used);
+    const percentageUsed = totalCap > 0 ? (used / totalCap) * 100 : 0;
+
+    return {
+      year: pool.year,
+      month: pool.month,
+      totalPoolCap: totalCap,
+      usedAmount: used,
+      remainingAmount: remaining,
+      percentageUsed: Math.round(percentageUsed * 100) / 100,
+      isCapped: pool.isCapped,
+    };
+  }
+
+  /**
+   * Updates reward rules for a profession or all professions.
    */
   static async updateRewardRules(
     adminId: string,
-    updates: { percentage?: number; monthlyPoolLimit?: number; minRedemptionAmount?: number; profession?: Profession }
+    params: {
+      percentage?: number;
+      monthlyPoolLimit?: number;
+      minRedemptionAmount?: number;
+      profession?: Profession;
+    }
   ) {
-    const existing = await prisma.rewardRule.findFirst({
-      where: updates.profession ? { profession: updates.profession } : { isActive: true },
-    });
+    const where: any = { isActive: true };
+    if (params.profession) {
+      where.profession = params.profession;
+    }
 
-    let updated;
-    if (existing) {
-      updated = await prisma.rewardRule.update({
-        where: { id: existing.id },
+    let rule = await prisma.rewardRule.findFirst({ where });
+    if (!rule) {
+      rule = await prisma.rewardRule.create({
         data: {
-          ...(updates.percentage !== undefined && { percentage: updates.percentage }),
-          ...(updates.monthlyPoolLimit !== undefined && { monthlyPoolLimit: updates.monthlyPoolLimit }),
-          ...(updates.minRedemptionAmount !== undefined && { minRedemptionAmount: updates.minRedemptionAmount }),
-          updatedByAdminId: adminId,
-        },
-      });
-    } else {
-      updated = await prisma.rewardRule.create({
-        data: {
-          profession: updates.profession || null,
-          percentage: updates.percentage || config.rewards.defaultPercentage,
-          monthlyPoolLimit: updates.monthlyPoolLimit || config.rewards.monthlyPoolCap,
-          minRedemptionAmount: updates.minRedemptionAmount || config.rewards.minRedemptionAmount,
+          profession: params.profession || null,
+          percentage: params.percentage !== undefined ? params.percentage : config.rewards.defaultPercentage,
+          monthlyPoolLimit: params.monthlyPoolLimit !== undefined ? params.monthlyPoolLimit : config.rewards.monthlyPoolCap,
+          minRedemptionAmount: params.minRedemptionAmount !== undefined ? params.minRedemptionAmount : config.rewards.minRedemptionAmount,
           isActive: true,
           updatedByAdminId: adminId,
         },
       });
+      return rule;
     }
 
-    // Sync monthly pool cap if updated
-    if (updates.monthlyPoolLimit !== undefined) {
-      const now = new Date();
+    const updated = await prisma.rewardRule.update({
+      where: { id: rule.id },
+      data: {
+        ...(params.percentage !== undefined && { percentage: params.percentage }),
+        ...(params.monthlyPoolLimit !== undefined && { monthlyPoolLimit: params.monthlyPoolLimit }),
+        ...(params.minRedemptionAmount !== undefined && { minRedemptionAmount: params.minRedemptionAmount }),
+        updatedByAdminId: adminId,
+      },
+    });
+
+    if (params.monthlyPoolLimit !== undefined) {
+      const { year, month } = getIstYearAndMonth();
       await prisma.rewardPool.updateMany({
-        where: { year: now.getFullYear(), month: now.getMonth() + 1 },
-        data: { totalPoolCap: updates.monthlyPoolLimit },
+        where: { year, month },
+        data: { totalPoolCap: params.monthlyPoolLimit },
       });
     }
 

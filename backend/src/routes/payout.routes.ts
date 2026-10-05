@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { PayoutService } from '../services/payout.service';
+import { payoutRedeemLimiter } from '../middleware/rateLimit.middleware';
 import { prisma } from '../db';
 
 const router = Router();
@@ -22,7 +23,7 @@ router.get('/eligibility', authenticate, async (req: AuthenticatedRequest, res: 
  * Request Reward Redemption
  * Backend determines verified recipient account, checks window, and enforces server-controlled payout amount.
  */
-router.post('/redeem', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/redeem', authenticate, payoutRedeemLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const { idempotencyKey, amount } = req.body;

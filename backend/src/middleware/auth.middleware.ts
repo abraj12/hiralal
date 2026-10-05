@@ -17,7 +17,7 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
 
   const token = authHeader.split(' ')[1];
   try {
-    const decoded = jwt.verify(token, config.jwt.secret) as { userId?: string; id?: string };
+    const decoded = jwt.verify(token, config.jwt.accessSecret) as { userId?: string; id?: string };
     const targetId = decoded.userId || decoded.id;
 
     if (!targetId) {

@@ -115,6 +115,12 @@ router.get('/file', async (req: Request, res: Response) => {
       return res.sendFile(localPath);
     }
 
+    const provider = StorageService.getProvider();
+    if (await provider.exists(key)) {
+      const stream = await provider.getStream(key);
+      return stream.pipe(res);
+    }
+
     res.status(404).json({ success: false, message: 'Document file not found in storage.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });

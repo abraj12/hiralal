@@ -261,12 +261,14 @@ router.post('/bills/:id/verify', async (req: AuthenticatedRequest, res: Response
     }
 
     if (action === 'APPROVE') {
-      const result = await BillService.approveBill(req.params.id, admin.id, remarks);
+      const customReward = typeof req.body.customRewardAmount === 'number' ? req.body.customRewardAmount : undefined;
+      const result = await BillService.approveBill(req.params.id, admin.id, customReward);
       res.json({
         success: true,
         message: 'Bill approved and reward credited to wallet.',
         bill: result.bill,
-        rewardCredited: result.rewardCredited,
+        rewardCredited: result.creditedReward,
+        walletBalance: result.walletBalance,
       });
     } else {
       const updatedBill = await BillService.rejectBill(req.params.id, admin.id, rejectionReason);

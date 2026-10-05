@@ -1,11 +1,13 @@
-import crypto from 'crypto';
 import { prisma } from '../db';
 import { config } from '../config';
 import { PayoutStatus } from '@prisma/client';
+import { getIstDate } from '../utils/timezone.utils';
+import { toPaise, fromPaise } from '../utils/money.utils';
 
 export class PayoutService {
   /**
-   * Retrieves active admin redemption settings and evaluates window status.
+   * Retrieves active admin redemption settings and evaluates window status
+   * using Asia/Kolkata business interpretation with UTC timestamps.
    */
   static async getRedemptionSettings() {
     let settings = await prisma.redemptionSettings.findUnique({
@@ -16,11 +18,11 @@ export class PayoutService {
       settings = await prisma.redemptionSettings.create({
         data: {
           id: 'default',
-          isEnabled: false,
+          isEnabled: false, // Default CLOSED until explicitly opened
           startAt: null,
           endAt: null,
-          minimumAmount: 500.0,
-          maximumAmount: 10000.0,
+          minimumAmount: config.rewards.minRedemptionAmount,
+          maximumAmount: config.rewards.maxRedemptionAmount,
           message: 'Rewards redemption is currently unavailable.',
         },
       });
@@ -44,11 +46,12 @@ export class PayoutService {
       },
       isWindowOpen,
       serverTime: now.toISOString(),
+      businessTimeIst: getIstDate(now).toISOString(),
     };
   }
 
   /**
-   * Checks whether a user is eligible to initiate a redemption.
+   * Evaluates user eligibility for rewards payout.
    */
   static async checkUserEligibility(userId: string) {
     const { settings, isWindowOpen } = await this.getRedemptionSettings();
@@ -98,19 +101,27 @@ export class PayoutService {
   }
 
   /**
-   * Initiates reward redemption with database transaction safety and official RazorpayX API.
+   * Requests reward redemption using durable outbox architecture.
+   * Scopes idempotency strictly to (userId, idempotencyKey).
    */
   static async requestRedemption(userId: string, idempotencyKey: string, requestedAmount?: number) {
-    // 1. Check idempotency
     const cleanKey = idempotencyKey.trim();
+
+    // 1. Idempotency Check scoped to USER
     const existingPayout = await prisma.payout.findUnique({
-      where: { idempotencyKey: cleanKey },
+      where: {
+        user_payout_idempotency_unique: {
+          userId,
+          idempotencyKey: cleanKey,
+        },
+      },
       include: { paymentAccount: true },
     });
 
     if (existingPayout) {
       return {
         payout: existingPayout,
+        amountDebited: Number(existingPayout.amount),
         message: 'Returning existing redemption request for this reference.',
       };
     }
@@ -126,42 +137,58 @@ export class PayoutService {
       throw new Error('A verified bank account or UPI ID is required for payout.');
     }
 
-    // 3. Server computes payout amount safely from DB
+    // 3. Server validates payout amount: NO silent clamping!
     let payoutAmount = eligibility.availableBalance;
-    if (requestedAmount && requestedAmount >= eligibility.minimumAmount && requestedAmount <= eligibility.availableBalance) {
+    if (requestedAmount !== undefined) {
+      if (requestedAmount < eligibility.minimumAmount) {
+        throw new Error(`Requested amount ₹${requestedAmount} is below the minimum redemption limit of ₹${eligibility.minimumAmount}.`);
+      }
+      if (requestedAmount > eligibility.maximumAmount) {
+        throw new Error(`Requested amount ₹${requestedAmount} exceeds the maximum single payout limit of ₹${eligibility.maximumAmount}.`);
+      }
+      if (requestedAmount > eligibility.availableBalance) {
+        throw new Error(`Requested amount ₹${requestedAmount} exceeds your available balance of ₹${eligibility.availableBalance.toFixed(2)}.`);
+      }
       payoutAmount = requestedAmount;
+    } else {
+      // Default: redeem all available balance up to maximum
+      payoutAmount = Math.min(eligibility.availableBalance, eligibility.maximumAmount);
     }
-    // Cap at maximum configured
-    if (payoutAmount > eligibility.maximumAmount) {
-      payoutAmount = eligibility.maximumAmount;
-    }
 
-    payoutAmount = Math.floor(payoutAmount * 100) / 100;
+    // Format to 2-decimal paise precision
+    payoutAmount = fromPaise(toPaise(payoutAmount));
 
-    // 4. Atomic PostgreSQL Transaction
-    const { payout, wallet } = await prisma.$transaction(async (tx) => {
-      const userWallet = await tx.wallet.findUnique({
-        where: { userId },
-      });
+    // 4. Atomic PostgreSQL Transaction: lock wallet, reserve funds, create payout, create outbox event
+    const { payout } = await prisma.$transaction(async (tx) => {
+      // Lock wallet row for update
+      const walletRows: any[] = await tx.$queryRaw`
+        SELECT * FROM "Wallet" WHERE "userId" = ${userId} FOR UPDATE;
+      `;
 
-      if (!userWallet || Number(userWallet.availableBalance) < payoutAmount) {
-        throw new Error('Insufficient available rewards balance for redemption.');
+      if (!walletRows || walletRows.length === 0) {
+        throw new Error('User wallet not found.');
       }
 
-      const newAvailable = Number(userWallet.availableBalance) - payoutAmount;
-      const newProcessing = Number(userWallet.processingAmount) + payoutAmount;
+      const userWallet = walletRows[0];
+      const currentAvailable = Number(userWallet.availableBalance);
 
-      // Reserve funds in processing amount
-      const updatedWallet = await tx.wallet.update({
-        where: { id: userWallet.id },
-        data: {
-          availableBalance: newAvailable,
-          processingAmount: newProcessing,
-          version: { increment: 1 },
-        },
-      });
+      if (currentAvailable < payoutAmount) {
+        throw new Error(`Insufficient available balance for payout. Current: ₹${currentAvailable.toFixed(2)}, Required: ₹${payoutAmount.toFixed(2)}.`);
+      }
 
-      // Create ledger transaction
+      // Move funds from availableBalance to processingAmount atomically
+      await tx.$executeRaw`
+        UPDATE "Wallet"
+        SET "availableBalance" = "availableBalance" - ${payoutAmount}::decimal,
+            "processingAmount" = "processingAmount" + ${payoutAmount}::decimal,
+            "version" = "version" + 1,
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "id" = ${userWallet.id};
+      `;
+
+      const newAvailable = currentAvailable - payoutAmount;
+
+      // Create immutable ledger record
       await tx.walletTransaction.create({
         data: {
           walletId: userWallet.id,
@@ -171,11 +198,11 @@ export class PayoutService {
           balanceAfter: newAvailable,
           referenceType: 'PAYOUT',
           referenceId: cleanKey,
-          description: `Redemption debit of ₹${payoutAmount.toFixed(2)} to ${verifiedAccount.maskedInfo}`,
+          description: `Payout debit of ₹${payoutAmount.toFixed(2)} reserved for ${verifiedAccount.maskedInfo}`,
         },
       });
 
-      // Create Payout record
+      // Create Payout record with PENDING status
       const newPayout = await tx.payout.create({
         data: {
           userId,
@@ -188,168 +215,164 @@ export class PayoutService {
         },
       });
 
-      return { payout: newPayout, wallet: updatedWallet };
+      // Create durable OutboxEvent for background dispatch
+      await tx.outboxEvent.create({
+        data: {
+          eventType: 'PAYOUT_DISPATCH',
+          payload: {
+            payoutId: newPayout.id,
+            userId,
+            amount: payoutAmount,
+            paymentAccountId: verifiedAccount.id,
+            idempotencyKey: cleanKey,
+          },
+          status: 'PENDING',
+        },
+      });
+
+      return { payout: newPayout };
     });
 
-    // 5. Real RazorpayX Payout Dispatch
-    let razorpayPayoutId: string | null = null;
-    let payoutStatus: PayoutStatus = 'PENDING';
-
-    if (config.razorpayx.keyId && config.razorpayx.keySecret && config.razorpayx.accountNumber && config.nodeEnv !== 'test') {
-      try {
-        const authHeader = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
-        const user = await prisma.user.findUnique({ where: { id: userId } });
-
-        // A. Create/Get Contact in RazorpayX
-        const contactRes = await fetch('https://api.razorpay.com/v1/contacts', {
-          method: 'POST',
-          headers: { Authorization: authHeader, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: user?.fullName || 'Hiralal Craftsman',
-            contact: user?.mobile || '',
-            type: 'vendor',
-            reference_id: userId,
-          }),
-        });
-        const contactData: any = await contactRes.json();
-        const contactId = contactData.id;
-
-        // B. Create Fund Account in RazorpayX
-        const fundAccountPayload =
-          verifiedAccount.accountType === 'UPI'
-            ? {
-                contact_id: contactId,
-                account_type: 'vpa',
-                vpa: { address: verifiedAccount.upiId },
-              }
-            : {
-                contact_id: contactId,
-                account_type: 'bank_account',
-                bank_account: {
-                  name: verifiedAccount.accountHolderName || user?.fullName,
-                  ifsc: verifiedAccount.ifscCode,
-                  account_number: verifiedAccount.accountNumber,
-                },
-              };
-
-        const fundRes = await fetch('https://api.razorpay.com/v1/fund_accounts', {
-          method: 'POST',
-          headers: { Authorization: authHeader, 'Content-Type': 'application/json' },
-          body: JSON.stringify(fundAccountPayload),
-        });
-        const fundData: any = await fundRes.json();
-        const fundAccountId = fundData.id;
-
-        // C. Initiate Real RazorpayX Payout
-        const payoutRes = await fetch('https://api.razorpay.com/v1/payouts', {
-          method: 'POST',
-          headers: {
-            Authorization: authHeader,
-            'Content-Type': 'application/json',
-            'X-Payout-Idempotency': cleanKey,
-          },
-          body: JSON.stringify({
-            account_number: config.razorpayx.accountNumber,
-            fund_account_id: fundAccountId,
-            amount: Math.round(payoutAmount * 100), // in paise
-            currency: 'INR',
-            mode: verifiedAccount.accountType === 'UPI' ? 'UPI' : 'IMPS',
-            purpose: 'payout',
-            queue_if_low_balance: true,
-            reference_id: payout.id,
-            narration: 'Hiralal & Sons Rewards',
-          }),
-        });
-
-        const payoutData: any = await payoutRes.json();
-        if (payoutData.id) {
-          razorpayPayoutId = payoutData.id;
-          payoutStatus = payoutData.status === 'processed' ? 'SUCCESS' : 'PAYOUT_INITIATED';
-
-          await prisma.payout.update({
-            where: { id: payout.id },
-            data: {
-              status: payoutStatus,
-              razorpayPayoutId,
-              razorpayFundAccountId: fundAccountId,
-              initiatedAt: new Date(),
-            },
-          });
-        } else {
-          throw new Error(payoutData.error?.description || 'RazorpayX payout creation failed.');
-        }
-      } catch (err: any) {
-        console.error('RazorpayX Payout Error:', err);
-        // Automatic reversal if payout initiation outright rejected
-        await this.reversePayout(payout.id, `Payment Gateway Error: ${err.message}`);
-        throw new Error(`Failed to initiate bank disbursement: ${err.message}. Your balance has been restored.`);
-      }
+    // 5. Trigger dispatch worker asynchronously (in non-test environment)
+    if (config.nodeEnv !== 'test') {
+      this.triggerPayoutDispatch(payout.id).catch((err) => {
+        console.warn(`[PAYOUT-DISPATCH-DEFERRED] Payout ${payout.id} queued for background worker: ${err.message}`);
+      });
     }
 
     return {
-      payout: {
-        ...payout,
-        status: payoutStatus,
-        razorpayPayoutId,
-      },
+      payout,
       amountDebited: payoutAmount,
-      wallet,
+      message: 'Redemption initiated successfully. Disbursement dispatched to your verified account.',
     };
   }
 
   /**
-   * Reverses a failed payout transaction and restores funds to user's available balance.
+   * Reverses a failed payout: refunds funds from processingAmount back to availableBalance,
+   * creates an immutable PAYOUT_REVERSAL transaction, updates payout status to FAILED,
+   * and notifies the user.
    */
   static async reversePayout(payoutId: string, reason: string) {
     return await prisma.$transaction(async (tx) => {
       const payout = await tx.payout.findUnique({
         where: { id: payoutId },
+        include: { wallet: true },
       });
 
-      if (!payout || payout.status === 'REVERSED' || payout.status === 'SUCCESS') {
-        return null;
+      if (!payout) throw new Error(`Payout ${payoutId} not found`);
+
+      // Idempotency: if already in a terminal state, return current record
+      if (payout.status === 'SUCCESS' || payout.status === 'FAILED' || payout.status === 'REVERSED') {
+        return payout;
       }
 
       const payoutAmount = Number(payout.amount);
 
-      const wallet = await tx.wallet.findUnique({
-        where: { id: payout.walletId },
-      });
-
-      if (!wallet) return null;
-
-      const restoredAvailable = Number(wallet.availableBalance) + payoutAmount;
-      const restoredProcessing = Math.max(0, Number(wallet.processingAmount) - payoutAmount);
-
+      // Atomically shift funds from processingAmount back to availableBalance
       await tx.wallet.update({
-        where: { id: wallet.id },
+        where: { id: payout.walletId },
         data: {
-          availableBalance: restoredAvailable,
-          processingAmount: restoredProcessing,
+          processingAmount: { decrement: payoutAmount },
+          availableBalance: { increment: payoutAmount },
           version: { increment: 1 },
         },
       });
 
+      // Get updated balance for ledger
+      const updatedWallet = await tx.wallet.findUnique({
+        where: { id: payout.walletId },
+      });
+      const balanceAfter = Number(updatedWallet?.availableBalance || 0);
+
+      // Create immutable ledger reversal entry
       await tx.walletTransaction.create({
         data: {
-          walletId: wallet.id,
+          walletId: payout.walletId,
           userId: payout.userId,
           amount: payoutAmount,
           type: 'PAYOUT_REVERSAL',
-          balanceAfter: restoredAvailable,
+          balanceAfter,
           referenceType: 'PAYOUT',
-          referenceId: payout.id,
-          description: `Disbursement reversed: ${reason}`,
+          referenceId: payout.idempotencyKey,
+          description: `Payout reversed: ${reason}`,
         },
       });
 
-      return await tx.payout.update({
+      // Mark payout as FAILED
+      const updatedPayout = await tx.payout.update({
         where: { id: payout.id },
         data: {
-          status: 'REVERSED',
+          status: 'FAILED',
           failureReason: reason,
         },
       });
+
+      // Notify user
+      await tx.notification.create({
+        data: {
+          userId: payout.userId,
+          title: 'Payout Failed & Refunded',
+          message: `Your payout request of ₹${payoutAmount.toFixed(2)} could not be processed (${reason}). The amount has been refunded back to your wallet.`,
+          type: 'PAYOUT_FAILED',
+        },
+      });
+
+      return updatedPayout;
     });
+  }
+
+  /**
+   * Finalizes a successful payout: moves funds out of processingAmount, increments totalRedeemed,
+   * updates payout status to SUCCESS, and notifies user.
+   */
+  static async finalizeSuccess(payoutId: string, razorpayPayoutId?: string) {
+    return await prisma.$transaction(async (tx) => {
+      const payout = await tx.payout.findUnique({
+        where: { id: payoutId },
+        include: { wallet: true },
+      });
+
+      if (!payout) throw new Error(`Payout ${payoutId} not found`);
+      if (payout.status === 'SUCCESS') return payout;
+
+      const payoutAmount = Number(payout.amount);
+
+      await tx.wallet.update({
+        where: { id: payout.walletId },
+        data: {
+          processingAmount: { decrement: payoutAmount },
+          totalRedeemed: { increment: payoutAmount },
+          version: { increment: 1 },
+        },
+      });
+
+      const updatedPayout = await tx.payout.update({
+        where: { id: payout.id },
+        data: {
+          status: 'SUCCESS',
+          razorpayPayoutId: razorpayPayoutId || payout.razorpayPayoutId,
+          completedAt: new Date(),
+        },
+      });
+
+      await tx.notification.create({
+        data: {
+          userId: payout.userId,
+          title: 'Reward Disbursement Successful!',
+          message: `₹${payoutAmount.toFixed(2)} has been credited to your verified payment account.`,
+          type: 'PAYOUT_SUCCESS',
+        },
+      });
+
+      return updatedPayout;
+    });
+  }
+
+  /**
+   * Invokes immediate worker dispatch or falls back to background processor.
+   */
+  static async triggerPayoutDispatch(payoutId: string) {
+    const { PayoutWorker } = await import('../worker/payout.worker');
+    await PayoutWorker.processPayout(payoutId);
   }
 }

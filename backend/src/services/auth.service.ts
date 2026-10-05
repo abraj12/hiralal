@@ -1,77 +1,97 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import crypto from 'crypto';
-import { config } from '../config';
 import { prisma } from '../db';
-import { Profession } from '@prisma/client';
+import { config } from '../config';
+import {
+  generateSecureOtp,
+  sha256Hash,
+  generateSecureToken,
+} from '../utils/crypto.utils';
+import { UserRole, Profession } from '@prisma/client';
 
 export class AuthService {
   /**
-   * Hashes OTP combined with mobile to prevent rainbow table attacks.
+   * Generates and dispatches cryptographically secure 6-digit OTP.
+   * Enforces 60-second cooldown and 10-minute rate limiting.
    */
-  private static hashOtp(mobile: string, otpCode: string): string {
-    return crypto
-      .createHash('sha256')
-      .update(`${mobile}:${otpCode}:${config.jwt.secret}`)
-      .digest('hex');
-  }
-
-  /**
-   * Sends real cryptographic OTP to mobile number with rate limiting and cooldown.
-   */
-  static async sendOtp(
-    mobile: string,
-    purpose: 'REGISTRATION' | 'FORGOT_PASSWORD' | 'LOGIN'
-  ): Promise<{ message: string; cooldownSeconds: number }> {
-    const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
+  static async requestOtp(params: {
+    mobile: string;
+    purpose: 'REGISTRATION' | 'FORGOT_PASSWORD' | 'LOGIN';
+    ipAddress?: string;
+  }) {
+    const cleanMobile = params.mobile.replace(/\D/g, '').slice(-10);
     if (cleanMobile.length !== 10) {
       throw new Error('Please enter a valid 10-digit Indian mobile number.');
     }
 
     const now = new Date();
 
-    // Check cooldown (60 seconds)
-    const latestOtp = await prisma.otpRequest.findFirst({
-      where: { mobile: cleanMobile },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    if (latestOtp && latestOtp.cooldownUntil && latestOtp.cooldownUntil > now) {
-      const waitSeconds = Math.ceil((latestOtp.cooldownUntil.getTime() - now.getTime()) / 1000);
-      throw new Error(`Please wait ${waitSeconds} seconds before requesting a new OTP.`);
+    // 1. Business purpose validation
+    if (params.purpose === 'REGISTRATION') {
+      const existingUser = await prisma.user.findUnique({
+        where: { mobile: cleanMobile },
+      });
+      if (existingUser) {
+        throw new Error('This mobile number is already registered. Please proceed to login.');
+      }
+    } else if (params.purpose === 'FORGOT_PASSWORD') {
+      const existingUser = await prisma.user.findUnique({
+        where: { mobile: cleanMobile },
+      });
+      if (!existingUser) {
+        throw new Error('No registered account was found with this mobile number.');
+      }
     }
 
-    // Rate limit: max 5 requests per 10 minutes
-    const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
-    const recentCount = await prisma.otpRequest.count({
+    // 2. Cooldown enforcement: prevent rapid resend within 60 seconds
+    const activeCooldown = await prisma.otpRequest.findFirst({
       where: {
         mobile: cleanMobile,
-        createdAt: { gte: tenMinutesAgo },
+        purpose: params.purpose,
+        cooldownUntil: { gt: now },
       },
     });
 
-    if (recentCount >= 5) {
-      throw new Error('Too many OTP requests. Please wait 10 minutes before requesting again.');
+    if (activeCooldown && activeCooldown.cooldownUntil) {
+      const remainingSec = Math.ceil((activeCooldown.cooldownUntil.getTime() - now.getTime()) / 1000);
+      throw new Error(`Please wait ${remainingSec} seconds before requesting a new verification code.`);
     }
 
-    // Generate cryptographically random 6-digit numeric code
-    const otpCode = crypto.randomInt(100000, 1000000).toString();
-    const otpHash = this.hashOtp(cleanMobile, otpCode);
-    const expiresAt = new Date(now.getTime() + 5 * 60 * 1000); // 5 min expiry
-    const cooldownUntil = new Date(now.getTime() + 60 * 1000); // 60s cooldown
+    // 3. Rate-limiting: max 5 requests per 10 minutes per mobile
+    const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
+    const recentRequests = await prisma.otpRequest.count({
+      where: {
+        mobile: cleanMobile,
+        createdAt: { gt: tenMinutesAgo },
+      },
+    });
+
+    if (recentRequests >= 5) {
+      throw new Error('Too many verification requests. Please try again after 10 minutes.');
+    }
+
+    // 4. Generate cryptographically secure OTP & Hash
+    const otpCode = generateSecureOtp();
+    const otpHash = sha256Hash(otpCode);
+    const expiresAt = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes
+    const cooldownUntil = new Date(now.getTime() + 60 * 1000); // 60 seconds
 
     await prisma.otpRequest.create({
       data: {
         mobile: cleanMobile,
         otpHash,
-        purpose,
+        purpose: params.purpose,
         expiresAt,
         cooldownUntil,
       },
     });
 
-    // Dispatch via configured SMS gateway
-    if (config.sms.apiKey && config.sms.provider === 'FAST2SMS') {
+    // 5. Secure SMS dispatch (development logging only behind development flag)
+    if (config.isProduction) {
+      if (!config.sms.apiKey) {
+        throw new Error('SMS Gateway service is currently unavailable. Please contact administration.');
+      }
+      // Production SMS API dispatch
       try {
         await fetch('https://www.fast2sms.com/dev/bulkV2', {
           method: 'POST',
@@ -85,125 +105,186 @@ export class AuthService {
             numbers: cleanMobile,
           }),
         });
-      } catch (smsErr) {
-        console.error('Failed to dispatch SMS via Fast2SMS gateway:', smsErr);
+      } catch (err: any) {
+        throw new Error(`SMS delivery failed: ${err.message}`);
       }
     } else {
-      // In local development / test without external SMS credits, print to secure terminal log
-      if (config.nodeEnv !== 'production') {
-        console.log(`[SMS-DISPATCH-SECURE] Verification code for ${cleanMobile}: ${otpCode}`);
-      }
+      // Development & test environments only
+      console.log(`[SMS-DEV-OTP] Code for ${cleanMobile}: ${otpCode} (expires in 10 mins)`);
     }
 
     return {
-      message: `OTP sent successfully to +91 ${cleanMobile}`,
+      message: 'Verification code dispatched successfully to your mobile number.',
       cooldownSeconds: 60,
+      expiresAt: expiresAt.toISOString(),
     };
   }
 
   /**
-   * Verifies submitted OTP against salted hash.
+   * Verifies OTP and returns a short-lived, single-use verificationToken.
+   * Stores only the SHA-256 hash of the verification token in PostgreSQL.
    */
-  static async verifyOtp(
-    mobile: string,
-    otpCode: string,
-    purpose: 'REGISTRATION' | 'FORGOT_PASSWORD' | 'LOGIN'
-  ): Promise<boolean> {
-    const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
+  static async verifyOtp(params: {
+    mobile: string;
+    otpCode: string;
+    purpose: 'REGISTRATION' | 'FORGOT_PASSWORD' | 'LOGIN';
+  }) {
+    const cleanMobile = params.mobile.replace(/\D/g, '').slice(-10);
+    const cleanOtp = params.otpCode.trim();
+
+    if (!cleanOtp || cleanOtp.length !== 6) {
+      throw new Error('Please enter a valid 6-digit verification code.');
+    }
+
     const now = new Date();
 
-    const otpRecord = await prisma.otpRequest.findFirst({
+    // Look up latest unused, non-expired OTP record
+    const record = await prisma.otpRequest.findFirst({
       where: {
         mobile: cleanMobile,
-        purpose,
+        purpose: params.purpose,
         isUsed: false,
         expiresAt: { gt: now },
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    if (!otpRecord) {
-      throw new Error('No valid OTP found or OTP has expired. Please request a new one.');
+    if (!record) {
+      throw new Error('Verification code has expired or is invalid. Please request a new code.');
     }
 
-    if (otpRecord.attemptsCount >= 3) {
+    if (record.attemptsCount >= 5) {
       await prisma.otpRequest.update({
-        where: { id: otpRecord.id },
+        where: { id: record.id },
         data: { isUsed: true },
       });
-      throw new Error('Maximum verification attempts exceeded. Please request a new OTP.');
+      throw new Error('Maximum verification attempts exceeded. Please request a new code.');
     }
 
-    const expectedHash = this.hashOtp(cleanMobile, otpCode);
-    const isValid = crypto.timingSafeEqual(Buffer.from(otpRecord.otpHash), Buffer.from(expectedHash));
-
-    if (!isValid) {
+    // Verify cryptographic SHA-256 hash
+    const inputHash = sha256Hash(cleanOtp);
+    if (inputHash !== record.otpHash) {
       await prisma.otpRequest.update({
-        where: { id: otpRecord.id },
+        where: { id: record.id },
         data: { attemptsCount: { increment: 1 } },
       });
-      throw new Error('Invalid OTP. Please check the code and try again.');
+      throw new Error('Invalid verification code. Please check and try again.');
     }
 
     // Mark OTP as used
     await prisma.otpRequest.update({
-      where: { id: otpRecord.id },
+      where: { id: record.id },
       data: { isUsed: true },
     });
 
-    return true;
+    // Generate short-lived verificationToken (32 bytes hex)
+    const verificationToken = generateSecureToken(32);
+    const tokenHash = sha256Hash(verificationToken);
+    const tokenExpiresAt = new Date(now.getTime() + 15 * 60 * 1000); // 15 mins
+
+    await prisma.verificationToken.create({
+      data: {
+        mobile: cleanMobile,
+        tokenHash,
+        purpose: params.purpose,
+        isUsed: false,
+        expiresAt: tokenExpiresAt,
+      },
+    });
+
+    return {
+      message: 'Code verified successfully.',
+      verificationToken,
+      expiresAt: tokenExpiresAt.toISOString(),
+    };
   }
 
   /**
-   * Registers a new user with strictly PLUMBER or TILE_INSTALLER profession.
+   * Consumes registrationVerificationToken and creates user account.
+   * NEVER re-verifies original OTP.
    */
-  static async registerUser(data: {
+  static async registerUser(params: {
     mobile: string;
     fullName: string;
     password: string;
-    profession: 'PLUMBER' | 'TILE_INSTALLER';
-    otpCode: string;
-  }): Promise<{ user: any; token: string; refreshToken: string }> {
-    const cleanMobile = data.mobile.replace(/\D/g, '').slice(-10);
+    profession: Profession;
+    verificationToken: string;
+    userAgent?: string;
+    ipAddress?: string;
+  }) {
+    const cleanMobile = params.mobile.replace(/\D/g, '').slice(-10);
+    const cleanName = params.fullName.trim();
 
-    // Verify OTP first
-    await this.verifyOtp(cleanMobile, data.otpCode, 'REGISTRATION');
-
-    // Validate Profession strictly
-    if (data.profession !== 'PLUMBER' && data.profession !== 'TILE_INSTALLER') {
-      throw new Error('Profession must strictly be PLUMBER or TILE_INSTALLER.');
+    if (!cleanName || cleanName.length < 2) {
+      throw new Error('Please enter your full name.');
     }
 
-    // Check if mobile already exists
-    const existing = await prisma.user.findUnique({
-      where: { mobile: cleanMobile },
-    });
-
-    if (existing) {
-      throw new Error('An account with this mobile number already exists. Please log in.');
-    }
-
-    if (!data.password || data.password.length < 6) {
+    if (!params.password || params.password.length < 6) {
       throw new Error('Password must be at least 6 characters long.');
     }
 
-    const passwordHash = await bcrypt.hash(data.password, 10);
+    if (!['PLUMBER', 'TILE_INSTALLER'].includes(params.profession)) {
+      throw new Error('Profession must be either PLUMBER or TILE_INSTALLER.');
+    }
 
-    // Transactionally create user and their wallet
-    const user = await prisma.$transaction(async (tx) => {
+    if (!params.verificationToken) {
+      throw new Error('Registration verification token is required.');
+    }
+
+    // 1. Consume verificationToken (atomic validation)
+    const tokenHash = sha256Hash(params.verificationToken);
+    const now = new Date();
+
+    const tokenRecord = await prisma.verificationToken.findFirst({
+      where: {
+        mobile: cleanMobile,
+        tokenHash,
+        purpose: 'REGISTRATION',
+        isUsed: false,
+        expiresAt: { gt: now },
+      },
+    });
+
+    if (!tokenRecord) {
+      throw new Error('Invalid or expired registration verification token. Please verify OTP again.');
+    }
+
+    // Invalidate token immediately
+    await prisma.verificationToken.update({
+      where: { id: tokenRecord.id },
+      data: { isUsed: true },
+    });
+
+    // 2. Prevent duplicate user
+    const existing = await prisma.user.findUnique({
+      where: { mobile: cleanMobile },
+    });
+    if (existing) {
+      throw new Error('An account already exists for this mobile number.');
+    }
+
+    // 3. Hash password with bcrypt salt 12
+    const passwordHash = await bcrypt.hash(params.password, 12);
+
+    // 4. Create User, Wallet, and AuthSession in transaction
+    const refreshToken = generateSecureToken(40);
+    const refreshTokenHash = sha256Hash(refreshToken);
+    const sessionExpiresAt = new Date(now.getTime() + 30 * 24 * 3600 * 1000); // 30 days
+
+    const { user, wallet } = await prisma.$transaction(async (tx) => {
       const newUser = await tx.user.create({
         data: {
           mobile: cleanMobile,
-          fullName: data.fullName.trim(),
+          fullName: cleanName,
           passwordHash,
-          profession: data.profession as Profession,
+          profession: params.profession,
           role: 'USER',
           status: 'ACTIVE',
           isVerified: true,
         },
       });
 
-      await tx.wallet.create({
+      const newWallet = await tx.wallet.create({
         data: {
           userId: newUser.id,
           availableBalance: 0.0,
@@ -212,11 +293,20 @@ export class AuthService {
         },
       });
 
-      return newUser;
+      await tx.authSession.create({
+        data: {
+          userId: newUser.id,
+          tokenHash: refreshTokenHash,
+          userAgent: params.userAgent,
+          ipAddress: params.ipAddress,
+          expiresAt: sessionExpiresAt,
+        },
+      });
+
+      return { user: newUser, wallet: newWallet };
     });
 
-    const token = this.generateToken(user);
-    const refreshToken = this.generateRefreshToken(user);
+    const accessToken = this.generateAccessToken(user.id, user.role, user.mobile);
 
     return {
       user: {
@@ -225,20 +315,22 @@ export class AuthService {
         fullName: user.fullName,
         profession: user.profession,
         role: user.role,
-        isVerified: user.isVerified,
       },
-      token,
+      wallet: {
+        availableBalance: Number(wallet.availableBalance),
+        processingAmount: Number(wallet.processingAmount),
+        totalRedeemed: Number(wallet.totalRedeemed),
+      },
+      accessToken,
       refreshToken,
+      token: accessToken, // Backwards compatibility for existing clients
     };
   }
 
   /**
-   * Authenticates user via mobile & password.
+   * Authenticates user, creates rotating refresh session.
    */
-  static async login(
-    mobile: string,
-    password: string
-  ): Promise<{ user: any; wallet: any; token: string; refreshToken: string }> {
+  static async login(mobile: string, pass: string, userAgent?: string, ipAddress?: string) {
     const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
 
     const user = await prisma.user.findUnique({
@@ -251,29 +343,41 @@ export class AuthService {
     }
 
     if (user.status === 'SUSPENDED') {
-      throw new Error('Your account has been suspended. Please contact Hiralal & Sons administration.');
+      throw new Error('Your account has been suspended. Please contact customer support.');
     }
 
-    const isMatch = await bcrypt.compare(password, user.passwordHash);
+    const isMatch = await bcrypt.compare(pass, user.passwordHash);
     if (!isMatch) {
       throw new Error('Invalid mobile number or password.');
     }
 
-    // Ensure wallet exists
-    let wallet = user.wallet;
-    if (!wallet) {
-      wallet = await prisma.wallet.create({
-        data: {
-          userId: user.id,
-          availableBalance: 0.0,
-          processingAmount: 0.0,
-          totalRedeemed: 0.0,
-        },
-      });
-    }
+    // Create session
+    const refreshToken = generateSecureToken(40);
+    const refreshTokenHash = sha256Hash(refreshToken);
+    const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000);
 
-    const token = this.generateToken(user);
-    const refreshToken = this.generateRefreshToken(user);
+    await prisma.authSession.create({
+      data: {
+        userId: user.id,
+        tokenHash: refreshTokenHash,
+        userAgent,
+        ipAddress,
+        expiresAt: sessionExpiresAt,
+      },
+    });
+
+    const accessToken = this.generateAccessToken(user.id, user.role, user.mobile);
+
+    // Audit log
+    await prisma.auditLog.create({
+      data: {
+        action: 'USER_LOGIN',
+        entityType: 'User',
+        entityId: user.id,
+        ipAddress,
+        userAgent,
+      },
+    });
 
     return {
       user: {
@@ -282,57 +386,182 @@ export class AuthService {
         fullName: user.fullName,
         profession: user.profession,
         role: user.role,
-        isVerified: user.isVerified,
       },
-      wallet: {
-        availableBalance: Number(wallet.availableBalance),
-        processingAmount: Number(wallet.processingAmount),
-        totalRedeemed: Number(wallet.totalRedeemed),
-      },
-      token,
+      wallet: user.wallet
+        ? {
+            availableBalance: Number(user.wallet.availableBalance),
+            processingAmount: Number(user.wallet.processingAmount),
+            totalRedeemed: Number(user.wallet.totalRedeemed),
+          }
+        : { availableBalance: 0, processingAmount: 0, totalRedeemed: 0 },
+      accessToken,
       refreshToken,
+      token: accessToken,
     };
   }
 
   /**
-   * Refreshes expired JWT session.
+   * Rotates refresh token and issues new access token.
+   * Detects replay attacks and revokes compromised session trees.
    */
-  static async refreshSession(refreshToken: string): Promise<{ token: string }> {
-    try {
-      const decoded = jwt.verify(refreshToken, config.jwt.refreshSecret) as any;
-      const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
-
-      if (!user || user.status === 'SUSPENDED') {
-        throw new Error('User account not found or suspended.');
-      }
-
-      const newToken = this.generateToken(user);
-      return { token: newToken };
-    } catch {
-      throw new Error('Invalid or expired refresh token. Please log in again.');
+  static async refreshToken(refreshTokenStr: string, userAgent?: string, ipAddress?: string) {
+    if (!refreshTokenStr) {
+      throw new Error('Refresh token is required.');
     }
+
+    const tokenHash = sha256Hash(refreshTokenStr);
+    const session = await prisma.authSession.findUnique({
+      where: { tokenHash },
+    });
+
+    if (!session) {
+      throw new Error('Invalid refresh token.');
+    }
+
+    // Replay attack detection: if token is already revoked, revoke all user sessions!
+    if (session.revokedAt) {
+      await prisma.authSession.updateMany({
+        where: { userId: session.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      throw new Error('Compromised or reused refresh token detected. All active sessions have been revoked.');
+    }
+
+    if (session.expiresAt < new Date()) {
+      throw new Error('Refresh token has expired. Please login again.');
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: session.userId },
+    });
+
+    if (!user || user.status === 'SUSPENDED') {
+      throw new Error('User account is invalid or suspended.');
+    }
+
+    // Token Rotation
+    const newRefreshToken = generateSecureToken(40);
+    const newRefreshTokenHash = sha256Hash(newRefreshToken);
+    const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000);
+
+    await prisma.$transaction([
+      prisma.authSession.update({
+        where: { id: session.id },
+        data: { revokedAt: new Date() },
+      }),
+      prisma.authSession.create({
+        data: {
+          userId: user.id,
+          tokenHash: newRefreshTokenHash,
+          userAgent,
+          ipAddress,
+          rotatedFrom: session.id,
+          expiresAt: sessionExpiresAt,
+        },
+      }),
+    ]);
+
+    const newAccessToken = this.generateAccessToken(user.id, user.role, user.mobile);
+
+    return {
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+      token: newAccessToken,
+    };
   }
 
-  private static generateToken(user: any): string {
-    return jwt.sign(
-      {
-        userId: user.id,
-        mobile: user.mobile,
-        role: user.role,
-        profession: user.profession,
-      },
-      config.jwt.secret,
-      { expiresIn: '7d' }
-    );
+  /**
+   * Revokes refresh token on user logout.
+   */
+  static async logout(refreshTokenStr: string) {
+    if (!refreshTokenStr) return;
+    const tokenHash = sha256Hash(refreshTokenStr);
+    await prisma.authSession.updateMany({
+      where: { tokenHash, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
   }
 
-  private static generateRefreshToken(user: any): string {
-    return jwt.sign(
-      {
-        userId: user.id,
+  /**
+   * Real backend password reset consuming verificationToken.
+   * Revokes all active sessions for security.
+   */
+  static async completePasswordReset(params: {
+    mobile: string;
+    verificationToken: string;
+    newPassword: string;
+    userAgent?: string;
+    ipAddress?: string;
+  }) {
+    const cleanMobile = params.mobile.replace(/\D/g, '').slice(-10);
+
+    if (!params.newPassword || params.newPassword.length < 6) {
+      throw new Error('New password must be at least 6 characters long.');
+    }
+
+    const tokenHash = sha256Hash(params.verificationToken);
+    const now = new Date();
+
+    const tokenRecord = await prisma.verificationToken.findFirst({
+      where: {
+        mobile: cleanMobile,
+        tokenHash,
+        purpose: 'FORGOT_PASSWORD',
+        isUsed: false,
+        expiresAt: { gt: now },
       },
-      config.jwt.refreshSecret,
-      { expiresIn: '30d' }
+    });
+
+    if (!tokenRecord) {
+      throw new Error('Invalid or expired password reset token. Please verify OTP again.');
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { mobile: cleanMobile },
+    });
+
+    if (!user) {
+      throw new Error('User not found.');
+    }
+
+    const newHash = await bcrypt.hash(params.newPassword, 12);
+
+    await prisma.$transaction([
+      prisma.verificationToken.update({
+        where: { id: tokenRecord.id },
+        data: { isUsed: true },
+      }),
+      prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash: newHash },
+      }),
+      // Revoke all active sessions
+      prisma.authSession.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+      prisma.auditLog.create({
+        data: {
+          action: 'PASSWORD_RESET',
+          entityType: 'User',
+          entityId: user.id,
+          ipAddress: params.ipAddress,
+          userAgent: params.userAgent,
+          newValue: 'Password reset via verified OTP token. All sessions revoked.',
+        },
+      }),
+    ]);
+
+    return {
+      message: 'Password reset successfully. Please log in with your new password.',
+    };
+  }
+
+  private static generateAccessToken(userId: string, role: UserRole, mobile: string): string {
+    return jwt.sign(
+      { userId, role, mobile },
+      config.jwt.accessSecret,
+      { expiresIn: config.jwt.accessExpiresIn as any }
     );
   }
 }

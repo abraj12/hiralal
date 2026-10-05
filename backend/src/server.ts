@@ -2,8 +2,10 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
+import crypto from 'crypto';
 import { config } from './config';
 import { checkDatabaseConnection } from './db';
+import { checkRedisConnection } from './redis';
 
 // Route imports
 import authRoutes from './routes/auth.routes';
@@ -18,15 +20,44 @@ import adminRoutes from './routes/admin.routes';
 
 const app = express();
 
-// Security middlewares
+// Request ID tracking middleware
+app.use((req: any, res: Response, next: NextFunction) => {
+  const incomingId = req.headers['x-request-id'] as string;
+  req.requestId = incomingId || crypto.randomUUID();
+  res.setHeader('X-Request-Id', req.requestId);
+  next();
+});
+
+// Security headers
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
-app.use(cors({
-  origin: '*', // Allow mobile and admin frontends
-  credentials: true,
-}));
 
+// CORS Configuration
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    // Permit mobile apps, curl, server-to-server requests without Origin header
+    if (!origin) return callback(null, true);
+    if (!config.isProduction) return callback(null, true);
+    if (config.cors.allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    callback(new Error(`Origin '${origin}' blocked by Hiralal CORS policy`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Request-Id',
+    'x-razorpay-signature',
+    'x-razorpay-event-id',
+    'x-test-rate-limit',
+  ],
+};
+app.use(cors(corsOptions));
+
+// JSON Body Parser with rawBody preservation for webhooks
 app.use(express.json({
   limit: '15mb',
   verify: (req: any, _res, buf) => {
@@ -38,14 +69,45 @@ app.use(express.json({
 const sharedAssetsPath = path.join(__dirname, '../../shared/assets');
 app.use('/assets', express.static(sharedAssetsPath));
 
-// Health check endpoint
-app.get('/health', (req: Request, res: Response) => {
+// Health Check Endpoints
+app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     service: 'Hiralal & Sons Rewards Management API',
     version: '1.0.0',
     timestamp: new Date().toISOString(),
   });
+});
+
+app.get('/health/live', (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/health/ready', async (_req: Request, res: Response) => {
+  try {
+    const dbOk = await checkDatabaseConnection();
+    const redisOk = await checkRedisConnection();
+    const isReady = dbOk;
+
+    res.status(isReady ? 200 : 503).json({
+      status: isReady ? 'ready' : 'unhealthy',
+      checks: {
+        database: dbOk ? 'healthy' : 'unhealthy',
+        redis: redisOk ? 'healthy' : 'disconnected',
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    res.status(503).json({
+      status: 'unhealthy',
+      error: err.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // API Routes
@@ -60,16 +122,34 @@ app.use('/api/webhooks', webhookRoutes);
 app.use('/api/admin', adminRoutes);
 
 // 404 Handler
-app.use((req: Request, res: Response) => {
-  res.status(404).json({ success: false, message: `Route ${req.method} ${req.url} not found` });
+app.use((req: any, res: Response) => {
+  res.status(404).json({
+    success: false,
+    code: 'ROUTE_NOT_FOUND',
+    message: `Route ${req.method} ${req.url} not found`,
+    requestId: req.requestId,
+  });
 });
 
 // Global Error Handler
-app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-  console.error('[UNHANDLED ERROR]', err);
-  res.status(err.status || 500).json({
+app.use((err: any, req: any, res: Response, _next: NextFunction) => {
+  console.error(`[UNHANDLED ERROR] [${req.requestId}]`, err);
+  const status = err.status || 500;
+  const code =
+    err.code ||
+    (status === 400
+      ? 'BAD_REQUEST'
+      : status === 401
+      ? 'UNAUTHORIZED'
+      : status === 403
+      ? 'FORBIDDEN'
+      : 'INTERNAL_SERVER_ERROR');
+
+  res.status(status).json({
     success: false,
+    code,
     message: err.message || 'Internal Server Error',
+    requestId: req.requestId,
   });
 });
 

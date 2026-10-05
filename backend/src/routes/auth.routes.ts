@@ -3,71 +3,214 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { AuthService } from '../services/auth.service';
 import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
+import {
+  otpRequestLimiter,
+  otpVerifyLimiter,
+  loginLimiter,
+  passwordResetLimiter,
+} from '../middleware/rateLimit.middleware';
 import { prisma } from '../db';
 import { config } from '../config';
 
 const router = Router();
 
-router.post('/send-otp', async (req: Request, res: Response) => {
+// ==========================================
+// 1. OTP REQUEST & VERIFICATION
+// ==========================================
+
+const handleOtpRequest = async (req: Request, res: Response) => {
   try {
     const { mobile, purpose = 'REGISTRATION' } = req.body;
     if (!mobile) {
-      return res.status(400).json({ success: false, message: 'Mobile number is required' });
+      return res.status(400).json({ success: false, message: 'Mobile number is required.' });
     }
-    const result = await AuthService.sendOtp(mobile, purpose);
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const result = await AuthService.requestOtp({ mobile, purpose, ipAddress });
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }
-});
+};
 
-router.post('/verify-otp', async (req: Request, res: Response) => {
+router.post('/otp/request', otpRequestLimiter, handleOtpRequest);
+router.post('/send-otp', otpRequestLimiter, handleOtpRequest); // Backwards compatibility alias
+
+const handleOtpVerify = async (req: Request, res: Response) => {
   try {
     const { mobile, otpCode, purpose = 'REGISTRATION' } = req.body;
     if (!mobile || !otpCode) {
-      return res.status(400).json({ success: false, message: 'Mobile and OTP code are required' });
+      return res.status(400).json({ success: false, message: 'Mobile and 6-digit OTP code are required.' });
     }
-    await AuthService.verifyOtp(mobile, otpCode, purpose);
-    res.json({ success: true, message: 'OTP verified successfully' });
+    const result = await AuthService.verifyOtp({ mobile, otpCode, purpose });
+    res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }
-});
+};
+
+router.post('/otp/verify', otpVerifyLimiter, handleOtpVerify);
+router.post('/verify-otp', otpVerifyLimiter, handleOtpVerify); // Backwards compatibility alias
+
+// ==========================================
+// 2. REGISTRATION (Consumes verificationToken)
+// ==========================================
 
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { mobile, fullName, password, profession, otpCode } = req.body;
-    if (!mobile || !fullName || !password || !otpCode) {
-      return res.status(400).json({ success: false, message: 'Mobile, name, password, and OTP code are required' });
+    const { mobile, fullName, password, profession, verificationToken, otpCode } = req.body;
+    if (!mobile || !fullName || !password) {
+      return res.status(400).json({ success: false, message: 'Mobile, full name, and password are required.' });
     }
+
     if (!['PLUMBER', 'TILE_INSTALLER'].includes(profession)) {
-      return res.status(400).json({ success: false, message: 'Profession must be either PLUMBER or TILE_INSTALLER' });
+      return res.status(400).json({ success: false, message: 'Profession must be either PLUMBER or TILE_INSTALLER.' });
     }
-    const result = await AuthService.registerUser({ mobile, fullName, password, profession, otpCode });
+
+    let tokenToConsume = verificationToken;
+
+    // Graceful adapter: if older client provided otpCode directly, verify OTP first to acquire token
+    if (!tokenToConsume && otpCode) {
+      const verifyRes = await AuthService.verifyOtp({ mobile, otpCode, purpose: 'REGISTRATION' });
+      tokenToConsume = verifyRes.verificationToken;
+    }
+
+    if (!tokenToConsume) {
+      return res.status(400).json({ success: false, message: 'Verification token is required. Please verify OTP first.' });
+    }
+
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+
+    const result = await AuthService.registerUser({
+      mobile,
+      fullName,
+      password,
+      profession,
+      verificationToken: tokenToConsume,
+      ipAddress,
+      userAgent,
+    });
+
     res.status(201).json({ success: true, ...result });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }
 });
 
-router.post('/login', async (req: Request, res: Response) => {
+// ==========================================
+// 3. LOGIN & SESSIONS
+// ==========================================
+
+router.post('/login', loginLimiter, async (req: Request, res: Response) => {
   try {
     const { mobile, password } = req.body;
     if (!mobile || !password) {
-      return res.status(400).json({ success: false, message: 'Mobile and password are required' });
+      return res.status(400).json({ success: false, message: 'Mobile number and password are required.' });
     }
-    const result = await AuthService.login(mobile, password);
+
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+
+    const result = await AuthService.login(mobile, password, userAgent, ipAddress);
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(401).json({ success: false, message: err.message });
   }
 });
 
+router.post('/refresh', async (req: Request, res: Response) => {
+  try {
+    const { refreshToken } = req.body;
+    if (!refreshToken) {
+      return res.status(400).json({ success: false, message: 'Refresh token is required.' });
+    }
+
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+
+    const result = await AuthService.refreshToken(refreshToken, userAgent, ipAddress);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(401).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/logout', async (req: Request, res: Response) => {
+  try {
+    const { refreshToken } = req.body;
+    if (refreshToken) {
+      await AuthService.logout(refreshToken);
+    }
+    res.json({ success: true, message: 'Logged out successfully.' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ==========================================
+// 4. REAL BACKEND PASSWORD RESET FLOW
+// ==========================================
+
+router.post('/password-reset/request', passwordResetLimiter, async (req: Request, res: Response) => {
+  try {
+    const { mobile } = req.body;
+    if (!mobile) {
+      return res.status(400).json({ success: false, message: 'Mobile number is required.' });
+    }
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const result = await AuthService.requestOtp({ mobile, purpose: 'FORGOT_PASSWORD', ipAddress });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/password-reset/verify', otpVerifyLimiter, async (req: Request, res: Response) => {
+  try {
+    const { mobile, otpCode } = req.body;
+    if (!mobile || !otpCode) {
+      return res.status(400).json({ success: false, message: 'Mobile and OTP code are required.' });
+    }
+    const result = await AuthService.verifyOtp({ mobile, otpCode, purpose: 'FORGOT_PASSWORD' });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/password-reset/complete', async (req: Request, res: Response) => {
+  try {
+    const { mobile, verificationToken, newPassword } = req.body;
+    if (!mobile || !verificationToken || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Mobile, verification token, and new password are required.' });
+    }
+
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+
+    const result = await AuthService.completePasswordReset({
+      mobile,
+      verificationToken,
+      newPassword,
+      ipAddress,
+      userAgent,
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+// ==========================================
+// 5. ADMIN AUTHENTICATION
+// ==========================================
+
 router.post('/admin-login', async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) {
-      return res.status(400).json({ success: false, message: 'Admin username (mobile) and password are required' });
+      return res.status(400).json({ success: false, message: 'Admin mobile/username and password are required.' });
     }
 
     const cleanMobile = username.replace(/\D/g, '').slice(-10);
@@ -89,9 +232,21 @@ router.post('/admin-login', async (req: Request, res: Response) => {
 
     const token = jwt.sign(
       { userId: admin.id, role: admin.role, mobile: admin.mobile },
-      config.jwt.secret,
-      { expiresIn: '24h' }
+      config.jwt.accessSecret,
+      { expiresIn: config.jwt.accessExpiresIn as any }
     );
+
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    await prisma.auditLog.create({
+      data: {
+        adminId: admin.id,
+        action: 'ADMIN_LOGIN',
+        entityType: 'User',
+        entityId: admin.id,
+        ipAddress,
+        newValue: 'Administrator session authenticated.',
+      },
+    });
 
     res.json({
       success: true,
@@ -102,70 +257,52 @@ router.post('/admin-login', async (req: Request, res: Response) => {
         role: admin.role,
       },
       token,
+      accessToken: token,
     });
   } catch (err: any) {
-    res.status(401).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-router.post('/refresh-token', async (req: Request, res: Response) => {
-  try {
-    const { refreshToken } = req.body;
-    if (!refreshToken) {
-      return res.status(400).json({ success: false, message: 'Refresh token is required' });
-    }
-    const result = await AuthService.refreshSession(refreshToken);
-    res.json({ success: true, ...result });
-  } catch (err: any) {
-    res.status(401).json({ success: false, message: err.message });
-  }
-});
+// ==========================================
+// 6. CURRENT USER PROFILE (/me)
+// ==========================================
 
 router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
-    const fullUser = await prisma.user.findUnique({
+    const freshUser = await prisma.user.findUnique({
       where: { id: user.id },
       include: {
         wallet: true,
-        kycRecords: { orderBy: { createdAt: 'desc' }, take: 1 },
-        paymentAccounts: { orderBy: { createdAt: 'desc' } },
+        kycRecords: { where: { panStatus: 'VERIFIED' } },
+        paymentAccounts: { where: { isVerified: true, isDefault: true } },
       },
     });
 
-    if (!fullUser) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+    if (!freshUser) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
     }
-
-    const kyc = fullUser.kycRecords[0] || null;
 
     res.json({
       success: true,
       user: {
-        id: fullUser.id,
-        mobile: fullUser.mobile,
-        fullName: fullUser.fullName,
-        profession: fullUser.profession,
-        role: fullUser.role,
-        isVerified: fullUser.isVerified,
+        id: freshUser.id,
+        mobile: freshUser.mobile,
+        fullName: freshUser.fullName,
+        profession: freshUser.profession,
+        role: freshUser.role,
+        isKycVerified: freshUser.kycRecords.length > 0,
+        isPaymentVerified: freshUser.paymentAccounts.length > 0,
+        createdAt: freshUser.createdAt,
       },
-      wallet: fullUser.wallet
+      wallet: freshUser.wallet
         ? {
-            availableBalance: Number(fullUser.wallet.availableBalance),
-            processingAmount: Number(fullUser.wallet.processingAmount),
-            totalRedeemed: Number(fullUser.wallet.totalRedeemed),
+            availableBalance: Number(freshUser.wallet.availableBalance),
+            processingAmount: Number(freshUser.wallet.processingAmount),
+            totalRedeemed: Number(freshUser.wallet.totalRedeemed),
           }
-        : { availableBalance: 0, processingAmount: 0, totalRedeemed: 0 },
-      kyc: kyc
-        ? { panStatus: kyc.panStatus, maskedPan: kyc.maskedPan, panName: kyc.panName }
         : null,
-      paymentAccounts: fullUser.paymentAccounts.map((p) => ({
-        id: p.id,
-        accountType: p.accountType,
-        maskedInfo: p.maskedInfo,
-        isVerified: p.isVerified,
-        isDefault: p.isDefault,
-      })),
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });

@@ -60,3 +60,9 @@ backend/prisma/*.db-journal
 # Uploads directory (keep directory, ignore uploaded test files)
 backend/uploads/*
 !backend/uploads/.gitkeep
+uploads/
+!uploads/.gitkeep
+
+# Coverage reports
+coverage/
+backend/coverage/

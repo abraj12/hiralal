@@ -1,10 +1,11 @@
 import { Router, Response } from 'express';
 import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { KycService } from '../services/kyc.service';
+import { kycLimiter } from '../middleware/rateLimit.middleware';
 
 const router = Router();
 
-router.post('/pan/verify', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/pan/verify', authenticate, kycLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const { panNumber, panName } = req.body;

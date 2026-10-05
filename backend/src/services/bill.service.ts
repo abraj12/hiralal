@@ -1,11 +1,12 @@
+import crypto from 'crypto';
 import { prisma } from '../db';
 import { RewardService } from './reward.service';
-import { StorageService } from './storage.service';
+import { StorageService } from './storage';
 import { BillStatus } from '@prisma/client';
 
 export class BillService {
   /**
-   * Submits a new bill with real file upload and duplicate hash detection.
+   * Submits a new bill with pre-upload duplicate hash detection and private R2 storage.
    */
   static async submitBill(data: {
     userId: string;
@@ -45,15 +46,15 @@ export class BillService {
       throw new Error(`Invoice #${cleanInvoiceNumber} has already been submitted by your account.`);
     }
 
-    // 2. Upload file to R2 / Storage and compute SHA-256 hash
-    const { fileKey, fileUrl, fileHash, fileSize } = await StorageService.uploadInvoiceFile(
-      data.fileBuffer,
-      data.fileName,
-      data.mimeType,
-      data.userId
-    );
+    // 2. Validate file, magic-bytes, and calculate SHA-256 hash BEFORE uploading
+    const { fileHash, normalizedMime } = StorageService.validateAndHashFile({
+      buffer: data.fileBuffer,
+      originalFilename: data.fileName,
+      mimeType: data.mimeType,
+      maxSizeInMb: 10,
+    });
 
-    // 3. Check duplicate document file hash across all users
+    // 3. Check duplicate document file hash across all users BEFORE storage write
     const duplicateDoc = await prisma.bill.findFirst({
       where: { fileHash },
     });
@@ -67,9 +68,21 @@ export class BillService {
     const rulePercentage = Number(rule.percentage);
     const calculatedReward = RewardService.calculateReward(data.billAmount, rulePercentage);
 
-    // 5. Create bill in PostgreSQL
+    const billId = crypto.randomUUID();
+
+    // 5. Upload file privately to Cloudflare R2
+    const uploadResult = await StorageService.uploadInvoice({
+      userId: data.userId,
+      billId,
+      buffer: data.fileBuffer,
+      originalFilename: data.fileName,
+      mimeType: normalizedMime,
+    });
+
+    // 6. Persist bill record in PostgreSQL
     return await prisma.bill.create({
       data: {
+        id: billId,
         userId: data.userId,
         invoiceNumber: cleanInvoiceNumber,
         invoiceDate: new Date(data.invoiceDate),
@@ -77,18 +90,18 @@ export class BillService {
         calculatedReward,
         rewardPercentage: rulePercentage,
         status: 'PENDING',
-        fileUrl,
-        fileKey,
+        fileUrl: uploadResult.fileUrl,
+        fileKey: uploadResult.fileKey,
         fileHash,
-        fileSize,
-        mimeType: data.mimeType,
+        fileSize: uploadResult.fileSize,
+        mimeType: normalizedMime,
         remarks: data.remarks || null,
       },
     });
   }
 
   /**
-   * Retrieves all bills for a specific user with freshly signed private URLs.
+   * Retrieves user bills with freshly generated signed R2 URLs.
    */
   static async getUserBills(userId: string, status?: BillStatus) {
     const bills = await prisma.bill.findMany({
@@ -99,73 +112,55 @@ export class BillService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return bills.map((b) => ({
-      ...b,
-      billAmount: Number(b.billAmount),
-      calculatedReward: Number(b.calculatedReward),
-      rewardPercentage: Number(b.rewardPercentage),
-      fileUrl: StorageService.generateSignedUrl(b.fileKey, 30),
-    }));
+    return await Promise.all(
+      bills.map(async (b) => {
+        let freshUrl = b.fileUrl;
+        if (b.fileKey) {
+          try {
+            freshUrl = await StorageService.getSignedInvoiceUrl(b.fileKey, 1800);
+          } catch (e) {
+            // Keep existing URL if signing error
+          }
+        }
+        return {
+          ...b,
+          billAmount: Number(b.billAmount),
+          calculatedReward: Number(b.calculatedReward),
+          rewardPercentage: Number(b.rewardPercentage),
+          fileUrl: freshUrl,
+        };
+      })
+    );
   }
 
   /**
-   * Retrieves single bill with signed URL.
+   * Approves a bill atomically with pool headroom check and wallet ledger credit.
    */
-  static async getBillById(billId: string, userId?: string) {
-    const bill = await prisma.bill.findUnique({
-      where: { id: billId },
-      include: {
-        user: {
-          select: { id: true, fullName: true, mobile: true, profession: true },
-        },
-      },
-    });
-
-    if (!bill) {
-      throw new Error('Invoice not found.');
-    }
-
-    if (userId && bill.userId !== userId) {
-      throw new Error('Unauthorized access to this bill.');
-    }
-
-    return {
-      ...bill,
-      billAmount: Number(bill.billAmount),
-      calculatedReward: Number(bill.calculatedReward),
-      rewardPercentage: Number(bill.rewardPercentage),
-      fileUrl: StorageService.generateSignedUrl(bill.fileKey, 60),
-    };
-  }
-
-  /**
-   * Admin approves a bill: recalculates reward server-side, checks monthly cap, and credits wallet transactionally.
-   */
-  static async approveBill(billId: string, adminId: string, remarks?: string) {
+  static async approveBill(billId: string, adminId: string, customRewardAmount?: number) {
     return await prisma.$transaction(async (tx) => {
+      // 1. Lock and fetch bill
       const bill = await tx.bill.findUnique({
         where: { id: billId },
         include: { user: true },
       });
 
-      if (!bill) {
-        throw new Error('Bill not found.');
-      }
-
+      if (!bill) throw new Error('Bill not found.');
       if (bill.status === 'APPROVED') {
         throw new Error('This bill has already been approved.');
       }
+      if (bill.status === 'CANCELLED') {
+        throw new Error('Cancelled bills cannot be approved.');
+      }
 
-      // 1. Recalculate reward server-side based on user profession
-      const rule = await RewardService.getRewardRule(bill.user.profession);
-      const rulePercentage = Number(rule.percentage);
-      const approvedBillAmount = Number(bill.billAmount);
-      const finalReward = RewardService.calculateReward(approvedBillAmount, rulePercentage);
+      // 2. Final reward calculation
+      const finalReward = customRewardAmount !== undefined && customRewardAmount > 0
+        ? RewardService.calculateReward(customRewardAmount, 100)
+        : Number(bill.calculatedReward);
 
-      // 2. Claim amount from monthly pool atomically
+      // 3. Atomically claim reward amount from monthly pool
       await RewardService.claimPoolAmount(tx, finalReward);
 
-      // 3. Fetch or initialize wallet
+      // 4. Ensure wallet exists and credit atomically
       let wallet = await tx.wallet.findUnique({
         where: { userId: bill.userId },
       });
@@ -181,18 +176,20 @@ export class BillService {
         });
       }
 
-      const newBalance = Number(wallet.availableBalance) + finalReward;
+      // Update wallet balance atomically
+      const updatedWalletRows: any[] = await tx.$queryRaw`
+        UPDATE "Wallet"
+        SET "availableBalance" = "availableBalance" + ${finalReward}::decimal,
+            "version" = "version" + 1,
+            "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "id" = ${wallet.id}
+        RETURNING *;
+      `;
 
-      // 4. Update wallet balance
-      const updatedWallet = await tx.wallet.update({
-        where: { id: wallet.id },
-        data: {
-          availableBalance: newBalance,
-          version: { increment: 1 },
-        },
-      });
+      const updatedWallet = updatedWalletRows[0];
+      const newBalance = Number(updatedWallet.availableBalance);
 
-      // 5. Create immutable double-entry ledger entry
+      // 5. Create immutable ledger record
       await tx.walletTransaction.create({
         data: {
           walletId: wallet.id,
@@ -202,7 +199,7 @@ export class BillService {
           balanceAfter: newBalance,
           referenceType: 'BILL',
           referenceId: bill.id,
-          description: `Reward credited for approved invoice #${bill.invoiceNumber} (${rulePercentage}%)`,
+          description: `Reward of ₹${finalReward.toFixed(2)} credited for approved invoice #${bill.invoiceNumber}`,
         },
       });
 
@@ -212,93 +209,63 @@ export class BillService {
         data: {
           status: 'APPROVED',
           calculatedReward: finalReward,
-          rewardPercentage: rulePercentage,
           verifiedByAdminId: adminId,
-          remarks: remarks || null,
+          rejectionReason: null,
         },
       });
 
-      // 7. Create notification for user
-      await tx.notification.create({
-        data: {
-          userId: bill.userId,
-          title: 'Bill Approved! Reward Credited',
-          message: `Your invoice #${bill.invoiceNumber} (₹${approvedBillAmount.toLocaleString('en-IN')}) has been approved. ₹${finalReward.toFixed(2)} has been credited to your rewards wallet.`,
-          type: 'BILL_APPROVED',
-        },
-      });
-
-      // 8. Record audit log
-      const validAdmin = adminId ? await tx.user.findUnique({ where: { id: adminId } }) : null;
+      // 7. Audit Log
       await tx.auditLog.create({
         data: {
-          adminId: validAdmin ? adminId : null,
+          adminId,
           action: 'BILL_APPROVED',
-          entityType: 'BILL',
+          entityType: 'Bill',
           entityId: bill.id,
-          newValue: JSON.stringify({ reward: finalReward, balanceAfter: newBalance }),
+          newValue: `Approved invoice #${bill.invoiceNumber} for user ${bill.userId}. Credited: ₹${finalReward.toFixed(2)}.`,
         },
       });
 
       return {
         bill: updatedBill,
-        wallet: updatedWallet,
-        rewardCredited: finalReward,
+        creditedReward: finalReward,
+        walletBalance: newBalance,
       };
     });
   }
 
   /**
-   * Admin rejects a bill with mandatory reason.
+   * Rejects a bill. Mandatory rejection reason required.
    */
-  static async rejectBill(billId: string, adminId: string, reason: string) {
-    if (!reason || reason.trim().length === 0) {
-      throw new Error('A rejection reason is mandatory when rejecting a bill.');
+  static async rejectBill(billId: string, adminId: string, rejectionReason: string) {
+    if (!rejectionReason || rejectionReason.trim().length < 3) {
+      throw new Error('A valid rejection reason (minimum 3 characters) is required to reject a bill.');
     }
 
-    return await prisma.$transaction(async (tx) => {
-      const bill = await tx.bill.findUnique({
-        where: { id: billId },
-      });
+    const bill = await prisma.bill.findUnique({ where: { id: billId } });
+    if (!bill) throw new Error('Bill not found.');
+    if (bill.status === 'APPROVED') {
+      throw new Error('Approved bills cannot be rejected.');
+    }
 
-      if (!bill) {
-        throw new Error('Bill not found.');
-      }
-
-      if (bill.status === 'APPROVED') {
-        throw new Error('Cannot reject a bill that has already been approved and credited.');
-      }
-
-      const updatedBill = await tx.bill.update({
-        where: { id: bill.id },
-        data: {
-          status: 'REJECTED',
-          rejectionReason: reason.trim(),
-          verifiedByAdminId: adminId,
-        },
-      });
-
-      await tx.notification.create({
-        data: {
-          userId: bill.userId,
-          title: 'Bill Rejected',
-          message: `Your invoice #${bill.invoiceNumber} was rejected. Reason: ${reason.trim()}`,
-          type: 'BILL_REJECTED',
-        },
-      });
-
-      const validAdmin = adminId ? await tx.user.findUnique({ where: { id: adminId } }) : null;
-      await tx.auditLog.create({
-        data: {
-          adminId: validAdmin ? adminId : null,
-          action: 'BILL_REJECTED',
-          entityType: 'BILL',
-          entityId: bill.id,
-          newValue: JSON.stringify({ reason: reason.trim() }),
-        },
-      });
-
-      return updatedBill;
+    const updated = await prisma.bill.update({
+      where: { id: billId },
+      data: {
+        status: 'REJECTED',
+        rejectionReason: rejectionReason.trim(),
+        verifiedByAdminId: adminId,
+      },
     });
+
+    await prisma.auditLog.create({
+      data: {
+        adminId,
+        action: 'BILL_REJECTED',
+        entityType: 'Bill',
+        entityId: billId,
+        newValue: `Rejected invoice #${bill.invoiceNumber}. Reason: ${rejectionReason.trim()}`,
+      },
+    });
+
+    return updated;
   }
 }

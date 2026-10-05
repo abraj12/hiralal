@@ -1,46 +1,56 @@
 import { prisma } from '../db';
 import { config } from '../config';
+import { PaymentType } from '@prisma/client';
+import { encryptSensitive } from '../utils/crypto.utils';
 
 export class PaymentService {
   /**
-   * Masks sensitive bank account number or UPI VPA.
+   * Masks sensitive account info for presentation:
+   * e.g., raj****@okhdfcbank or HDFC Bank ••••••5678
    */
-  static maskPaymentInfo(type: 'UPI' | 'BANK_ACCOUNT', detail: string): string {
+  static maskPaymentInfo(type: PaymentType, identifier: string, bankName?: string): string {
+    const clean = identifier.trim();
     if (type === 'UPI') {
-      const parts = detail.split('@');
+      const parts = clean.split('@');
       if (parts.length === 2) {
-        const name = parts[0];
-        const visible = name.length > 3 ? name.substring(0, 3) : name;
-        return `${visible}****@${parts[1]}`;
+        const username = parts[0];
+        const handle = parts[1];
+        const masked = username.length > 3 ? `${username.substring(0, 3)}****` : '****';
+        return `${masked}@${handle}`;
       }
-      return detail;
+      return clean.length > 4 ? `****${clean.slice(-4)}` : clean;
     } else {
-      const clean = detail.replace(/\s+/g, '');
       const last4 = clean.slice(-4);
-      return `••••••${last4}`;
+      return `${bankName || 'Bank'} ••••••${last4}`;
     }
   }
 
   /**
-   * Adds and verifies a UPI handle via RazorpayX Fund Account Validation.
+   * Verifies and saves a UPI ID using RazorpayX Fund Account Validation API.
    */
-  static async addUpiAccount(userId: string, upiId: string, accountHolderName?: string) {
+  static async verifyAndAddUpi(userId: string, upiId: string) {
     const cleanUpi = upiId.trim().toLowerCase();
-    const upiRegex = /^[\w.-]+@[\w.-]+$/;
+
+    // Syntax validation
+    const upiRegex = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
     if (!upiRegex.test(cleanUpi)) {
-      throw new Error('Please enter a valid UPI ID (e.g. yourname@okhdfcbank or 9876543210@paytm).');
+      throw new Error('Please enter a valid UPI ID (e.g., yourname@bank or 9876543210@paytm).');
     }
 
-    let isVerified = false;
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new Error('User not found.');
 
-    // Call RazorpayX Fund Account Validation if credentials exist
+    let isValid = true;
+    let registeredName = user.fullName;
+
+    // Real RazorpayX VPA Validation
     if (config.razorpayx.keyId && config.razorpayx.keySecret && config.nodeEnv !== 'test') {
       try {
-        const authHeader = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
-        const validationRes = await fetch('https://api.razorpay.com/v1/fund_accounts/validations', {
+        const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
+        const res = await fetch('https://api.razorpay.com/v1/fund_accounts/validations', {
           method: 'POST',
           headers: {
-            Authorization: authHeader,
+            Authorization: auth,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
@@ -48,85 +58,85 @@ export class PaymentService {
             fund_account: {
               account_type: 'vpa',
               vpa: { address: cleanUpi },
-              contact: { name: accountHolderName || 'Craftsman', type: 'vendor' },
             },
-            amount: 100, // Re. 1 validation
+            amount: 100, // 1 Rupee penny validation
             currency: 'INR',
           }),
         });
 
-        const valData: any = await validationRes.json();
-        if (valData.id && valData.status !== 'failed') {
-          isVerified = true;
+        const data: any = await res.json();
+        if (res.ok && data.status !== 'failed') {
+          isValid = true;
+          registeredName = data.results?.registered_name || user.fullName;
         } else {
-          throw new Error(valData.error?.description || 'UPI ID could not be validated with banking network.');
+          throw new Error(data.error?.description || 'UPI ID validation failed with banking network.');
         }
       } catch (err: any) {
-        if (config.nodeEnv === 'production') {
-          throw new Error(`RazorpayX UPI validation failed: ${err.message}`);
-        }
-        isVerified = true; // Sandbox fallback in local development
+        throw new Error(`UPI Validation failed: ${err.message}`);
       }
-    } else {
-      if (config.nodeEnv === 'production') {
-        throw new Error('RazorpayX API credentials (RAZORPAYX_KEY_ID & SECRET) are required in production.');
-      }
-      isVerified = true;
     }
-
-    // Set other accounts to non-default
-    await prisma.paymentAccount.updateMany({
-      where: { userId },
-      data: { isDefault: false },
-    });
 
     const maskedInfo = this.maskPaymentInfo('UPI', cleanUpi);
 
-    return await prisma.paymentAccount.create({
-      data: {
-        userId,
-        accountType: 'UPI',
-        upiId: cleanUpi,
-        accountHolderName: accountHolderName || null,
-        maskedInfo,
-        isVerified,
-        verifiedAt: isVerified ? new Date() : null,
-        isDefault: true,
-      },
+    // Save or update account
+    return await prisma.$transaction(async (tx) => {
+      // Ensure only one default account
+      await tx.paymentAccount.updateMany({
+        where: { userId, isDefault: true },
+        data: { isDefault: false },
+      });
+
+      return await tx.paymentAccount.create({
+        data: {
+          userId,
+          accountType: 'UPI',
+          upiId: cleanUpi,
+          accountHolderName: registeredName,
+          maskedInfo,
+          isVerified: isValid,
+          verifiedAt: new Date(),
+          isDefault: true,
+        },
+      });
     });
   }
 
   /**
-   * Adds and verifies a Bank Account via RazorpayX penny-drop account validation.
+   * Verifies and saves a Bank Account using RazorpayX Penny Drop / Validation.
    */
-  static async addBankAccount(data: {
+  static async verifyAndAddBankAccount(params: {
     userId: string;
     accountHolderName: string;
     accountNumber: string;
     ifscCode: string;
     bankName?: string;
   }) {
-    const cleanAccount = data.accountNumber.replace(/\s+/g, '');
-    const cleanIfsc = data.ifscCode.trim().toUpperCase();
+    const cleanAccount = params.accountNumber.trim();
+    const cleanIfsc = params.ifscCode.trim().toUpperCase();
+    const cleanName = params.accountHolderName.trim();
 
-    if (!/^\d{9,18}$/.test(cleanAccount)) {
-      throw new Error('Please enter a valid 9 to 18-digit bank account number.');
+    if (cleanAccount.length < 9 || cleanAccount.length > 18 || !/^\d+$/.test(cleanAccount)) {
+      throw new Error('Please enter a valid bank account number (9 to 18 digits).');
     }
 
     if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanIfsc)) {
       throw new Error('Please enter a valid 11-character Indian IFSC code (e.g. HDFC0001234).');
     }
 
-    let isVerified = false;
+    const user = await prisma.user.findUnique({ where: { id: params.userId } });
+    if (!user) throw new Error('User not found.');
 
-    // Call RazorpayX Fund Account Validation API
+    let isValid = true;
+    let registeredName = cleanName;
+
+    // Real RazorpayX Bank Account Validation
     if (config.razorpayx.keyId && config.razorpayx.keySecret && config.nodeEnv !== 'test') {
       try {
-        const authHeader = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
-        const validationRes = await fetch('https://api.razorpay.com/v1/fund_accounts/validations', {
+        const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
+        const res = await fetch('https://api.razorpay.com/v1/fund_accounts/validations', {
           method: 'POST',
           headers: {
-            Authorization: authHeader,
+            Authorization: auth,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
@@ -134,75 +144,89 @@ export class PaymentService {
             fund_account: {
               account_type: 'bank_account',
               bank_account: {
-                name: data.accountHolderName,
+                name: cleanName,
                 ifsc: cleanIfsc,
                 account_number: cleanAccount,
               },
-              contact: { name: data.accountHolderName, type: 'vendor' },
             },
-            amount: 100, // Re 1 penny drop validation
+            amount: 100,
             currency: 'INR',
           }),
         });
 
-        const valData: any = await validationRes.json();
-        if (valData.id && valData.status !== 'failed') {
-          isVerified = true;
+        const data: any = await res.json();
+        if (res.ok && data.status !== 'failed') {
+          isValid = true;
+          registeredName = data.results?.registered_name || cleanName;
         } else {
-          throw new Error(valData.error?.description || 'Bank account verification failed with the bank.');
+          throw new Error(data.error?.description || 'Bank account validation failed with IFSC switch.');
         }
       } catch (err: any) {
-        if (config.nodeEnv === 'production') {
-          throw new Error(`RazorpayX Bank Account validation failed: ${err.message}`);
-        }
-        isVerified = true; // Sandbox fallback in local development
+        throw new Error(`Bank Account validation failed: ${err.message}`);
       }
-    } else {
-      if (config.nodeEnv === 'production') {
-        throw new Error('RazorpayX API credentials (RAZORPAYX_KEY_ID & SECRET) are required in production.');
-      }
-      isVerified = true;
     }
 
-    await prisma.paymentAccount.updateMany({
-      where: { userId: data.userId },
-      data: { isDefault: false },
-    });
+    const maskedInfo = this.maskPaymentInfo('BANK_ACCOUNT', cleanAccount, params.bankName);
+    const encryptedAccount = encryptSensitive(cleanAccount);
 
-    const maskedInfo = `${data.bankName || 'Bank'} ${this.maskPaymentInfo('BANK_ACCOUNT', cleanAccount)}`;
+    return await prisma.$transaction(async (tx) => {
+      await tx.paymentAccount.updateMany({
+        where: { userId: params.userId, isDefault: true },
+        data: { isDefault: false },
+      });
 
-    return await prisma.paymentAccount.create({
-      data: {
-        userId: data.userId,
-        accountType: 'BANK_ACCOUNT',
-        accountHolderName: data.accountHolderName.trim(),
-        accountNumber: cleanAccount,
-        ifscCode: cleanIfsc,
-        bankName: data.bankName || null,
-        maskedInfo,
-        isVerified,
-        verifiedAt: isVerified ? new Date() : null,
-        isDefault: true,
-      },
+      return await tx.paymentAccount.create({
+        data: {
+          userId: params.userId,
+          accountType: 'BANK_ACCOUNT',
+          accountHolderName: registeredName,
+          accountNumber: cleanAccount,
+          accountNumberEncrypted: encryptedAccount,
+          ifscCode: cleanIfsc,
+          bankName: params.bankName || 'Bank',
+          maskedInfo,
+          isVerified: isValid,
+          verifiedAt: new Date(),
+          isDefault: true,
+        },
+      });
     });
   }
 
-  /**
-   * Retrieves user's registered payment accounts.
-   */
-  static async getUserAccounts(userId: string) {
-    return await prisma.paymentAccount.findMany({
+  static async getUserPaymentAccounts(userId: string) {
+    const accounts = await prisma.paymentAccount.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        accountType: true,
-        maskedInfo: true,
-        accountHolderName: true,
-        isVerified: true,
-        verifiedAt: true,
-        isDefault: true,
-      },
     });
+
+    return accounts.map((a) => ({
+      id: a.id,
+      accountType: a.accountType,
+      maskedInfo: a.maskedInfo,
+      bankName: a.bankName,
+      accountHolderName: a.accountHolderName,
+      isVerified: a.isVerified,
+      isDefault: a.isDefault,
+      verifiedAt: a.verifiedAt,
+      createdAt: a.createdAt,
+    }));
+  }
+
+  static async addUpiAccount(userId: string, upiId: string, _accountHolderName?: string) {
+    return this.verifyAndAddUpi(userId, upiId);
+  }
+
+  static async addBankAccount(params: {
+    userId: string;
+    accountHolderName: string;
+    accountNumber: string;
+    ifscCode: string;
+    bankName?: string;
+  }) {
+    return this.verifyAndAddBankAccount(params);
+  }
+
+  static async getUserAccounts(userId: string) {
+    return this.getUserPaymentAccounts(userId);
   }
 }

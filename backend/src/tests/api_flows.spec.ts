@@ -4,6 +4,7 @@ import { prisma } from '../db';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { config } from '../config';
+import { getIstYearAndMonth } from '../utils/timezone.utils';
 
 describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
   let userToken: string;
@@ -12,6 +13,14 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
   let testAdminId: string;
 
   beforeAll(async () => {
+    // Reset pool for clean test run
+    const { year, month } = getIstYearAndMonth();
+    await prisma.rewardPool.upsert({
+      where: { pool_year_month_unique: { year, month } },
+      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+    });
+
     // 1. Provision Test Admin in PostgreSQL
     const adminPasswordHash = await bcrypt.hash('Admin@123', 10);
     const admin = await prisma.user.upsert({
@@ -95,10 +104,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
 
     // Create a known OTP hash in test db for this registration
     const testOtpCode = '789123';
-    const otpHash = crypto
-      .createHash('sha256')
-      .update(`${uniqueMobile}:${testOtpCode}:${config.jwt.secret}`)
-      .digest('hex');
+    const otpHash = crypto.createHash('sha256').update(testOtpCode).digest('hex');
 
     await prisma.otpRequest.create({
       data: {
@@ -139,7 +145,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
 
   test('POST /api/bills uploads real bill with base64 document', async () => {
     const invoiceNumber = `INV-API-${Date.now()}`;
-    const fileBase64 = Buffer.from('PDF_SAMPLE_CONTENT_FOR_TESTING_' + Date.now()).toString('base64');
+    const fileBase64 = Buffer.from('%PDF-1.4 test invoice content ' + Date.now()).toString('base64');
 
     const res = await request(app)
       .post('/api/bills')
@@ -170,7 +176,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
 
   test('Admin approves bill and credits reward to user wallet', async () => {
     const invoiceNumber = `INV-APPROVE-${Date.now()}`;
-    const fileBase64 = Buffer.from(`DOC_DATA_${Date.now()}`).toString('base64');
+    const fileBase64 = Buffer.from('%PDF-1.4 test invoice content ' + Date.now()).toString('base64');
 
     const billRes = await request(app)
       .post('/api/bills')

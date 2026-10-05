@@ -5,11 +5,13 @@ import { KycService } from '../services/kyc.service';
 import { PaymentService } from '../services/payment.service';
 import { AuthService } from '../services/auth.service';
 import { StorageService } from '../services/storage.service';
+import { getIstYearAndMonth } from '../utils/timezone.utils';
 import { prisma } from '../db';
 import crypto from 'crypto';
 
 describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
   let testUserId: string;
+  let testAdminId: string;
 
   beforeAll(async () => {
     // Clean up test records
@@ -19,6 +21,29 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
     await prisma.paymentAccount.deleteMany({ where: { user: { mobile: '9888888888' } } });
     await prisma.wallet.deleteMany({ where: { user: { mobile: '9888888888' } } });
     await prisma.user.deleteMany({ where: { mobile: '9888888888' } });
+
+    // Reset pool for clean test run
+    const { year, month } = getIstYearAndMonth();
+    await prisma.rewardPool.upsert({
+      where: { pool_year_month_unique: { year, month } },
+      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+    });
+
+    // Provision admin user for audit log foreign keys
+    const admin = await prisma.user.upsert({
+      where: { mobile: '9999999999' },
+      update: { role: 'ADMIN' },
+      create: {
+        mobile: '9999999999',
+        fullName: 'Admin User',
+        passwordHash: 'adminhash',
+        role: 'ADMIN',
+        status: 'ACTIVE',
+        isVerified: true,
+      },
+    });
+    testAdminId = admin.id;
 
     // Create a real test plumber
     const user = await prisma.user.create({
@@ -98,7 +123,7 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
 
     test('Rejects duplicate invoice number for the same user', async () => {
       const invoiceNumber = `INV-TEST-${Date.now()}`;
-      const buf1 = Buffer.from(`Doc content 1 - ${Date.now()}`);
+      const buf1 = Buffer.from(`%PDF-1.4 Doc content 1 - ${Date.now()}`);
 
       await BillService.submitBill({
         userId: testUserId,
@@ -110,7 +135,7 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
         mimeType: 'application/pdf',
       });
 
-      const buf2 = Buffer.from(`Doc content 2 - ${Date.now()}`);
+      const buf2 = Buffer.from(`%PDF-1.4 Doc content 2 - ${Date.now()}`);
       await expect(
         BillService.submitBill({
           userId: testUserId,
@@ -125,7 +150,10 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
     });
 
     test('Rejects duplicate file upload by SHA-256 hash', async () => {
-      const sameBuffer = Buffer.from(`Identical document bytes ${Date.now()}`);
+      const sameBuffer = Buffer.concat([
+        Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+        Buffer.from(`Identical document bytes ${Date.now()}`),
+      ]);
 
       await BillService.submitBill({
         userId: testUserId,
@@ -151,7 +179,10 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
     });
 
     test('Bill rejection requires mandatory rejection reason', async () => {
-      const buf = Buffer.from(`Doc for rejection - ${Date.now()}`);
+      const buf = Buffer.concat([
+        Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+        Buffer.from(`Doc for rejection - ${Date.now()}`),
+      ]);
       const bill = await BillService.submitBill({
         userId: testUserId,
         invoiceNumber: `INV-REJECT-${Date.now()}`,
@@ -162,9 +193,9 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
         mimeType: 'image/jpeg',
       });
 
-      await expect(BillService.rejectBill(bill.id, 'admin-id', '')).rejects.toThrow(/rejection reason is mandatory/);
+      await expect(BillService.rejectBill(bill.id, testAdminId, '')).rejects.toThrow(/rejection reason/);
 
-      const rejected = await BillService.rejectBill(bill.id, 'admin-id', 'Blurry unreadable bill photo');
+      const rejected = await BillService.rejectBill(bill.id, testAdminId, 'Blurry unreadable bill photo');
       expect(rejected.status).toBe('REJECTED');
       expect(rejected.rejectionReason).toBe('Blurry unreadable bill photo');
     });
@@ -216,10 +247,13 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
 
   describe('5. Payout Idempotency & Balance Reversal', () => {
     test('Payout reversal restores wallet availableBalance and creates PAYOUT_REVERSAL ledger entry', async () => {
+      const walletBefore = await prisma.wallet.findUnique({
+        where: { userId: testUserId },
+      });
+      const initialAvailable = Number(walletBefore?.availableBalance || 0);
+
       const idempotencyKey = `idem-test-${Date.now()}`;
       const result = await PayoutService.requestRedemption(testUserId, idempotencyKey, 500);
-
-      const initialAvailable = Number(result.wallet!.availableBalance);
 
       // Trigger reversal
       await PayoutService.reversePayout(result.payout.id, 'Test reversal bank rejection');
@@ -228,10 +262,10 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
         where: { userId: testUserId },
       });
 
-      expect(Number(updatedWallet?.availableBalance)).toBe(initialAvailable + 500);
+      expect(Number(updatedWallet?.availableBalance)).toBe(initialAvailable);
 
       const reversalTx = await prisma.walletTransaction.findFirst({
-        where: { referenceId: result.payout.id, type: 'PAYOUT_REVERSAL' },
+        where: { referenceId: idempotencyKey, type: 'PAYOUT_REVERSAL' },
       });
       expect(reversalTx).not.toBeNull();
       expect(Number(reversalTx?.amount)).toBe(500);

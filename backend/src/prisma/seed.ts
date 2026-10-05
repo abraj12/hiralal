@@ -1,11 +1,25 @@
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { prisma } from '../db';
+import { config } from '../config';
 
 async function main() {
   console.log('🌱 Starting database seeding for Hiralal & Sons...');
 
   try {
-    const adminPasswordHash = await bcrypt.hash(process.env.ADMIN_INITIAL_PASSWORD || 'Admin@123', 10);
+    let rawPassword = process.env.ADMIN_INITIAL_PASSWORD;
+
+    if (!rawPassword) {
+      if (config.isProduction) {
+        throw new Error('[FATAL] ADMIN_INITIAL_PASSWORD environment variable is required to seed production database.');
+      }
+      rawPassword = crypto.randomBytes(9).toString('base64');
+      console.log('⚠️ [DEV NOTICE] No ADMIN_INITIAL_PASSWORD provided. Generated random admin credentials:');
+      console.log(`   Admin Mobile:   9999999999`);
+      console.log(`   Admin Password: ${rawPassword}`);
+    }
+
+    const adminPasswordHash = await bcrypt.hash(rawPassword, 10);
 
     // 1. Provision Secure Company Administrator
     const admin = await prisma.user.upsert({
@@ -13,6 +27,7 @@ async function main() {
       update: {
         role: 'ADMIN',
         status: 'ACTIVE',
+        passwordHash: adminPasswordHash,
       },
       create: {
         mobile: '9999999999',
@@ -69,26 +84,27 @@ async function main() {
       console.log('✅ Profession reward rules provisioned: 0.5% (Plumber & Tile Installer)');
     }
 
-    // 4. Provision Initial Redemption Settings
+    // 4. Provision Initial Redemption Settings (CLOSED BY DEFAULT in production)
     await prisma.redemptionSettings.upsert({
       where: { id: 'default' },
       update: {},
       create: {
         id: 'default',
-        isEnabled: true,
-        startAt: new Date(Date.now() - 24 * 3600 * 1000), // Active by default
-        endAt: new Date(Date.now() + 60 * 24 * 3600 * 1000), // 60 days window
+        isEnabled: false, // Default CLOSED until administration explicitly opens the window
+        startAt: null,
+        endAt: null,
         minimumAmount: 500.0,
         maximumAmount: 10000.0,
-        message: 'Rewards redemption window is open for eligible verified craftsmen.',
+        message: 'Rewards redemption is currently unavailable.',
         updatedByAdminId: admin.id,
       },
     });
-    console.log('✅ Redemption settings provisioned (Admin-controlled window)');
+    console.log('✅ Redemption settings provisioned (Admin-controlled window, default CLOSED)');
 
     console.log('🎉 Production database initialization complete!');
   } catch (error) {
     console.error('Error seeding database:', error);
+    process.exit(1);
   } finally {
     await prisma.$disconnect();
   }
