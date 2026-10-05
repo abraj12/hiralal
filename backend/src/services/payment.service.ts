@@ -180,7 +180,7 @@ export class PaymentService {
           userId: params.userId,
           accountType: 'BANK_ACCOUNT',
           accountHolderName: registeredName,
-          accountNumber: cleanAccount,
+          accountNumber: maskedInfo,
           accountNumberEncrypted: encryptedAccount,
           ifscCode: cleanIfsc,
           bankName: params.bankName || 'Bank',

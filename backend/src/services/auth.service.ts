@@ -8,6 +8,8 @@ import {
   generateSecureToken,
 } from '../utils/crypto.utils';
 import { UserRole, Profession } from '@prisma/client';
+import { SmsService } from './sms';
+
 
 export class AuthService {
   /**
@@ -86,32 +88,16 @@ export class AuthService {
       },
     });
 
-    // 5. Secure SMS dispatch (development logging only behind development flag)
-    if (config.isProduction) {
-      if (!config.sms.apiKey) {
-        throw new Error('SMS Gateway service is currently unavailable. Please contact administration.');
-      }
-      // Production SMS API dispatch
-      try {
-        await fetch('https://www.fast2sms.com/dev/bulkV2', {
-          method: 'POST',
-          headers: {
-            authorization: config.sms.apiKey,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            route: 'otp',
-            variables_values: otpCode,
-            numbers: cleanMobile,
-          }),
-        });
-      } catch (err: any) {
-        throw new Error(`SMS delivery failed: ${err.message}`);
-      }
-    } else {
-      // Development & test environments only
-      console.log(`[SMS-DEV-OTP] Code for ${cleanMobile}: ${otpCode} (expires in 10 mins)`);
+    // 5. Secure SMS dispatch via configured provider (MSG91 in production)
+    const smsResult = await SmsService.sendOtp({
+      mobile: cleanMobile,
+      otpCode,
+    });
+
+    if (!smsResult.success && config.isProduction) {
+      throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
     }
+
 
     return {
       message: 'Verification code dispatched successfully to your mobile number.',

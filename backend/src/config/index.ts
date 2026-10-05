@@ -7,6 +7,8 @@ export interface AppConfig {
   isProduction: boolean;
   databaseUrl: string;
   encryptionKey: string;
+  fieldEncryptionKey: string;
+  storageHmacSecret: string;
   jwt: {
     accessSecret: string;
     refreshSecret: string;
@@ -41,6 +43,8 @@ export interface AppConfig {
   sms: {
     provider: string;
     apiKey: string;
+    authKey: string;
+    templateId: string;
     senderId: string;
   };
   cors: {
@@ -65,6 +69,8 @@ if (isProduction) {
     'JWT_ACCESS_SECRET',
     'JWT_REFRESH_SECRET',
     'ENCRYPTION_KEY',
+    'FIELD_ENCRYPTION_KEY',
+    'STORAGE_HMAC_SECRET',
     'R2_ACCESS_KEY_ID',
     'R2_SECRET_ACCESS_KEY',
     'R2_BUCKET_NAME',
@@ -74,8 +80,10 @@ if (isProduction) {
     'RAZORPAYX_KEY_SECRET',
     'RAZORPAYX_ACCOUNT_NUMBER',
     'RAZORPAYX_WEBHOOK_SECRET',
-    'SMS_API_KEY',
+    'MSG91_AUTH_KEY',
+    'MSG91_TEMPLATE_ID',
     'CORS_ALLOWED_ORIGINS',
+    'ADMIN_INITIAL_PASSWORD',
   ];
 
   const missing = mandatoryVars.filter((v) => !process.env[v] || process.env[v]?.trim() === '');
@@ -103,6 +111,8 @@ export const config: AppConfig = {
   isProduction,
   databaseUrl: process.env.DATABASE_URL || 'postgresql://postgres:1234@localhost:5432/hiralal_rewards?schema=public',
   encryptionKey: process.env.ENCRYPTION_KEY || 'hiralal_aes256_secret_key_32bytes_sample_dev_only!',
+  fieldEncryptionKey: process.env.FIELD_ENCRYPTION_KEY || 'hiralal_field_aes256_32bytes_key_dev_only!',
+  storageHmacSecret: process.env.STORAGE_HMAC_SECRET || 'hiralal_dev_storage_hmac_secret_2026',
 
   jwt: {
     accessSecret: process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'dev_access_secret_key_hiralal_2026',
@@ -143,9 +153,11 @@ export const config: AppConfig = {
   },
 
   sms: {
-    provider: (process.env.SMS_PROVIDER || 'FAST2SMS').toUpperCase(),
-    apiKey: process.env.SMS_API_KEY || '',
-    senderId: process.env.SMS_SENDER_ID || 'HIRALAL',
+    provider: (process.env.SMS_PROVIDER || 'MSG91').toUpperCase(),
+    apiKey: process.env.SMS_API_KEY || process.env.MSG91_AUTH_KEY || '',
+    authKey: process.env.MSG91_AUTH_KEY || process.env.SMS_API_KEY || '',
+    templateId: process.env.MSG91_TEMPLATE_ID || '',
+    senderId: process.env.MSG91_SENDER_ID || process.env.SMS_SENDER_ID || 'HIRALAL',
   },
 
   cors: {

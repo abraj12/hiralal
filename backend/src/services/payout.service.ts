@@ -261,8 +261,13 @@ export class PayoutService {
 
       if (!payout) throw new Error(`Payout ${payoutId} not found`);
 
-      // Idempotency: if already in a terminal state, return current record
-      if (payout.status === 'SUCCESS' || payout.status === 'FAILED' || payout.status === 'REVERSED') {
+      // Forbidden transition: SUCCESS payouts cannot be reversed without manual ledger compensation
+      if (payout.status === 'SUCCESS') {
+        throw new Error(`Cannot reverse payout ${payoutId} because it has already successfully completed.`);
+      }
+
+      // Idempotency: if already in FAILED or REVERSED state, return current record without duplicate refund
+      if (payout.status === 'FAILED' || payout.status === 'REVERSED') {
         return payout;
       }
 
@@ -334,6 +339,11 @@ export class PayoutService {
 
       if (!payout) throw new Error(`Payout ${payoutId} not found`);
       if (payout.status === 'SUCCESS') return payout;
+
+      // Forbidden transition: Cannot finalize a payout that was already FAILED or REVERSED
+      if (payout.status === 'FAILED' || payout.status === 'REVERSED') {
+        throw new Error(`Cannot finalize payout ${payoutId} because it is already in terminal state ${payout.status}`);
+      }
 
       const payoutAmount = Number(payout.amount);
 

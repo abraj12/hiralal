@@ -9,8 +9,10 @@ const TAG_LENGTH = 16;
  * Derives a consistent 32-byte key from the configured encryption secret.
  */
 function getDerivedKey(): Buffer {
-  return crypto.createHash('sha256').update(config.encryptionKey).digest();
+  const keySource = config.fieldEncryptionKey || config.encryptionKey;
+  return crypto.createHash('sha256').update(keySource).digest();
 }
+
 
 /**
  * Encrypts sensitive text using AES-256-GCM.

@@ -77,6 +77,13 @@ jobs:
           JWT_ACCESS_SECRET: test_jwt_access_secret_for_ci_pipeline_2026
           JWT_REFRESH_SECRET: test_jwt_refresh_secret_for_ci_pipeline_2026
           ENCRYPTION_KEY: test_encryption_key_32bytes_sample_pipeline_ci_key
+          FIELD_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          STORAGE_HMAC_SECRET: test_hmac_secret_for_ci_pipeline_2026
+          MSG91_AUTH_KEY: test_msg91_auth_key_ci
+          MSG91_TEMPLATE_ID: test_msg91_template_ci
+          SIGNCARE_API_KEY: test_signcare_api_key_ci
+          SIGNCARE_APP_ID: test_signcare_app_id_ci
+          ADMIN_INITIAL_PASSWORD: AdminCiTest2026!
           REDIS_HOST: 127.0.0.1
           REDIS_PORT: 6379
         run: npm test -- --coverage

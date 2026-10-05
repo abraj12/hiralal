@@ -1,13 +1,34 @@
 version: '3.8'
 
+# ==============================================================================
+# Hiralal & Sons Sales Pvt. Ltd. - Production Multi-Container Compose
+# Platform: AWS EC2 t4g.medium (2 vCPU, 4 GiB RAM, ARM64 / Graviton2, ap-south-1)
+# Memory Budget:
+#   PostgreSQL 16:  1280 MB limit
+#   Redis 7:         256 MB limit
+#   Backend API:     768 MB limit
+#   Worker Daemon:   512 MB limit
+#   Admin Frontend:  512 MB limit
+#   Nginx Proxy:     128 MB limit
+#   OS / Kernel:    ~700 MB Headroom
+#   Total Stack:    < 4096 MB Physical RAM
+# ==============================================================================
+
 services:
   postgres:
     image: postgres:16-alpine
     container_name: hiralal_postgres
     restart: unless-stopped
+    command: postgres -c shared_buffers=512MB -c work_mem=16MB -c maintenance_work_mem=128MB -c effective_cache_size=1GB -c max_connections=100
+    deploy:
+      resources:
+        limits:
+          memory: 1280M
+        reservations:
+          memory: 512M
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-hiralal_rewards}
     expose:
       - '5432'
@@ -16,15 +37,27 @@ services:
     networks:
       - hiralal_net
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-hiralal_rewards}']
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-hiralal_rewards}']
       interval: 5s
       timeout: 5s
       retries: 5
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '20m'
+        max-file: '5'
 
   redis:
     image: redis:7-alpine
     container_name: hiralal_redis
     restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy noeviction
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
     expose:
       - '6379'
     volumes:
@@ -36,6 +69,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '20m'
+        max-file: '5'
 
   backend:
     build:
@@ -44,6 +82,12 @@ services:
     container_name: hiralal_backend
     restart: unless-stopped
     command: sh -c "npx prisma migrate deploy && node dist/server.js"
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,31 +96,40 @@ services:
     environment:
       PORT: 5000
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public
+      NODE_OPTIONS: '--max-old-space-size=512'
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
-      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
-      R2_BUCKET_NAME: ${R2_BUCKET_NAME}
-      R2_ENDPOINT: ${R2_ENDPOINT}
-      SIGNCARE_API_KEY: ${SIGNCARE_API_KEY}
-      SIGNCARE_APP_ID: ${SIGNCARE_APP_ID}
-      RAZORPAYX_KEY_ID: ${RAZORPAYX_KEY_ID}
-      RAZORPAYX_KEY_SECRET: ${RAZORPAYX_KEY_SECRET}
-      RAZORPAYX_ACCOUNT_NUMBER: ${RAZORPAYX_ACCOUNT_NUMBER}
-      RAZORPAYX_WEBHOOK_SECRET: ${RAZORPAYX_WEBHOOK_SECRET}
-      SMS_API_KEY: ${SMS_API_KEY}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
-      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required}
+      STORAGE_HMAC_SECRET: ${STORAGE_HMAC_SECRET:?STORAGE_HMAC_SECRET is required}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?R2_ACCESS_KEY_ID is required}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?R2_SECRET_ACCESS_KEY is required}
+      R2_BUCKET_NAME: ${R2_BUCKET_NAME:?R2_BUCKET_NAME is required}
+      R2_ENDPOINT: ${R2_ENDPOINT:?R2_ENDPOINT is required}
+      SIGNCARE_API_KEY: ${SIGNCARE_API_KEY:?SIGNCARE_API_KEY is required}
+      SIGNCARE_APP_ID: ${SIGNCARE_APP_ID:?SIGNCARE_APP_ID is required}
+      RAZORPAYX_KEY_ID: ${RAZORPAYX_KEY_ID:?RAZORPAYX_KEY_ID is required}
+      RAZORPAYX_KEY_SECRET: ${RAZORPAYX_KEY_SECRET:?RAZORPAYX_KEY_SECRET is required}
+      RAZORPAYX_ACCOUNT_NUMBER: ${RAZORPAYX_ACCOUNT_NUMBER:?RAZORPAYX_ACCOUNT_NUMBER is required}
+      RAZORPAYX_WEBHOOK_SECRET: ${RAZORPAYX_WEBHOOK_SECRET:?RAZORPAYX_WEBHOOK_SECRET is required}
+      MSG91_AUTH_KEY: ${MSG91_AUTH_KEY:?MSG91_AUTH_KEY is required}
+      MSG91_TEMPLATE_ID: ${MSG91_TEMPLATE_ID:?MSG91_TEMPLATE_ID is required}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:?ADMIN_INITIAL_PASSWORD is required}
     expose:
       - '5000'
     volumes:
       - uploads:/app/uploads
     networks:
       - hiralal_net
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '20m'
+        max-file: '5'
 
   worker:
     build:
@@ -85,6 +138,12 @@ services:
     container_name: hiralal_worker
     restart: unless-stopped
     command: node dist/worker/index.js
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
     depends_on:
       postgres:
         condition: service_healthy
@@ -94,15 +153,22 @@ services:
         condition: service_started
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public
+      NODE_OPTIONS: '--max-old-space-size=384'
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-      RAZORPAYX_KEY_ID: ${RAZORPAYX_KEY_ID}
-      RAZORPAYX_KEY_SECRET: ${RAZORPAYX_KEY_SECRET}
-      RAZORPAYX_ACCOUNT_NUMBER: ${RAZORPAYX_ACCOUNT_NUMBER}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required}
+      RAZORPAYX_KEY_ID: ${RAZORPAYX_KEY_ID:?RAZORPAYX_KEY_ID is required}
+      RAZORPAYX_KEY_SECRET: ${RAZORPAYX_KEY_SECRET:?RAZORPAYX_KEY_SECRET is required}
+      RAZORPAYX_ACCOUNT_NUMBER: ${RAZORPAYX_ACCOUNT_NUMBER:?RAZORPAYX_ACCOUNT_NUMBER is required}
     networks:
       - hiralal_net
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '20m'
+        max-file: '5'
 
   admin:
     build:
@@ -110,6 +176,12 @@ services:
       dockerfile: Dockerfile
     container_name: hiralal_admin
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
     depends_on:
       - backend
     environment:
@@ -119,20 +191,38 @@ services:
       - '3000'
     networks:
       - hiralal_net
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '20m'
+        max-file: '5'
 
   nginx:
     image: nginx:alpine
     container_name: hiralal_nginx
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 32M
     ports:
       - '80:80'
+      - '443:443'
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
       - backend
       - admin
     networks:
       - hiralal_net
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '20m'
+        max-file: '5'
 
 networks:
   hiralal_net:

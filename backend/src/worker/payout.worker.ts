@@ -241,24 +241,38 @@ export class PayoutWorker {
    * Polls OutboxEvent table for unprocessed PAYOUT_DISPATCH events.
    */
   static async processOutboxEvents(): Promise<void> {
-    const pendingEvents = await prisma.outboxEvent.findMany({
+    const leaseTimeout = new Date(Date.now() - 5 * 60 * 1000);
+    const candidateEvents = await prisma.outboxEvent.findMany({
       where: {
         eventType: 'PAYOUT_DISPATCH',
-        status: 'PENDING',
+        OR: [
+          { status: 'PENDING' },
+          { status: 'PROCESSING', updatedAt: { lt: leaseTimeout } },
+        ],
       },
       take: 20,
       orderBy: { createdAt: 'asc' },
     });
 
-    for (const event of pendingEvents) {
+    for (const event of candidateEvents) {
       try {
-        await prisma.outboxEvent.update({
-          where: { id: event.id },
+        // Atomic compare-and-swap claim to guarantee single worker execution
+        const claimResult = await prisma.outboxEvent.updateMany({
+          where: {
+            id: event.id,
+            status: event.status,
+            updatedAt: event.updatedAt,
+          },
           data: {
             status: 'PROCESSING',
             attempts: { increment: 1 },
           },
         });
+
+        if (claimResult.count === 0) {
+          // Another worker instance claimed this event concurrently
+          continue;
+        }
 
         const payload = event.payload as any;
         if (payload && payload.payoutId) {
