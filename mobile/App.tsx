@@ -69,7 +69,7 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0F172A',
+    backgroundColor: Platform.OS === 'web' ? '#0F172A' : '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
   },

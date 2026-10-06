@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -7,8 +7,9 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
-  Dimensions,
   Platform,
+  useWindowDimensions,
+  LayoutChangeEvent,
 } from 'react-native';
 import {
   FileText,
@@ -22,38 +23,167 @@ import {
 } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+// Natural dimensions of welcome_bg.png
+const BG_ORIGINAL_WIDTH = 504;
+const BG_ORIGINAL_HEIGHT = 1024;
+const BG_ASPECT_RATIO = BG_ORIGINAL_WIDTH / BG_ORIGINAL_HEIGHT;
+
+// Center coordinates in 504x1024 coordinate system:
+// Blue plate center (For Plumbers): X = 415, Y = 258
+const BLUE_PLATE_CENTER_X = 415;
+const BLUE_PLATE_CENTER_Y = 258;
+
+// Orange plate center (For Tile Installers): X = 415, Y = 560
+const ORANGE_PLATE_CENTER_X = 415;
+const ORANGE_PLATE_CENTER_Y = 560;
 
 export default function WelcomeScreen() {
   const { setCurrentScreen } = useApp();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const [containerSize, setContainerSize] = useState({
+    width: windowWidth,
+    height: windowHeight,
+  });
+
+  const onLayout = (event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    if (width > 0 && height > 0) {
+      setContainerSize({ width, height });
+    }
+  };
+
+  const currentW = containerSize.width || windowWidth;
+  const currentH = containerSize.height || windowHeight;
+
+  // Responsive scale factor based on container height
+  const scale = currentH / BG_ORIGINAL_HEIGHT;
+  const imgWidth = currentH * BG_ASPECT_RATIO;
+
+  // Blue plate overlay positioning (pinned to right: 0)
+  const blueCenterFromRight = (BG_ORIGINAL_WIDTH - BLUE_PLATE_CENTER_X) * scale;
+  const blueCenterFromTop = BLUE_PLATE_CENTER_Y * scale;
+  const blueBoxWidth = 140 * scale;
+  const blueBoxHeight = 72 * scale;
+
+  // Orange plate overlay positioning (pinned to right: 0)
+  const orangeCenterFromRight = (BG_ORIGINAL_WIDTH - ORANGE_PLATE_CENTER_X) * scale;
+  const orangeCenterFromTop = ORANGE_PLATE_CENTER_Y * scale;
+  const orangeBoxWidth = 140 * scale;
+  const orangeBoxHeight = 72 * scale;
+
+  // Safe content column width ensuring it never intersects the right-side artwork
+  const maxContentWidth = Math.min(currentW * 0.58, 290 * scale);
+
+  // Scaled typography and sizing
+  const headlineFontSize = Math.max(24, Math.round(28 * Math.min(scale, 1.1)));
+  const headlineLineHeight = Math.round(headlineFontSize * 1.22);
+  const subFontSize = Math.max(11, Math.round(12 * Math.min(scale, 1.1)));
+  const subLineHeight = Math.round(subFontSize * 1.45);
+
+  const logoSize = Math.max(50, Math.round(58 * Math.min(scale, 1.1)));
+  const brandNameSize = Math.max(13, Math.round(15 * Math.min(scale, 1.1)));
+  const brandSubSize = Math.max(8.5, Math.round(9.5 * Math.min(scale, 1.1)));
+
+  const cardPadV = Math.max(7, Math.round(9 * Math.min(scale, 1.05)));
+  const cardPadH = Math.max(8, Math.round(10 * Math.min(scale, 1.05)));
+  const iconBoxSize = Math.max(28, Math.round(32 * Math.min(scale, 1.05)));
+  const cardTitleSize = Math.max(11, Math.round(12 * Math.min(scale, 1.05)));
+  const cardSubSize = Math.max(8.5, Math.round(9.5 * Math.min(scale, 1.05)));
 
   return (
-    <View style={styles.root}>
-      {/* 1. Background image covering full screen */}
+    <View style={styles.root} onLayout={onLayout}>
+      {/* 1. Background image: anchored to right edge so artwork is never cropped */}
       <Image
         source={require('../../assets/welcome_bg.png')}
-        style={StyleSheet.absoluteFill}
+        style={[
+          styles.bgImage,
+          {
+            width: imgWidth,
+            height: currentH,
+          },
+        ]}
         resizeMode="cover"
       />
 
-      {/* 2. Plumber Plate Overlay - locked directly onto the Blue Plate on background */}
-      <View style={styles.bluePlateOverlay} pointerEvents="none">
+      {/* 2. Plumber Plate Overlay: Locked directly onto the Blue Plate shape */}
+      <View
+        style={[
+          styles.plateOverlay,
+          {
+            top: blueCenterFromTop - blueBoxHeight / 2,
+            right: blueCenterFromRight - blueBoxWidth / 2,
+            width: blueBoxWidth,
+            height: blueBoxHeight,
+          },
+        ]}
+        pointerEvents="none"
+      >
         <View style={styles.plateHeaderRow}>
-          <Wrench size={18} color="#FFFFFF" strokeWidth={2.4} />
-          <Text style={styles.plateForText}>FOR</Text>
+          <Wrench
+            size={Math.max(13, Math.round(15 * Math.min(scale, 1.1)))}
+            color="#FFFFFF"
+            strokeWidth={2.4}
+          />
+          <Text
+            style={[
+              styles.plateForText,
+              { fontSize: Math.max(8.5, Math.round(10 * Math.min(scale, 1.1))) },
+            ]}
+          >
+            FOR
+          </Text>
         </View>
-        <Text style={styles.plateMainText}>FOR PLUMBERS</Text>
+        <Text
+          style={[
+            styles.plateMainText,
+            { fontSize: Math.max(9.5, Math.round(11 * Math.min(scale, 1.1))) },
+          ]}
+          numberOfLines={1}
+        >
+          PLUMBERS
+        </Text>
       </View>
 
-      {/* 3. Tile Installer Plate Overlay - locked directly onto the Orange Plate on background */}
-      <View style={styles.orangePlateOverlay} pointerEvents="none">
+      {/* 3. Tile Installer Plate Overlay: Locked directly onto the Orange Plate shape */}
+      <View
+        style={[
+          styles.plateOverlay,
+          {
+            top: orangeCenterFromTop - orangeBoxHeight / 2,
+            right: orangeCenterFromRight - orangeBoxWidth / 2,
+            width: orangeBoxWidth,
+            height: orangeBoxHeight,
+          },
+        ]}
+        pointerEvents="none"
+      >
         <View style={styles.plateHeaderRow}>
-          <Grid size={18} color="#FFFFFF" strokeWidth={2.4} />
-          <Text style={styles.plateForText}>FOR</Text>
+          <Grid
+            size={Math.max(13, Math.round(15 * Math.min(scale, 1.1)))}
+            color="#FFFFFF"
+            strokeWidth={2.4}
+          />
+          <Text
+            style={[
+              styles.plateForText,
+              { fontSize: Math.max(8.5, Math.round(10 * Math.min(scale, 1.1))) },
+            ]}
+          >
+            FOR
+          </Text>
         </View>
-        <Text style={styles.plateMainText}>TILE INSTALLERS</Text>
+        <Text
+          style={[
+            styles.plateMainText,
+            { fontSize: Math.max(9, Math.round(10.5 * Math.min(scale, 1.1))) },
+          ]}
+          numberOfLines={1}
+        >
+          TILE INSTALLERS
+        </Text>
       </View>
 
+      {/* 4. Foreground Content Column */}
       <SafeAreaView style={styles.safeArea}>
         <ScrollView
           style={styles.scrollView}
@@ -61,71 +191,161 @@ export default function WelcomeScreen() {
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
-          {/* Top content container */}
-          <View style={styles.topContent}>
-            {/* 4. Brand Header: Centered Crest Logo + Centered Company Name + Red Program Subtitle */}
+          {/* Top content container bounded within left content column */}
+          <View style={[styles.topContent, { maxWidth: maxContentWidth }]}>
+            {/* Brand Header */}
             <View style={styles.brandHeader}>
               <Image
                 source={require('../../assets/brand_logo.png')}
-                style={styles.logo}
+                style={{ width: logoSize, height: logoSize, marginBottom: 6 }}
                 resizeMode="contain"
               />
-              <Text style={styles.brandName}>HIRALAL AND SONS</Text>
+              <Text style={[styles.brandName, { fontSize: brandNameSize }]}>
+                HIRALAL AND SONS
+              </Text>
               <View style={styles.subRow}>
                 <View style={styles.subLine} />
-                <Text style={styles.brandSub}>REWARDS PROGRAM</Text>
+                <Text style={[styles.brandSub, { fontSize: brandSubSize }]}>
+                  REWARDS PROGRAM
+                </Text>
                 <View style={styles.subLine} />
               </View>
             </View>
 
-            {/* 5. Main Headline: Left aligned with 'More Rewards' in red */}
+            {/* Hero Headline */}
             <View style={styles.headlineContainer}>
-              <Text style={styles.headlineDark}>Your Work</Text>
-              <Text style={styles.headlineDark}>Deserves</Text>
-              <Text style={styles.headlineRed}>More Rewards</Text>
-              <Text style={styles.headlineSub}>
+              <Text
+                style={[
+                  styles.headlineDark,
+                  { fontSize: headlineFontSize, lineHeight: headlineLineHeight },
+                ]}
+              >
+                Your Work
+              </Text>
+              <Text
+                style={[
+                  styles.headlineDark,
+                  { fontSize: headlineFontSize, lineHeight: headlineLineHeight },
+                ]}
+              >
+                Deserves
+              </Text>
+              <Text
+                style={[
+                  styles.headlineRed,
+                  { fontSize: headlineFontSize, lineHeight: headlineLineHeight },
+                ]}
+              >
+                More Rewards
+              </Text>
+              <Text
+                style={[
+                  styles.headlineSub,
+                  { fontSize: subFontSize, lineHeight: subLineHeight },
+                ]}
+              >
                 Earn exciting rewards on genuine purchases from Hiralal & Sons.
               </Text>
             </View>
 
-            {/* 6. Value Proposition Cards: Left column, soft colored backgrounds */}
+            {/* 3 Value Proposition Cards */}
             <View style={styles.cardsContainer}>
               {/* Card 1: Upload Bills */}
-              <View style={[styles.card, styles.cardBlue]}>
-                <View style={[styles.iconBox, styles.iconBlue]}>
-                  <FileText size={18} color="#1E60D5" strokeWidth={2.2} />
+              <View
+                style={[
+                  styles.card,
+                  styles.cardBlue,
+                  { paddingVertical: cardPadV, paddingHorizontal: cardPadH },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.iconBox,
+                    styles.iconBlue,
+                    { width: iconBoxSize, height: iconBoxSize },
+                  ]}
+                >
+                  <FileText
+                    size={Math.round(iconBoxSize * 0.55)}
+                    color="#1E60D5"
+                    strokeWidth={2.2}
+                  />
                 </View>
                 <View style={styles.cardTextWrap}>
-                  <Text style={styles.cardTitle}>Upload Bills</Text>
-                  <Text style={styles.cardSub}>Submit genuine purchase bills</Text>
+                  <Text style={[styles.cardTitle, { fontSize: cardTitleSize }]}>
+                    Upload Bills
+                  </Text>
+                  <Text style={[styles.cardSub, { fontSize: cardSubSize }]}>
+                    Submit genuine purchase bills
+                  </Text>
                 </View>
               </View>
 
               {/* Card 2: Earn Rewards */}
-              <View style={[styles.card, styles.cardPink]}>
-                <View style={[styles.iconBox, styles.iconPink]}>
-                  <Gift size={18} color="#DC2626" strokeWidth={2.2} />
+              <View
+                style={[
+                  styles.card,
+                  styles.cardPink,
+                  { paddingVertical: cardPadV, paddingHorizontal: cardPadH },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.iconBox,
+                    styles.iconPink,
+                    { width: iconBoxSize, height: iconBoxSize },
+                  ]}
+                >
+                  <Gift
+                    size={Math.round(iconBoxSize * 0.55)}
+                    color="#DC2626"
+                    strokeWidth={2.2}
+                  />
                 </View>
                 <View style={styles.cardTextWrap}>
-                  <Text style={styles.cardTitle}>Earn Rewards</Text>
-                  <Text style={styles.cardSub}>Get rewarded for your purchases</Text>
+                  <Text style={[styles.cardTitle, { fontSize: cardTitleSize }]}>
+                    Earn Rewards
+                  </Text>
+                  <Text style={[styles.cardSub, { fontSize: cardSubSize }]}>
+                    Get rewarded for your purchases
+                  </Text>
                 </View>
               </View>
 
               {/* Card 3: Safe & Verified */}
-              <View style={[styles.card, styles.cardGreen]}>
-                <View style={[styles.iconBox, styles.iconGreen]}>
-                  <ShieldCheck size={18} color="#16A34A" strokeWidth={2.2} />
+              <View
+                style={[
+                  styles.card,
+                  styles.cardGreen,
+                  { paddingVertical: cardPadV, paddingHorizontal: cardPadH },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.iconBox,
+                    styles.iconGreen,
+                    { width: iconBoxSize, height: iconBoxSize },
+                  ]}
+                >
+                  <ShieldCheck
+                    size={Math.round(iconBoxSize * 0.55)}
+                    color="#16A34A"
+                    strokeWidth={2.2}
+                  />
                 </View>
                 <View style={styles.cardTextWrap}>
-                  <Text style={styles.cardTitle}>Safe & Verified</Text>
-                  <Text style={styles.cardSub}>Trusted and secure platform</Text>
+                  <Text style={[styles.cardTitle, { fontSize: cardTitleSize }]}>
+                    Safe & Verified
+                  </Text>
+                  <Text style={[styles.cardSub, { fontSize: cardSubSize }]}>
+                    Trusted and secure platform
+                  </Text>
                 </View>
               </View>
             </View>
           </View>
 
-          {/* 7. Action Buttons at the bottom */}
+          {/* Action Buttons spanning full width */}
           <View style={styles.actionsContainer}>
             {/* Login Button */}
             <TouchableOpacity
@@ -133,9 +353,9 @@ export default function WelcomeScreen() {
               onPress={() => setCurrentScreen('LOGIN')}
               activeOpacity={0.85}
             >
-              <LogIn size={20} color="#FFFFFF" />
+              <LogIn size={20} color="#FFFFFF" strokeWidth={2.2} />
               <Text style={styles.loginBtnText}>Login</Text>
-              <ChevronRight size={20} color="#FFFFFF" />
+              <ChevronRight size={20} color="#FFFFFF" strokeWidth={2.5} />
             </TouchableOpacity>
 
             {/* Create New Account Button */}
@@ -144,9 +364,9 @@ export default function WelcomeScreen() {
               onPress={() => setCurrentScreen('REGISTER')}
               activeOpacity={0.85}
             >
-              <User size={20} color="#1E60D5" />
+              <User size={20} color="#1E60D5" strokeWidth={2.2} />
               <Text style={styles.createBtnText}>Create New Account</Text>
-              <ChevronRight size={20} color="#1E60D5" />
+              <ChevronRight size={20} color="#1E60D5" strokeWidth={2.5} />
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -159,6 +379,12 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  bgImage: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
   },
   safeArea: {
     flex: 1,
@@ -168,8 +394,8 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'android' ? 10 : 4,
-    paddingBottom: 24,
+    paddingTop: Platform.OS === 'android' ? 8 : 4,
+    paddingBottom: 20,
     minHeight: '100%',
     justifyContent: 'space-between',
   },
@@ -177,28 +403,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  // Locked directly onto the Blue Plate shape on the background
-  bluePlateOverlay: {
+  // Locked directly onto the Blue & Orange Plates on the background
+  plateOverlay: {
     position: 'absolute',
-    top: SCREEN_HEIGHT * 0.23,
-    right: SCREEN_WIDTH * 0.04,
-    width: SCREEN_WIDTH * 0.32,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
   },
-
-  // Locked directly onto the Orange Plate shape on the background
-  orangePlateOverlay: {
-    position: 'absolute',
-    top: SCREEN_HEIGHT * 0.535,
-    right: SCREEN_WIDTH * 0.04,
-    width: SCREEN_WIDTH * 0.32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
-  },
-
   plateHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -208,33 +419,24 @@ const styles = StyleSheet.create({
   },
   plateForText: {
     color: '#FFFFFF',
-    fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
   plateMainText: {
     color: '#FFFFFF',
-    fontSize: 10.5,
     fontWeight: '900',
-    letterSpacing: 0.3,
+    letterSpacing: 0.4,
     textAlign: 'center',
   },
 
   // Brand Header: Logo centered above text
   brandHeader: {
     alignItems: 'center',
-    width: SCREEN_WIDTH * 0.58,
-    marginTop: 8,
-    marginBottom: 16,
-    alignSelf: 'flex-start',
-  },
-  logo: {
-    width: 60,
-    height: 60,
-    marginBottom: 6,
+    width: '100%',
+    marginTop: 4,
+    marginBottom: 14,
   },
   brandName: {
-    fontSize: 14.5,
     fontWeight: '900',
     color: '#0F172A',
     letterSpacing: 0.8,
@@ -248,56 +450,47 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   subLine: {
-    width: 12,
-    height: 1,
+    width: 14,
+    height: 1.5,
     backgroundColor: '#DC2626',
   },
   brandSub: {
-    fontSize: 9.5,
     fontWeight: '800',
     color: '#DC2626',
     letterSpacing: 1.2,
     textAlign: 'center',
   },
 
-  // Headline
+  // Hero Headline
   headlineContainer: {
-    width: SCREEN_WIDTH * 0.58,
-    marginBottom: 16,
+    width: '100%',
+    marginBottom: 14,
   },
   headlineDark: {
-    fontSize: 27,
     fontWeight: '900',
     color: '#0F172A',
-    lineHeight: 33,
     letterSpacing: -0.3,
   },
   headlineRed: {
-    fontSize: 27,
     fontWeight: '900',
     color: '#DC2626',
-    lineHeight: 35,
     letterSpacing: -0.3,
   },
   headlineSub: {
-    fontSize: 12,
     color: '#475569',
     marginTop: 8,
-    lineHeight: 17,
     fontWeight: '500',
   },
 
   // 3 Feature Cards
   cardsContainer: {
-    width: SCREEN_WIDTH * 0.58,
+    width: '100%',
     gap: 10,
-    marginBottom: 20,
+    marginBottom: 16,
   },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 9,
-    paddingHorizontal: 10,
     borderRadius: 16,
     gap: 8,
   },
@@ -311,8 +504,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#F0FDF4',
   },
   iconBox: {
-    width: 32,
-    height: 32,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -330,12 +521,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   cardTitle: {
-    fontSize: 12,
     fontWeight: '800',
     color: '#0F172A',
   },
   cardSub: {
-    fontSize: 9.5,
     color: '#64748B',
     marginTop: 1,
   },
@@ -344,7 +533,8 @@ const styles = StyleSheet.create({
   actionsContainer: {
     width: '100%',
     gap: 12,
-    paddingBottom: 8,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'android' ? 12 : 6,
   },
   loginBtn: {
     backgroundColor: '#1E60D5',
