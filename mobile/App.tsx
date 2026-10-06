@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, StyleSheet, SafeAreaView, StatusBar, Platform } from 'react-native';
 import { AppProvider, useApp } from './src/context/AppContext';
 import BottomNav from './src/components/BottomNav';
+import AnimatedSplashScreen from './src/components/AnimatedSplashScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import BillsScreen from './src/screens/BillsScreen';
 import RewardsScreen from './src/screens/RewardsScreen';
@@ -53,9 +54,14 @@ function MainAppNavigator() {
 }
 
 export default function App() {
+  const [showSplash, setShowSplash] = useState(true);
+
   return (
     <AppProvider>
       <MainAppNavigator />
+      {showSplash && (
+        <AnimatedSplashScreen onFinish={() => setShowSplash(false)} />
+      )}
     </AppProvider>
   );
 }

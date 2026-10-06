@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "Hiralal Rewards",
+    "name": "Hiralal & Sons Rewards",
     "slug": "hiralal-rewards",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/app_icon_red.png",
+    "icon": "./assets/brand_logo.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/welcome_neutral.png",
+      "image": "./assets/brand_logo.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -16,12 +16,12 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/app_icon_red.png",
+        "foregroundImage": "./assets/brand_logo.png",
         "backgroundColor": "#ffffff"
       }
     },
     "web": {
-      "favicon": "./assets/app_icon_red.png"
+      "favicon": "./assets/brand_logo.png"
     },
     "plugins": [
       "expo-asset"
