@@ -106,27 +106,31 @@ export function createRateLimiter(options: {
 // Pre-configured rate limiters
 export const otpRequestLimiter = createRateLimiter({
   keyPrefix: 'otp:request',
-  limit: 3,
-  windowSeconds: 300, // 3 requests per 5 minutes
+  limit: config.isProduction ? 5 : 25,
+  windowSeconds: 300,
   getIdentifier: (req) => req.body?.mobile || req.ip || 'anon',
   message: 'Too many OTP requests. Please wait 5 minutes before trying again.',
 });
 
 export const otpVerifyLimiter = createRateLimiter({
   keyPrefix: 'otp:verify',
-  limit: 5,
-  windowSeconds: 300, // 5 attempts per 5 minutes
+  limit: config.isProduction ? 10 : 50,
+  windowSeconds: 300,
   getIdentifier: (req) => req.body?.mobile || req.ip || 'anon',
   message: 'Too many verification attempts. Please wait 5 minutes before trying again.',
 });
 
 export const loginLimiter = createRateLimiter({
   keyPrefix: 'auth:login',
-  limit: 5,
-  windowSeconds: 900, // 5 login attempts per 15 minutes
+  limit: config.isProduction ? 15 : 60,
+  windowSeconds: config.isProduction ? 900 : 180,
   getIdentifier: (req) => req.body?.mobile || req.ip || 'anon',
-  message: 'Too many failed login attempts. Account temporarily locked for 15 minutes.',
+  message: 'Too many failed login attempts. Please wait a moment before trying again.',
 });
+
+export function clearRateLimitCache() {
+  memoryCache.clear();
+}
 
 export const passwordResetLimiter = createRateLimiter({
   keyPrefix: 'auth:password_reset',
