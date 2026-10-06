@@ -394,7 +394,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'android' ? 24 : 16,
+    paddingTop: Platform.OS === 'android' ? 52 : 38,
     paddingBottom: 20,
     minHeight: '100%',
     justifyContent: 'space-between',
@@ -433,8 +433,7 @@ const styles = StyleSheet.create({
   brandHeader: {
     alignItems: 'center',
     width: '100%',
-    marginTop: 10,
-    marginBottom: 18,
+    marginBottom: 44,
   },
   brandName: {
     fontWeight: '900',
@@ -464,7 +463,7 @@ const styles = StyleSheet.create({
   // Hero Headline
   headlineContainer: {
     width: '100%',
-    marginBottom: 18,
+    marginBottom: 32,
   },
   headlineDark: {
     fontWeight: '900',
@@ -485,8 +484,8 @@ const styles = StyleSheet.create({
   // 3 Feature Cards
   cardsContainer: {
     width: '100%',
-    gap: 10,
-    marginBottom: 20,
+    gap: 12,
+    marginBottom: 32,
   },
   card: {
     flexDirection: 'row',
@@ -534,7 +533,7 @@ const styles = StyleSheet.create({
     width: '100%',
     gap: 12,
     paddingTop: 10,
-    paddingBottom: Platform.OS === 'android' ? 48 : 36,
+    paddingBottom: Platform.OS === 'android' ? 88 : 72,
   },
   loginBtn: {
     backgroundColor: '#1E60D5',
