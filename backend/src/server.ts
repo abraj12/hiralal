@@ -156,10 +156,11 @@ app.use((err: any, req: any, res: Response, _next: NextFunction) => {
 export { app };
 
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(config.port, async () => {
+  app.listen(config.port, '0.0.0.0', async () => {
     console.log(`====================================================`);
     console.log(`🚀 Hiralal & Sons Rewards API running on port ${config.port}`);
     console.log(`   URL: http://localhost:${config.port}`);
+    console.log(`   LAN/Emulator URL: http://0.0.0.0:${config.port}`);
     console.log(`   Environment: ${config.nodeEnv}`);
     console.log(`====================================================`);
     await checkDatabaseConnection();

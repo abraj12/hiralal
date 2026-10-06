@@ -1,6 +1,46 @@
-import { Platform } from 'react-native';
+import Constants from 'expo-constants';
+import { Platform, NativeModules } from 'react-native';
 
 const getBaseUrl = () => {
+  // 1. If explicit EXPO_PUBLIC_API_URL is configured and not emulator 10.0.2.2
+  const envUrl = process.env.EXPO_PUBLIC_API_URL;
+  if (envUrl && !envUrl.includes('10.0.2.2')) {
+    return envUrl;
+  }
+
+  // 2. Auto-detect host IP from Expo Constants (hostUri or debuggerHost)
+  try {
+    const hostUri = Constants.expoConfig?.hostUri || (Constants as any).expoGoConfig?.debuggerHost;
+    if (hostUri) {
+      const host = hostUri.split(':')[0];
+      if (host && host !== 'localhost' && host !== '127.0.0.1') {
+        return `http://${host}:5000/api`;
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // 3. Fallback to NativeModules SourceCode scriptURL
+  try {
+    const scriptURL: string | undefined = NativeModules?.SourceCode?.scriptURL;
+    if (scriptURL) {
+      const match = scriptURL.match(/^https?:\/\/([^:/]+)/);
+      const host = match ? match[1] : null;
+      if (host && host !== 'localhost' && host !== '127.0.0.1') {
+        return `http://${host}:5000/api`;
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // 4. If EXPO_PUBLIC_API_URL was set to 10.0.2.2 and no network host was found
+  if (envUrl) {
+    return envUrl;
+  }
+
+  // 5. Default fallback
   if (Platform.OS === 'android') {
     return 'http://10.0.2.2:5000/api';
   }
@@ -8,6 +48,7 @@ const getBaseUrl = () => {
 };
 
 export const API_BASE = getBaseUrl();
+console.log('📡 Mobile API configured at:', API_BASE);
 
 export class MobileApiClient {
   private static token: string | null = null;

@@ -33,6 +33,7 @@ backend/dist/
 # Keep .env.example
 !.env.example
 !backend/.env.example
+!mobile/.env.example
 
 # Logs & temporary files
 npm-debug.log*
