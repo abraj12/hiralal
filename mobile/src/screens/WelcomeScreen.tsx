@@ -29,15 +29,6 @@ export default function WelcomeScreen() {
         </Text>
       </View>
 
-      {/* Hero Visual Banner from reference */}
-      <View style={styles.heroBannerBox}>
-        <Image
-          source={require('../../assets/hero_neutral.png')}
-          style={styles.heroBannerImage}
-          resizeMode="contain"
-        />
-      </View>
-
       {/* 3 Value Proposition Badges */}
       <View style={styles.featuresRow}>
         <View style={styles.featureItem}>
@@ -133,22 +124,12 @@ const styles = StyleSheet.create({
     marginTop: 6,
     lineHeight: 19,
   },
-  heroBannerBox: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-    marginVertical: 10,
-  },
-  heroBannerImage: {
-    width: '100%',
-    height: 160,
-  },
   featuresRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    marginTop: 16,
-    marginBottom: 24,
+    marginTop: 24,
+    marginBottom: 32,
   },
   featureItem: {
     flex: 1,
