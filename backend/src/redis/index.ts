@@ -2,6 +2,7 @@ import Redis from 'ioredis';
 import { config } from '../config';
 
 let redisClient: Redis | null = null;
+let lastErrorLog = 0;
 
 export function getRedisClient(): Redis {
   if (redisClient) return redisClient;
@@ -12,11 +13,13 @@ export function getRedisClient(): Redis {
     password: config.redis.password,
     maxRetriesPerRequest: null, // Required by BullMQ
     enableReadyCheck: true,
+    enableOfflineQueue: false, // Critical: do NOT hang offline commands; fail fast so fallback kicks in
+    connectTimeout: 2000,
     retryStrategy(times: number) {
       if (config.nodeEnv === 'test') {
-        return null; // Don't loop retries in unit test environment
+        return null;
       }
-      return Math.min(times * 100, 3000);
+      return Math.min(times * 500, 5000);
     },
   };
 
@@ -27,18 +30,34 @@ export function getRedisClient(): Redis {
   }
 
   redisClient.on('error', (err) => {
-    if (config.nodeEnv !== 'test') {
-      console.warn('⚠️ [REDIS WARNING]', err.message);
+    const now = Date.now();
+    if (now - lastErrorLog > 30000 && config.nodeEnv !== 'test') {
+      console.warn('⚠️ [REDIS OFFLINE] Redis unavailable, fallback cache active:', err.message);
+      lastErrorLog = now;
     }
+  });
+
+  redisClient.on('ready', () => {
+    console.log('✅ [REDIS] Connected and ready');
   });
 
   return redisClient;
 }
 
+export function isRedisReady(): boolean {
+  return redisClient !== null && redisClient.status === 'ready';
+}
+
 export async function checkRedisConnection(): Promise<boolean> {
   try {
     const client = getRedisClient();
-    const pong = await client.ping();
+    if (client.status !== 'ready') {
+      return false;
+    }
+    const pong = await Promise.race([
+      client.ping(),
+      new Promise<string>((_, reject) => setTimeout(() => reject(new Error('Redis ping timeout')), 500)),
+    ]);
     return pong === 'PONG';
   } catch (err) {
     return false;

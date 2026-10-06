@@ -20,11 +20,17 @@ import adminRoutes from './routes/admin.routes';
 
 const app = express();
 
-// Request ID tracking middleware
+// Request ID tracking and HTTP latency logging middleware
 app.use((req: any, res: Response, next: NextFunction) => {
+  const start = Date.now();
   const incomingId = req.headers['x-request-id'] as string;
   req.requestId = incomingId || crypto.randomUUID();
   res.setHeader('X-Request-Id', req.requestId);
+
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`📡 [HTTP] ${req.method} ${req.originalUrl || req.url} - ${res.statusCode} (${duration}ms)`);
+  });
   next();
 });
 

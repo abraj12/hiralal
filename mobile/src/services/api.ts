@@ -92,19 +92,31 @@ export class MobileApiClient {
       headers['Authorization'] = `Bearer ${currentToken}`;
     }
 
+    const start = Date.now();
     try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12000); // 12-second timeout
+
       const res = await fetch(`${API_BASE}${endpoint}`, {
         ...options,
         headers,
+        signal: controller.signal,
       });
+      clearTimeout(timer);
 
       const data = await res.json();
+      console.log(`⚡ [API] ${options.method || 'GET'} ${endpoint} completed in ${Date.now() - start}ms`);
       if (!res.ok) {
         throw new Error(data.message || 'Request failed');
       }
       return data;
     } catch (err: any) {
-      console.warn(`[API ERROR] ${endpoint}:`, err.message);
+      const elapsed = Date.now() - start;
+      if (err.name === 'AbortError') {
+        console.warn(`⏱️ [API TIMEOUT] ${endpoint} timed out after ${elapsed}ms`);
+        throw new Error('Connection timed out. Please check network/Wi-Fi connection.');
+      }
+      console.warn(`[API ERROR] ${endpoint} (${elapsed}ms):`, err.message);
       throw err;
     }
   }

@@ -57,12 +57,14 @@ describe('Concurrency & Financial Integrity Tests', () => {
     // Enable redemption window
     await prisma.redemptionSettings.upsert({
       where: { id: 'default' },
-      update: { isEnabled: true, minimumAmount: 500, maximumAmount: 10000 },
+      update: { isEnabled: true, minimumAmount: 500, maximumAmount: 10000, startAt: null, endAt: null },
       create: {
         id: 'default',
         isEnabled: true,
         minimumAmount: 500,
         maximumAmount: 10000,
+        startAt: null,
+        endAt: null,
       },
     });
 

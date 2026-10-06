@@ -133,7 +133,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setCurrentScreen('MAIN');
     setActiveTab('HOME');
-    await refreshData();
+    refreshData().catch(e => console.warn('Background sync failed:', e));
   };
 
   const logout = () => {

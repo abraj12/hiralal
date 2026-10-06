@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { getRedisClient, checkRedisConnection } from '../redis';
+import { getRedisClient, isRedisReady, checkRedisConnection } from '../redis';
 import { config } from '../config';
 
 // In-memory fallback cache when Redis is offline or in testing
@@ -42,9 +42,7 @@ export function createRateLimiter(options: {
     const key = `ratelimit:${keyPrefix}:${identifier}`;
 
     try {
-      const isRedisAvailable = await checkRedisConnection();
-
-      if (isRedisAvailable) {
+      if (isRedisReady()) {
         const redis = getRedisClient();
         const current = await redis.incr(key);
 
