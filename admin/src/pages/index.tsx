@@ -18,13 +18,15 @@ import { AdminApiClient } from '../lib/api';
 
 export default function AdminDashboardPage() {
   const router = useRouter();
+  const [profession, setProfession] = useState('ALL');
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedBill, setSelectedBill] = useState<any>(null);
 
   const fetchDashboard = async () => {
     try {
-      const res = await AdminApiClient.getDashboard();
+      setLoading(true);
+      const res = await AdminApiClient.getDashboard(profession);
       setData(res);
     } catch (err) {
       console.error(err);
@@ -35,7 +37,7 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     fetchDashboard();
-  }, []);
+  }, [profession]);
 
   const stats = data?.stats || {
     totalUsers: 2,
@@ -72,6 +74,21 @@ export default function AdminDashboardPage() {
           </div>
 
           <div className="flex items-center space-x-3">
+            {/* Profession Filter */}
+            <div className="bg-slate-200/80 p-1 rounded-xl flex space-x-1 text-xs font-bold">
+              {['ALL', 'PLUMBER', 'TILE_INSTALLER'].map(pf => (
+                <button
+                  key={pf}
+                  onClick={() => setProfession(pf)}
+                  className={`px-3 py-1.5 rounded-lg transition ${
+                    profession === pf ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+                  }`}
+                >
+                  {pf === 'ALL' ? 'Overall' : pf === 'PLUMBER' ? 'Plumbers' : 'Tiles'}
+                </button>
+              ))}
+            </div>
+
             <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
               <span className="w-2 h-2 rounded-full bg-emerald-500 mr-2 animate-ping" />
               Live Backend Active
@@ -135,7 +152,7 @@ export default function AdminDashboardPage() {
               ₹{stats.rewardsThisMonth.toLocaleString('en-IN')}
             </div>
             <div className="text-xs text-slate-400 mt-2 font-medium">
-              Calculated automatically at 0.5%
+              Dynamic incentive rules applied
             </div>
           </div>
 
@@ -197,7 +214,7 @@ export default function AdminDashboardPage() {
                   <th className="py-3.5 px-4">Professional</th>
                   <th className="py-3.5 px-4">Profession</th>
                   <th className="py-3.5 px-4">Bill Amount</th>
-                  <th className="py-3.5 px-4">Reward (0.5%)</th>
+                  <th className="py-3.5 px-4">Reward</th>
                   <th className="py-3.5 px-4">Status</th>
                   <th className="py-3.5 px-5 text-right">Action</th>
                 </tr>

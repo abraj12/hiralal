@@ -28,7 +28,7 @@ describe('Phase 19 — Database Migrations Verification', () => {
       encoding: 'utf8',
     });
 
-    expect(migrateOutput).toContain('1 migration found');
+    expect(migrateOutput).toMatch(/\d+ migration(s)? found/);
     expect(migrateOutput).toContain('All migrations have been successfully applied');
 
     // 3. Connect to fresh database and verify complete schema
@@ -51,8 +51,8 @@ describe('Phase 19 — Database Migrations Verification', () => {
       const migrations: any = await testPrisma.$queryRaw`
         SELECT migration_name, finished_at FROM _prisma_migrations;
       `;
-      expect(migrations.length).toBe(1);
-      expect(migrations[0].migration_name).toContain('init_production_schema');
+      expect(migrations.length).toBeGreaterThanOrEqual(1);
+      expect(migrations.some((m: any) => m.migration_name.includes('init_production_schema'))).toBe(true);
     } finally {
       await testPrisma.$disconnect();
 

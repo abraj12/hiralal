@@ -25,10 +25,6 @@ export default function UploadBillScreen() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const calculatedReward = billAmount && !isNaN(parseFloat(billAmount))
-    ? (parseFloat(billAmount) * 0.005).toFixed(2)
-    : '0.00';
-
   const handleSubmit = async () => {
     if (!invoiceNumber.trim() || !invoiceDate || !billAmount.trim()) {
       setErrorMsg('Please fill in Invoice Number, Date, and Amount.');
@@ -73,11 +69,11 @@ export default function UploadBillScreen() {
           We'll verify your bill and update your rewards soon.
         </Text>
         <View style={styles.provisionalRewardCard}>
-          <Text style={styles.provisionalLabel}>Provisional Reward Earned</Text>
-          <Text style={[styles.provisionalAmount, { color: theme.primaryColor }]}>
-            ₹{calculatedReward}
+          <Text style={styles.provisionalLabel}>Reward Verification Pending</Text>
+          <Text style={[styles.provisionalAmount, { color: theme.primaryColor, fontSize: 18, marginTop: 4 }]}>
+            Under Review
           </Text>
-          <Text style={styles.provisionalNote}>0.5% will be credited upon admin verification</Text>
+          <Text style={styles.provisionalNote}>Reward will be calculated and credited upon administrator verification</Text>
         </View>
 
         <TouchableOpacity
@@ -180,18 +176,18 @@ export default function UploadBillScreen() {
             />
           </View>
 
-          {/* Real-time Calculated Reward Preview */}
+          {/* Reward Program Info Box */}
           <View style={[styles.rewardPreviewBox, { backgroundColor: theme.primaryLight, borderColor: theme.primaryColor }]}>
             <View style={styles.rewardPreviewHeader}>
               <Text style={[styles.rewardPreviewTitle, { color: theme.primaryDark }]}>
-                Expected Reward (0.5%)
+                Hiralal Rewards Program
               </Text>
-              <Text style={[styles.rewardPreviewValue, { color: theme.primaryColor }]}>
-                ₹{calculatedReward}
+              <Text style={[styles.rewardPreviewValue, { color: theme.primaryColor, fontSize: 13 }]}>
+                Awaiting Verification
               </Text>
             </View>
             <Text style={styles.rewardPreviewDesc}>
-              Calculated on genuine Hiralal & Sons purchases. Verified on backend.
+              Reward points will be verified and credited directly to your wallet after administrator invoice audit.
             </Text>
           </View>
 

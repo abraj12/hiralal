@@ -81,7 +81,7 @@ export default function RewardsScreen() {
 
                   <View style={styles.cardFooterRow}>
                     <Text style={styles.cardBillAmount}>
-                      Bill Amount: ₹{item.billAmount.toLocaleString('en-IN')} (0.5%)
+                      Bill Amount: ₹{item.billAmount.toLocaleString('en-IN')}
                     </Text>
                     <Text
                       style={[

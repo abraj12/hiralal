@@ -85,7 +85,7 @@ export default function AdminBillsPage() {
                 <th className="py-3.5 px-4">Profession</th>
                 <th className="py-3.5 px-4">Invoice Date</th>
                 <th className="py-3.5 px-4">Bill Amount</th>
-                <th className="py-3.5 px-4">System Reward (0.5%)</th>
+                <th className="py-3.5 px-4">Eligible Reward</th>
                 <th className="py-3.5 px-4">Status</th>
                 <th className="py-3.5 px-5 text-right">Verification</th>
               </tr>
@@ -117,9 +117,19 @@ export default function AdminBillsPage() {
                     </td>
                     <td className="py-4 px-4 font-black text-slate-900 text-sm">
                       ₹{b.billAmount.toLocaleString('en-IN')}
+                      {b.gstIncluded && (
+                        <div className="text-[10px] text-slate-400 font-normal">
+                          GST {b.gstRate}% (Eligible ₹{(b.eligibleRewardAmount || b.billAmount).toLocaleString('en-IN')})
+                        </div>
+                      )}
                     </td>
                     <td className="py-4 px-4 font-black text-emerald-600 text-sm">
                       ₹{b.calculatedReward.toLocaleString('en-IN')}
+                      {b.rewardRateSnapshot && (
+                        <div className="text-[10px] text-emerald-700 font-normal">
+                          @{b.rewardRateSnapshot}%
+                        </div>
+                      )}
                     </td>
                     <td className="py-4 px-4">
                       <span

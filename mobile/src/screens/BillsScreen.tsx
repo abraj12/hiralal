@@ -126,9 +126,9 @@ export default function BillsScreen() {
                   </View>
 
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.billAmountLabel}>Reward (0.5%)</Text>
-                    <Text style={[styles.rewardValue, { color: isApproved ? '#16A34A' : theme.primaryColor }]}>
-                      +₹{b.calculatedReward}
+                    <Text style={styles.billAmountLabel}>{isApproved ? 'Reward Earned' : 'Reward Status'}</Text>
+                    <Text style={[styles.rewardValue, { color: isApproved ? '#16A34A' : '#64748B' }]}>
+                      {isApproved ? `+₹${b.calculatedReward}` : 'Awaiting Review'}
                     </Text>
                   </View>
                 </View>
@@ -168,14 +168,10 @@ export default function BillsScreen() {
                   <Text style={styles.detailValue}>₹{selectedBill.billAmount.toLocaleString('en-IN')}</Text>
                 </View>
                 <View style={styles.detailItem}>
-                  <Text style={styles.detailLabel}>Calculated Reward</Text>
-                  <Text style={[styles.detailValue, { color: '#16A34A' }]}>
-                    ₹{selectedBill.calculatedReward}
+                  <Text style={styles.detailLabel}>Reward Status</Text>
+                  <Text style={[styles.detailValue, { color: selectedBill.status === 'APPROVED' ? '#16A34A' : '#64748B' }]}>
+                    {selectedBill.status === 'APPROVED' ? `₹${selectedBill.calculatedReward}` : 'Pending Verification'}
                   </Text>
-                </View>
-                <View style={styles.detailItem}>
-                  <Text style={styles.detailLabel}>Reward Rate</Text>
-                  <Text style={styles.detailValue}>0.5% Cash</Text>
                 </View>
                 <View style={styles.detailItem}>
                   <Text style={styles.detailLabel}>Status</Text>

@@ -49,9 +49,10 @@ export class AdminApiClient {
     return data;
   }
 
-  // Dashboard Overview
-  static getDashboard() {
-    return this.request('/admin/dashboard');
+  // Dashboard Overview with Profession Filtering
+  static getDashboard(profession = 'ALL') {
+    const params = new URLSearchParams({ profession });
+    return this.request(`/admin/dashboard?${params.toString()}`);
   }
 
   // User Management
@@ -65,21 +66,39 @@ export class AdminApiClient {
   }
 
   // Bills Management & Verification
-  static getBills(status = 'ALL', profession = 'ALL') {
+  static getBills(status = 'ALL', profession = 'ALL', search = '') {
     const params = new URLSearchParams({ status, profession });
+    if (search) params.append('search', search);
     return this.request(`/admin/bills?${params.toString()}`);
   }
 
-  static verifyBill(id: string, action: 'APPROVE' | 'REJECT', rejectionReason?: string) {
+  static verifyBill(
+    id: string,
+    actionOrOptions: 'APPROVE' | 'REJECT' | {
+      action: 'APPROVE' | 'REJECT';
+      rejectionReason?: string;
+      gstIncluded?: boolean;
+      gstRate?: number;
+      gstRuleId?: string;
+      gstOverrideReason?: string;
+      customRewardAmount?: number;
+    },
+    legacyRejectionReason?: string
+  ) {
+    const payload = typeof actionOrOptions === 'string'
+      ? { action: actionOrOptions, rejectionReason: legacyRejectionReason }
+      : actionOrOptions;
+
     return this.request(`/admin/bills/${id}/verify`, {
       method: 'POST',
-      body: JSON.stringify({ action, rejectionReason }),
+      body: JSON.stringify(payload),
     });
   }
 
   // Payout Management
-  static getPayouts(status = 'ALL') {
-    return this.request(`/admin/payouts?status=${status}`);
+  static getPayouts(status = 'ALL', profession = 'ALL') {
+    const params = new URLSearchParams({ status, profession });
+    return this.request(`/admin/payouts?${params.toString()}`);
   }
 
   static handlePayoutAction(id: string, action: 'COMPLETE' | 'FAIL', reason?: string) {
@@ -89,24 +108,63 @@ export class AdminApiClient {
     });
   }
 
-  // Reward Rules & Pool
-  static getRewardRules() {
-    return this.request('/admin/settings/reward-rules');
+  // Reward Rules (Profession-Specific & Versioned)
+  static getRewardRules(profession = 'ALL') {
+    const params = new URLSearchParams({ profession });
+    return this.request(`/admin/settings/reward-rules?${params.toString()}`);
   }
 
-  static updateRewardRules(data: { percentage?: number; monthlyPoolLimit?: number; minRedemptionAmount?: number }) {
+  static createRewardRule(data: {
+    profession: 'PLUMBER' | 'TILE_INSTALLER';
+    rewardPercentage: number;
+    monthlyPoolLimit: number;
+    minRedemptionAmount?: number;
+    maxRedemptionAmount?: number;
+    effectiveFrom?: string;
+    effectiveUntil?: string | null;
+  }) {
+    return this.request('/admin/settings/reward-rules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  static updateRewardRules(data: {
+    percentage?: number;
+    monthlyPoolLimit?: number;
+    minRedemptionAmount?: number;
+    profession?: string;
+  }) {
     return this.request('/admin/settings/reward-rules', {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
-  // Redemption Settings (Arbitrary Admin-Controlled Windows)
-  static getRedemptionSettings() {
-    return this.request('/admin/settings/redemption');
+  // Tax / GST Rules
+  static getGstRules() {
+    return this.request('/admin/settings/gst-rules');
+  }
+
+  static createGstRule(data: {
+    ratePercentage: number;
+    description?: string;
+    isDefault?: boolean;
+  }) {
+    return this.request('/admin/settings/gst-rules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Redemption Settings
+  static getRedemptionSettings(profession = 'ALL') {
+    const params = new URLSearchParams({ profession });
+    return this.request(`/admin/settings/redemption?${params.toString()}`);
   }
 
   static updateRedemptionSettings(data: {
+    profession?: string;
     isEnabled: boolean;
     startAt?: string | null;
     endAt?: string | null;

@@ -66,10 +66,13 @@ router.post('/', authenticate, upload.single('invoiceFile'), async (req: Authent
       success: true,
       message: 'Bill uploaded successfully and submitted for administrator verification.',
       bill: {
-        ...bill,
+        id: bill.id,
+        invoiceNumber: bill.invoiceNumber,
+        invoiceDate: bill.invoiceDate,
         billAmount: Number(bill.billAmount),
-        calculatedReward: Number(bill.calculatedReward),
-        rewardPercentage: Number(bill.rewardPercentage),
+        status: bill.status,
+        calculatedReward: null,
+        message: 'Awaiting administrator verification.',
       },
     });
   } catch (err: any) {

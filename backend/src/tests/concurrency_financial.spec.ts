@@ -25,7 +25,7 @@ describe('Concurrency & Financial Integrity Tests', () => {
         mobile: '9777777777',
         fullName: 'Concurrency Test Craftsman',
         passwordHash: 'hash',
-        profession: 'TILE_INSTALLER',
+        profession: 'PLUMBER',
         role: 'USER',
         status: 'ACTIVE',
         isVerified: true,
@@ -84,15 +84,32 @@ describe('Concurrency & Financial Integrity Tests', () => {
   test('1. Monthly Pool Ceiling Race Condition: approvals never exceed ₹50,000 cap under parallel load', async () => {
     const { year, month } = getIstYearAndMonth();
 
+    // Ensure active rule for PLUMBER is 0.50%
+    await prisma.rewardRule.updateMany({
+      where: { profession: 'PLUMBER', isActive: true },
+      data: { isActive: false },
+    });
+    await prisma.rewardRule.create({
+      data: {
+        profession: 'PLUMBER',
+        rewardPercentage: 0.50,
+        monthlyPoolLimit: 50000.0,
+        minRedemptionAmount: 500.0,
+        maxRedemptionAmount: 10000.0,
+        isActive: true,
+      },
+    });
+
     // Set pool to exactly ₹49,800 used out of ₹50,000 (headroom = ₹200)
     await prisma.rewardPool.upsert({
-      where: { pool_year_month_unique: { year, month } },
+      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
       update: {
         totalPoolCap: 50000.0,
         usedAmount: 49800.0,
         isCapped: false,
       },
       create: {
+        profession: 'PLUMBER',
         year,
         month,
         totalPoolCap: 50000.0,
@@ -131,7 +148,7 @@ describe('Concurrency & Financial Integrity Tests', () => {
 
     // Verify final pool state
     const pool = await prisma.rewardPool.findUnique({
-      where: { pool_year_month_unique: { year, month } },
+      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
     });
     expect(Number(pool?.usedAmount)).toBe(50000.0);
     expect(pool?.isCapped).toBe(true);

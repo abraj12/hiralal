@@ -1,23 +1,33 @@
 import { prisma } from '../db';
 import { config } from '../config';
-import { PayoutStatus } from '@prisma/client';
+import { PayoutStatus, Profession } from '@prisma/client';
 import { getIstDate } from '../utils/timezone.utils';
 import { toPaise, fromPaise } from '../utils/money.utils';
 
 export class PayoutService {
   /**
-   * Retrieves active admin redemption settings and evaluates window status
+   * Retrieves active admin redemption settings for a profession and evaluates window status
    * using Asia/Kolkata business interpretation with UTC timestamps.
    */
-  static async getRedemptionSettings() {
-    let settings = await prisma.redemptionSettings.findUnique({
-      where: { id: 'default' },
-    });
+  static async getRedemptionSettings(profession?: Profession) {
+    let settings = null;
+    if (profession) {
+      settings = await prisma.redemptionSettings.findUnique({
+        where: { profession },
+      });
+    }
+
+    if (!settings) {
+      settings = await prisma.redemptionSettings.findUnique({
+        where: { id: 'default' },
+      });
+    }
 
     if (!settings) {
       settings = await prisma.redemptionSettings.create({
         data: {
           id: 'default',
+          profession: profession || null,
           isEnabled: false, // Default CLOSED until explicitly opened
           startAt: null,
           endAt: null,
@@ -51,11 +61,9 @@ export class PayoutService {
   }
 
   /**
-   * Evaluates user eligibility for rewards payout.
+   * Evaluates user eligibility for rewards payout based on their profession.
    */
   static async checkUserEligibility(userId: string) {
-    const { settings, isWindowOpen } = await this.getRedemptionSettings();
-
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -66,6 +74,8 @@ export class PayoutService {
     });
 
     if (!user) throw new Error('User not found.');
+
+    const { settings, isWindowOpen } = await this.getRedemptionSettings(user.profession || undefined);
 
     const availableBalance = user.wallet ? Number(user.wallet.availableBalance) : 0;
     const hasVerifiedKyc = user.kycRecords.length > 0;

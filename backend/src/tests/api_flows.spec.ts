@@ -16,9 +16,24 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     // Reset pool for clean test run
     const { year, month } = getIstYearAndMonth();
     await prisma.rewardPool.upsert({
-      where: { pool_year_month_unique: { year, month } },
+      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
       update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+      create: { profession: 'PLUMBER', year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+    });
+
+    await prisma.rewardRule.updateMany({
+      where: { profession: 'PLUMBER', isActive: true },
+      data: { isActive: false },
+    });
+    await prisma.rewardRule.create({
+      data: {
+        profession: 'PLUMBER',
+        rewardPercentage: 0.50,
+        monthlyPoolLimit: 50000.0,
+        minRedemptionAmount: 500.0,
+        maxRedemptionAmount: 10000.0,
+        isActive: true,
+      },
     });
 
     // 1. Provision Test Admin in PostgreSQL
@@ -161,13 +176,14 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.bill.invoiceNumber).toBe(invoiceNumber);
-    expect(Number(res.body.bill.calculatedReward)).toBe(100); // 0.5% of 20000
     expect(res.body.bill.status).toBe('PENDING');
+    // Mobile response hides provisional calculation before approval
+    expect(res.body.bill.calculatedReward == null || Number(res.body.bill.calculatedReward) === 0).toBe(true);
   });
 
   test('GET /api/admin/dashboard returns operational stats and pool', async () => {
     const res = await request(app)
-      .get('/api/admin/dashboard')
+      .get('/api/admin/dashboard?profession=PLUMBER')
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
     expect(res.body.stats.totalUsers).toBeGreaterThan(0);

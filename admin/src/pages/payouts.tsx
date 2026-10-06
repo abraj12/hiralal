@@ -6,13 +6,14 @@ import { AdminApiClient } from '../lib/api';
 export default function AdminPayoutsPage() {
   const [payouts, setPayouts] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [professionFilter, setProfessionFilter] = useState('ALL');
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const fetchPayouts = async () => {
     try {
       setLoading(true);
-      const res = await AdminApiClient.getPayouts(statusFilter);
+      const res = await AdminApiClient.getPayouts(statusFilter, professionFilter);
       setPayouts(res.payouts || []);
     } catch (err) {
       console.error(err);
@@ -23,7 +24,7 @@ export default function AdminPayoutsPage() {
 
   useEffect(() => {
     fetchPayouts();
-  }, [statusFilter]);
+  }, [statusFilter, professionFilter]);
 
   const handleAction = async (id: string, action: 'COMPLETE' | 'FAIL') => {
     setActionLoading(id);
@@ -53,6 +54,7 @@ export default function AdminPayoutsPage() {
           </div>
 
           <div className="flex items-center space-x-3">
+            {/* Status Filter */}
             <div className="bg-slate-200/80 p-1 rounded-xl flex space-x-1 text-xs font-bold">
               {['ALL', 'PROCESSING', 'SUCCESS', 'FAILED'].map(st => (
                 <button
@@ -63,6 +65,21 @@ export default function AdminPayoutsPage() {
                   }`}
                 >
                   {st}
+                </button>
+              ))}
+            </div>
+
+            {/* Profession Filter */}
+            <div className="bg-slate-200/80 p-1 rounded-xl flex space-x-1 text-xs font-bold">
+              {['ALL', 'PLUMBER', 'TILE_INSTALLER'].map(pf => (
+                <button
+                  key={pf}
+                  onClick={() => setProfessionFilter(pf)}
+                  className={`px-3 py-1.5 rounded-lg transition ${
+                    professionFilter === pf ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+                  }`}
+                >
+                  {pf === 'ALL' ? 'All' : pf === 'PLUMBER' ? 'Plumber' : 'Tiles'}
                 </button>
               ))}
             </div>

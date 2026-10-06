@@ -2,8 +2,11 @@ import { Router, Response } from 'express';
 import { authenticate, requireRole, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { prisma } from '../db';
 import { RewardService } from '../services/reward.service';
+import { RewardRuleService } from '../services/reward-rule.service';
+import { GstService } from '../services/gst.service';
 import { BillService } from '../services/bill.service';
 import { StorageService } from '../services/storage.service';
+import { PayoutService } from '../services/payout.service';
 import { BillStatus, Profession, UserStatus } from '@prisma/client';
 
 const router = Router();
@@ -13,25 +16,35 @@ router.use(authenticate);
 router.use(requireRole(['ADMIN']));
 
 /**
- * 1. Dashboard Overview Stats
+ * 1. Dashboard Overview Stats with Strict Server-Side Profession Filtering
  */
 router.get('/dashboard', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const totalUsers = await prisma.user.count({ where: { role: 'USER' } });
+    const professionQuery = req.query.profession as string;
+    const filterProfession = (professionQuery && professionQuery !== 'ALL') ? (professionQuery as Profession) : undefined;
+
+    const userWhere: any = { role: 'USER' };
+    if (filterProfession) userWhere.profession = filterProfession;
+
+    const totalUsers = await prisma.user.count({ where: userWhere });
     const plumbersCount = await prisma.user.count({ where: { role: 'USER', profession: 'PLUMBER' } });
     const tilesCount = await prisma.user.count({ where: { role: 'USER', profession: 'TILE_INSTALLER' } });
 
+    const billWhere: any = {};
+    if (filterProfession) billWhere.user = { profession: filterProfession };
+
     const pendingBills = await prisma.bill.count({
-      where: { status: { in: ['PENDING', 'UNDER_REVIEW'] } },
+      where: { ...billWhere, status: { in: ['PENDING', 'UNDER_REVIEW'] } },
     });
-    const approvedBillsCount = await prisma.bill.count({ where: { status: 'APPROVED' } });
-    const rejectedBillsCount = await prisma.bill.count({ where: { status: 'REJECTED' } });
+    const approvedBillsCount = await prisma.bill.count({ where: { ...billWhere, status: 'APPROVED' } });
+    const rejectedBillsCount = await prisma.bill.count({ where: { ...billWhere, status: 'REJECTED' } });
 
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const monthBills = await prisma.bill.findMany({
       where: {
+        ...billWhere,
         status: 'APPROVED',
         updatedAt: { gte: startOfMonth },
       },
@@ -39,20 +52,25 @@ router.get('/dashboard', async (req: AuthenticatedRequest, res: Response) => {
     });
     const rewardsThisMonth = monthBills.reduce((acc, b) => acc + Number(b.calculatedReward), 0);
 
+    const payoutWhere: any = {};
+    if (filterProfession) payoutWhere.user = { profession: filterProfession };
+
     const pendingPayouts = await prisma.payout.count({
-      where: { status: { in: ['PENDING', 'PROCESSING', 'PAYOUT_INITIATED'] } },
+      where: { ...payoutWhere, status: { in: ['PENDING', 'PROCESSING', 'PAYOUT_INITIATED'] } },
     });
-    const successfulPayouts = await prisma.payout.count({ where: { status: 'SUCCESS' } });
+    const successfulPayouts = await prisma.payout.count({ where: { ...payoutWhere, status: 'SUCCESS' } });
 
-    const totalRedeemedAgg = await prisma.wallet.aggregate({
-      _sum: { totalRedeemed: true },
+    const redeemedBills = await prisma.payout.aggregate({
+      where: { ...payoutWhere, status: 'SUCCESS' },
+      _sum: { amount: true },
     });
-    const totalRedeemed = Number(totalRedeemedAgg._sum.totalRedeemed || 0);
+    const totalRedeemed = Number(redeemedBills._sum.amount || 0);
 
-    const pool = await RewardService.getPoolAnalytics();
+    const pool = await RewardService.getPoolAnalytics(filterProfession);
 
     // 10 most recent bills
     const recentBills = await prisma.bill.findMany({
+      where: billWhere,
       take: 10,
       orderBy: { createdAt: 'desc' },
       include: {
@@ -62,10 +80,11 @@ router.get('/dashboard', async (req: AuthenticatedRequest, res: Response) => {
 
     res.json({
       success: true,
+      profession: filterProfession || 'ALL',
       stats: {
         totalUsers,
-        plumbersCount,
-        tilesCount,
+        plumbersCount: filterProfession === 'TILE_INSTALLER' ? 0 : plumbersCount,
+        tilesCount: filterProfession === 'PLUMBER' ? 0 : tilesCount,
         pendingBills,
         approvedBillsCount,
         rejectedBillsCount,
@@ -78,8 +97,12 @@ router.get('/dashboard', async (req: AuthenticatedRequest, res: Response) => {
       recentBills: recentBills.map((b) => ({
         ...b,
         billAmount: Number(b.billAmount),
+        grossBillAmount: Number(b.grossBillAmount || b.billAmount),
+        gstAmount: b.gstAmount !== null ? Number(b.gstAmount) : 0,
+        gstRate: b.gstRate !== null ? Number(b.gstRate) : 0,
+        eligibleRewardAmount: b.eligibleRewardAmount !== null ? Number(b.eligibleRewardAmount) : Number(b.billAmount),
         calculatedReward: Number(b.calculatedReward),
-        rewardPercentage: Number(b.rewardPercentage),
+        rewardPercentage: b.rewardPercentage !== null ? Number(b.rewardPercentage) : null,
         fileUrl: StorageService.generateSignedUrl(b.fileKey, 30),
       })),
     });
@@ -89,7 +112,7 @@ router.get('/dashboard', async (req: AuthenticatedRequest, res: Response) => {
 });
 
 /**
- * 2. User Directory
+ * 2. User Directory with Server-Side Profession Filtering
  */
 router.get('/users', async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -194,6 +217,9 @@ router.get('/users/:id', async (req: AuthenticatedRequest, res: Response) => {
       bills: user.bills.map((b) => ({
         ...b,
         billAmount: Number(b.billAmount),
+        grossBillAmount: Number(b.grossBillAmount || b.billAmount),
+        gstAmount: b.gstAmount !== null ? Number(b.gstAmount) : 0,
+        eligibleRewardAmount: b.eligibleRewardAmount !== null ? Number(b.eligibleRewardAmount) : Number(b.billAmount),
         calculatedReward: Number(b.calculatedReward),
         fileUrl: StorageService.generateSignedUrl(b.fileKey, 30),
       })),
@@ -210,38 +236,23 @@ router.get('/users/:id', async (req: AuthenticatedRequest, res: Response) => {
 });
 
 /**
- * 4. Bills Management
+ * 4. Bills Management with Strict Server-Side Profession & Status Filtering
  */
 router.get('/bills', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const status = req.query.status as string;
     const profession = req.query.profession as string;
+    const search = req.query.search as string;
 
-    const where: any = {};
-    if (status && status !== 'ALL') {
-      where.status = status as BillStatus;
-    }
-    if (profession && profession !== 'ALL') {
-      where.user = { profession: profession as Profession };
-    }
-
-    const bills = await prisma.bill.findMany({
-      where,
-      include: {
-        user: { select: { id: true, fullName: true, mobile: true, profession: true } },
-      },
-      orderBy: { createdAt: 'desc' },
+    const bills = await BillService.getAdminBills({
+      profession: (profession && profession !== 'ALL') ? (profession as Profession) : 'ALL',
+      status: (status && status !== 'ALL') ? (status as BillStatus) : 'ALL',
+      search,
     });
 
     res.json({
       success: true,
-      bills: bills.map((b) => ({
-        ...b,
-        billAmount: Number(b.billAmount),
-        calculatedReward: Number(b.calculatedReward),
-        rewardPercentage: Number(b.rewardPercentage),
-        fileUrl: StorageService.generateSignedUrl(b.fileKey, 30),
-      })),
+      bills,
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
@@ -249,11 +260,11 @@ router.get('/bills', async (req: AuthenticatedRequest, res: Response) => {
 });
 
 /**
- * 5. Bill Verification (Approve / Reject)
+ * 5. Bill Verification (Approve / Reject with GST and Financial Snapshot)
  */
 router.post('/bills/:id/verify', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { action, rejectionReason, remarks } = req.body;
+    const { action, rejectionReason, gstIncluded, gstRate, gstRuleId, gstOverrideReason, customRewardAmount } = req.body;
     const admin = req.user!;
 
     if (!action || !['APPROVE', 'REJECT'].includes(action)) {
@@ -261,8 +272,14 @@ router.post('/bills/:id/verify', async (req: AuthenticatedRequest, res: Response
     }
 
     if (action === 'APPROVE') {
-      const customReward = typeof req.body.customRewardAmount === 'number' ? req.body.customRewardAmount : undefined;
-      const result = await BillService.approveBill(req.params.id, admin.id, customReward);
+      const result = await BillService.approveBill(req.params.id, admin.id, {
+        gstIncluded: Boolean(gstIncluded),
+        gstRate: typeof gstRate === 'number' ? gstRate : undefined,
+        gstRuleId: typeof gstRuleId === 'string' ? gstRuleId : undefined,
+        gstOverrideReason: typeof gstOverrideReason === 'string' ? gstOverrideReason : undefined,
+        customRewardAmount: typeof customRewardAmount === 'number' ? customRewardAmount : undefined,
+      });
+
       res.json({
         success: true,
         message: 'Bill approved and reward credited to wallet.',
@@ -284,14 +301,19 @@ router.post('/bills/:id/verify', async (req: AuthenticatedRequest, res: Response
 });
 
 /**
- * 6. Payouts Management
+ * 6. Payouts Management with Strict Server-Side Profession Filtering
  */
 router.get('/payouts', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const status = req.query.status as string;
+    const profession = req.query.profession as string;
+
     const where: any = {};
     if (status && status !== 'ALL') {
       where.status = status;
+    }
+    if (profession && profession !== 'ALL') {
+      where.user = { profession: profession as Profession };
     }
 
     const payouts = await prisma.payout.findMany({
@@ -326,24 +348,39 @@ router.get('/payouts', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
+router.post('/payouts/:id/action', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { action, reason } = req.body;
+    const { id } = req.params;
+
+    if (action === 'COMPLETE') {
+      const payout = await PayoutService.finalizeSuccess(id);
+      return res.json({ success: true, message: 'Payout marked as complete.', payout });
+    } else if (action === 'FAIL') {
+      const payout = await PayoutService.reversePayout(id, reason || 'Admin manual rejection');
+      return res.json({ success: true, message: 'Payout marked as failed and reversed.', payout });
+    }
+
+    return res.status(400).json({ success: false, message: 'Invalid action. Must be COMPLETE or FAIL.' });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
 /**
- * 7. Redemption Settings (Admin Control Window)
+ * 7. Redemption Settings (Profession-Specific Windows)
  */
 router.get('/settings/redemption', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const settings = await prisma.redemptionSettings.findUnique({
-      where: { id: 'default' },
-    });
+    const profession = req.query.profession as string;
+    const prof = (profession && profession !== 'ALL') ? (profession as Profession) : undefined;
+
+    const result = await PayoutService.getRedemptionSettings(prof);
 
     res.json({
       success: true,
-      settings: settings
-        ? {
-            ...settings,
-            minimumAmount: Number(settings.minimumAmount),
-            maximumAmount: Number(settings.maximumAmount),
-          }
-        : null,
+      settings: result.settings,
+      isWindowOpen: result.isWindowOpen,
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
@@ -353,7 +390,7 @@ router.get('/settings/redemption', async (req: AuthenticatedRequest, res: Respon
 router.put('/settings/redemption', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const admin = req.user!;
-    const { isEnabled, startAt, endAt, minimumAmount, maximumAmount, message } = req.body;
+    const { isEnabled, startAt, endAt, minimumAmount, maximumAmount, message, profession } = req.body;
 
     const startDate = startAt ? new Date(startAt) : null;
     const endDate = endAt ? new Date(endAt) : null;
@@ -369,10 +406,15 @@ router.put('/settings/redemption', async (req: AuthenticatedRequest, res: Respon
       return res.status(400).json({ success: false, message: 'Maximum redemption must be greater than or equal to minimum amount.' });
     }
 
-    const prevSettings = await prisma.redemptionSettings.findUnique({ where: { id: 'default' } });
+    const prof: Profession | null = profession && profession !== 'ALL' ? (profession as Profession) : null;
+    const settingId = prof ? `setting_${prof}` : 'default';
+
+    const prevSettings = await prisma.redemptionSettings.findUnique({
+      where: prof ? { profession: prof } : { id: settingId },
+    });
 
     const updated = await prisma.redemptionSettings.upsert({
-      where: { id: 'default' },
+      where: prof ? { profession: prof } : { id: settingId },
       update: {
         isEnabled: Boolean(isEnabled),
         startAt: startDate,
@@ -383,7 +425,8 @@ router.put('/settings/redemption', async (req: AuthenticatedRequest, res: Respon
         updatedByAdminId: admin.id,
       },
       create: {
-        id: 'default',
+        id: settingId,
+        profession: prof,
         isEnabled: Boolean(isEnabled),
         startAt: startDate,
         endAt: endDate,
@@ -400,7 +443,7 @@ router.put('/settings/redemption', async (req: AuthenticatedRequest, res: Respon
         adminId: admin.id,
         action: 'REDEMPTION_SETTINGS_UPDATED',
         entityType: 'REDEMPTION_SETTINGS',
-        entityId: 'default',
+        entityId: updated.id,
         oldValue: JSON.stringify(prevSettings),
         newValue: JSON.stringify(updated),
       },
@@ -408,7 +451,7 @@ router.put('/settings/redemption', async (req: AuthenticatedRequest, res: Respon
 
     res.json({
       success: true,
-      message: 'Redemption window settings updated successfully.',
+      message: `Redemption window settings for ${prof || 'ALL'} updated successfully.`,
       settings: {
         ...updated,
         minimumAmount: Number(updated.minimumAmount),
@@ -421,21 +464,30 @@ router.put('/settings/redemption', async (req: AuthenticatedRequest, res: Respon
 });
 
 /**
- * 8. Reward Rules Configuration
+ * 8. Dynamic Reward Rules Configuration (Profession-Specific & Versioned)
  */
 router.get('/settings/reward-rules', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const rules = await prisma.rewardRule.findMany({ where: { isActive: true } });
-    const pool = await RewardService.getPoolAnalytics();
+    const profession = req.query.profession as string;
+    const prof = (profession && profession !== 'ALL') ? (profession as Profession) : undefined;
+
+    const rules = await RewardRuleService.listRules(prof);
+    const pool = await RewardService.getPoolAnalytics(prof);
 
     res.json({
       success: true,
-      rules: rules.map((r) => ({
+      rules: rules.map((r: any) => ({
         id: r.id,
         profession: r.profession,
-        percentage: Number(r.percentage),
+        version: r.version,
+        rewardPercentage: Number(r.rewardPercentage),
+        percentage: Number(r.rewardPercentage),
         monthlyPoolLimit: Number(r.monthlyPoolLimit),
         minRedemptionAmount: Number(r.minRedemptionAmount),
+        maxRedemptionAmount: Number(r.maxRedemptionAmount),
+        effectiveFrom: r.effectiveFrom,
+        effectiveUntil: r.effectiveUntil,
+        isActive: r.isActive,
       })),
       pool,
     });
@@ -444,32 +496,51 @@ router.get('/settings/reward-rules', async (req: AuthenticatedRequest, res: Resp
   }
 });
 
+router.post('/settings/reward-rules', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const admin = req.user!;
+    const { profession, rewardPercentage, monthlyPoolLimit, minRedemptionAmount, maxRedemptionAmount, effectiveFrom, effectiveUntil } = req.body;
+
+    if (!profession || !['PLUMBER', 'TILE_INSTALLER'].includes(profession)) {
+      return res.status(400).json({ success: false, message: 'Valid profession (PLUMBER or TILE_INSTALLER) is required.' });
+    }
+
+    const created = await RewardRuleService.createRule(admin.id, {
+      profession: profession as Profession,
+      rewardPercentage: parseFloat(rewardPercentage),
+      monthlyPoolLimit: parseFloat(monthlyPoolLimit),
+      minRedemptionAmount: minRedemptionAmount ? parseFloat(minRedemptionAmount) : undefined,
+      maxRedemptionAmount: maxRedemptionAmount ? parseFloat(maxRedemptionAmount) : undefined,
+      effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : undefined,
+      effectiveUntil: effectiveUntil ? new Date(effectiveUntil) : null,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: `New versioned rule (v${created.version}) created for ${profession}.`,
+      rule: created,
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
 router.put('/settings/reward-rules', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { percentage, monthlyPoolLimit, minRedemptionAmount, profession } = req.body;
     const admin = req.user!;
 
+    const prof = profession as Profession || 'PLUMBER';
     const updated = await RewardService.updateRewardRules(admin.id, {
       percentage: percentage ? parseFloat(percentage) : undefined,
       monthlyPoolLimit: monthlyPoolLimit ? parseFloat(monthlyPoolLimit) : undefined,
       minRedemptionAmount: minRedemptionAmount ? parseFloat(minRedemptionAmount) : undefined,
-      profession: profession || undefined,
-    });
-
-    // Audit Log
-    await prisma.auditLog.create({
-      data: {
-        adminId: admin.id,
-        action: 'REWARD_RULES_UPDATED',
-        entityType: 'REWARD_RULE',
-        entityId: updated.id,
-        newValue: JSON.stringify(updated),
-      },
+      profession: prof,
     });
 
     res.json({
       success: true,
-      message: 'Reward rule settings updated successfully.',
+      message: `Reward rule for ${prof} updated successfully.`,
       rule: updated,
     });
   } catch (err: any) {
@@ -478,9 +549,74 @@ router.put('/settings/reward-rules', async (req: AuthenticatedRequest, res: Resp
 });
 
 /**
- * 9. Audit Logs
+ * 9. GST Rates Configuration
  */
-router.get('/audit-logs', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/settings/gst-rules', async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rules = await GstService.getActiveGstRules();
+    res.json({
+      success: true,
+      rules: rules.map((r: any) => ({
+        id: r.id,
+        ratePercentage: Number(r.ratePercentage),
+        description: r.description,
+        isDefault: r.isDefault,
+        isActive: r.isActive,
+        effectiveFrom: r.effectiveFrom,
+        effectiveUntil: r.effectiveUntil,
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/settings/gst-rules', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const admin = req.user!;
+    const { ratePercentage, description, isDefault } = req.body;
+
+    const rule = await GstService.createGstRule(admin.id, {
+      ratePercentage: parseFloat(ratePercentage),
+      description,
+      isDefault: Boolean(isDefault),
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'GST rate created successfully.',
+      rule,
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+router.patch('/settings/gst-rules/:id', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const admin = req.user!;
+    const { description, isDefault, isActive } = req.body;
+
+    const updated = await GstService.updateGstRule(admin.id, req.params.id, {
+      description,
+      isDefault,
+      isActive,
+    });
+
+    res.json({
+      success: true,
+      message: 'GST rate updated successfully.',
+      rule: updated,
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * 10. Audit Logs
+ */
+router.get('/audit-logs', async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const logs = await prisma.auditLog.findMany({
       take: 100,

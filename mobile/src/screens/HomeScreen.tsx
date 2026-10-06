@@ -50,7 +50,7 @@ export default function HomeScreen() {
                 resizeMode="contain"
               />
               <Text style={styles.emptyTitle}>No Bills Submitted Yet</Text>
-              <Text style={styles.emptySubtitle}>Upload your first bill to start earning 0.5% rewards</Text>
+              <Text style={styles.emptySubtitle}>Upload your first bill to start earning rewards</Text>
             </View>
           ) : (
             bills.slice(0, 3).map((item: any) => {

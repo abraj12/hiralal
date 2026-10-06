@@ -202,15 +202,15 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
       });
 
       testPool = await prisma.rewardPool.upsert({
-        where: { pool_year_month_unique: { year: 2026, month: 10 } },
+        where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year: 2026, month: 10 } },
         update: { totalPoolCap: 50000.0, usedAmount: 2000.0 },
-        create: { year: 2026, month: 10, totalPoolCap: 50000.0, usedAmount: 2000.0 },
+        create: { profession: 'PLUMBER', year: 2026, month: 10, totalPoolCap: 50000.0, usedAmount: 2000.0 },
       });
 
       await prisma.rewardRule.upsert({
         where: { id: 'test_rule_plumber' },
-        update: { percentage: 0.50, isActive: true },
-        create: { id: 'test_rule_plumber', profession: 'PLUMBER', percentage: 0.50, monthlyPoolLimit: 50000.0 },
+        update: { rewardPercentage: 0.50, isActive: true },
+        create: { id: 'test_rule_plumber', profession: 'PLUMBER', rewardPercentage: 0.50, monthlyPoolLimit: 50000.0 },
       });
 
       await prisma.redemptionSettings.upsert({
@@ -330,7 +330,7 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
 
     it('verifies reward pool usedAmount reconciles with approved bills', async () => {
       const pool = await prisma.rewardPool.findUnique({
-        where: { pool_year_month_unique: { year: 2026, month: 10 } },
+        where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year: 2026, month: 10 } },
       });
       expect(Number(pool?.usedAmount)).toBe(2000.0);
     });

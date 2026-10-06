@@ -23,7 +23,7 @@ export default function RewardCard({ onPress }: RewardCardProps) {
           <Text style={styles.titleLabel}>{theme.rewardTitle}</Text>
           <View style={styles.sparkleTag}>
             <Sparkles size={11} color="#ffffff" />
-            <Text style={styles.sparkleText}>0.5% Cashback</Text>
+            <Text style={styles.sparkleText}>Rewards Program</Text>
           </View>
         </View>
 

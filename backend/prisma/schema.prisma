@@ -156,68 +156,113 @@ model WalletTransaction {
 }
 
 model Bill {
-  id                String     @id @default(uuid())
-  userId            String
-  user              User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  invoiceNumber     String
-  invoiceDate       DateTime
-  billAmount        Decimal    @db.Decimal(12, 2)
-  calculatedReward  Decimal    @db.Decimal(12, 2)
-  rewardPercentage  Decimal    @default(0.50) @db.Decimal(5, 2)
-  status            BillStatus @default(PENDING)
-  fileUrl           String
-  fileKey           String
-  fileHash          String?
-  fileSize          Int?
-  mimeType          String?
-  rejectionReason   String?
-  verifiedByAdminId String?
-  remarks           String?
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  id                   String      @id @default(uuid())
+  userId               String
+  user                 User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoiceNumber        String
+  invoiceDate          DateTime
+  billAmount           Decimal     @db.Decimal(12, 2)
+  grossBillAmount      Decimal?    @db.Decimal(12, 2)
+  gstIncluded          Boolean     @default(false)
+  gstRate              Decimal?    @db.Decimal(5, 2)
+  gstAmount            Decimal?    @db.Decimal(12, 2)
+  eligibleRewardAmount Decimal?    @db.Decimal(12, 2)
+  calculatedReward     Decimal     @db.Decimal(12, 2)
+  rewardPercentage     Decimal?    @db.Decimal(5, 2)
+  rewardRateSnapshot   Decimal?    @db.Decimal(5, 2)
+  rewardRuleId         String?
+  rewardRule           RewardRule? @relation(fields: [rewardRuleId], references: [id], onDelete: SetNull)
+  gstRuleId            String?
+  gstRule              GstRule?    @relation(fields: [gstRuleId], references: [id], onDelete: SetNull)
+  gstOverrideReason    String?
+  status               BillStatus  @default(PENDING)
+  fileUrl              String
+  fileKey              String
+  fileHash             String?
+  fileSize             Int?
+  mimeType             String?
+  rejectionReason      String?
+  verifiedByAdminId    String?
+  remarks              String?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
 
   @@unique([userId, invoiceNumber], name: "user_invoice_unique")
   @@index([userId])
   @@index([status])
   @@index([invoiceNumber])
   @@index([fileHash])
+  @@index([rewardRuleId])
+  @@index([gstRuleId])
   @@index([createdAt])
 }
 
 model RewardPool {
-  id           String   @id @default(uuid())
+  id           String     @id @default(uuid())
+  profession   Profession @default(PLUMBER)
   year         Int
   month        Int
-  totalPoolCap Decimal  @default(50000.00) @db.Decimal(12, 2)
-  usedAmount   Decimal  @default(0.00) @db.Decimal(12, 2)
-  isCapped     Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  totalPoolCap Decimal    @default(50000.00) @db.Decimal(12, 2)
+  usedAmount   Decimal    @default(0.00) @db.Decimal(12, 2)
+  isCapped     Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 
-  @@unique([year, month], name: "pool_year_month_unique")
+  @@unique([profession, year, month], name: "pool_profession_year_month_unique")
+  @@index([profession, year, month])
 }
 
 model RewardRule {
   id                  String      @id @default(uuid())
-  profession          Profession?
-  percentage          Decimal     @default(0.50) @db.Decimal(5, 2)
+  profession          Profession  @default(PLUMBER)
+  rewardPercentage    Decimal     @default(0.50) @db.Decimal(5, 2)
   monthlyPoolLimit    Decimal     @default(50000.00) @db.Decimal(12, 2)
   minRedemptionAmount Decimal     @default(500.00) @db.Decimal(12, 2)
+  maxRedemptionAmount Decimal     @default(10000.00) @db.Decimal(12, 2)
+  effectiveFrom       DateTime    @default(now())
+  effectiveUntil      DateTime?
   isActive            Boolean     @default(true)
+  version             Int         @default(1)
+  createdByAdminId    String?
   updatedByAdminId    String?
+  createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
+
+  bills               Bill[]
+
+  @@index([profession, isActive])
+  @@index([effectiveFrom, effectiveUntil])
+}
+
+model GstRule {
+  id               String    @id @default(uuid())
+  ratePercentage   Decimal   @db.Decimal(5, 2)
+  description      String?
+  isDefault        Boolean   @default(false)
+  isActive         Boolean   @default(true)
+  effectiveFrom    DateTime  @default(now())
+  effectiveUntil   DateTime?
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  bills            Bill[]
+
+  @@index([isActive])
 }
 
 model RedemptionSettings {
-  id               String    @id @default("default")
-  isEnabled        Boolean   @default(false)
+  id               String      @id @default("default")
+  profession       Profession? @unique
+  isEnabled        Boolean     @default(false)
   startAt          DateTime?
   endAt            DateTime?
-  minimumAmount    Decimal   @default(500.00) @db.Decimal(12, 2)
-  maximumAmount    Decimal   @default(10000.00) @db.Decimal(12, 2)
-  message          String    @default("Rewards redemption is currently unavailable.")
+  minimumAmount    Decimal     @default(500.00) @db.Decimal(12, 2)
+  maximumAmount    Decimal     @default(10000.00) @db.Decimal(12, 2)
+  message          String      @default("Rewards redemption is currently unavailable.")
   updatedByAdminId String?
-  updatedAt        DateTime  @updatedAt
+  updatedAt        DateTime    @updatedAt
 }
 
 model KycRecord {
