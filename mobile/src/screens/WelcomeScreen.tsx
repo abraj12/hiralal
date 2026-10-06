@@ -8,6 +8,7 @@ import {
   ScrollView,
   SafeAreaView,
   Dimensions,
+  Platform,
 } from 'react-native';
 import {
   FileText,
@@ -21,19 +22,37 @@ import {
 } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 
-const { width } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function WelcomeScreen() {
   const { setCurrentScreen } = useApp();
 
   return (
     <View style={styles.root}>
-      {/* 1. Background image with plumber fittings and floor tiles */}
+      {/* 1. Background image covering full screen */}
       <Image
         source={require('../../assets/welcome_bg.png')}
-        style={styles.bgImage}
+        style={StyleSheet.absoluteFill}
         resizeMode="cover"
       />
+
+      {/* 2. Plumber Plate Overlay - locked directly onto the Blue Plate on background */}
+      <View style={styles.bluePlateOverlay} pointerEvents="none">
+        <View style={styles.plateHeaderRow}>
+          <Wrench size={18} color="#FFFFFF" strokeWidth={2.4} />
+          <Text style={styles.plateForText}>FOR</Text>
+        </View>
+        <Text style={styles.plateMainText}>FOR PLUMBERS</Text>
+      </View>
+
+      {/* 3. Tile Installer Plate Overlay - locked directly onto the Orange Plate on background */}
+      <View style={styles.orangePlateOverlay} pointerEvents="none">
+        <View style={styles.plateHeaderRow}>
+          <Grid size={18} color="#FFFFFF" strokeWidth={2.4} />
+          <Text style={styles.plateForText}>FOR</Text>
+        </View>
+        <Text style={styles.plateMainText}>TILE INSTALLERS</Text>
+      </View>
 
       <SafeAreaView style={styles.safeArea}>
         <ScrollView
@@ -42,27 +61,15 @@ export default function WelcomeScreen() {
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
-          {/* 2. Top-Right Floating Badges inside the Blue & Orange Shapes */}
-          <View style={styles.badgePlumber} pointerEvents="none">
-            <Wrench size={22} color="#FFFFFF" />
-            <Text style={styles.badgeLabelSmall}>FOR</Text>
-            <Text style={styles.badgeLabelBold}>PLUMBERS</Text>
-          </View>
-
-          <View style={styles.badgeTiles} pointerEvents="none">
-            <Grid size={22} color="#FFFFFF" />
-            <Text style={styles.badgeLabelSmall}>FOR</Text>
-            <Text style={styles.badgeLabelBold}>TILE INSTALLERS</Text>
-          </View>
-
-          {/* 3. Top-Left Brand Header */}
-          <View style={styles.brandHeader}>
-            <Image
-              source={require('../../assets/brand_logo.png')}
-              style={styles.logo}
-              resizeMode="contain"
-            />
-            <View style={styles.brandTextWrap}>
+          {/* Top content container */}
+          <View style={styles.topContent}>
+            {/* 4. Brand Header: Centered Crest Logo + Centered Company Name + Red Program Subtitle */}
+            <View style={styles.brandHeader}>
+              <Image
+                source={require('../../assets/brand_logo.png')}
+                style={styles.logo}
+                resizeMode="contain"
+              />
               <Text style={styles.brandName}>HIRALAL AND SONS</Text>
               <View style={styles.subRow}>
                 <View style={styles.subLine} />
@@ -70,55 +77,55 @@ export default function WelcomeScreen() {
                 <View style={styles.subLine} />
               </View>
             </View>
-          </View>
 
-          {/* 4. Main Headline */}
-          <View style={styles.headlineContainer}>
-            <Text style={styles.headlineDark}>Your Work</Text>
-            <Text style={styles.headlineDark}>Deserves</Text>
-            <Text style={styles.headlineRed}>More Rewards</Text>
-            <Text style={styles.headlineSub}>
-              Earn exciting rewards on genuine purchases from Hiralal & Sons.
-            </Text>
-          </View>
-
-          {/* 5. Left Value Proposition Cards */}
-          <View style={styles.cardsContainer}>
-            {/* Card 1: Upload Bills */}
-            <View style={[styles.card, styles.cardBlue]}>
-              <View style={[styles.iconBox, styles.iconBlue]}>
-                <FileText size={20} color="#1E60D5" />
-              </View>
-              <View style={styles.cardTextWrap}>
-                <Text style={styles.cardTitle}>Upload Bills</Text>
-                <Text style={styles.cardSub}>Submit genuine purchase bills</Text>
-              </View>
+            {/* 5. Main Headline: Left aligned with 'More Rewards' in red */}
+            <View style={styles.headlineContainer}>
+              <Text style={styles.headlineDark}>Your Work</Text>
+              <Text style={styles.headlineDark}>Deserves</Text>
+              <Text style={styles.headlineRed}>More Rewards</Text>
+              <Text style={styles.headlineSub}>
+                Earn exciting rewards on genuine purchases from Hiralal & Sons.
+              </Text>
             </View>
 
-            {/* Card 2: Earn Rewards */}
-            <View style={[styles.card, styles.cardPink]}>
-              <View style={[styles.iconBox, styles.iconPink]}>
-                <Gift size={20} color="#DC2626" />
+            {/* 6. Value Proposition Cards: Left column, soft colored backgrounds */}
+            <View style={styles.cardsContainer}>
+              {/* Card 1: Upload Bills */}
+              <View style={[styles.card, styles.cardBlue]}>
+                <View style={[styles.iconBox, styles.iconBlue]}>
+                  <FileText size={18} color="#1E60D5" strokeWidth={2.2} />
+                </View>
+                <View style={styles.cardTextWrap}>
+                  <Text style={styles.cardTitle}>Upload Bills</Text>
+                  <Text style={styles.cardSub}>Submit genuine purchase bills</Text>
+                </View>
               </View>
-              <View style={styles.cardTextWrap}>
-                <Text style={styles.cardTitle}>Earn Rewards</Text>
-                <Text style={styles.cardSub}>Get rewarded for your purchases</Text>
-              </View>
-            </View>
 
-            {/* Card 3: Safe & Verified */}
-            <View style={[styles.card, styles.cardGreen]}>
-              <View style={[styles.iconBox, styles.iconGreen]}>
-                <ShieldCheck size={20} color="#16A34A" />
+              {/* Card 2: Earn Rewards */}
+              <View style={[styles.card, styles.cardPink]}>
+                <View style={[styles.iconBox, styles.iconPink]}>
+                  <Gift size={18} color="#DC2626" strokeWidth={2.2} />
+                </View>
+                <View style={styles.cardTextWrap}>
+                  <Text style={styles.cardTitle}>Earn Rewards</Text>
+                  <Text style={styles.cardSub}>Get rewarded for your purchases</Text>
+                </View>
               </View>
-              <View style={styles.cardTextWrap}>
-                <Text style={styles.cardTitle}>Safe & Verified</Text>
-                <Text style={styles.cardSub}>Trusted and secure platform</Text>
+
+              {/* Card 3: Safe & Verified */}
+              <View style={[styles.card, styles.cardGreen]}>
+                <View style={[styles.iconBox, styles.iconGreen]}>
+                  <ShieldCheck size={18} color="#16A34A" strokeWidth={2.2} />
+                </View>
+                <View style={styles.cardTextWrap}>
+                  <Text style={styles.cardTitle}>Safe & Verified</Text>
+                  <Text style={styles.cardSub}>Trusted and secure platform</Text>
+                </View>
               </View>
             </View>
           </View>
 
-          {/* 6. Primary Action Buttons */}
+          {/* 7. Action Buttons at the bottom */}
           <View style={styles.actionsContainer}>
             {/* Login Button */}
             <TouchableOpacity
@@ -153,15 +160,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  bgImage: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    width: '100%',
-    height: '100%',
-  },
   safeArea: {
     flex: 1,
   },
@@ -170,74 +168,87 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 32,
+    paddingTop: Platform.OS === 'android' ? 10 : 4,
+    paddingBottom: 24,
     minHeight: '100%',
     justifyContent: 'space-between',
   },
+  topContent: {
+    flex: 1,
+  },
 
-  // Floating Overlay Badges on Blue & Orange Shapes
-  badgePlumber: {
+  // Locked directly onto the Blue Plate shape on the background
+  bluePlateOverlay: {
     position: 'absolute',
-    top: 96,
-    right: 22,
+    top: SCREEN_HEIGHT * 0.23,
+    right: SCREEN_WIDTH * 0.04,
+    width: SCREEN_WIDTH * 0.32,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
   },
-  badgeTiles: {
+
+  // Locked directly onto the Orange Plate shape on the background
+  orangePlateOverlay: {
     position: 'absolute',
-    top: 316,
-    right: 18,
+    top: SCREEN_HEIGHT * 0.535,
+    right: SCREEN_WIDTH * 0.04,
+    width: SCREEN_WIDTH * 0.32,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
-    maxWidth: 100,
   },
-  badgeLabelSmall: {
-    fontSize: 9,
-    fontWeight: '700',
+
+  plateHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginBottom: 2,
+  },
+  plateForText: {
     color: '#FFFFFF',
-    marginTop: 2,
-    letterSpacing: 0.8,
-  },
-  badgeLabelBold: {
     fontSize: 10,
-    fontWeight: '900',
-    color: '#FFFFFF',
+    fontWeight: '800',
     letterSpacing: 0.5,
+  },
+  plateMainText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '900',
+    letterSpacing: 0.3,
     textAlign: 'center',
   },
 
-  // Brand Header
+  // Brand Header: Logo centered above text
   brandHeader: {
-    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 20,
-    gap: 10,
-    maxWidth: width * 0.65,
+    width: SCREEN_WIDTH * 0.58,
+    marginTop: 8,
+    marginBottom: 16,
+    alignSelf: 'flex-start',
   },
   logo: {
-    width: 44,
-    height: 44,
-  },
-  brandTextWrap: {
-    justifyContent: 'center',
+    width: 60,
+    height: 60,
+    marginBottom: 6,
   },
   brandName: {
-    fontSize: 14,
+    fontSize: 14.5,
     fontWeight: '900',
     color: '#0F172A',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
+    textAlign: 'center',
   },
   subRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 2,
-    gap: 4,
+    justifyContent: 'center',
+    marginTop: 3,
+    gap: 5,
   },
   subLine: {
-    width: 10,
+    width: 12,
     height: 1,
     backgroundColor: '#DC2626',
   },
@@ -245,12 +256,13 @@ const styles = StyleSheet.create({
     fontSize: 9.5,
     fontWeight: '800',
     color: '#DC2626',
-    letterSpacing: 1,
+    letterSpacing: 1.2,
+    textAlign: 'center',
   },
 
-  // Main Headline
+  // Headline
   headlineContainer: {
-    maxWidth: width * 0.64,
+    width: SCREEN_WIDTH * 0.58,
     marginBottom: 16,
   },
   headlineDark: {
@@ -258,37 +270,39 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#0F172A',
     lineHeight: 33,
+    letterSpacing: -0.3,
   },
   headlineRed: {
     fontSize: 27,
     fontWeight: '900',
     color: '#DC2626',
-    lineHeight: 33,
+    lineHeight: 35,
+    letterSpacing: -0.3,
   },
   headlineSub: {
-    fontSize: 12.5,
+    fontSize: 12,
     color: '#475569',
     marginTop: 8,
-    lineHeight: 18,
+    lineHeight: 17,
     fontWeight: '500',
   },
 
-  // Left Value Proposition Cards
+  // 3 Feature Cards
   cardsContainer: {
-    maxWidth: width * 0.66,
+    width: SCREEN_WIDTH * 0.58,
     gap: 10,
-    marginVertical: 12,
+    marginBottom: 20,
   },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
     borderRadius: 16,
-    gap: 10,
+    gap: 8,
   },
   cardBlue: {
-    backgroundColor: '#F0F7FF',
+    backgroundColor: '#EFF6FF',
   },
   cardPink: {
     backgroundColor: '#FFF1F2',
@@ -297,14 +311,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#F0FDF4',
   },
   iconBox: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
   iconBlue: {
-    backgroundColor: '#E0EFFF',
+    backgroundColor: '#DBEAFE',
   },
   iconPink: {
     backgroundColor: '#FFE4E6',
@@ -316,20 +330,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   cardTitle: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '800',
     color: '#0F172A',
   },
   cardSub: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#64748B',
     marginTop: 1,
   },
 
-  // Primary Action Buttons
+  // Action Buttons
   actionsContainer: {
-    marginTop: 20,
+    width: '100%',
     gap: 12,
+    paddingBottom: 8,
   },
   loginBtn: {
     backgroundColor: '#1E60D5',
@@ -341,7 +356,7 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     shadowColor: '#1E60D5',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.35,
     shadowRadius: 8,
     elevation: 4,
   },
