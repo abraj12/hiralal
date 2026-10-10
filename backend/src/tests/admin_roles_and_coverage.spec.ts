@@ -431,13 +431,23 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
         AuthService.login('9999911111', 'AnyPassword@123')
       ).rejects.toThrow(/Invalid mobile number or password/i);
 
+      // Contract A: Admin cannot authenticate through regular user login
       await expect(
-        AuthService.login(suspendedAdminMobile, 'AnyPassword@123')
-      ).rejects.toThrow(/account has been suspended/i);
-
-      await expect(
-        AuthService.login(regularUserMobile, 'WrongPassword@123')
+        AuthService.login(billAdminMobile, testPassword)
       ).rejects.toThrow(/Invalid mobile number or password/i);
+
+      // Suspended regular user rejection
+      await prisma.user.update({
+        where: { id: regularUserId },
+        data: { status: 'SUSPENDED' },
+      });
+      await expect(
+        AuthService.login(regularUserMobile, testPassword)
+      ).rejects.toThrow(/account has been suspended/i);
+      await prisma.user.update({
+        where: { id: regularUserId },
+        data: { status: 'ACTIVE' },
+      });
 
       const regularLogin = await AuthService.login(regularUserMobile, testPassword);
       expect(regularLogin.accessToken).toBeDefined();
@@ -691,20 +701,32 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       });
     });
 
-    test('requestRedemption enforces amount bounds', async () => {
+    test('requestRedemption enforces minimum bounds and 100% balance', async () => {
       await prisma.payout.deleteMany({ where: { userId: regularUserId } });
       await prisma.kycRecord.updateMany({
         where: { userId: regularUserId },
         data: { nameMatched: true, panStatus: 'VERIFIED' },
       });
 
-      await expect(
-        PayoutService.requestRedemption(regularUserId, 'key-min', 100)
-      ).rejects.toThrow(/below the minimum redemption limit/i);
+      // Wallet available balance below minimum
+      await prisma.wallet.update({
+        where: { id: regularWalletId },
+        data: { availableBalance: 100.0 },
+      });
 
       await expect(
-        PayoutService.requestRedemption(regularUserId, 'key-max', 999999)
-      ).rejects.toThrow(/exceeds your available balance/i);
+        PayoutService.requestRedemption(regularUserId, 'key-min')
+      ).rejects.toThrow(/Minimum redemption amount/i);
+
+      // Wallet available balance valid -> 100% full balance redeemed
+      await prisma.wallet.update({
+        where: { id: regularWalletId },
+        data: { availableBalance: 3000.0 },
+      });
+
+      const res = await PayoutService.requestRedemption(regularUserId, 'key-full');
+      expect(res.amountDebited).toBe(3000.0);
+      expect(res.payout.status).toBe('PENDING');
     });
 
     test('approveRedemption transitions PENDING payout to APPROVED', async () => {
@@ -736,10 +758,10 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       expect(Number(wallet?.availableBalance)).toBe(5000.0);
       expect(Number(wallet?.processingAmount)).toBe(0.0);
 
-      const rejectAgain = await PayoutService.rejectRedemption(testPayoutId, opsAdminId, 'Invalid UPI details');
-      expect(rejectAgain.status).toBe('FAILED');
-      const walletAgain = await prisma.wallet.findUnique({ where: { id: regularWalletId } });
-      expect(Number(walletAgain?.availableBalance)).toBe(5000.0);
+      // Contract C: Cannot manually reject non-PENDING payout
+      await expect(
+        PayoutService.rejectRedemption(testPayoutId, opsAdminId, 'Invalid UPI details')
+      ).rejects.toThrow(/Cannot manually reject payout in FAILED state/i);
     });
 
     test('reversePayout refunds processing funds and records PAYOUT_REVERSAL', async () => {

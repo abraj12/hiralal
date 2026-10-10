@@ -147,9 +147,7 @@ export default function AdminSettingsPage() {
       await AdminApiClient.createRewardRule({
         profession: prof,
         rewardPercentage: parseFloat(form.rewardPercentage),
-        monthlyPoolLimit: parseFloat(form.monthlyPoolLimit),
         minRedemptionAmount: parseFloat(form.minRedemptionAmount),
-        maxRedemptionAmount: parseFloat(form.maxRedemptionAmount),
       });
 
       setSuccessMsg(`New versioned reward rule deployed for ${prof === 'PLUMBER' ? 'Plumbers' : 'Tile Installers'}! Historical approved bills remain financially immutable.`);
@@ -376,28 +374,7 @@ export default function AdminSettingsPage() {
                       className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
                     />
                     <span className="text-[10px] text-slate-400 mt-1 block">
-                      Worker cannot request payout below this balance
-                    </span>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Maximum Redemption Limit Per Request (₹)
-                    </label>
-                    <input
-                      type="number"
-                      step="500"
-                      min="500"
-                      value={activeTab === 'PLUMBER' ? plumberForm.maxRedemptionAmount : tileForm.maxRedemptionAmount}
-                      onChange={(e) =>
-                        activeTab === 'PLUMBER'
-                          ? setPlumberForm({ ...plumberForm, maxRedemptionAmount: e.target.value })
-                          : setTileForm({ ...tileForm, maxRedemptionAmount: e.target.value })
-                      }
-                      className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
-                    />
-                    <span className="text-[10px] text-slate-400 mt-1 block">
-                      Cap per single payout transaction
+                      Worker cannot request payout below this balance (100% full balance redeemed)
                     </span>
                   </div>
                 </div>

@@ -517,20 +517,19 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       adminId: adminUserId,
       gstIncluded: true,
       gstRate: 18.0,
-      customRewardAmount: 50.0,
-      gstOverrideReason: 'Special festival allowance approved by Director',
+      gstOverrideReason: 'Special tax rate verification approved by Director',
     });
     const approved = res.bill;
 
     expect(approved.status).toBe('APPROVED');
-    expect(Number(approved.calculatedReward)).toBe(50.0);
-    expect(approved.gstOverrideReason).toBe('Special festival allowance approved by Director');
+    expect(Number(approved.calculatedReward)).toBeGreaterThan(0);
+    expect(approved.gstOverrideReason).toBe('Special tax rate verification approved by Director');
 
     // Verify audit log entry exists
     const auditLogs = await prisma.auditLog.findMany({
       where: { entityId: bill.id, action: 'BILL_APPROVED' },
     });
     expect(auditLogs.length).toBeGreaterThan(0);
-    expect(auditLogs[0].newValue).toContain('Special festival allowance');
+    expect(auditLogs[0].newValue).toContain('Special tax rate verification');
   });
 });

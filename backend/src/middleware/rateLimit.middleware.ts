@@ -132,7 +132,7 @@ export const otpRequestLimiter = createRateLimiter({
   keyPrefix: 'otp:request',
   limit: config.isProduction ? 5 : 25,
   windowSeconds: 300,
-  getIdentifier: (req) => normalizeIdentifier(req.body?.mobile) || req.ip || 'anon',
+  getIdentifier: (req) => normalizeIdentifier(req.body?.identifier || req.body?.mobile) || req.ip || 'anon',
   message: 'Too many OTP requests. Please wait 5 minutes before trying again.',
 });
 
@@ -140,7 +140,7 @@ export const otpVerifyLimiter = createRateLimiter({
   keyPrefix: 'otp:verify',
   limit: config.isProduction ? 10 : 50,
   windowSeconds: 300,
-  getIdentifier: (req) => normalizeIdentifier(req.body?.mobile) || req.ip || 'anon',
+  getIdentifier: (req) => normalizeIdentifier(req.body?.identifier || req.body?.mobile) || req.ip || 'anon',
   message: 'Too many verification attempts. Please wait 5 minutes before trying again.',
 });
 
@@ -191,7 +191,7 @@ export const adminLoginLimiter = createRateLimiter({
 export const adminAccountLoginLimiter = createRateLimiter({
   keyPrefix: 'auth:admin_login_user',
   limit: 5,
-  windowSeconds: 900, // 5 attempts per 15 minutes by username
-  getIdentifier: (req) => req.body?.username || 'anon',
+  windowSeconds: 900, // 5 attempts per 15 minutes by username/identifier
+  getIdentifier: (req) => req.body?.identifier || req.body?.username || 'anon',
   message: 'Too many admin login attempts for this account. Please wait 15 minutes.',
 });

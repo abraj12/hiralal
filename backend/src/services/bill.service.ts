@@ -245,7 +245,6 @@ export class BillService {
           gstRate?: number;
           gstRuleId?: string;
           gstOverrideReason?: string;
-          customRewardAmount?: number;
         },
     adminIdArg?: string,
     optionsArg?: {
@@ -253,7 +252,6 @@ export class BillService {
       gstRate?: number;
       gstRuleId?: string;
       gstOverrideReason?: string;
-      customRewardAmount?: number;
     }
   ) {
     let billId: string;
@@ -263,7 +261,6 @@ export class BillService {
       gstRate?: number;
       gstRuleId?: string;
       gstOverrideReason?: string;
-      customRewardAmount?: number;
     } | undefined;
 
     if (typeof billIdOrParams === 'object') {
@@ -344,13 +341,8 @@ export class BillService {
 
       const gstCalc = GstService.calculateGstAndEligibleAmount(gross, isGstIncluded, effectiveGstRate);
 
-      // 4. Final reward calculation
-      let finalReward: number;
-      if (typeof options?.customRewardAmount === 'number' && options.customRewardAmount > 0) {
-        finalReward = Math.round(options.customRewardAmount * 100) / 100;
-      } else {
-        finalReward = RewardService.calculateReward(gstCalc.eligibleRewardAmount, rulePercentage);
-      }
+      // 4. Final reward calculation strictly rule-based
+      const finalReward = RewardService.calculateReward(gstCalc.eligibleRewardAmount, rulePercentage);
 
       // 5. Ensure wallet exists and credit atomically
       let wallet = await tx.wallet.findUnique({

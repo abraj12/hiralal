@@ -136,17 +136,6 @@ jobs:
           path: backend/test_output.log
           retention-days: 7
 
-      - name: Save Test Log to Debug Branch
-        if: failure()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -B debug-ci-logs
-          cp backend/test_output.log ./ci_test_output.log || true
-          git add -f ci_test_output.log
-          git commit -m "ci: debug test output log" || true
-          git push -f origin debug-ci-logs || true
-
   docker-arm64-check:
     name: Docker ARM64 Build Verification (AWS Graviton2)
     runs-on: ubuntu-latest

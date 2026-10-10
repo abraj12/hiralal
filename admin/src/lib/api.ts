@@ -145,7 +145,7 @@ export class AdminApiClient {
 
   static handlePayoutAction(
     id: string,
-    action: 'APPROVE' | 'REJECT' | 'FAIL',
+    action: 'APPROVE' | 'REJECT',
     reason?: string
   ) {
     return this.request(`/admin/payouts/${id}/action`, {
@@ -163,7 +163,7 @@ export class AdminApiClient {
   static createRewardRule(data: {
     profession: 'PLUMBER' | 'TILE_INSTALLER';
     rewardPercentage: number;
-    monthlyPoolLimit: number;
+    monthlyPoolLimit?: number;
     minRedemptionAmount?: number;
     maxRedemptionAmount?: number;
     effectiveFrom?: string;

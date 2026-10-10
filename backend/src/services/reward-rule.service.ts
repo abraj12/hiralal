@@ -74,7 +74,7 @@ export class RewardRuleService {
     params: {
       profession: Profession;
       rewardPercentage: number;
-      monthlyPoolLimit: number;
+      monthlyPoolLimit?: number;
       minRedemptionAmount?: number;
       maxRedemptionAmount?: number;
       effectiveFrom?: Date;
@@ -83,20 +83,21 @@ export class RewardRuleService {
     },
     tx: any = prisma
   ): Promise<RewardRule> {
-    const { profession, rewardPercentage, monthlyPoolLimit } = params;
+    const { profession, rewardPercentage } = params;
 
     if (rewardPercentage <= 0 || rewardPercentage > 50) {
       throw new Error('Reward percentage must be between 0.01% and 50.00%.');
     }
 
-    if (monthlyPoolLimit <= 0) {
-      throw new Error('Monthly reward pool limit must be greater than zero.');
+    const monthlyPoolLimit = params.monthlyPoolLimit !== undefined ? params.monthlyPoolLimit : 0.0;
+    const minRedemption = params.minRedemptionAmount !== undefined ? params.minRedemptionAmount : 500;
+    const maxRedemption = params.maxRedemptionAmount !== undefined ? params.maxRedemptionAmount : 0.0;
+
+    if (minRedemption <= 0) {
+      throw new Error('Minimum redemption amount must be greater than zero.');
     }
 
-    const minRedemption = params.minRedemptionAmount !== undefined ? params.minRedemptionAmount : 500;
-    const maxRedemption = params.maxRedemptionAmount !== undefined ? params.maxRedemptionAmount : 10000;
-
-    if (minRedemption <= 0 || maxRedemption < minRedemption) {
+    if (maxRedemption > 0 && maxRedemption < minRedemption) {
       throw new Error('Maximum redemption amount must be greater than or equal to minimum redemption amount.');
     }
 

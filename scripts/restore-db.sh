@@ -54,17 +54,17 @@ SQL_FILE="${TEMP_DIR}/restore.sql"
 
 echo "[$(date -u)] [1/4] Decrypting AES-256 backup: ${ENC_BACKUP}..."
 CRYPTO_SCRIPT="$(dirname "$0")/crypto-backup.js"
-if [ -f "${CRYPTO_SCRIPT}" ] && command -v node >/dev/null 2>&1; then
-  node "${CRYPTO_SCRIPT}" decrypt "${ENC_BACKUP}" "${DEC_FILE}"
-else
-  openssl enc -d -aes-256-cbc -pbkdf2 -in "${ENC_BACKUP}" -out "${DEC_FILE}" -pass pass:"${BACKUP_ENCRYPTION_PASSPHRASE}"
+if [ ! -f "${CRYPTO_SCRIPT}" ] || ! command -v node >/dev/null 2>&1; then
+  echo "[FATAL ERROR] Node.js or crypto-backup.js helper missing. Cannot safely decrypt backup." >&2
+  exit 1
 fi
+node "${CRYPTO_SCRIPT}" decrypt "${ENC_BACKUP}" "${DEC_FILE}"
 
 echo "[$(date -u)] [2/4] Decompressing SQL dump..."
 gunzip -c "${DEC_FILE}" > "${SQL_FILE}"
 
 echo "[$(date -u)] [3/4] Restoring SQL dump into database '${TARGET_DB}' in container '${DB_CONTAINER}'..."
-docker exec -i "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${TARGET_DB}" < "${SQL_FILE}"
+docker exec -i "${DB_CONTAINER}" psql -v ON_ERROR_STOP=1 -U "${DB_USER}" -d "${TARGET_DB}" < "${SQL_FILE}"
 
 echo "[$(date -u)] [4/4] Commencing deep financial integrity & ledger reconciliation verification..."
 

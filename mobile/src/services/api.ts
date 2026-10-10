@@ -298,6 +298,10 @@ export class MobileApiClient {
     });
   }
 
+  static requestOtp(mobile: string, purpose = 'REGISTRATION') {
+    return this.sendOtp(mobile, purpose);
+  }
+
   static verifyOtp(mobile: string, otpCode: string, purpose = 'REGISTRATION') {
     return this.request('/auth/verify-otp', {
       method: 'POST',
@@ -347,6 +351,18 @@ export class MobileApiClient {
 
   static getProfile() {
     return this.request('/auth/me');
+  }
+
+  static updateProfileName(data: {
+    firstName?: string;
+    middleName?: string;
+    lastName?: string;
+    fullName?: string;
+  }) {
+    return this.request('/auth/profile/name', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
   }
 
   static updateProfile(data: { profession?: string; fullName?: string }) {

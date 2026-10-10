@@ -272,7 +272,7 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
       const initialAvailable = Number(walletBefore?.availableBalance || 0);
 
       const idempotencyKey = `idem-test-${Date.now()}`;
-      const result = await PayoutService.requestRedemption(testUserId, idempotencyKey, 500);
+      const result = await PayoutService.requestRedemption(testUserId, idempotencyKey);
 
       // Trigger reversal
       await PayoutService.reversePayout(result.payout.id, 'Test reversal bank rejection');
@@ -287,7 +287,7 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
         where: { referenceId: result.payout.id, type: 'PAYOUT_REVERSAL' },
       });
       expect(reversalTx).not.toBeNull();
-      expect(Number(reversalTx?.amount)).toBe(500);
+      expect(Number(reversalTx?.amount)).toBe(initialAvailable);
     });
   });
 });

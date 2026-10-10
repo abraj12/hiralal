@@ -335,6 +335,13 @@ router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequ
     const { action, rejectionReason, gstIncluded, gstRate, gstRuleId, gstOverrideReason, customRewardAmount } = req.body;
     const admin = req.user!;
 
+    if (customRewardAmount !== undefined && customRewardAmount !== null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Manual customRewardAmount overrides are strictly prohibited. Rewards must be calculated exclusively via system reward rules.',
+      });
+    }
+
     if (!action || !['APPROVE', 'REJECT'].includes(action)) {
       return res.status(400).json({ success: false, message: 'Action must be APPROVE or REJECT.' });
     }
@@ -345,7 +352,6 @@ router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequ
         gstRate: typeof gstRate === 'number' ? gstRate : undefined,
         gstRuleId: typeof gstRuleId === 'string' ? gstRuleId : undefined,
         gstOverrideReason: typeof gstOverrideReason === 'string' ? gstOverrideReason : undefined,
-        customRewardAmount: typeof customRewardAmount === 'number' ? customRewardAmount : undefined,
       });
 
       res.json({
@@ -428,7 +434,7 @@ router.post('/payouts/:id/action', requireOperationsAdmin, async (req: Authentic
     if (action === 'APPROVE') {
       const payout = await PayoutService.approveRedemption(id, admin.id);
       return res.json({ success: true, message: 'Payout approved and queued for disbursement.', payout });
-    } else if (action === 'REJECT' || action === 'FAIL') {
+    } else if (action === 'REJECT') {
       if (!reason || !reason.trim()) {
         return res.status(400).json({ success: false, message: 'A rejection reason is required.' });
       }

@@ -54,9 +54,20 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     });
     testAdminId = admin.id;
 
+    const challengeToken = crypto.randomBytes(32).toString('hex');
+    await prisma.verificationToken.create({
+      data: {
+        mobile: '9999999999',
+        tokenHash: crypto.createHash('sha256').update(challengeToken).digest('hex'),
+        purpose: 'ADMIN_LOGIN',
+        isUsed: false,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      },
+    });
+
     const adminLoginRes = await request(app)
       .post('/api/auth/admin-login')
-      .send({ username: '9999999999', password: 'Admin@123' });
+      .send({ username: 'ADMIN9999999999', password: 'Admin@123', verificationToken: challengeToken });
     if (adminLoginRes.status !== 200) {
       console.error('adminLoginRes failed with status:', adminLoginRes.status, adminLoginRes.body);
     }
@@ -265,5 +276,63 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
       .set('x-razorpay-signature', 'invalidsig123')
       .send(JSON.parse(payload));
     expect(invalidRes.status).toBe(400);
+  });
+
+  test('Contract A: Admin cannot authenticate via regular /api/auth/login', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ mobile: '9999900001', password: 'AdminPassword@123' });
+    expect(res.status).toBe(401);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('Contract D: POST /api/admin/bills/:id/verify rejects customRewardAmount with 400', async () => {
+    const res = await request(app)
+      .post('/api/admin/bills/any-bill-id/verify')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ action: 'APPROVE', customRewardAmount: 500 });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toContain('Manual customRewardAmount overrides are strictly prohibited');
+  });
+
+  test('Contract F: POST /api/auth/logout rejects missing token and accepts verified token', async () => {
+    // Missing credentials
+    const missingRes = await request(app)
+      .post('/api/auth/logout')
+      .send({});
+    expect(missingRes.status).toBe(400);
+
+    // Unsigned / forged token
+    const forgedToken = 'eyJhbGciOiJub25lIn0.eyJ1c2VySWQiOiJhZG1pbi0xMjMifQ.';
+    const forgedRes = await request(app)
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${forgedToken}`)
+      .send({});
+    expect(forgedRes.status).toBe(400);
+
+    // Valid verified token
+    const validRes = await request(app)
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({});
+    expect(validRes.status).toBe(200);
+    expect(validRes.body.success).toBe(true);
+  });
+
+  test('Admin OTP Flow: POST /api/auth/admin-login rejects without verificationToken with 403', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ identifier: '9999900001', password: 'AdminPassword@123' });
+    expect(res.status).toBe(403);
+    expect(res.body.message).toContain('Password-only admin login is deprecated and disabled');
+  });
+
+  test('Contract C: POST /api/admin/payouts/:id/action rejects FAIL action with 400', async () => {
+    const res = await request(app)
+      .post('/api/admin/payouts/any-id/action')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ action: 'FAIL', reason: 'Failed disbursement' });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toContain('Invalid action. Must be APPROVE or REJECT');
   });
 });

@@ -148,16 +148,31 @@ router.post('/logout', async (req: Request, res: Response) => {
     let userId: string | undefined;
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
       try {
-        const token = authHeader.split(' ')[1];
-        const decoded = jwt.decode(token) as any;
+        const decoded = jwt.verify(token, config.jwt.accessSecret) as any;
         if (decoded?.userId || decoded?.id) {
           userId = decoded.userId || decoded.id;
         }
       } catch {
-        // ignore decoding errors
+        try {
+          const decodedAdmin = jwt.verify(token, config.admin.accessSecret) as any;
+          if (decodedAdmin?.userId || decodedAdmin?.id) {
+            userId = decodedAdmin.userId || decodedAdmin.id;
+          }
+        } catch {
+          // Token is invalid/unverified - do not trust userId from unverified token
+        }
       }
     }
+
+    if (!refreshToken && !userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid session token (Authorization header) or refresh token is required for logout.',
+      });
+    }
+
     await AuthService.logout(refreshToken, userId);
     res.json({ success: true, message: 'Logged out successfully.' });
   } catch (err: any) {
@@ -266,7 +281,7 @@ router.post(
       }
 
       if (!verificationToken) {
-        return res.status(400).json({
+        return res.status(403).json({
           success: false,
           message: 'Admin verification challenge token is required. Please verify OTP first.',
         });
@@ -303,87 +318,26 @@ router.post(
         return res.status(400).json({ success: false, message: 'Admin mobile/username and password are required.' });
       }
 
-      if (verificationToken) {
-        const ipAddress = req.ip || req.socket.remoteAddress;
-        const userAgent = req.headers['user-agent'];
-        const result = await AuthService.loginAdmin({
-          identifier,
-          password,
-          verificationToken,
-          userAgent,
-          ipAddress,
-        });
-        return res.json({ success: true, ...result });
-      }
-
-      // Password-only admin authentication is strictly forbidden in production
-      if (config.isProduction) {
+      if (!verificationToken) {
         return res.status(403).json({
           success: false,
-          message: 'Password-only admin login is deprecated and disabled for security in production. Admin authentication requires OTP verification (/api/auth/admin/otp/request -> /api/auth/admin/otp/verify -> /api/auth/admin/login).',
+          message:
+            'Password-only admin login is deprecated and disabled for security. Admin authentication requires OTP verification (/api/auth/admin/otp/request -> /api/auth/admin/otp/verify -> /api/auth/admin/login).',
         });
       }
 
-      const cleanMobile = identifier.replace(/\D/g, '').slice(-10);
-      const admin = await prisma.user.findFirst({
-        where: {
-          mobile: cleanMobile,
-          role: { in: ['ADMIN', 'BILL_ADMIN', 'OPERATIONS_ADMIN'] },
-        },
+      const ipAddress = req.ip || req.socket.remoteAddress;
+      const userAgent = req.headers['user-agent'];
+      const result = await AuthService.loginAdmin({
+        identifier,
+        password,
+        verificationToken,
+        userAgent,
+        ipAddress,
       });
-
-      if (!admin) {
-        return res.status(401).json({ success: false, message: 'Invalid admin credentials.' });
-      }
-
-      const isMatch = await bcrypt.compare(password, admin.passwordHash);
-      if (!isMatch) {
-        return res.status(401).json({ success: false, message: 'Invalid admin credentials.' });
-      }
-
-      const sessionId = crypto.randomUUID();
-      await prisma.authSession.updateMany({
-        where: { userId: admin.id, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-      await prisma.user.update({
-        where: { id: admin.id },
-        data: { activeSessionId: sessionId },
-      });
-
-      const token = jwt.sign(
-        { userId: admin.id, role: admin.role, mobile: admin.mobile, sessionId },
-        config.admin.accessSecret || config.jwt.accessSecret,
-        { expiresIn: config.jwt.accessExpiresIn as any }
-      );
-
-      const sessionToken = generateSecureToken(40);
-      const sessionTokenHash = sha256Hash(sessionToken);
-      const sessionExpiresAt = new Date(Date.now() + 24 * 3600 * 1000);
-
-      await prisma.authSession.create({
-        data: {
-          userId: admin.id,
-          sessionId,
-          tokenHash: sessionTokenHash,
-          expiresAt: sessionExpiresAt,
-        },
-      });
-
-      res.json({
-        success: true,
-        user: {
-          id: admin.id,
-          fullName: admin.fullName,
-          mobile: admin.mobile,
-          role: admin.role,
-        },
-        token,
-        accessToken: token,
-        sessionId,
-      });
+      return res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      res.status(401).json({ success: false, message: err.message });
     }
   }
 );

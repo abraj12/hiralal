@@ -43,6 +43,14 @@ export class AuthService {
       return { role: 'OPERATIONS_ADMIN', mobile: remainder };
     }
 
+    if (cleanRaw.startsWith('ADMIN')) {
+      const remainder = cleanRaw.slice(5).replace(/\D/g, '').slice(-10);
+      if (remainder.length !== 10) {
+        throw new Error('Invalid Admin identifier format. Must be prefix followed by 10-digit mobile.');
+      }
+      return { role: 'ADMIN', mobile: remainder };
+    }
+
     throw new Error('Invalid admin identifier prefix. Please enter your designated role prefix followed by your 10-digit mobile number.');
   }
 
@@ -773,8 +781,8 @@ export class AuthService {
   static async login(mobile: string, pass: string, userAgent?: string, ipAddress?: string) {
     const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
 
-    const user = await prisma.user.findUnique({
-      where: { mobile: cleanMobile },
+    const user = await prisma.user.findFirst({
+      where: { mobile: cleanMobile, role: 'USER' },
       include: { wallet: true },
     });
 

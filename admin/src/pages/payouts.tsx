@@ -28,7 +28,7 @@ export default function AdminPayoutsPage() {
 
   const handleAction = async (
     id: string,
-    action: 'APPROVE' | 'REJECT' | 'FAIL',
+    action: 'APPROVE' | 'REJECT',
     reason?: string
   ) => {
     setActionLoading(id);
@@ -192,34 +192,6 @@ export default function AdminPayoutsPage() {
                               Reject & Refund
                             </button>
                           </>
-                        )}
-                        {p.status === 'APPROVED' && (
-                          <button
-                            onClick={() => {
-                              const reason = prompt('Please enter cancellation reason:');
-                              if (reason && reason.trim()) {
-                                handleAction(p.id, 'REJECT', reason.trim());
-                              }
-                            }}
-                            disabled={actionLoading === p.id}
-                            className="px-2.5 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-bold text-xs transition"
-                          >
-                            Cancel
-                          </button>
-                        )}
-                        {p.status === 'PROCESSING' && (
-                          <button
-                            onClick={() => {
-                              const reason = prompt('Please enter failure reason:');
-                              if (reason && reason.trim()) {
-                                handleAction(p.id, 'FAIL', reason.trim());
-                              }
-                            }}
-                            disabled={actionLoading === p.id}
-                            className="px-2.5 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-bold text-xs transition"
-                          >
-                            Fail & Refund
-                          </button>
                         )}
                       </td>
                     </tr>

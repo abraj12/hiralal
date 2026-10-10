@@ -280,7 +280,7 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
         .post('/api/auth/admin-login')
         .set('x-test-rate-limit', 'true')
         .send({ username: '9999999999', password: 'WrongPassword@123' });
-      expect([400, 401]).toContain(res.status);
+      expect([400, 401, 403]).toContain(res.status);
     }
 
     // 6th attempt should be blocked by rate limiter

@@ -9,22 +9,22 @@ export class PayoutService {
    * Retrieves active admin redemption settings for a profession and evaluates window status
    * using Asia/Kolkata business interpretation with UTC timestamps.
    */
-  static async getRedemptionSettings(profession?: Profession) {
+  static async getRedemptionSettings(profession?: Profession, tx: any = prisma) {
     let settings = null;
     if (profession) {
-      settings = await prisma.redemptionSettings.findUnique({
+      settings = await tx.redemptionSettings.findUnique({
         where: { profession },
       });
     }
 
     if (!settings) {
-      settings = await prisma.redemptionSettings.findUnique({
+      settings = await tx.redemptionSettings.findUnique({
         where: { id: 'default' },
       });
     }
 
     if (!settings) {
-      settings = await prisma.redemptionSettings.create({
+      settings = await tx.redemptionSettings.create({
         data: {
           id: 'default',
           profession: profession || null,
@@ -132,9 +132,10 @@ export class PayoutService {
   /**
    * Requests reward redemption using durable outbox architecture.
    * Scopes idempotency strictly to (userId, idempotencyKey).
-   * Redeems 100% full balance by default. Requires admin approval before dispatch.
+   * Enforces 100% full balance redemption under pessimistic locking.
+   * Requires admin approval before dispatch.
    */
-  static async requestRedemption(userId: string, idempotencyKey: string, requestedAmount?: number) {
+  static async requestRedemption(userId: string, idempotencyKey: string) {
     const cleanKey = idempotencyKey.trim();
 
     // 1. Idempotency Check scoped to USER
@@ -156,36 +157,11 @@ export class PayoutService {
       };
     }
 
-    // 2. Enforce strict eligibility and window rules
-    const eligibility = await this.checkUserEligibility(userId);
-    if (!eligibility.canRedeem) {
-      throw new Error(eligibility.reason);
-    }
-
-    const verifiedAccount = eligibility.verifiedAccount;
-    if (!verifiedAccount) {
-      throw new Error('A verified bank account or UPI ID is required for payout.');
-    }
-
-    // 3. Server validates payout amount: default to 100% full available balance
-    let payoutAmount = eligibility.availableBalance;
-    if (requestedAmount !== undefined) {
-      if (requestedAmount < eligibility.minimumAmount) {
-        throw new Error(`Requested amount ₹${requestedAmount} is below the minimum redemption limit of ₹${eligibility.minimumAmount}.`);
-      }
-      if (requestedAmount > eligibility.availableBalance) {
-        throw new Error(`Requested amount ₹${requestedAmount} exceeds your available balance of ₹${eligibility.availableBalance.toFixed(2)}.`);
-      }
-      payoutAmount = requestedAmount;
-    }
-
-    // Format to 2-decimal paise precision
-    payoutAmount = fromPaise(toPaise(payoutAmount));
-
-    // 4. Atomic PostgreSQL Transaction: lock wallet, reserve funds, create payout in PENDING status
+    // 2. Atomic PostgreSQL Transaction: lock wallet, evaluate eligibility, reserve 100% funds, create payout in PENDING status
     let payoutResult: any;
+    let debitedAmount = 0;
     try {
-      const { payout } = await prisma.$transaction(async (tx) => {
+      const { payout, amount } = await prisma.$transaction(async (tx) => {
         // Lock wallet row for update
         const walletRows: any[] = await tx.$queryRaw`
           SELECT * FROM "Wallet" WHERE "userId" = ${userId} FOR UPDATE;
@@ -198,9 +174,58 @@ export class PayoutService {
         const userWallet = walletRows[0];
         const currentAvailable = Number(userWallet.availableBalance);
 
-        if (currentAvailable < payoutAmount) {
-          throw new Error(`Insufficient available balance for payout. Current: ₹${currentAvailable.toFixed(2)}, Required: ₹${payoutAmount.toFixed(2)}.`);
+        // Check active in-flight payout inside transaction
+        const activePayout = await tx.payout.findFirst({
+          where: {
+            userId,
+            status: { in: ['PENDING', 'APPROVED', 'PAYOUT_INITIATED', 'PROCESSING'] },
+          },
+        });
+
+        if (activePayout) {
+          throw new Error('You have a redemption request currently in progress. Please wait until it completes.');
         }
+
+        // Fetch user profile, kyc, payment accounts inside transaction
+        const user = await tx.user.findUnique({
+          where: { id: userId },
+          include: {
+            kycRecords: { where: { panStatus: 'VERIFIED' } },
+            paymentAccounts: { where: { isVerified: true, isDefault: true } },
+          },
+        });
+
+        if (!user) throw new Error('User not found.');
+
+        const { settings, isWindowOpen } = await this.getRedemptionSettings(user.profession || undefined, tx);
+        if (!isWindowOpen) {
+          throw new Error(settings.message || 'Rewards redemption window is currently closed by administration.');
+        }
+
+        const hasVerifiedKyc = user.kycRecords.length > 0;
+        const verifiedKycRecord = hasVerifiedKyc ? user.kycRecords[0] : null;
+        const isNameMatched = Boolean(verifiedKycRecord?.nameMatched || user.isNameLocked);
+        const verifiedAccount = user.paymentAccounts[0] || null;
+
+        if (!hasVerifiedKyc) {
+          throw new Error('Please verify your PAN card details before redeeming rewards.');
+        }
+        if (!isNameMatched) {
+          throw new Error('Your verified PAN name does not match your registered account name. Please update your profile name or complete verification.');
+        }
+        if (!verifiedAccount) {
+          throw new Error('A verified bank account or UPI ID is required for payout.');
+        }
+
+        if (currentAvailable <= 0) {
+          throw new Error('No balance available for redemption.');
+        }
+        if (currentAvailable < settings.minimumAmount) {
+          throw new Error(`Minimum redemption amount is ₹${settings.minimumAmount}. Your current balance is ₹${currentAvailable.toFixed(2)}.`);
+        }
+
+        // 100% full balance redemption
+        const payoutAmount = fromPaise(toPaise(currentAvailable));
 
         // Move funds from availableBalance to processingAmount atomically
         await tx.$executeRaw`
@@ -251,9 +276,10 @@ export class PayoutService {
           },
         });
 
-        return { payout: newPayout };
+        return { payout: newPayout, amount: payoutAmount };
       });
       payoutResult = payout;
+      debitedAmount = amount;
     } catch (err: any) {
       if (err.code === 'P2002' || (err.message && err.message.includes('user_payout_idempotency_unique'))) {
         const racePayout = await prisma.payout.findUnique({
@@ -279,7 +305,7 @@ export class PayoutService {
 
     return {
       payout: payoutResult,
-      amountDebited: payoutAmount,
+      amountDebited: debitedAmount,
       message: 'Redemption request submitted successfully. Awaiting admin approval before disbursement.',
     };
   }
@@ -410,12 +436,13 @@ export class PayoutService {
 
       if (!payout) throw new Error(`Payout ${payoutId} not found`);
 
-      if (payout.status === 'SUCCESS') {
-        throw new Error(`Cannot reject payout ${payoutId} because it has already successfully completed.`);
-      }
-
-      if (payout.status === 'FAILED' || payout.status === 'REVERSED') {
-        return payout;
+      if (payout.status !== 'PENDING') {
+        if (payout.status === 'SUCCESS') {
+          throw new Error(`Cannot reject payout ${payoutId} because it has already successfully completed.`);
+        }
+        throw new Error(
+          `Cannot manually reject payout in ${payout.status} state. Manual rejection is permitted only before payout approval and dispatch.`
+        );
       }
 
       const payoutAmount = Number(payout.amount);
