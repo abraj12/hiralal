@@ -86,6 +86,72 @@ export class AuthService {
   }
 
   /**
+   * Universal password-first authentication handler.
+   * - Validates credentials against password hash BEFORE generating challenges or dispatching OTPs.
+   * - Craftsman (USER) credentials return immediate authenticated session.
+   * - Configured Admin credentials create and dispatch single-purpose OTP challenge.
+   * - Invalid formats, prefixes, or credentials fail closed with generic error (no role enumeration).
+   */
+  static async authenticatePasswordFirst(params: {
+    identifier: string;
+    password: string;
+    ipAddress?: string;
+    userAgent?: string;
+  }) {
+    const rawIdentifier = (params.identifier || '').trim();
+    const password = params.password || '';
+
+    if (!rawIdentifier || !password) {
+      throw new Error('Invalid login credentials. Please check your details and try again.');
+    }
+
+    // 1. Silent backend classification: check if identifier matches configured admin prefix
+    if (this.isConfiguredAdminPrefix(rawIdentifier)) {
+      // Flow B: Valid administrator candidate.
+      // Sequence: Validate administrator password FIRST before generating OTP challenge.
+      const result = await this.requestAdminOtp({
+        identifier: rawIdentifier,
+        password,
+        ipAddress: params.ipAddress,
+        userAgent: params.userAgent,
+      });
+
+      const { role, mobile } = this.resolveAdminIdentifier(rawIdentifier);
+      const maskedMobile = `***${mobile.slice(-4)}`;
+
+      return {
+        kind: 'ADMIN_OTP_REQUIRED' as const,
+        challengeId: result.challengeToken,
+        challengeToken: result.challengeToken,
+        requiresOtp: true as const,
+        role,
+        mobileMasked: maskedMobile,
+        message: result.message,
+        cooldownSeconds: result.cooldownSeconds,
+        expiresAt: result.expiresAt,
+      };
+    }
+
+    // 2. Reject arbitrary words or unrecognized prefixes without role enumeration
+    if (/[a-zA-Z]/.test(rawIdentifier)) {
+      throw new Error('Invalid login credentials. Please check your details and try again.');
+    }
+
+    // 3. Flow A: Ordinary 10-digit mobile number craftsman user login
+    const cleanMobile = normalizeStrictIndianMobile(rawIdentifier);
+    if (!cleanMobile) {
+      throw new Error('Invalid login credentials. Please check your details and try again.');
+    }
+
+    const session = await this.login(cleanMobile, password, params.userAgent, params.ipAddress);
+
+    return {
+      kind: 'USER_AUTHENTICATED' as const,
+      session,
+    };
+  }
+
+  /**
    * Requests an admin OTP for prefix-based identifier.
    * Requires administrator password. Verifies credentials FIRST before issuing challenge/OTP.
    * Ensures account exists with the designated role, enforces cooldown & rate limits,
@@ -1078,6 +1144,10 @@ export class AuthService {
 
     if (!user || user.status === 'SUSPENDED') {
       throw new Error('User account is invalid or suspended.');
+    }
+
+    if (user.role !== 'USER') {
+      throw new Error('Administrator sessions cannot be refreshed via public user token refresh.');
     }
 
     // Single active session enforcement: check if session matches user.activeSessionId

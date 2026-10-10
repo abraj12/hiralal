@@ -123,7 +123,6 @@ export class AdminApiClient {
       gstRate?: number;
       gstRuleId?: string;
       gstOverrideReason?: string;
-      customRewardAmount?: number;
     },
     legacyRejectionReason?: string
   ) {

@@ -109,54 +109,51 @@ router.post('/register', async (req: Request, res: Response) => {
 // ==========================================
 
 router.post('/login', loginLimiter, async (req: Request, res: Response) => {
+  const rawIdentifier = String(req.body?.identifier || req.body?.mobile || '').trim();
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+  if (!rawIdentifier || !password) {
+    return res.status(400).json({ success: false, message: 'Mobile number and password are required.' });
+  }
+
+  const ipAddress = req.ip || req.socket.remoteAddress;
+  const userAgent = req.headers['user-agent'];
+
   try {
-    const { mobile, identifier, password } = req.body;
-    const rawIdentifier = String(identifier || mobile || '').trim();
-    if (!rawIdentifier || !password) {
-      return res.status(400).json({ success: false, message: 'Mobile number and password are required.' });
-    }
+    const result = await AuthService.authenticatePasswordFirst({
+      identifier: rawIdentifier,
+      password,
+      ipAddress,
+      userAgent,
+    });
 
-    const ipAddress = req.ip || req.socket.remoteAddress;
-    const userAgent = req.headers['user-agent'];
-
-    // 1. Silent backend classification: check if identifier matches configured admin prefix
-    if (AuthService.isConfiguredAdminPrefix(rawIdentifier)) {
-      // Flow B: Valid administrator candidate.
-      // Sequence: Validate administrator password FIRST before generating OTP challenge.
-      const result = await AuthService.requestAdminOtp({
-        identifier: rawIdentifier,
-        password,
-        ipAddress,
-      });
-
-      // Issue pre-auth OTP challenge token (no session token or privileged access granted)
-      return res.json({
+    if (result.kind === 'USER_AUTHENTICATED') {
+      return res.status(200).json({
         success: true,
+        type: 'USER_AUTHENTICATED',
+        ...result.session,
+      });
+    }
+
+    if (result.kind === 'ADMIN_OTP_REQUIRED') {
+      return res.status(200).json({
+        success: true,
+        type: 'ADMIN_OTP_REQUIRED',
         requiresOtp: true,
-        ...result,
+        challengeId: result.challengeId,
+        challengeToken: result.challengeToken,
+        role: result.role,
+        mobileMasked: result.mobileMasked,
+        message: result.message,
+        cooldownSeconds: result.cooldownSeconds,
+        expiresAt: result.expiresAt,
       });
     }
 
-    // 2. Reject arbitrary words or invalid prefixes without role enumeration
-    if (/[a-zA-Z]/.test(rawIdentifier)) {
-      // Flow C: Arbitrary alphabetic text or unrecognized prefix.
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid login credentials. Please check your details and try again.',
-      });
-    }
-
-    // 3. Flow A: Ordinary 10-digit mobile number craftsman user login
-    const cleanMobile = normalizeStrictIndianMobile(rawIdentifier);
-    if (!cleanMobile) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid login credentials. Please check your details and try again.',
-      });
-    }
-
-    const result = await AuthService.login(cleanMobile, password, userAgent, ipAddress);
-    res.json({ success: true, ...result });
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid login credentials. Please check your details and try again.',
+    });
   } catch (err: any) {
     const isCredentials =
       err.message.includes('credentials') ||

@@ -111,19 +111,19 @@
    Services:
    - `hiralal_postgres` (PostgreSQL Database)
    - `hiralal_redis` (Redis Caching & Queue)
-   - `hiralal_api` (Express TypeScript Backend)
+   - `hiralal_backend` (Express TypeScript Backend)
    - `hiralal_worker` (Background Payout & Outbox Processor)
    - `hiralal_admin` (Next.js Admin Frontend)
    - `hiralal_nginx` (Nginx TLS Reverse Proxy)
 
 4. Run Prisma database migrations:
    ```bash
-   docker compose exec api npm run prisma:deploy
+   docker compose exec backend npm run prisma:deploy
    ```
 
 5. Seed initial administrative rules:
    ```bash
-   docker compose exec api npm run seed
+   docker compose exec backend npm run seed
    ```
 
 ---

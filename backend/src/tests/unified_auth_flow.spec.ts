@@ -205,6 +205,7 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
+      expect(res.body.type).toBe('USER_AUTHENTICATED');
       expect(res.body.user.role).toBe('USER');
       expect(res.body.user.mobile).toBe(craftsmanMobile);
       expect(res.body.token).toBeDefined();
@@ -302,8 +303,10 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
+      expect(res.body.type).toBe('ADMIN_OTP_REQUIRED');
       expect(res.body.requiresOtp).toBe(true);
       expect(res.body.challengeToken).toBeDefined();
+      expect(res.body.challengeId).toBeDefined();
       expect(res.body.cooldownSeconds).toBe(60);
 
       // Password verification alone MUST NOT grant access token or create authenticated session
@@ -636,6 +639,27 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
 
       expect(logoutRes.status).toBe(200);
       expect(logoutRes.body.success).toBe(true);
+    });
+
+    test('Administrator sessions cannot be refreshed via public user token refresh (Contract 4.4)', async () => {
+      const opsUser = await prisma.user.findFirst({ where: { mobile: opsAdminMobile } });
+      const testAdminSessionToken = 'test_admin_refresh_token_string_32_bytes_x';
+      const tokenHash = sha256Hash(testAdminSessionToken);
+      await prisma.authSession.create({
+        data: {
+          userId: opsUser!.id,
+          sessionId: 'test_admin_session_for_refresh_check',
+          tokenHash,
+          expiresAt: new Date(Date.now() + 86400000),
+        },
+      });
+
+      const refreshRes = await request(app)
+        .post('/api/auth/refresh')
+        .send({ refreshToken: testAdminSessionToken });
+
+      expect(refreshRes.status).toBe(401);
+      expect(refreshRes.body.message).toContain('Administrator sessions cannot be refreshed via public user token refresh');
     });
   });
 });

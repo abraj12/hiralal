@@ -12,6 +12,9 @@ on:
     types: [completed]
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   deploy-production:
     name: Production Deployment to AWS EC2
@@ -24,24 +27,35 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Configure SSH Key
+      - name: Configure SSH Key and Verify Host Key
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
         run: |
+          if [ -z "${EC2_HOST}" ] || [ -z "${EC2_SSH_KEY}" ]; then
+            echo "[FATAL ERROR] Mandatory EC2 deployment secrets (EC2_HOST or EC2_SSH_KEY) are missing. Halting deployment." >&2
+            exit 1
+          fi
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_ed25519
+          echo "${EC2_SSH_KEY}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts || true
+          if [ -n "${EC2_SSH_KNOWN_HOSTS}" ]; then
+            echo "${EC2_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+            chmod 644 ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "${EC2_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
 
       - name: Execute Remote Deployment on EC2
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER || 'ubuntu' }}
+          TARGET_SHA: ${{ github.sha }}
         run: |
-          if [ -z "${EC2_HOST}" ]; then
-            echo "[INFO] EC2_HOST secret is not configured yet. Skipping live SSH dispatch."
-            exit 0
-          fi
+          echo "Target deployment commit: ${TARGET_SHA}"
 
-          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new "${EC2_USER}@${EC2_HOST}" << 'EOF'
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes "${EC2_USER}@${EC2_HOST}" TARGET_SHA="${TARGET_SHA}" 'bash -s' << 'EOF'
             set -euo pipefail
             echo "==> Deploying Hiralal & Sons Rewards Platform on AWS Graviton2..."
             
@@ -56,6 +70,9 @@ jobs:
             # Fetch and fast-forward latest release on main
             git fetch origin main
             git reset --hard origin/main
+            
+            DEPLOYED_SHA=$(git rev-parse HEAD)
+            echo "Successfully checked out release commit: ${DEPLOYED_SHA}"
             
             # Verify origin SSL certificates
             if [ -f scripts/verify-nginx-ssl.sh ]; then
@@ -78,7 +95,7 @@ jobs:
             # Smoke test health probe
             HEALTH_URL="http://localhost/health"
             if curl -f -s "${HEALTH_URL}" | grep -qi "ok"; then
-              echo "==> Deployment SUCCESS: All services healthy and verified!"
+              echo "==> Deployment SUCCESS: Release ${DEPLOYED_SHA} healthy and verified!"
             else
               echo "==> Health probe failed. Inspecting logs:"
               docker compose logs --tail=50
