@@ -63,3 +63,16 @@ export async function checkRedisConnection(): Promise<boolean> {
     return false;
   }
 }
+
+export async function closeRedis(): Promise<void> {
+  if (redisClient) {
+    try {
+      await redisClient.quit();
+    } catch {
+      redisClient.disconnect();
+    }
+    redisClient = null;
+  }
+}
+
+

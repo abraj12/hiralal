@@ -3,6 +3,7 @@ import { app } from '../server';
 import { prisma } from '../db';
 import { AuthService } from '../services/auth.service';
 import { sha256Hash } from '../utils/crypto.utils';
+import { closeRedis } from '../redis';
 
 describe('Authentication, Single-Use Verification Tokens & Session Security Tests', () => {
   const testMobile = '9876543210';
@@ -21,6 +22,8 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
     await prisma.verificationToken.deleteMany({ where: { mobile: testMobile } });
     await prisma.otpRequest.deleteMany({ where: { mobile: testMobile } });
     await prisma.user.deleteMany({ where: { mobile: testMobile } });
+    await prisma.$disconnect();
+    await closeRedis();
   });
 
   let validVerificationToken: string;

@@ -100,7 +100,7 @@ jobs:
           ADMIN_INITIAL_PASSWORD: Admin@123
           REDIS_HOST: 127.0.0.1
           REDIS_PORT: 6379
-        run: npm test -- --coverage
+        run: npm test -- --coverage --forceExit
 
   docker-arm64-check:
     name: Docker ARM64 Build Verification (AWS Graviton2)

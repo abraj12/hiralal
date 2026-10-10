@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { config } from '../config';
 import { getIstYearAndMonth } from '../utils/timezone.utils';
+import { closeRedis } from '../redis';
 
 describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
   let userToken: string;
@@ -100,6 +101,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
 
   afterAll(async () => {
     await prisma.$disconnect();
+    await closeRedis();
   });
 
   test('GET /health returns 200 OK with service details', async () => {
