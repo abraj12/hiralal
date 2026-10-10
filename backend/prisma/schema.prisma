@@ -153,6 +153,7 @@ model WalletTransaction {
   @@index([walletId])
   @@index([userId])
   @@index([createdAt])
+  @@index([referenceType, referenceId])
 }
 
 model Bill {
@@ -268,11 +269,12 @@ model KycRecord {
   id                 String    @id @default(uuid())
   userId             String
   user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  panNumber          String
+  panNumber          String?
   panName            String
   panStatus          KycStatus @default(PENDING)
   maskedPan          String
   panNumberEncrypted String?
+  panBlindIndex      String?   @unique
   provider           String    @default("SIGNCARE")
   providerRequestId  String?
   consent            Boolean   @default(true)
@@ -283,7 +285,7 @@ model KycRecord {
   updatedAt          DateTime  @updatedAt
 
   @@index([userId])
-  @@index([panNumber])
+  @@index([panBlindIndex])
 }
 
 model PaymentAccount {
@@ -325,6 +327,10 @@ model Payout {
   failureReason         String?
   initiatedAt           DateTime?
   completedAt           DateTime?
+  reconciliationAttempts Int            @default(0)
+  lastReconciledAt      DateTime?
+  requiresManualReview  Boolean        @default(false)
+  manualReviewReason    String?
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
 
@@ -332,6 +338,7 @@ model Payout {
   @@index([userId])
   @@index([status])
   @@index([razorpayPayoutId])
+  @@index([requiresManualReview])
 }
 
 model OutboxEvent {
@@ -349,17 +356,21 @@ model OutboxEvent {
 }
 
 model WebhookEvent {
-  id          String    @id @default(uuid())
-  provider    String    // RAZORPAYX
-  eventId     String
-  eventType   String
-  payload     Json
-  isProcessed Boolean   @default(false)
-  processedAt DateTime?
-  createdAt   DateTime  @default(now())
+  id                  String    @id @default(uuid())
+  provider            String    // RAZORPAYX
+  eventId             String
+  eventType           String
+  payload             Json
+  isProcessed         Boolean   @default(false)
+  processingStartedAt DateTime?
+  attempts            Int       @default(0)
+  lastError           String?
+  processedAt         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@unique([provider, eventId], name: "provider_event_unique")
-  @@index([isProcessed])
+  @@index([isProcessed, processingStartedAt])
 }
 
 model OtpRequest {

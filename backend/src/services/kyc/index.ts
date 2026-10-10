@@ -3,7 +3,7 @@ import { config } from '../../config';
 import { KycProvider } from './kyc.interface';
 import { SignCareKycProvider } from './signcare.provider';
 import { MockKycProvider } from './mock.provider';
-import { encryptSensitive } from '../../utils/crypto.utils';
+import { encryptSensitive, generateBlindIndex } from '../../utils/crypto.utils';
 
 export class KycService {
   private static provider: KycProvider | null = null;
@@ -44,10 +44,14 @@ export class KycService {
       throw new Error('Full Name as registered on PAN card is required.');
     }
 
-    // 2. Check cross-user uniqueness
+    // 2. Check cross-user uniqueness using keyed blind index
+    const panBlindIndex = generateBlindIndex(cleanPan);
     const existingOther = await prisma.kycRecord.findFirst({
       where: {
-        panNumber: cleanPan,
+        OR: [
+          { panBlindIndex },
+          { panNumber: cleanPan },
+        ],
         userId: { not: userId },
         panStatus: 'VERIFIED',
       },
@@ -83,7 +87,7 @@ export class KycService {
     const maskedPan = this.maskPan(cleanPan);
     const encryptedPan = encryptSensitive(cleanPan);
 
-    // 4. Upsert User KYC Record
+    // 4. Upsert User KYC Record with encrypted PAN and blind index (no plaintext)
     const existingRecord = await prisma.kycRecord.findFirst({
       where: { userId },
     });
@@ -93,7 +97,8 @@ export class KycService {
       kyc = await prisma.kycRecord.update({
         where: { id: existingRecord.id },
         data: {
-          panNumber: cleanPan,
+          panNumber: null,
+          panBlindIndex,
           panName: result.panName || cleanName,
           panStatus: 'VERIFIED',
           maskedPan,
@@ -108,7 +113,8 @@ export class KycService {
       kyc = await prisma.kycRecord.create({
         data: {
           userId,
-          panNumber: cleanPan,
+          panNumber: null,
+          panBlindIndex,
           panName: result.panName || cleanName,
           panStatus: 'VERIFIED',
           maskedPan,

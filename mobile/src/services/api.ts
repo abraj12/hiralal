@@ -52,22 +52,28 @@ export const API_BASE = getBaseUrl();
 console.log('📡 Mobile API configured at:', API_BASE);
 
 const STORAGE_KEY = 'hiralal_jwt_token';
+const REFRESH_STORAGE_KEY = 'hiralal_refresh_token';
 
 export class MobileApiClient {
   private static token: string | null = null;
+  private static refreshToken: string | null = null;
+  private static refreshPromise: Promise<string | null> | null = null;
 
   static async initToken(): Promise<string | null> {
     try {
       if (Platform.OS === 'web') {
         if (typeof window !== 'undefined' && window.localStorage) {
           this.token = window.localStorage.getItem(STORAGE_KEY);
+          this.refreshToken = window.localStorage.getItem(REFRESH_STORAGE_KEY);
         }
       } else {
         this.token = await SecureStore.getItemAsync(STORAGE_KEY);
+        this.refreshToken = await SecureStore.getItemAsync(REFRESH_STORAGE_KEY);
       }
     } catch (e) {
       console.warn('Storage read warning:', e);
       this.token = null;
+      this.refreshToken = null;
     }
     return this.token;
   }
@@ -95,6 +101,29 @@ export class MobileApiClient {
     }
   }
 
+  static async setRefreshToken(refreshToken: string | null): Promise<void> {
+    this.refreshToken = refreshToken;
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          if (refreshToken) {
+            window.localStorage.setItem(REFRESH_STORAGE_KEY, refreshToken);
+          } else {
+            window.localStorage.removeItem(REFRESH_STORAGE_KEY);
+          }
+        }
+      } else {
+        if (refreshToken) {
+          await SecureStore.setItemAsync(REFRESH_STORAGE_KEY, refreshToken);
+        } else {
+          await SecureStore.deleteItemAsync(REFRESH_STORAGE_KEY);
+        }
+      }
+    } catch (e) {
+      console.warn('Storage write warning:', e);
+    }
+  }
+
   static getToken(): string | null {
     if (!this.token && Platform.OS === 'web') {
       try {
@@ -108,7 +137,25 @@ export class MobileApiClient {
     return this.token;
   }
 
-  static async request<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  static getRefreshToken(): string | null {
+    if (!this.refreshToken && Platform.OS === 'web') {
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          this.refreshToken = window.localStorage.getItem(REFRESH_STORAGE_KEY);
+        }
+      } catch (e) {
+        // Storage access ignored
+      }
+    }
+    return this.refreshToken;
+  }
+
+  static async clearAllTokens(): Promise<void> {
+    await this.setToken(null);
+    await this.setRefreshToken(null);
+  }
+
+  static async request<T = any>(endpoint: string, options: RequestInit = {}, isRetry = false): Promise<T> {
     const headers: Record<string, string> = {
       ...(options.headers as Record<string, string>),
     };
@@ -121,37 +168,117 @@ export class MobileApiClient {
     }
 
     const currentToken = this.getToken();
-    if (currentToken) {
+    if (currentToken && !headers['Authorization']) {
       headers['Authorization'] = `Bearer ${currentToken}`;
     }
 
     const start = Date.now();
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 12000); // 12-second timeout
+    const controller = new AbortController();
+    const timeoutMs = 12000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+    try {
       const res = await fetch(`${API_BASE}${endpoint}`, {
         ...options,
         headers,
         signal: controller.signal,
       });
-      clearTimeout(timer);
 
-      const data = await res.json();
-      console.log(`⚡ [API] ${options.method || 'GET'} ${endpoint} completed in ${Date.now() - start}ms`);
-      if (!res.ok) {
-        throw new Error(data.message || 'Request failed');
+      const contentType = res.headers.get('content-type') || '';
+      let data: any;
+      if (contentType.includes('application/json')) {
+        try {
+          data = await res.json();
+        } catch {
+          data = {};
+        }
+      } else {
+        const text = await res.text();
+        data = { message: text };
       }
+
+      // If 401 Unauthorized, perform token rotation and retry once
+      if (
+        res.status === 401 &&
+        !isRetry &&
+        !endpoint.startsWith('/auth/login') &&
+        !endpoint.startsWith('/auth/refresh') &&
+        !endpoint.startsWith('/auth/register')
+      ) {
+        const refreshedToken = await this.performTokenRefresh();
+        if (refreshedToken) {
+          const retryHeaders = { ...headers, Authorization: `Bearer ${refreshedToken}` };
+          return this.request(endpoint, { ...options, headers: retryHeaders }, true);
+        }
+      }
+
+      if (!res.ok) {
+        throw new Error(data.message || `Request failed with status ${res.status}`);
+      }
+
       return data;
     } catch (err: any) {
       const elapsed = Date.now() - start;
       if (err.name === 'AbortError') {
-        console.warn(`⏱️ [API TIMEOUT] ${endpoint} timed out after ${elapsed}ms`);
         throw new Error('Connection timed out. Please check network/Wi-Fi connection.');
       }
-      console.warn(`[API ERROR] ${endpoint} (${elapsed}ms):`, err.message);
       throw err;
+    } finally {
+      clearTimeout(timer);
     }
+  }
+
+  private static async performTokenRefresh(): Promise<string | null> {
+    const rf = this.getRefreshToken();
+    if (!rf) {
+      await this.clearAllTokens();
+      return null;
+    }
+
+    if (this.refreshPromise) {
+      return this.refreshPromise;
+    }
+
+    this.refreshPromise = (async () => {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        let res: globalThis.Response;
+        try {
+          res = await fetch(`${API_BASE}/auth/refresh-token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken: rf }),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
+
+        if (!res.ok) {
+          await this.clearAllTokens();
+          return null;
+        }
+
+        const data = await res.json();
+        if (data.token) {
+          await this.setToken(data.token);
+          if (data.refreshToken) {
+            await this.setRefreshToken(data.refreshToken);
+          }
+          return data.token;
+        }
+        await this.clearAllTokens();
+        return null;
+      } catch {
+        await this.clearAllTokens();
+        return null;
+      } finally {
+        this.refreshPromise = null;
+      }
+    })();
+
+    return this.refreshPromise;
   }
 
   // Auth
@@ -174,6 +301,7 @@ export class MobileApiClient {
     fullName: string;
     password: string;
     profession: string;
+    verificationToken?: string;
     otpCode?: string;
   }) {
     return this.request('/auth/register', {
@@ -187,6 +315,22 @@ export class MobileApiClient {
       method: 'POST',
       body: JSON.stringify({ mobile, password }),
     });
+  }
+
+  static async logout() {
+    const rf = this.getRefreshToken();
+    try {
+      if (rf) {
+        await this.request('/auth/logout', {
+          method: 'POST',
+          body: JSON.stringify({ refreshToken: rf }),
+        });
+      }
+    } catch {
+      // safe fallback
+    } finally {
+      await this.clearAllTokens();
+    }
   }
 
   static getProfile() {

@@ -100,10 +100,10 @@ app.get('/health/ready', async (_req: Request, res: Response) => {
   try {
     const dbOk = await checkDatabaseConnection();
     const redisOk = await checkRedisConnection();
-    const isReady = dbOk;
+    const isReady = config.isProduction ? (dbOk && redisOk) : dbOk;
 
     res.status(isReady ? 200 : 503).json({
-      status: isReady ? 'ready' : 'unhealthy',
+      status: isReady ? 'ready' : 'not_ready',
       checks: {
         database: dbOk ? 'healthy' : 'unhealthy',
         redis: redisOk ? 'healthy' : 'disconnected',

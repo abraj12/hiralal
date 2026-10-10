@@ -102,21 +102,38 @@ export class ReconciliationWorker {
             console.log(`[RECONCILIATION] Payout ${payout.id} reversed as FAILED (${reason}) via gateway status.`);
           } else {
             // Still in 'queued' or 'processing'
-            if (!payout.razorpayPayoutId && razorpayPayout.id) {
-              await prisma.payout.update({
-                where: { id: payout.id },
-                data: { razorpayPayoutId: razorpayPayout.id },
-              });
-            }
+            await prisma.payout.update({
+              where: { id: payout.id },
+              data: {
+                razorpayPayoutId: payout.razorpayPayoutId || razorpayPayout.id,
+                lastReconciledAt: new Date(),
+                reconciliationAttempts: { increment: 1 },
+              },
+            });
           }
         } else {
-          // If transaction is older than 20 minutes and not found at Razorpay, safe reversal
+          // Missing search result is NOT authoritative proof of gateway failure.
+          // Keep funds safely reserved. Record reconciliation attempt and escalate to manual review after threshold.
+          const nextAttempts = (payout.reconciliationAttempts || 0) + 1;
           const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
-          if (payout.createdAt <= twentyMinutesAgo) {
-            const reason = 'Transaction not found at gateway after 20-minute reconciliation grace window';
-            await PayoutService.reversePayout(payout.id, reason);
-            reconciledCount++;
-            console.warn(`[RECONCILIATION] Payout ${payout.id} safely reversed. Gateway reported no record after 20 minutes.`);
+          const shouldEscalate = nextAttempts >= 5 || payout.createdAt <= twentyMinutesAgo;
+
+          await prisma.payout.update({
+            where: { id: payout.id },
+            data: {
+              reconciliationAttempts: nextAttempts,
+              lastReconciledAt: new Date(),
+              requiresManualReview: shouldEscalate,
+              manualReviewReason: shouldEscalate
+                ? `Lookup inconclusive after ${nextAttempts} attempts or 20-minute window; funds held reserved for operator audit.`
+                : null,
+            },
+          });
+
+          if (shouldEscalate) {
+            console.warn(`[RECONCILIATION] Payout ${payout.id} escalated to MANUAL REVIEW. Funds remain safely reserved.`);
+          } else {
+            console.log(`[RECONCILIATION] Payout ${payout.id} lookup attempt ${nextAttempts} inconclusive. Retrying on next cycle.`);
           }
         }
       } catch (err: any) {

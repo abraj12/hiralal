@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export interface AppConfig {
+  serviceRole: 'api' | 'worker' | 'migration' | 'cron';
   port: number;
   nodeEnv: string;
   isProduction: boolean;
@@ -61,15 +62,26 @@ export interface AppConfig {
 
 const nodeEnv = process.env.NODE_ENV || 'development';
 const isProduction = nodeEnv === 'production';
+const rawRole = (process.env.SERVICE_ROLE || 'api').toLowerCase();
+const ALLOWED_ROLES = ['api', 'worker', 'migration', 'cron'] as const;
+type ServiceRole = typeof ALLOWED_ROLES[number];
+
+if (!ALLOWED_ROLES.includes(rawRole as any)) {
+  throw new Error(`[FATAL] Invalid SERVICE_ROLE "${rawRole}". Allowed roles: ${ALLOWED_ROLES.join(', ')}`);
+}
+const serviceRole = rawRole as ServiceRole;
 
 // Production Fail-Fast Validation
 if (isProduction) {
-  const mandatoryVars = [
+  const commonVars = [
     'DATABASE_URL',
-    'JWT_ACCESS_SECRET',
-    'JWT_REFRESH_SECRET',
     'ENCRYPTION_KEY',
     'FIELD_ENCRYPTION_KEY',
+  ];
+
+  const apiOnlyVars = [
+    'JWT_ACCESS_SECRET',
+    'JWT_REFRESH_SECRET',
     'STORAGE_HMAC_SECRET',
     'R2_ACCESS_KEY_ID',
     'R2_SECRET_ACCESS_KEY',
@@ -86,14 +98,45 @@ if (isProduction) {
     'ADMIN_INITIAL_PASSWORD',
   ];
 
+  const workerOnlyVars = [
+    'RAZORPAYX_KEY_ID',
+    'RAZORPAYX_KEY_SECRET',
+    'RAZORPAYX_ACCOUNT_NUMBER',
+  ];
+
+  let mandatoryVars: string[] = [...commonVars];
+  if (serviceRole === 'api') {
+    mandatoryVars = [...mandatoryVars, ...apiOnlyVars];
+  } else if (serviceRole === 'worker') {
+    mandatoryVars = [...mandatoryVars, ...workerOnlyVars];
+  }
+
   const missing = mandatoryVars.filter((v) => !process.env[v] || process.env[v]?.trim() === '');
   if (missing.length > 0) {
     throw new Error(
-      `[FATAL] Production startup halted. Missing required environment variables: ${missing.join(', ')}`
+      `[FATAL] Production startup halted for role "${serviceRole}". Missing required environment variables: ${missing.join(', ')}`
     );
   }
 
-  // Ensure encryption key is 32 bytes (64 hex characters)
+  // Reject known placeholder values in production
+  const PLACEHOLDER_PATTERNS = [
+    'REPLACE_WITH_',
+    'sample_dev_only',
+    'dev_access_secret',
+    'dev_refresh_secret',
+    'change_this',
+  ];
+
+  for (const v of mandatoryVars) {
+    const val = process.env[v] || '';
+    if (PLACEHOLDER_PATTERNS.some((p) => val.includes(p))) {
+      throw new Error(
+        `[FATAL] Production startup halted. Environment variable "${v}" contains an insecure placeholder value.`
+      );
+    }
+  }
+
+  // Ensure encryption key is at least 32 bytes
   if (process.env.ENCRYPTION_KEY && process.env.ENCRYPTION_KEY.length < 32) {
     throw new Error('[FATAL] ENCRYPTION_KEY must be at least 32 characters for AES-256 encryption.');
   }
@@ -106,6 +149,7 @@ const allowedOrigins = allowedOriginsEnv
   .filter(Boolean);
 
 export const config: AppConfig = {
+  serviceRole,
   port: parseInt(process.env.PORT || '5000', 10),
   nodeEnv,
   isProduction,

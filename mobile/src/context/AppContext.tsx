@@ -98,14 +98,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
             setCurrentScreen('MAIN');
           } else {
-            await MobileApiClient.setToken(null);
+            await MobileApiClient.clearAllTokens();
             if (mounted) setCurrentScreen('WELCOME');
           }
         } else {
           if (mounted) setCurrentScreen('WELCOME');
         }
       } catch (e) {
-        await MobileApiClient.setToken(null);
+        await MobileApiClient.clearAllTokens();
         if (mounted) setCurrentScreen('WELCOME');
       } finally {
         if (mounted) setIsLoading(false);
@@ -122,6 +122,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Authenticate with real server-side endpoint. NO mock/offline fallback.
     const res = await MobileApiClient.login(mobile, pass);
     await MobileApiClient.setToken(res.token);
+    if (res.refreshToken) {
+      await MobileApiClient.setRefreshToken(res.refreshToken);
+    }
     setUser(res.user);
 
     if (res.user.profession && (res.user.profession === 'PLUMBER' || res.user.profession === 'TILE_INSTALLER')) {
@@ -137,7 +140,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const logout = async () => {
-    await MobileApiClient.setToken(null);
+    await MobileApiClient.logout();
     setUser(null);
     setWallet({ availableBalance: 0, processingAmount: 0, totalRedeemed: 0 });
     setTransactions([]);

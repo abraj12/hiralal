@@ -27,6 +27,7 @@ export default function RegisterScreen() {
   const [mobile, setMobile] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState('');
+  const [verificationToken, setVerificationToken] = useState<string | null>(null);
 
   // Step 3: Name & Password
   const [fullName, setFullName] = useState('');
@@ -43,6 +44,7 @@ export default function RegisterScreen() {
 
     setLoading(true);
     setErrorMsg(null);
+    setVerificationToken(null);
     try {
       await MobileApiClient.sendOtp(mobile, 'REGISTRATION');
       setOtpSent(true);
@@ -62,10 +64,15 @@ export default function RegisterScreen() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      await MobileApiClient.verifyOtp(mobile, otpCode, 'REGISTRATION');
+      const result = await MobileApiClient.verifyOtp(mobile, otpCode, 'REGISTRATION');
+      if (!result?.verificationToken) {
+        throw new Error('OTP verification succeeded without a registration token.');
+      }
+      setVerificationToken(result.verificationToken);
       setStep(3);
-    } catch (e: any) {
-      setErrorMsg(e.message || 'Invalid or expired OTP code.');
+    } catch (error: any) {
+      setVerificationToken(null);
+      setErrorMsg(error.message || 'Invalid or expired OTP code.');
     } finally {
       setLoading(false);
     }
@@ -74,6 +81,11 @@ export default function RegisterScreen() {
   const handleCompleteRegistration = async () => {
     if (!fullName || !password) {
       setErrorMsg('Please enter your full name and choose a secure password.');
+      return;
+    }
+    if (!verificationToken) {
+      setErrorMsg('Verification token is missing. Please verify your mobile number again.');
+      setStep(2);
       return;
     }
 
@@ -86,10 +98,13 @@ export default function RegisterScreen() {
         fullName,
         password,
         profession: selectedProfession,
-        otpCode,
+        verificationToken,
       });
       if (res.token) {
-        MobileApiClient.setToken(res.token);
+        await MobileApiClient.setToken(res.token);
+      }
+      if (res.refreshToken) {
+        await MobileApiClient.setRefreshToken(res.refreshToken);
       }
       await refreshData();
       setCurrentScreen('MAIN');
@@ -107,8 +122,12 @@ export default function RegisterScreen() {
         <TouchableOpacity
           style={styles.backBtn}
           onPress={() => {
-            if (step > 1) setStep((step - 1) as any);
-            else setCurrentScreen('WELCOME');
+            if (step > 1) {
+              if (step === 3) setVerificationToken(null);
+              setStep((step - 1) as any);
+            } else {
+              setCurrentScreen('WELCOME');
+            }
           }}
         >
           <ArrowLeft size={20} color="#0F172A" />
@@ -249,7 +268,12 @@ export default function RegisterScreen() {
                 <TextInput
                   style={styles.inputFlex}
                   value={mobile}
-                  onChangeText={setMobile}
+                  onChangeText={(val) => {
+                    setMobile(val);
+                    setVerificationToken(null);
+                    setOtpSent(false);
+                    setOtpCode('');
+                  }}
                   placeholder="Enter 10-digit number"
                   keyboardType="phone-pad"
                   maxLength={10}

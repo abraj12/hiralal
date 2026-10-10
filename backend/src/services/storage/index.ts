@@ -179,6 +179,10 @@ export class StorageService {
    * Validates signed URL HMAC and expiry.
    */
   static verifySignedUrl(fileKey: string, expires: number, signature: string): boolean {
+    if (!fileKey || fileKey.includes('..') || path.isAbsolute(fileKey)) {
+      return false; // Traversal attempt rejected
+    }
+
     const now = Math.floor(Date.now() / 1000);
     if (now > expires) {
       return false; // Expired
@@ -196,7 +200,7 @@ export class StorageService {
   }
 
   static getLocalFilePath(fileKey: string): string {
-    const safeKey = fileKey.replace(/\//g, '_');
-    return path.join(__dirname, '../../../../uploads', safeKey);
+    const sanitized = fileKey.replace(/\.\./g, '').replace(/[\/\\]/g, '_');
+    return path.join(__dirname, '../../../../uploads', sanitized);
   }
 }

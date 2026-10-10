@@ -4,6 +4,43 @@ import { toPaise } from '../utils/money.utils';
 import { decryptSensitive } from '../utils/crypto.utils';
 import { PayoutService } from '../services/payout.service';
 
+export function resolveBankAccountNumber(account: {
+  accountType: string;
+  accountNumber?: string | null;
+  accountNumberEncrypted?: string | null;
+}): string {
+  if (account.accountType !== 'BANK_ACCOUNT') {
+    throw new Error('Bank account details requested for a non-bank account.');
+  }
+
+  if (!account.accountNumberEncrypted) {
+    throw new Error('Encrypted bank account details are unavailable.');
+  }
+
+  const plaintext = decryptSensitive(account.accountNumberEncrypted);
+
+  if (!/^\d{9,18}$/.test(plaintext)) {
+    throw new Error('Stored bank account details are invalid.');
+  }
+
+  return plaintext;
+}
+
+export function resolveUpiAddress(account: {
+  accountType: string;
+  upiId?: string | null;
+}): string {
+  if (account.accountType !== 'UPI') {
+    throw new Error('UPI details requested for a non-UPI account.');
+  }
+
+  if (!account.upiId || !/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(account.upiId.trim())) {
+    throw new Error('Stored UPI handle details are invalid.');
+  }
+
+  return account.upiId.trim();
+}
+
 export class PayoutWorker {
   private static isOutboxPolling = false;
   private static pollTimer: NodeJS.Timeout | null = null;
@@ -134,16 +171,14 @@ export class PayoutWorker {
       // 2. Resolve Fund Account on RazorpayX with timeout
       let fundAccountBody: any;
       if (paymentAccount.accountType === 'UPI') {
+        const upiAddress = resolveUpiAddress(paymentAccount);
         fundAccountBody = {
           contact_id: contactId,
           account_type: 'vpa',
-          vpa: { address: paymentAccount.upiId },
+          vpa: { address: upiAddress },
         };
       } else {
-        let accountNumber = paymentAccount.accountNumber;
-        if (!accountNumber && paymentAccount.accountNumberEncrypted) {
-          accountNumber = decryptSensitive(paymentAccount.accountNumberEncrypted);
-        }
+        const accountNumber = resolveBankAccountNumber(paymentAccount);
         fundAccountBody = {
           contact_id: contactId,
           account_type: 'bank_account',

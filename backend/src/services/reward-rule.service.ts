@@ -1,5 +1,6 @@
 import { prisma } from '../db';
 import { Profession, RewardRule } from '@prisma/client';
+import { config } from '../config';
 
 export class RewardRuleService {
   /**
@@ -25,15 +26,20 @@ export class RewardRuleService {
     });
 
     if (rules.length === 0) {
-      // Look for any active fallback rule for this profession
-      const fallbackRule = await tx.rewardRule.findFirst({
+      if (config.isProduction) {
+        throw new Error(
+          `[REWARD-RULE] No active reward rule found for profession ${profession} at effective date ${effectiveAt.toISOString()}. Operation halted (fail closed).`
+        );
+      }
+
+      // In development or test environments, fallback to latest active rule
+      const devRule = await tx.rewardRule.findFirst({
         where: { profession, isActive: true },
         orderBy: { version: 'desc' },
       });
 
-      if (fallbackRule) return fallbackRule;
+      if (devRule) return devRule;
 
-      // Fail closed in production, seed safe initial rule in dev/test
       return await tx.rewardRule.create({
         data: {
           profession,
@@ -41,6 +47,7 @@ export class RewardRuleService {
           monthlyPoolLimit: 50000.0,
           minRedemptionAmount: 500.0,
           maxRedemptionAmount: 10000.0,
+          effectiveFrom: new Date('2020-01-01'),
           isActive: true,
           version: 1,
         },

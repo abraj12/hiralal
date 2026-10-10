@@ -36,6 +36,9 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+    env:
+      DATABASE_URL: postgresql://postgres:testpassword@localhost:5432/hiralal_rewards_test?schema=public
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -53,10 +56,14 @@ jobs:
 
       - name: Prisma Schema Validation
         working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:testpassword@localhost:5432/hiralal_rewards_test?schema=public
         run: npx prisma validate
 
       - name: Prisma Client Generation
         working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:testpassword@localhost:5432/hiralal_rewards_test?schema=public
         run: npx prisma generate
 
       - name: TypeScript Typecheck
@@ -215,3 +222,25 @@ jobs:
         if: always()
         run: |
           docker compose down -v
+
+  mobile-check:
+    name: Mobile App Typecheck Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install Mobile Dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: TypeScript Typecheck
+        working-directory: mobile
+        run: npx tsc --noEmit

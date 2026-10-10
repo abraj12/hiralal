@@ -73,3 +73,14 @@ export function generateSecureToken(bytes = 32): string {
 export function generateSecureOtp(): string {
   return crypto.randomInt(100000, 1000000).toString();
 }
+
+/**
+ * Computes a keyed blind index (HMAC-SHA256) for high-entropy unique lookups
+ * without exposing plaintext PII in database indexes.
+ */
+export function generateBlindIndex(plaintext: string): string {
+  if (!plaintext) return '';
+  const normalized = plaintext.trim().toUpperCase();
+  const hmacKey = config.fieldEncryptionKey || config.encryptionKey;
+  return crypto.createHmac('sha256', hmacKey).update(normalized).digest('hex');
+}

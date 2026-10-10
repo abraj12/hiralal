@@ -17,6 +17,15 @@ export interface RateLimitOptions {
   message?: string;
 }
 
+export function normalizeIdentifier(val: string | undefined): string {
+  if (!val) return 'anon';
+  const clean = val.replace(/\D/g, '');
+  if (clean.length >= 10) {
+    return clean.slice(-10);
+  }
+  return val.trim().toLowerCase();
+}
+
 export function createRateLimiter(options: {
   keyPrefix: string;
   limit: number;
@@ -66,12 +75,27 @@ export function createRateLimiter(options: {
         }
 
         return next();
+      } else if (config.isProduction) {
+        // In production, security-sensitive auth routes fail closed if Redis is down
+        res.status(503).json({
+          success: false,
+          code: 'RATE_LIMIT_UNAVAILABLE',
+          message: 'Rate limiting service is temporarily unavailable. Please retry shortly.',
+        });
+        return;
       }
     } catch (redisErr) {
-      // Degrade to memory cache
+      if (config.isProduction) {
+        res.status(503).json({
+          success: false,
+          code: 'RATE_LIMIT_UNAVAILABLE',
+          message: 'Rate limiting service encountered an error. Please retry shortly.',
+        });
+        return;
+      }
     }
 
-    // In-memory fallback
+    // In-memory fallback for non-production environments
     const now = Date.now();
     const entry = memoryCache.get(key);
 
@@ -108,7 +132,7 @@ export const otpRequestLimiter = createRateLimiter({
   keyPrefix: 'otp:request',
   limit: config.isProduction ? 5 : 25,
   windowSeconds: 300,
-  getIdentifier: (req) => req.body?.mobile || req.ip || 'anon',
+  getIdentifier: (req) => normalizeIdentifier(req.body?.mobile) || req.ip || 'anon',
   message: 'Too many OTP requests. Please wait 5 minutes before trying again.',
 });
 
@@ -116,7 +140,7 @@ export const otpVerifyLimiter = createRateLimiter({
   keyPrefix: 'otp:verify',
   limit: config.isProduction ? 10 : 50,
   windowSeconds: 300,
-  getIdentifier: (req) => req.body?.mobile || req.ip || 'anon',
+  getIdentifier: (req) => normalizeIdentifier(req.body?.mobile) || req.ip || 'anon',
   message: 'Too many verification attempts. Please wait 5 minutes before trying again.',
 });
 
@@ -124,7 +148,7 @@ export const loginLimiter = createRateLimiter({
   keyPrefix: 'auth:login',
   limit: config.isProduction ? 15 : 60,
   windowSeconds: config.isProduction ? 900 : 180,
-  getIdentifier: (req) => req.body?.mobile || req.ip || 'anon',
+  getIdentifier: (req) => normalizeIdentifier(req.body?.mobile) || req.ip || 'anon',
   message: 'Too many failed login attempts. Please wait a moment before trying again.',
 });
 

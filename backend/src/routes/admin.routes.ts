@@ -212,8 +212,30 @@ router.get('/users/:id', async (req: AuthenticatedRequest, res: Response) => {
             totalRedeemed: Number(user.wallet.totalRedeemed),
           }
         : null,
-      kyc: user.kycRecords[0] || null,
-      paymentAccounts: user.paymentAccounts,
+      kyc: user.kycRecords[0]
+        ? {
+            id: user.kycRecords[0].id,
+            panName: user.kycRecords[0].panName,
+            panStatus: user.kycRecords[0].panStatus,
+            maskedPan: user.kycRecords[0].maskedPan,
+            provider: user.kycRecords[0].provider,
+            verifiedAt: user.kycRecords[0].verifiedAt,
+            rejectionReason: user.kycRecords[0].rejectionReason,
+            createdAt: user.kycRecords[0].createdAt,
+          }
+        : null,
+      paymentAccounts: user.paymentAccounts.map((p) => ({
+        id: p.id,
+        accountType: p.accountType,
+        accountHolderName: p.accountHolderName,
+        maskedInfo: p.maskedInfo,
+        ifscCode: p.ifscCode,
+        bankName: p.bankName,
+        isVerified: p.isVerified,
+        verifiedAt: p.verifiedAt,
+        isDefault: p.isDefault,
+        createdAt: p.createdAt,
+      })),
       bills: user.bills.map((b) => ({
         ...b,
         billAmount: Number(b.billAmount),
@@ -223,7 +245,16 @@ router.get('/users/:id', async (req: AuthenticatedRequest, res: Response) => {
         calculatedReward: Number(b.calculatedReward),
         fileUrl: StorageService.generateSignedUrl(b.fileKey, 30),
       })),
-      payouts: user.payouts,
+      payouts: user.payouts.map((p) => ({
+        id: p.id,
+        amount: Number(p.amount),
+        paymentType: p.paymentType,
+        status: p.status,
+        failureReason: p.failureReason,
+        initiatedAt: p.initiatedAt,
+        completedAt: p.completedAt,
+        createdAt: p.createdAt,
+      })),
       ledger: ledger.map((l) => ({
         ...l,
         amount: Number(l.amount),

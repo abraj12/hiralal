@@ -124,7 +124,7 @@ export class AuthService {
 
     const now = new Date();
 
-    return await prisma.$transaction(async (tx) => {
+    const txResult = await prisma.$transaction(async (tx) => {
       // Look up latest unused, non-expired OTP record
       const latest = await tx.otpRequest.findFirst({
         where: {
@@ -137,7 +137,10 @@ export class AuthService {
       });
 
       if (!latest) {
-        throw new Error('Verification code has expired or is invalid. Please request a new code.');
+        return {
+          success: false,
+          message: 'Verification code has expired or is invalid. Please request a new code.',
+        };
       }
 
       // Lock row FOR UPDATE to protect attempt limit against concurrent requests
@@ -148,7 +151,10 @@ export class AuthService {
       });
 
       if (!record || record.isUsed || record.expiresAt <= new Date()) {
-        throw new Error('Verification code has expired or is invalid. Please request a new code.');
+        return {
+          success: false,
+          message: 'Verification code has expired or is invalid. Please request a new code.',
+        };
       }
 
       if (record.attemptsCount >= 5) {
@@ -156,7 +162,10 @@ export class AuthService {
           where: { id: record.id },
           data: { isUsed: true },
         });
-        throw new Error('Maximum verification attempts exceeded. Please request a new code.');
+        return {
+          success: false,
+          message: 'Maximum verification attempts exceeded. Please request a new code.',
+        };
       }
 
       // Verify cryptographic SHA-256 hash
@@ -171,8 +180,15 @@ export class AuthService {
             where: { id: record.id },
             data: { isUsed: true },
           });
+          return {
+            success: false,
+            message: 'Maximum verification attempts exceeded. Please request a new code.',
+          };
         }
-        throw new Error('Invalid verification code. Please check and try again.');
+        return {
+          success: false,
+          message: 'Invalid verification code. Please check and try again.',
+        };
       }
 
       // Mark OTP as used atomically
@@ -197,11 +213,22 @@ export class AuthService {
       });
 
       return {
+        success: true,
         message: 'Code verified successfully.',
         verificationToken,
         expiresAt: tokenExpiresAt.toISOString(),
       };
     });
+
+    if (!txResult.success) {
+      throw new Error(txResult.message);
+    }
+
+    return {
+      message: txResult.message,
+      verificationToken: txResult.verificationToken!,
+      expiresAt: txResult.expiresAt!,
+    };
   }
 
   /**
@@ -439,17 +466,27 @@ export class AuthService {
       throw new Error('User account is invalid or suspended.');
     }
 
-    // Token Rotation
+    // Token Rotation with atomic claim
     const newRefreshToken = generateSecureToken(40);
     const newRefreshTokenHash = sha256Hash(newRefreshToken);
     const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000);
 
-    await prisma.$transaction([
-      prisma.authSession.update({
-        where: { id: session.id },
+    const rotatedSession = await prisma.$transaction(async (tx) => {
+      // Conditionally claim the session only if it is still active
+      const claim = await tx.authSession.updateMany({
+        where: {
+          id: session.id,
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
+        },
         data: { revokedAt: new Date() },
-      }),
-      prisma.authSession.create({
+      });
+
+      if (claim.count !== 1) {
+        return null;
+      }
+
+      return await tx.authSession.create({
         data: {
           userId: user.id,
           tokenHash: newRefreshTokenHash,
@@ -458,8 +495,12 @@ export class AuthService {
           rotatedFrom: session.id,
           expiresAt: sessionExpiresAt,
         },
-      }),
-    ]);
+      });
+    });
+
+    if (!rotatedSession) {
+      throw new Error('Refresh token has already been rotated or revoked.');
+    }
 
     const newAccessToken = this.generateAccessToken(user.id, user.role, user.mobile);
 
