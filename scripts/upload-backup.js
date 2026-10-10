@@ -86,6 +86,11 @@ async function uploadAndVerifyBackup(localFile, remoteKey, bucketName, injectedC
     throw new Error(`Remote verification FAILED: Size mismatch! Local: ${localSize} bytes vs Remote: ${remoteSize} bytes.`);
   }
 
+  const remoteSha256 = headResult.Metadata?.sha256;
+  if (remoteSha256 && remoteSha256 !== localSha256) {
+    throw new Error(`Remote verification FAILED: SHA-256 digest mismatch! Local: ${localSha256} vs Remote: ${remoteSha256}.`);
+  }
+
   console.log(`[R2-BACKUP-VERIFIED] External backup verified successfully: s3://${bucketName}/${remoteKey} (Size: ${remoteSize} bytes, SHA256: ${localSha256})`);
   return {
     verified: true,

@@ -20,6 +20,9 @@ import adminRoutes from './routes/admin.routes';
 
 const app = express();
 
+// Trust reverse proxy (Nginx single-hop) to correctly resolve real client IP and enforce rate limiting
+app.set('trust proxy', 1);
+
 // Request ID tracking and HTTP latency logging middleware
 app.use((req: any, res: Response, next: NextFunction) => {
   const start = Date.now();

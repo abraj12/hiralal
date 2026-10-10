@@ -157,7 +157,27 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
       expect(typeof result.sha256).toBe('string');
     });
 
-    it('Scenario 5: verifies retention policy is 30 days in backup script', () => {
+    it('Scenario 5: fails closed when upload succeeds but remote HeadObject verification detects SHA-256 mismatch', async () => {
+      process.env.R2_ACCESS_KEY_ID = 'test_key';
+      process.env.R2_SECRET_ACCESS_KEY = 'test_secret';
+      process.env.R2_ENDPOINT = 'https://mock.r2.cloudflarestorage.com';
+
+      const localSize = fs.statSync(tempTestFile).size;
+
+      const mockS3Client = {
+        send: jest.fn()
+          .mockResolvedValueOnce({ ETag: '"mock_etag"' }) // PutObject
+          .mockResolvedValueOnce({ ContentLength: localSize, Metadata: { sha256: 'corrupted_hash_mismatch_12345' } }),
+      };
+
+      await expect(
+        uploadAndVerifyBackup(tempTestFile, 'backups/test.enc', 'test-bucket', mockS3Client as any)
+      ).rejects.toThrow('Remote verification FAILED: SHA-256 digest mismatch');
+
+      expect(fs.existsSync(tempTestFile)).toBe(true);
+    });
+
+    it('Scenario 6: verifies retention policy is 30 days in backup script', () => {
       const scriptPath = path.join(__dirname, '../../../scripts/backup-db.sh');
       const scriptContent = fs.readFileSync(scriptPath, 'utf8');
       expect(scriptContent).toContain('RETENTION_DAYS="${RETENTION_DAYS:-30}"');

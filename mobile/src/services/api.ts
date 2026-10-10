@@ -105,6 +105,10 @@ export class MobileApiClient {
     this.refreshToken = refreshToken;
     try {
       if (Platform.OS === 'web') {
+        // In production web builds, do not persist long-lived refresh tokens in localStorage
+        if (process.env.NODE_ENV === 'production') {
+          return;
+        }
         if (typeof window !== 'undefined' && window.localStorage) {
           if (refreshToken) {
             window.localStorage.setItem(REFRESH_STORAGE_KEY, refreshToken);
@@ -245,7 +249,7 @@ export class MobileApiClient {
         const timer = setTimeout(() => controller.abort(), 8000);
         let res: globalThis.Response;
         try {
-          res = await fetch(`${API_BASE}/auth/refresh-token`, {
+          res = await fetch(`${API_BASE}/auth/refresh`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ refreshToken: rf }),
@@ -256,22 +260,27 @@ export class MobileApiClient {
         }
 
         if (!res.ok) {
-          await this.clearAllTokens();
+          // If server explicitly returns 401 Unauthorized, token is expired/revoked: clear credentials
+          if (res.status === 401) {
+            await this.clearAllTokens();
+          }
           return null;
         }
 
         const data = await res.json();
-        if (data.token) {
-          await this.setToken(data.token);
+        const newAccessToken = data.accessToken || data.token;
+        if (newAccessToken) {
+          await this.setToken(newAccessToken);
           if (data.refreshToken) {
             await this.setRefreshToken(data.refreshToken);
           }
-          return data.token;
+          return newAccessToken;
         }
         await this.clearAllTokens();
         return null;
-      } catch {
-        await this.clearAllTokens();
+      } catch (err) {
+        // Transient network failures or timeouts MUST NOT clear user credentials!
+        console.warn('Token refresh network attempt failed:', err);
         return null;
       } finally {
         this.refreshPromise = null;

@@ -283,7 +283,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 Attached Document
               </span>
               <a
-                href={`http://localhost:5000${bill.fileUrl}`}
+                href={bill.fileUrl?.startsWith('http') ? bill.fileUrl : (bill.fileUrl?.startsWith('/') ? bill.fileUrl : `/${bill.fileUrl || ''}`)}
                 target="_blank"
                 rel="noreferrer"
                 className="text-xs text-blue-600 hover:underline flex items-center space-x-1 font-medium"
@@ -299,7 +299,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 <p className="text-xs font-semibold text-slate-700">{bill.invoiceNumber}</p>
                 <p className="text-[11px] text-slate-400 mt-1">Protected Cloudflare R2 Document Vault</p>
                 <a
-                  href={`http://localhost:5000${bill.fileUrl}`}
+                  href={bill.fileUrl?.startsWith('http') ? bill.fileUrl : (bill.fileUrl?.startsWith('/') ? bill.fileUrl : `/${bill.fileUrl || ''}`)}
                   target="_blank"
                   rel="noreferrer"
                   className="mt-3 inline-block px-3 py-1.5 bg-white border border-slate-200 text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 shadow-sm"

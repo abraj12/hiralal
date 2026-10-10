@@ -81,6 +81,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:testpassword@localhost:5432/hiralal_rewards_test?schema=public
           ADMIN_INITIAL_PASSWORD: Admin@123
+          ENABLE_DEMO_SEED: true
         run: npm run seed
 
       - name: Run Production Test Suite with Coverage
@@ -100,7 +101,9 @@ jobs:
           ADMIN_INITIAL_PASSWORD: Admin@123
           REDIS_HOST: 127.0.0.1
           REDIS_PORT: 6379
+        shell: bash
         run: |
+          set -o pipefail
           npm test -- --coverage --forceExit 2>&1 | tee test_output.log
 
       - name: Publish Test Output to Summary

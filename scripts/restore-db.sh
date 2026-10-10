@@ -98,18 +98,32 @@ fi
 
 echo "[$(date -u)] Authoritative wallet ledger reconciliation PASSED (0 balance discrepancies)."
 
-# 3. Payout State and Ledger Consistency
+# 3. Payout State and Ledger Consistency (Debit correlation)
 INVALID_PAYOUTS=$(docker exec -i "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${TARGET_DB}" -t -A -c "
   SELECT count(*) FROM \"Payout\" p
   WHERE p.status = 'SUCCESS' AND NOT EXISTS (
     SELECT 1 FROM \"WalletTransaction\" t
-    WHERE t.\"walletId\" = p.\"walletId\" AND t.type = 'PAYOUT_DEBIT' AND t.\"referenceId\" = p.\"idempotencyKey\"
+    WHERE t.\"walletId\" = p.\"walletId\" AND t.type = 'PAYOUT_DEBIT' AND (t.\"referenceId\" = p.id OR t.\"referenceId\" = p.\"idempotencyKey\")
   );
 ")
 
 if [ "${INVALID_PAYOUTS}" -ne 0 ]; then
   echo "[FATAL ERROR] Payout reconciliation FAILED: Found ${INVALID_PAYOUTS} successful payout(s) without matching PAYOUT_DEBIT ledger records!" >&2
   exit 4
+fi
+
+# 4. Failed/Reversed Payouts Compensation Consistency
+UNCOMPENSATED_PAYOUTS=$(docker exec -i "${DB_CONTAINER}" psql -U "${DB_USER}" -d "${TARGET_DB}" -t -A -c "
+  SELECT count(*) FROM \"Payout\" p
+  WHERE p.status IN ('FAILED', 'REVERSED') AND NOT EXISTS (
+    SELECT 1 FROM \"WalletTransaction\" t
+    WHERE t.\"walletId\" = p.\"walletId\" AND t.type IN ('REFUND', 'PAYOUT_REVERSAL') AND (t.\"referenceId\" = p.id OR t.\"referenceId\" = p.\"idempotencyKey\" OR t.\"referenceId\" = p.\"idempotencyKey\" || '_rev')
+  );
+")
+
+if [ "${UNCOMPENSATED_PAYOUTS}" -ne 0 ]; then
+  echo "[FATAL ERROR] Payout compensation reconciliation FAILED: Found ${UNCOMPENSATED_PAYOUTS} failed/reversed payout(s) without matching compensation ledger records!" >&2
+  exit 5
 fi
 
 echo "[$(date -u)] Payout state machine & ledger correlation PASSED."

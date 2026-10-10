@@ -98,14 +98,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
             setCurrentScreen('MAIN');
           } else {
+            // Server responded but user profile was not returned
             await MobileApiClient.clearAllTokens();
             if (mounted) setCurrentScreen('WELCOME');
           }
         } else {
           if (mounted) setCurrentScreen('WELCOME');
         }
-      } catch (e) {
-        await MobileApiClient.clearAllTokens();
+      } catch (e: any) {
+        // Only clear tokens if the server specifically rejects the session with 401 Unauthorized
+        if (e?.message?.includes('401') || e?.message?.includes('Unauthorized') || e?.message?.includes('invalid')) {
+          await MobileApiClient.clearAllTokens();
+        } else {
+          console.warn('Network or server unreachable during startup session check:', e?.message);
+        }
         if (mounted) setCurrentScreen('WELCOME');
       } finally {
         if (mounted) setIsLoading(false);

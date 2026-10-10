@@ -3,6 +3,16 @@ import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
+export function assertDemoSeedAllowed(): void {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Demo seed is disabled in production.');
+  }
+
+  if (process.env.ENABLE_DEMO_SEED !== 'true') {
+    throw new Error('Set ENABLE_DEMO_SEED=true to provision demo users.');
+  }
+}
+
 async function main() {
   console.log('🌱 Starting Hiralal & Sons Production Database Seeding...');
 
@@ -159,90 +169,105 @@ async function main() {
         updatedByAdminId: admin.id,
       },
     });
-    // 6. Provision Demo Plumber & Tile Worker for Testing
-    const userPasswordHash = await bcrypt.hash('User@123', 10);
-    
-    // Demo Plumber
-    const demoPlumber = await prisma.user.upsert({
-      where: { mobile: '9876543210' },
-      update: {
-        role: 'USER',
-        status: 'ACTIVE',
-        isVerified: true,
-        passwordHash: userPasswordHash,
-        profession: 'PLUMBER',
-      },
-      create: {
-        mobile: '9876543210',
-        fullName: 'Ramesh Kumar (Plumber)',
-        passwordHash: userPasswordHash,
-        profession: 'PLUMBER',
-        role: 'USER',
-        status: 'ACTIVE',
-        isVerified: true,
-        wallet: {
-          create: {
+
+    // 6. Provision Demo Plumber & Tile Worker for Non-Production Testing
+    if (process.env.ENABLE_DEMO_SEED === 'true' || process.env.NODE_ENV === 'test') {
+      assertDemoSeedAllowed();
+
+      const userPasswordHash = await bcrypt.hash('User@123', 10);
+
+      // Demo Plumber
+      let demoPlumber = await prisma.user.findUnique({
+        where: { mobile: '9876543210' },
+      });
+
+      if (!demoPlumber) {
+        demoPlumber = await prisma.user.create({
+          data: {
+            mobile: '9876543210',
+            fullName: 'Ramesh Kumar (Plumber)',
+            passwordHash: userPasswordHash,
+            profession: 'PLUMBER',
+            role: 'USER',
+            status: 'ACTIVE',
+            isVerified: true,
+          },
+        });
+
+        const wallet = await prisma.wallet.create({
+          data: {
+            userId: demoPlumber.id,
             availableBalance: 2500.0,
             processingAmount: 0.0,
-            totalRedeemed: 1000.0,
+            totalRedeemed: 0.0,
           },
-        },
-      },
-    });
+        });
 
-    // Ensure wallet exists for demo plumber
-    await prisma.wallet.upsert({
-      where: { userId: demoPlumber.id },
-      update: {},
-      create: {
-        userId: demoPlumber.id,
-        availableBalance: 2500.0,
-        processingAmount: 0.0,
-        totalRedeemed: 1000.0,
-      },
-    });
-    console.log(`✅ Demo Plumber provisioned: ${demoPlumber.fullName} (${demoPlumber.mobile}) | Balance: ₹2,500`);
+        // Auditable opening balance ledger transaction
+        await prisma.walletTransaction.create({
+          data: {
+            walletId: wallet.id,
+            userId: demoPlumber.id,
+            amount: 2500.0,
+            type: 'MANUAL_ADJUSTMENT',
+            balanceAfter: 2500.0,
+            referenceType: 'ADMIN',
+            referenceId: 'DEMO_SEED_OPENING_BALANCE',
+            description: 'Demo initial opening balance',
+          },
+        });
+        console.log(`✅ Demo Plumber provisioned: ${demoPlumber.fullName} (${demoPlumber.mobile}) | Balance: ₹2,500`);
+      } else {
+        console.log(`ℹ️ Existing Demo Plumber detected (${demoPlumber.mobile}). Preserving existing account credentials and status.`);
+      }
 
-    // Demo Tile Installer
-    const demoTile = await prisma.user.upsert({
-      where: { mobile: '9876543211' },
-      update: {
-        role: 'USER',
-        status: 'ACTIVE',
-        isVerified: true,
-        passwordHash: userPasswordHash,
-        profession: 'TILE_INSTALLER',
-      },
-      create: {
-        mobile: '9876543211',
-        fullName: 'Suresh Verma (Tile Worker)',
-        passwordHash: userPasswordHash,
-        profession: 'TILE_INSTALLER',
-        role: 'USER',
-        status: 'ACTIVE',
-        isVerified: true,
-        wallet: {
-          create: {
+      // Demo Tile Installer
+      let demoTile = await prisma.user.findUnique({
+        where: { mobile: '9876543211' },
+      });
+
+      if (!demoTile) {
+        demoTile = await prisma.user.create({
+          data: {
+            mobile: '9876543211',
+            fullName: 'Suresh Verma (Tile Worker)',
+            passwordHash: userPasswordHash,
+            profession: 'TILE_INSTALLER',
+            role: 'USER',
+            status: 'ACTIVE',
+            isVerified: true,
+          },
+        });
+
+        const wallet = await prisma.wallet.create({
+          data: {
+            userId: demoTile.id,
             availableBalance: 3200.0,
             processingAmount: 0.0,
-            totalRedeemed: 500.0,
+            totalRedeemed: 0.0,
           },
-        },
-      },
-    });
+        });
 
-    // Ensure wallet exists for demo tile worker
-    await prisma.wallet.upsert({
-      where: { userId: demoTile.id },
-      update: {},
-      create: {
-        userId: demoTile.id,
-        availableBalance: 3200.0,
-        processingAmount: 0.0,
-        totalRedeemed: 500.0,
-      },
-    });
-    console.log(`✅ Demo Tile Worker provisioned: ${demoTile.fullName} (${demoTile.mobile}) | Balance: ₹3,200`);
+        // Auditable opening balance ledger transaction
+        await prisma.walletTransaction.create({
+          data: {
+            walletId: wallet.id,
+            userId: demoTile.id,
+            amount: 3200.0,
+            type: 'MANUAL_ADJUSTMENT',
+            balanceAfter: 3200.0,
+            referenceType: 'ADMIN',
+            referenceId: 'DEMO_SEED_OPENING_BALANCE',
+            description: 'Demo initial opening balance',
+          },
+        });
+        console.log(`✅ Demo Tile Worker provisioned: ${demoTile.fullName} (${demoTile.mobile}) | Balance: ₹3,200`);
+      } else {
+        console.log(`ℹ️ Existing Demo Tile Worker detected (${demoTile.mobile}). Preserving existing account credentials and status.`);
+      }
+    } else {
+      console.log('ℹ️ Demo user provisioning skipped (set ENABLE_DEMO_SEED=true in non-production to provision demo accounts).');
+    }
 
     console.log('🎉 Production database initialization complete!');
   } catch (error) {
@@ -252,6 +277,8 @@ async function main() {
     await prisma.$disconnect();
   }
 }
+
+export { main };
 
 if (require.main === module) {
   main();

@@ -1,4 +1,7 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+import { getAdminApiBase } from './apiConfig';
+export { getAdminApiBase };
+
+const API_BASE = getAdminApiBase();
 
 export class AdminApiClient {
   private static getToken(): string | null {

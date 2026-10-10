@@ -71,8 +71,52 @@ if (!ALLOWED_ROLES.includes(rawRole as any)) {
 }
 const serviceRole = rawRole as ServiceRole;
 
-// Production Fail-Fast Validation
-if (isProduction) {
+/**
+ * Helper to identify unsafe example, placeholder, or low-entropy default values.
+ * Never prints secret values in errors or logs.
+ */
+export function isUnsafeProductionValue(name: string, value: string | undefined): boolean {
+  if (!value || !value.trim()) {
+    return true;
+  }
+
+  const normalized = value.trim().toLowerCase();
+
+  const forbiddenExactValues = new Set([
+    'changeme',
+    'change_me',
+    'your_secret_here',
+    'replace_me',
+    'password',
+    'secret',
+    'admin@123',
+    'user@123',
+    'change_this_to_a_strong_password_in_production',
+  ]);
+
+  if (forbiddenExactValues.has(normalized)) {
+    return true;
+  }
+
+  const placeholderPatterns = [
+    /^your[-_ ]/,
+    /^replace[-_ ]/,
+    /^change[-_ ]/,
+    /^example[-_ ]/,
+    /^placeholder(?:[-_ ]|$)/,
+    /^generate(?:[-_ ]|$)/,
+    /<[^>]+>/,
+    /sample_dev_only/,
+    /dev_access_secret/,
+    /dev_refresh_secret/,
+    /change_this/,
+    /replace_with_/,
+  ];
+
+  return placeholderPatterns.some((pattern) => pattern.test(normalized));
+}
+
+export function validateProductionConfig(role: ServiceRole = serviceRole, env: Record<string, string | undefined> = process.env): void {
   const commonVars = [
     'DATABASE_URL',
     'ENCRYPTION_KEY',
@@ -105,41 +149,59 @@ if (isProduction) {
   ];
 
   let mandatoryVars: string[] = [...commonVars];
-  if (serviceRole === 'api') {
+  if (role === 'api') {
     mandatoryVars = [...mandatoryVars, ...apiOnlyVars];
-  } else if (serviceRole === 'worker') {
+  } else if (role === 'worker') {
     mandatoryVars = [...mandatoryVars, ...workerOnlyVars];
   }
 
-  const missing = mandatoryVars.filter((v) => !process.env[v] || process.env[v]?.trim() === '');
+  const missing = mandatoryVars.filter((v) => !env[v] || env[v]?.trim() === '');
   if (missing.length > 0) {
     throw new Error(
-      `[FATAL] Production startup halted for role "${serviceRole}". Missing required environment variables: ${missing.join(', ')}`
+      `[FATAL] Production startup halted for role "${role}". Missing required environment variables: ${missing.join(', ')}`
     );
   }
 
-  // Reject known placeholder values in production
-  const PLACEHOLDER_PATTERNS = [
-    'REPLACE_WITH_',
-    'sample_dev_only',
-    'dev_access_secret',
-    'dev_refresh_secret',
-    'change_this',
-  ];
-
   for (const v of mandatoryVars) {
-    const val = process.env[v] || '';
-    if (PLACEHOLDER_PATTERNS.some((p) => val.includes(p))) {
+    const val = env[v];
+    if (isUnsafeProductionValue(v, val)) {
       throw new Error(
-        `[FATAL] Production startup halted. Environment variable "${v}" contains an insecure placeholder value.`
+        `[FATAL] Production startup halted for role "${role}". Environment variable "${v}" contains an insecure placeholder or example value.`
       );
     }
   }
 
-  // Ensure encryption key is at least 32 bytes
-  if (process.env.ENCRYPTION_KEY && process.env.ENCRYPTION_KEY.length < 32) {
+  // Ensure cryptographic keys are at least 32 characters
+  if (env.ENCRYPTION_KEY && env.ENCRYPTION_KEY.length < 32) {
     throw new Error('[FATAL] ENCRYPTION_KEY must be at least 32 characters for AES-256 encryption.');
   }
+
+  if (env.FIELD_ENCRYPTION_KEY && env.FIELD_ENCRYPTION_KEY.length < 32) {
+    throw new Error('[FATAL] FIELD_ENCRYPTION_KEY must be at least 32 characters for AES-256 encryption.');
+  }
+
+  if (role === 'api') {
+    if (env.JWT_ACCESS_SECRET && env.JWT_ACCESS_SECRET.length < 32) {
+      throw new Error('[FATAL] JWT_ACCESS_SECRET must be at least 32 characters for secure signing.');
+    }
+    if (env.JWT_REFRESH_SECRET && env.JWT_REFRESH_SECRET.length < 32) {
+      throw new Error('[FATAL] JWT_REFRESH_SECRET must be at least 32 characters for secure signing.');
+    }
+    if (env.JWT_ACCESS_SECRET && env.JWT_REFRESH_SECRET && env.JWT_ACCESS_SECRET === env.JWT_REFRESH_SECRET) {
+      throw new Error('[FATAL] JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be distinct secrets.');
+    }
+    if (env.STORAGE_HMAC_SECRET && env.STORAGE_HMAC_SECRET.length < 16) {
+      throw new Error('[FATAL] STORAGE_HMAC_SECRET must be at least 16 characters for HMAC signing.');
+    }
+    if (env.ADMIN_INITIAL_PASSWORD && env.ADMIN_INITIAL_PASSWORD.length < 8) {
+      throw new Error('[FATAL] ADMIN_INITIAL_PASSWORD must be at least 8 characters.');
+    }
+  }
+}
+
+// Production Fail-Fast Validation
+if (isProduction) {
+  validateProductionConfig(serviceRole, process.env);
 }
 
 const allowedOriginsEnv = process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:8081,http://127.0.0.1:3000';
