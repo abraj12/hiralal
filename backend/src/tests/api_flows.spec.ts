@@ -32,6 +32,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
         monthlyPoolLimit: 50000.0,
         minRedemptionAmount: 500.0,
         maxRedemptionAmount: 10000.0,
+        effectiveFrom: new Date('2020-01-01'),
         isActive: true,
       },
     });
@@ -40,7 +41,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     const adminPasswordHash = await bcrypt.hash('Admin@123', 10);
     const admin = await prisma.user.upsert({
       where: { mobile: '9999999999' },
-      update: { role: 'ADMIN', status: 'ACTIVE' },
+      update: { role: 'ADMIN', status: 'ACTIVE', passwordHash: adminPasswordHash },
       create: {
         mobile: '9999999999',
         fullName: 'Hiralal Admin',

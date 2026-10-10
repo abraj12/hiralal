@@ -98,6 +98,7 @@ describe('Concurrency & Financial Integrity Tests', () => {
         monthlyPoolLimit: 50000.0,
         minRedemptionAmount: 500.0,
         maxRedemptionAmount: 10000.0,
+        effectiveFrom: new Date('2020-01-01'),
         isActive: true,
       },
     });
