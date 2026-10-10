@@ -100,7 +100,19 @@ jobs:
           ADMIN_INITIAL_PASSWORD: Admin@123
           REDIS_HOST: 127.0.0.1
           REDIS_PORT: 6379
-        run: npm test -- --coverage --forceExit
+        run: |
+          npm test -- --coverage --forceExit 2>&1 | tee test_output.log
+
+      - name: Publish Test Output to Summary
+        if: always()
+        working-directory: backend
+        run: |
+          if [ -f test_output.log ]; then
+            echo "### Jest Test Execution Output" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -n 120 test_output.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
 
   docker-arm64-check:
     name: Docker ARM64 Build Verification (AWS Graviton2)
