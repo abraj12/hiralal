@@ -631,6 +631,27 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
     let testPayoutId: string;
 
     beforeEach(async () => {
+      await prisma.redemptionSettings.upsert({
+        where: { id: 'default' },
+        update: {
+          isEnabled: true,
+          minimumAmount: 500.0,
+          maximumAmount: 10000.0,
+          startAt: null,
+          endAt: null,
+          message: 'Rewards redemption window is now open.',
+        },
+        create: {
+          id: 'default',
+          isEnabled: true,
+          minimumAmount: 500.0,
+          maximumAmount: 10000.0,
+          startAt: null,
+          endAt: null,
+          message: 'Rewards redemption window is now open.',
+        },
+      });
+
       await prisma.wallet.update({
         where: { id: regularWalletId },
         data: { availableBalance: 4000.0, processingAmount: 1000.0, totalRedeemed: 0.0 },
@@ -648,6 +669,30 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
         },
       });
       testPayoutId = payout.id;
+    });
+
+    test('enforces fail-closed behavior when redemption window is closed by administration', async () => {
+      // Clear in-flight test payout first
+      await prisma.payout.deleteMany({ where: { userId: regularUserId } });
+
+      await prisma.redemptionSettings.update({
+        where: { id: 'default' },
+        data: { isEnabled: false, message: 'Rewards redemption is currently unavailable.' },
+      });
+
+      const check = await PayoutService.checkUserEligibility(regularUserId);
+      expect(check.canRedeem).toBe(false);
+      expect(check.reason).toContain('Rewards redemption is currently unavailable.');
+
+      await expect(
+        PayoutService.requestRedemption(regularUserId, 'key-closed-window')
+      ).rejects.toThrow(/Rewards redemption is currently unavailable./i);
+
+      // Restore to open for subsequent tests
+      await prisma.redemptionSettings.update({
+        where: { id: 'default' },
+        data: { isEnabled: true, message: 'Rewards redemption window is now open.' },
+      });
     });
 
     test('checkUserEligibility checks all gating rules', async () => {
