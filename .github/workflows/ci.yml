@@ -238,8 +238,10 @@ jobs:
       - name: Smoke Test - API Reverse Proxy Routing (/api)
         run: |
           echo "Testing HTTPS /api/auth routing to backend through Nginx..."
-          HTTP_STATUS=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost/api/auth/login -X POST -H "Content-Type: application/json" -d '{}')
+          HTTP_RESPONSE=$(curl -k -s -w "\nHTTP_STATUS:%{http_code}" https://localhost/api/auth/login -X POST -H "Content-Type: application/json" -d '{}')
+          HTTP_STATUS=$(echo "$HTTP_RESPONSE" | grep "HTTP_STATUS:" | cut -d':' -f2)
           echo "HTTP Response Status from API via Nginx: $HTTP_STATUS"
+          echo "HTTP Response Payload: $HTTP_RESPONSE"
           if [ "$HTTP_STATUS" -ne 400 ] && [ "$HTTP_STATUS" -ne 401 ]; then
             echo "Unexpected HTTP status: $HTTP_STATUS"
             docker compose logs backend

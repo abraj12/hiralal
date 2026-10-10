@@ -45,6 +45,13 @@ export function getRedisClient(): Redis {
 }
 
 export function isRedisReady(): boolean {
+  if (!redisClient) {
+    try {
+      getRedisClient();
+    } catch {
+      return false;
+    }
+  }
   return redisClient !== null && redisClient.status === 'ready';
 }
 

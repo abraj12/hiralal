@@ -1,7 +1,7 @@
 # Production Multi-Stage Dockerfile for Hiralal & Sons Rewards Backend
 # Optimized for linux/arm64 (AWS Graviton2 t4g.medium) and linux/amd64
 
-FROM node:22-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -16,11 +16,14 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src/
 
-# Generate Prisma Client
+# Generate Prisma Client for all target architectures
 RUN npx prisma generate
 
 # Compile TypeScript
 RUN npm run build
+
+# Prune development dependencies to keep only production dependencies
+RUN npm prune --omit=dev && npm cache clean --force
 
 # Stage 2: Production Runner
 FROM node:22-alpine AS runner
@@ -35,11 +38,8 @@ ENV PORT=5000
 COPY package*.json ./
 COPY prisma ./prisma/
 
-# Install only production dependencies
-RUN npm ci --omit=dev && npm cache clean --force
-
-# Copy generated Prisma Client and compiled application
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+# Copy dependencies and compiled application directly from builder stage
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
 # Create uploads directory and set permissions

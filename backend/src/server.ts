@@ -178,5 +178,6 @@ if (process.env.NODE_ENV !== 'test') {
     console.log(`   Environment: ${config.nodeEnv}`);
     console.log(`====================================================`);
     await checkDatabaseConnection();
+    await checkRedisConnection();
   });
 }
