@@ -6,12 +6,18 @@ import { PayoutWorker } from '../worker/payout.worker';
 import { ReconciliationWorker } from '../worker/reconciliation.worker';
 import { KycService } from '../services/kyc.service';
 import { PaymentService } from '../services/payment.service';
+import { config } from '../config';
 
 describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
   let user: any;
   let paymentAccount: any;
 
   beforeAll(async () => {
+    config.razorpayx.keyId = 'rzp_test_hiralal2026';
+    config.razorpayx.keySecret = 'rzp_secret_hiralal2026';
+    config.razorpayx.accountNumber = '2323230041123456';
+    config.razorpayx.webhookSecret = 'webhook_secret_hiralal_rzpx_2026';
+
     // Clean up
     await prisma.webhookEvent.deleteMany({ where: { provider: 'RAZORPAYX' } });
     await prisma.payout.deleteMany({ where: { user: { mobile: '9666666666' } } });

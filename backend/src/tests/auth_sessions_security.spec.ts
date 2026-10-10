@@ -3,13 +3,15 @@ import { app } from '../server';
 import { prisma } from '../db';
 import { AuthService } from '../services/auth.service';
 import { sha256Hash } from '../utils/crypto.utils';
-import { closeRedis } from '../redis';
+import { closeRedis, checkRedisConnection, isRedisReady, getRedisClient } from '../redis';
+import { clearRateLimitCache } from '../middleware/rateLimit.middleware';
 
 describe('Authentication, Single-Use Verification Tokens & Session Security Tests', () => {
   const testMobile = '9876543210';
   const testPassword = 'SecureCraftsman@2026';
 
   beforeAll(async () => {
+    await checkRedisConnection();
     // Clean up test data
     await prisma.authSession.deleteMany({ where: { user: { mobile: testMobile } } });
     await prisma.verificationToken.deleteMany({ where: { mobile: testMobile } });
@@ -260,6 +262,18 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
   });
 
   test('8. Admin Login Rate Limiting: 6th attempt within window receives 429 Too Many Requests', async () => {
+    await checkRedisConnection();
+    clearRateLimitCache();
+    if (isRedisReady()) {
+      const redis = getRedisClient();
+      await redis.del(
+        'ratelimit:auth:admin_login_user:9999999999',
+        'ratelimit:auth:admin_login_ip:127.0.0.1',
+        'ratelimit:auth:admin_login_ip:::1',
+        'ratelimit:auth:admin_login_ip:::ffff:127.0.0.1'
+      );
+    }
+
     // Send 5 login requests with x-test-rate-limit header
     for (let i = 0; i < 5; i++) {
       const res = await request(app)

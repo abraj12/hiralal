@@ -255,7 +255,9 @@ export const config: AppConfig = {
     keyId: process.env.RAZORPAYX_KEY_ID || '',
     keySecret: process.env.RAZORPAYX_KEY_SECRET || '',
     accountNumber: process.env.RAZORPAYX_ACCOUNT_NUMBER || '',
-    webhookSecret: process.env.RAZORPAYX_WEBHOOK_SECRET || '',
+    webhookSecret:
+      process.env.RAZORPAYX_WEBHOOK_SECRET ||
+      (nodeEnv === 'production' ? '' : 'webhook_secret_hiralal_rzpx_2026'),
   },
 
   sms: {

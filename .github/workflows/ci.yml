@@ -104,6 +104,10 @@ jobs:
           ADMIN_INITIAL_PASSWORD: Admin@123
           REDIS_HOST: 127.0.0.1
           REDIS_PORT: 6379
+          RAZORPAYX_KEY_ID: rzp_test_hiralal2026
+          RAZORPAYX_KEY_SECRET: rzp_secret_hiralal2026
+          RAZORPAYX_ACCOUNT_NUMBER: 2323230041123456
+          RAZORPAYX_WEBHOOK_SECRET: webhook_secret_hiralal_rzpx_2026
         shell: bash
         run: |
           set -o pipefail
@@ -133,7 +137,7 @@ jobs:
           retention-days: 7
 
       - name: Save Test Log to Debug Branch
-        if: always()
+        if: failure()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
