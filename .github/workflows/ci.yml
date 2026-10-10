@@ -177,7 +177,21 @@ jobs:
 
       - name: Build and Start Full Multi-Container Production Stack
         run: |
-          docker compose up -d --build
+          docker compose up -d --build 2>&1 | tee compose_up.log || {
+            echo "### Docker Compose Up Failed" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat compose_up.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "### Container Status" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            docker compose ps >> $GITHUB_STEP_SUMMARY 2>&1 || true
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "### Container Logs" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            docker compose logs --tail=100 >> $GITHUB_STEP_SUMMARY 2>&1 || true
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          }
 
       - name: Wait for Stack Health and Readiness (Postgres, Redis, API, Worker, Admin, Nginx)
         timeout-minutes: 5
