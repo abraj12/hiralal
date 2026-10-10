@@ -68,12 +68,15 @@ describe('Concurrency & Financial Integrity Tests', () => {
       },
     });
 
+    await prisma.redemptionSettings.deleteMany({ where: { profession: 'PLUMBER' } });
+
     // Verify KYC and Payment account
     await KycService.submitPan(craftsmanUser.id, 'ABCDE5678G', 'Concurrency Craftsman');
     await PaymentService.addUpiAccount(craftsmanUser.id, 'concurrency@upi');
   });
 
   afterAll(async () => {
+    await prisma.redemptionSettings.deleteMany({ where: { profession: 'PLUMBER' } });
     await prisma.payout.deleteMany({ where: { userId: craftsmanUser.id } });
     await prisma.bill.deleteMany({ where: { userId: craftsmanUser.id } });
     await prisma.kycRecord.deleteMany({ where: { userId: craftsmanUser.id } });

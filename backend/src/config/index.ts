@@ -57,6 +57,19 @@ export interface AppConfig {
     minRedemptionAmount: number;
     maxRedemptionAmount: number;
   };
+  admin: {
+    billAdminPrefix: string;
+    operationsAdminPrefix: string;
+    accessTokenExpiresIn: string;
+    accessSecret: string;
+    billAdminMobile?: string;
+    operationsAdminMobile?: string;
+    billAdminInitialPassword?: string;
+    operationsAdminInitialPassword?: string;
+  };
+  otp: {
+    ttlSeconds: number;
+  };
   timezone: string;
 }
 
@@ -193,10 +206,64 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     if (env.STORAGE_HMAC_SECRET && env.STORAGE_HMAC_SECRET.length < 16) {
       throw new Error('[FATAL] STORAGE_HMAC_SECRET must be at least 16 characters for HMAC signing.');
     }
+    if (env.JWT_ADMIN_ACCESS_SECRET) {
+      if (env.JWT_ADMIN_ACCESS_SECRET.length < 32) {
+        throw new Error('[FATAL] JWT_ADMIN_ACCESS_SECRET must be at least 32 characters for secure signing.');
+      }
+      if (env.JWT_ACCESS_SECRET && env.JWT_ADMIN_ACCESS_SECRET === env.JWT_ACCESS_SECRET) {
+        throw new Error('[FATAL] JWT_ADMIN_ACCESS_SECRET and JWT_ACCESS_SECRET must be distinct secrets.');
+      }
+    }
+    if (env.OTP_TTL_SECONDS) {
+      const ttl = parseInt(env.OTP_TTL_SECONDS, 10);
+      if (isNaN(ttl) || ttl <= 0 || ttl > 300) {
+        throw new Error('[FATAL] OTP_TTL_SECONDS must be between 1 and 300 seconds (5 minutes maximum).');
+      }
+    }
+    if (env.BILL_ADMIN_PREFIX && env.OPERATIONS_ADMIN_PREFIX) {
+      const p1 = env.BILL_ADMIN_PREFIX.trim().toUpperCase();
+      const p2 = env.OPERATIONS_ADMIN_PREFIX.trim().toUpperCase();
+      if (!p1 || !p2 || p1 === p2) {
+        throw new Error('[FATAL] BILL_ADMIN_PREFIX and OPERATIONS_ADMIN_PREFIX must be distinct non-empty prefixes.');
+      }
+    }
+    if (env.BILL_ADMIN_MOBILE && env.OPERATIONS_ADMIN_MOBILE) {
+      const m1 = env.BILL_ADMIN_MOBILE.replace(/\D/g, '').slice(-10);
+      const m2 = env.OPERATIONS_ADMIN_MOBILE.replace(/\D/g, '').slice(-10);
+      if (m1 && m2 && m1 === m2) {
+        throw new Error('[FATAL] BILL_ADMIN_MOBILE and OPERATIONS_ADMIN_MOBILE must be distinct mobile numbers.');
+      }
+    }
     if (env.ADMIN_INITIAL_PASSWORD && env.ADMIN_INITIAL_PASSWORD.length < 8) {
       throw new Error('[FATAL] ADMIN_INITIAL_PASSWORD must be at least 8 characters.');
     }
   }
+}
+
+export function normalizeAdminPrefix(prefix: string | undefined): string {
+  if (!prefix) return '';
+  return prefix.trim().toUpperCase();
+}
+
+export function isValidDuration(duration: string | undefined): boolean {
+  if (!duration) return false;
+  return /^\d+[smhdwy]$/.test(duration.trim());
+}
+
+// Global OTP TTL validation
+const rawOtpTtl = process.env.OTP_TTL_SECONDS;
+if (rawOtpTtl !== undefined) {
+  const parsedOtp = parseInt(rawOtpTtl, 10);
+  if (isNaN(parsedOtp) || parsedOtp <= 0 || parsedOtp > 300) {
+    throw new Error('[FATAL] OTP_TTL_SECONDS must not exceed 300 seconds (5 minutes maximum).');
+  }
+}
+
+// Global Admin Prefix collision check
+const rawBillPrefix = normalizeAdminPrefix(process.env.BILL_ADMIN_PREFIX || 'XYZ');
+const rawOpsPrefix = normalizeAdminPrefix(process.env.OPERATIONS_ADMIN_PREFIX || 'ABC');
+if (rawBillPrefix && rawOpsPrefix && rawBillPrefix === rawOpsPrefix) {
+  throw new Error('[FATAL] BILL_ADMIN_PREFIX and OPERATIONS_ADMIN_PREFIX must not collide after normalization.');
 }
 
 // Production Fail-Fast Validation
@@ -277,6 +344,25 @@ export const config: AppConfig = {
     monthlyPoolCap: parseFloat(process.env.MONTHLY_REWARD_POOL_CAP || '50000'),
     minRedemptionAmount: parseFloat(process.env.MIN_REDEMPTION_AMOUNT || '500'),
     maxRedemptionAmount: parseFloat(process.env.MAX_REDEMPTION_AMOUNT || '10000'),
+  },
+
+  admin: {
+    billAdminPrefix: rawBillPrefix,
+    operationsAdminPrefix: rawOpsPrefix,
+    accessTokenExpiresIn: process.env.ADMIN_ACCESS_TOKEN_EXPIRES_IN || '1d',
+    accessSecret: process.env.JWT_ADMIN_ACCESS_SECRET || process.env.JWT_ACCESS_SECRET || 'dev_admin_access_secret_key_hiralal_2026',
+    billAdminMobile: process.env.BILL_ADMIN_MOBILE,
+    operationsAdminMobile: process.env.OPERATIONS_ADMIN_MOBILE,
+    billAdminInitialPassword: process.env.BILL_ADMIN_INITIAL_PASSWORD,
+    operationsAdminInitialPassword: process.env.OPERATIONS_ADMIN_INITIAL_PASSWORD,
+  },
+
+  otp: {
+    ttlSeconds: (() => {
+      const parsed = parseInt(process.env.OTP_TTL_SECONDS || '300', 10);
+      if (isNaN(parsed) || parsed <= 0 || parsed > 300) return 300;
+      return parsed;
+    })(),
   },
 
   timezone: 'Asia/Kolkata',

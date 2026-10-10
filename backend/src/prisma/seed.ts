@@ -52,6 +52,72 @@ async function main() {
       console.log(`ℹ️ Existing Admin detected (${admin.mobile}). Preserving existing credentials.`);
     }
 
+    // 1b. Provision Bill Review Administrator (BILL_ADMIN)
+    const billAdminMobile = process.env.BILL_ADMIN_MOBILE || '9999999991';
+    const billAdminPassword =
+      process.env.BILL_ADMIN_INITIAL_PASSWORD ||
+      process.env.ADMIN_INITIAL_PASSWORD ||
+      (process.env.NODE_ENV === 'production' ? '' : 'BillAdmin@123');
+
+    let billAdmin = await prisma.user.findFirst({
+      where: { role: 'BILL_ADMIN' },
+    });
+
+    if (!billAdmin) {
+      if (!billAdminPassword) {
+        throw new Error(
+          'BILL_ADMIN_INITIAL_PASSWORD or ADMIN_INITIAL_PASSWORD is required to provision Bill Admin in production.'
+        );
+      }
+      const billAdminHash = await bcrypt.hash(billAdminPassword, 10);
+      billAdmin = await prisma.user.create({
+        data: {
+          mobile: billAdminMobile,
+          fullName: 'Hiralal & Sons Bill Review Administrator',
+          passwordHash: billAdminHash,
+          role: 'BILL_ADMIN',
+          status: 'ACTIVE',
+          isVerified: true,
+        },
+      });
+      console.log(`✅ Bill Admin provisioned: ${billAdmin.fullName} (${billAdmin.mobile})`);
+    } else {
+      console.log(`ℹ️ Existing Bill Admin detected (${billAdmin.mobile}). Preserving existing credentials.`);
+    }
+
+    // 1c. Provision Operations Administrator (OPERATIONS_ADMIN)
+    const opsAdminMobile = process.env.OPERATIONS_ADMIN_MOBILE || '9999999992';
+    const opsAdminPassword =
+      process.env.OPERATIONS_ADMIN_INITIAL_PASSWORD ||
+      process.env.ADMIN_INITIAL_PASSWORD ||
+      (process.env.NODE_ENV === 'production' ? '' : 'OpsAdmin@123');
+
+    let opsAdmin = await prisma.user.findFirst({
+      where: { role: 'OPERATIONS_ADMIN' },
+    });
+
+    if (!opsAdmin) {
+      if (!opsAdminPassword) {
+        throw new Error(
+          'OPERATIONS_ADMIN_INITIAL_PASSWORD or ADMIN_INITIAL_PASSWORD is required to provision Operations Admin in production.'
+        );
+      }
+      const opsAdminHash = await bcrypt.hash(opsAdminPassword, 10);
+      opsAdmin = await prisma.user.create({
+        data: {
+          mobile: opsAdminMobile,
+          fullName: 'Hiralal & Sons Operations Administrator',
+          passwordHash: opsAdminHash,
+          role: 'OPERATIONS_ADMIN',
+          status: 'ACTIVE',
+          isVerified: true,
+        },
+      });
+      console.log(`✅ Operations Admin provisioned: ${opsAdmin.fullName} (${opsAdmin.mobile})`);
+    } else {
+      console.log(`ℹ️ Existing Operations Admin detected (${opsAdmin.mobile}). Preserving existing credentials.`);
+    }
+
     // 2. Provision Initial Monthly Reward Pools per Profession
     const now = new Date();
     const year = now.getFullYear();

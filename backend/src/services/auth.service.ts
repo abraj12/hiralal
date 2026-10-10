@@ -1,7 +1,8 @@
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../db';
-import { config } from '../config';
+import { config, normalizeAdminPrefix } from '../config';
 import {
   generateSecureOtp,
   sha256Hash,
@@ -9,18 +10,398 @@ import {
   hmacHashOtp,
 } from '../utils/crypto.utils';
 import { validateStructuredName } from '../utils/name.utils';
-import { UserRole, Profession } from '@prisma/client';
+import { UserRole, Profession, OtpPurpose } from '@prisma/client';
 import { SmsService } from './sms';
-
 
 export class AuthService {
   /**
+   * Resolves an admin identifier with prefix (e.g. XYZ9876543210 or ABC9876543210)
+   * to designated role ('BILL_ADMIN' or 'OPERATIONS_ADMIN') and 10-digit mobile number.
+   */
+  static resolveAdminIdentifier(identifier: string): { role: UserRole; mobile: string } {
+    if (!identifier || typeof identifier !== 'string') {
+      throw new Error('Admin identifier is required.');
+    }
+
+    const cleanRaw = identifier.trim().toUpperCase();
+    const billPrefix = normalizeAdminPrefix(config.admin.billAdminPrefix);
+    const opsPrefix = normalizeAdminPrefix(config.admin.operationsAdminPrefix);
+
+    if (billPrefix && cleanRaw.startsWith(billPrefix)) {
+      const remainder = cleanRaw.slice(billPrefix.length).replace(/\D/g, '').slice(-10);
+      if (remainder.length !== 10) {
+        throw new Error('Invalid Bill Admin identifier format. Must be prefix followed by 10-digit mobile.');
+      }
+      return { role: 'BILL_ADMIN', mobile: remainder };
+    }
+
+    if (opsPrefix && cleanRaw.startsWith(opsPrefix)) {
+      const remainder = cleanRaw.slice(opsPrefix.length).replace(/\D/g, '').slice(-10);
+      if (remainder.length !== 10) {
+        throw new Error('Invalid Operations Admin identifier format. Must be prefix followed by 10-digit mobile.');
+      }
+      return { role: 'OPERATIONS_ADMIN', mobile: remainder };
+    }
+
+    throw new Error('Invalid admin identifier prefix. Please enter your designated role prefix followed by your 10-digit mobile number.');
+  }
+
+  /**
+   * Requests an admin OTP for prefix-based identifier.
+   * Ensures account exists with the designated role, enforces cooldown & rate limits,
+   * invalidates prior unused ADMIN_LOGIN OTPs, and uses configured OTP TTL (<= 300s).
+   */
+  static async requestAdminOtp(params: { identifier: string; ipAddress?: string }) {
+    const { role, mobile } = this.resolveAdminIdentifier(params.identifier);
+
+    const admin = await prisma.user.findFirst({
+      where: { mobile, role: role as UserRole },
+    });
+
+    if (!admin) {
+      throw new Error('Admin account not found for the provided identifier.');
+    }
+
+    if (admin.status !== 'ACTIVE') {
+      throw new Error('Admin account is suspended. Please contact system support.');
+    }
+
+    const now = new Date();
+
+    // 1. Cooldown enforcement (60 seconds)
+    const activeCooldown = await prisma.otpRequest.findFirst({
+      where: {
+        mobile,
+        purpose: 'ADMIN_LOGIN',
+        cooldownUntil: { gt: now },
+      },
+    });
+
+    if (activeCooldown && activeCooldown.cooldownUntil) {
+      const remainingSec = Math.ceil((activeCooldown.cooldownUntil.getTime() - now.getTime()) / 1000);
+      throw new Error(`Please wait ${remainingSec} seconds before requesting a new admin verification code.`);
+    }
+
+    // 2. Rate-limiting: max 5 requests per 10 minutes
+    const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
+    const recentRequests = await prisma.otpRequest.count({
+      where: {
+        mobile,
+        purpose: 'ADMIN_LOGIN',
+        createdAt: { gt: tenMinutesAgo },
+      },
+    });
+
+    if (recentRequests >= 5) {
+      throw new Error('Too many verification requests. Please try again after 10 minutes.');
+    }
+
+    // 3. Invalidate earlier unused ADMIN_LOGIN OTPs for this mobile
+    await prisma.otpRequest.updateMany({
+      where: {
+        mobile,
+        purpose: 'ADMIN_LOGIN',
+        isUsed: false,
+      },
+      data: { isUsed: true },
+    });
+
+    // 4. Generate cryptographically secure OTP & Hash
+    const otpCode = generateSecureOtp();
+    const otpHash = hmacHashOtp(otpCode);
+    const ttlMs = config.otp.ttlSeconds * 1000;
+    const expiresAt = new Date(now.getTime() + ttlMs);
+    const cooldownUntil = new Date(now.getTime() + 60 * 1000);
+
+    await prisma.otpRequest.create({
+      data: {
+        mobile,
+        otpHash,
+        purpose: 'ADMIN_LOGIN',
+        expiresAt,
+        cooldownUntil,
+      },
+    });
+
+    // 5. Dispatch SMS
+    const smsResult = await SmsService.sendOtp({
+      mobile,
+      otpCode,
+    });
+
+    if (!smsResult.success && config.isProduction) {
+      throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
+    }
+
+    return {
+      message: 'Admin verification code dispatched successfully to your registered mobile number.',
+      cooldownSeconds: 60,
+      expiresAt: expiresAt.toISOString(),
+      role,
+    };
+  }
+
+  /**
+   * Verifies an admin OTP and returns a short-lived, single-use verification challenge token.
+   */
+  static async verifyAdminOtp(params: { identifier: string; otpCode: string }) {
+    const { role, mobile } = this.resolveAdminIdentifier(params.identifier);
+    const cleanOtp = (params.otpCode || '').trim();
+
+    if (!cleanOtp || cleanOtp.length !== 6) {
+      throw new Error('Please enter a valid 6-digit verification code.');
+    }
+
+    const now = new Date();
+
+    const txResult = await prisma.$transaction(async (tx) => {
+      const latest = await tx.otpRequest.findFirst({
+        where: {
+          mobile,
+          purpose: 'ADMIN_LOGIN',
+          isUsed: false,
+          expiresAt: { gt: now },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (!latest) {
+        return {
+          success: false,
+          message: 'Admin verification code has expired or is invalid. Please request a new code.',
+        };
+      }
+
+      await tx.$queryRaw`SELECT "id" FROM "OtpRequest" WHERE "id" = ${latest.id} FOR UPDATE`;
+
+      const record = await tx.otpRequest.findUnique({
+        where: { id: latest.id },
+      });
+
+      if (!record || record.isUsed || record.expiresAt <= new Date()) {
+        return {
+          success: false,
+          message: 'Admin verification code has expired or is invalid. Please request a new code.',
+        };
+      }
+
+      if (record.attemptsCount >= 5) {
+        await tx.otpRequest.update({
+          where: { id: record.id },
+          data: { isUsed: true },
+        });
+        return {
+          success: false,
+          message: 'Maximum verification attempts exceeded. Please request a new code.',
+        };
+      }
+
+      const inputHmac = hmacHashOtp(cleanOtp);
+      const inputSha = sha256Hash(cleanOtp);
+      if (inputHmac !== record.otpHash && inputSha !== record.otpHash) {
+        const updated = await tx.otpRequest.update({
+          where: { id: record.id },
+          data: { attemptsCount: { increment: 1 } },
+        });
+        if (updated.attemptsCount >= 5) {
+          await tx.otpRequest.update({
+            where: { id: record.id },
+            data: { isUsed: true },
+          });
+          return {
+            success: false,
+            message: 'Maximum verification attempts exceeded. Please request a new code.',
+          };
+        }
+        return {
+          success: false,
+          message: 'Invalid verification code. Please check and try again.',
+        };
+      }
+
+      await tx.otpRequest.update({
+        where: { id: record.id },
+        data: { isUsed: true },
+      });
+
+      const verificationToken = generateSecureToken(32);
+      const tokenHash = sha256Hash(verificationToken);
+      const tokenExpiresAt = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes challenge TTL
+
+      // Invalidate existing unused verification tokens for this mobile and purpose
+      await tx.verificationToken.updateMany({
+        where: {
+          mobile,
+          purpose: 'ADMIN_LOGIN',
+          isUsed: false,
+        },
+        data: { isUsed: true },
+      });
+
+      await tx.verificationToken.create({
+        data: {
+          mobile,
+          tokenHash,
+          purpose: 'ADMIN_LOGIN',
+          isUsed: false,
+          expiresAt: tokenExpiresAt,
+        },
+      });
+
+      return {
+        success: true,
+        message: 'Admin verification code verified successfully.',
+        verificationToken,
+        expiresAt: tokenExpiresAt.toISOString(),
+      };
+    });
+
+    if (!txResult.success) {
+      throw new Error(txResult.message);
+    }
+
+    return {
+      message: txResult.message,
+      verificationToken: txResult.verificationToken!,
+      expiresAt: txResult.expiresAt!,
+      role,
+    };
+  }
+
+  /**
+   * Completes Admin Login with identifier, challenge verificationToken, and password.
+   * Atomically consumes challenge token, verifies password, enforces SINGLE ACTIVE SESSION,
+   * invalidates prior sessions, and issues role-specific JWT.
+   */
+  static async loginAdmin(params: {
+    identifier: string;
+    password: string;
+    verificationToken: string;
+    userAgent?: string;
+    ipAddress?: string;
+  }) {
+    const { role, mobile } = this.resolveAdminIdentifier(params.identifier);
+
+    if (!params.password) {
+      throw new Error('Admin password is required.');
+    }
+
+    if (!params.verificationToken) {
+      throw new Error('Admin verification challenge token is required. Please verify OTP first.');
+    }
+
+    const tokenHash = sha256Hash(params.verificationToken);
+    const now = new Date();
+
+    const admin = await prisma.$transaction(async (tx) => {
+      // 1. Atomically consume verification challenge
+      const claim = await tx.verificationToken.updateMany({
+        where: {
+          tokenHash,
+          mobile,
+          purpose: 'ADMIN_LOGIN',
+          isUsed: false,
+          expiresAt: { gt: now },
+        },
+        data: { isUsed: true },
+      });
+
+      if (claim.count !== 1) {
+        throw new Error('Invalid or expired admin verification challenge token. Please verify OTP again.');
+      }
+
+      // 2. Fetch admin user
+      const adminUser = await tx.user.findFirst({
+        where: { mobile, role: role as UserRole },
+      });
+
+      if (!adminUser) {
+        throw new Error('Admin account not found for this identifier.');
+      }
+
+      if (adminUser.status !== 'ACTIVE') {
+        throw new Error('Admin account is suspended. Please contact system support.');
+      }
+
+      const isMatch = await bcrypt.compare(params.password, adminUser.passwordHash);
+      if (!isMatch) {
+        throw new Error('Invalid admin credentials.');
+      }
+
+      // 3. Single active session: generate new sessionId and invalidate previous sessions
+      const sessionId = crypto.randomUUID();
+
+      await tx.authSession.updateMany({
+        where: { userId: adminUser.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+
+      await tx.user.update({
+        where: { id: adminUser.id },
+        data: { activeSessionId: sessionId },
+      });
+
+      const sessionToken = generateSecureToken(40);
+      const sessionTokenHash = sha256Hash(sessionToken);
+      const expiresAt = new Date(Date.now() + 24 * 3600 * 1000); // 1 day
+
+      await tx.authSession.create({
+        data: {
+          userId: adminUser.id,
+          sessionId,
+          tokenHash: sessionTokenHash,
+          userAgent: params.userAgent,
+          ipAddress: params.ipAddress,
+          expiresAt,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          adminId: adminUser.id,
+          action: 'ADMIN_LOGIN',
+          entityType: 'User',
+          entityId: adminUser.id,
+          ipAddress: params.ipAddress,
+          userAgent: params.userAgent,
+          newValue: `Administrator authenticated via verified OTP challenge for role ${adminUser.role}.`,
+        },
+      });
+
+      return { adminUser, sessionId };
+    });
+
+    const accessToken = jwt.sign(
+      {
+        userId: admin.adminUser.id,
+        role: admin.adminUser.role,
+        mobile: admin.adminUser.mobile,
+        sessionId: admin.sessionId,
+      },
+      config.admin.accessSecret,
+      { expiresIn: config.admin.accessTokenExpiresIn as any }
+    );
+
+    return {
+      user: {
+        id: admin.adminUser.id,
+        mobile: admin.adminUser.mobile,
+        fullName: admin.adminUser.fullName,
+        role: admin.adminUser.role,
+      },
+      accessToken,
+      token: accessToken,
+      sessionId: admin.sessionId,
+    };
+  }
+
+  /**
    * Generates and dispatches cryptographically secure 6-digit OTP.
-   * Enforces 60-second cooldown and 10-minute rate limiting.
+   * Enforces 60-second cooldown, 10-minute rate limiting, and OTP TTL <= 300s.
    */
   static async requestOtp(params: {
     mobile: string;
-    purpose: 'REGISTRATION' | 'FORGOT_PASSWORD' | 'LOGIN';
+    purpose: OtpPurpose | 'REGISTRATION' | 'FORGOT_PASSWORD' | 'LOGIN' | 'ADMIN_LOGIN';
     ipAddress?: string;
   }) {
     const cleanMobile = params.mobile.replace(/\D/g, '').slice(-10);
@@ -44,10 +425,11 @@ export class AuthService {
       });
       if (!existingUser) {
         // Privacy protection: do not reveal account non-existence
+        const ttlMs = config.otp.ttlSeconds * 1000;
         return {
           message: 'If an account is associated with this mobile number, a verification code has been dispatched.',
           cooldownSeconds: 60,
-          expiresAt: new Date(now.getTime() + 10 * 60 * 1000).toISOString(),
+          expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
         };
       }
     }
@@ -56,7 +438,7 @@ export class AuthService {
     const activeCooldown = await prisma.otpRequest.findFirst({
       where: {
         mobile: cleanMobile,
-        purpose: params.purpose,
+        purpose: params.purpose as OtpPurpose,
         cooldownUntil: { gt: now },
       },
     });
@@ -82,14 +464,15 @@ export class AuthService {
     // 4. Generate cryptographically secure OTP & Hash (server-secret-keyed HMAC)
     const otpCode = generateSecureOtp();
     const otpHash = hmacHashOtp(otpCode);
-    const expiresAt = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes
-    const cooldownUntil = new Date(now.getTime() + 60 * 1000); // 60 seconds
+    const ttlMs = config.otp.ttlSeconds * 1000;
+    const expiresAt = new Date(now.getTime() + ttlMs);
+    const cooldownUntil = new Date(now.getTime() + 60 * 1000);
 
     await prisma.otpRequest.create({
       data: {
         mobile: cleanMobile,
         otpHash,
-        purpose: params.purpose,
+        purpose: params.purpose as OtpPurpose,
         expiresAt,
         cooldownUntil,
       },
@@ -105,7 +488,6 @@ export class AuthService {
       throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
     }
 
-
     return {
       message: 'Verification code dispatched successfully to your mobile number.',
       cooldownSeconds: 60,
@@ -120,10 +502,10 @@ export class AuthService {
   static async verifyOtp(params: {
     mobile: string;
     otpCode: string;
-    purpose: 'REGISTRATION' | 'FORGOT_PASSWORD' | 'LOGIN';
+    purpose: OtpPurpose | 'REGISTRATION' | 'FORGOT_PASSWORD' | 'LOGIN' | 'ADMIN_LOGIN';
   }) {
     const cleanMobile = params.mobile.replace(/\D/g, '').slice(-10);
-    const cleanOtp = params.otpCode.trim();
+    const cleanOtp = (params.otpCode || '').trim();
 
     if (!cleanOtp || cleanOtp.length !== 6) {
       throw new Error('Please enter a valid 6-digit verification code.');
@@ -136,7 +518,7 @@ export class AuthService {
       const latest = await tx.otpRequest.findFirst({
         where: {
           mobile: cleanMobile,
-          purpose: params.purpose,
+          purpose: params.purpose as OtpPurpose,
           isUsed: false,
           expiresAt: { gt: now },
         },
@@ -214,7 +596,7 @@ export class AuthService {
         data: {
           mobile: cleanMobile,
           tokenHash,
-          purpose: params.purpose,
+          purpose: params.purpose as OtpPurpose,
           isUsed: false,
           expiresAt: tokenExpiresAt,
         },
@@ -241,7 +623,7 @@ export class AuthService {
 
   /**
    * Consumes registrationVerificationToken and creates user account with structured names.
-   * NEVER re-verifies original OTP.
+   * Enforces SINGLE ACTIVE SESSION upon registration.
    */
   static async registerUser(params: {
     mobile: string;
@@ -287,7 +669,8 @@ export class AuthService {
     // 2. Hash password with bcrypt salt 12
     const passwordHash = await bcrypt.hash(params.password, 12);
 
-    // 3. Create User, Wallet, and AuthSession in transaction with atomic token claim
+    // 3. Single active session ID
+    const sessionId = crypto.randomUUID();
     const refreshToken = generateSecureToken(40);
     const refreshTokenHash = sha256Hash(refreshToken);
     const sessionExpiresAt = new Date(now.getTime() + 30 * 24 * 3600 * 1000); // 30 days
@@ -316,6 +699,7 @@ export class AuthService {
       if (existing) {
         throw new Error('An account already exists for this mobile number.');
       }
+
       const newUser = await tx.user.create({
         data: {
           mobile: cleanMobile,
@@ -329,6 +713,7 @@ export class AuthService {
           role: 'USER',
           status: 'ACTIVE',
           isVerified: true,
+          activeSessionId: sessionId,
         },
       });
 
@@ -344,6 +729,7 @@ export class AuthService {
       await tx.authSession.create({
         data: {
           userId: newUser.id,
+          sessionId,
           tokenHash: refreshTokenHash,
           userAgent: params.userAgent,
           ipAddress: params.ipAddress,
@@ -354,7 +740,7 @@ export class AuthService {
       return { user: newUser, wallet: newWallet };
     });
 
-    const accessToken = this.generateAccessToken(user.id, user.role, user.mobile);
+    const accessToken = this.generateAccessToken(user.id, user.role, user.mobile, sessionId);
 
     return {
       user: {
@@ -376,11 +762,13 @@ export class AuthService {
       accessToken,
       refreshToken,
       token: accessToken, // Backwards compatibility for existing clients
+      sessionId,
     };
   }
 
   /**
-   * Authenticates user, creates rotating refresh session.
+   * Authenticates user, creates rotating refresh session, and enforces SINGLE ACTIVE SESSION.
+   * Subsequent login replaces and invalidates previous session immediately.
    */
   static async login(mobile: string, pass: string, userAgent?: string, ipAddress?: string) {
     const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
@@ -403,33 +791,50 @@ export class AuthService {
       throw new Error('Invalid mobile number or password.');
     }
 
-    // Create session
+    // Single active session: generate new sessionId and invalidate previous sessions
+    const sessionId = crypto.randomUUID();
     const refreshToken = generateSecureToken(40);
     const refreshTokenHash = sha256Hash(refreshToken);
     const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000);
 
-    await prisma.authSession.create({
-      data: {
-        userId: user.id,
-        tokenHash: refreshTokenHash,
-        userAgent,
-        ipAddress,
-        expiresAt: sessionExpiresAt,
-      },
+    await prisma.$transaction(async (tx) => {
+      // Invalidate all existing sessions for this user
+      await tx.authSession.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+
+      // Update activeSessionId on user
+      await tx.user.update({
+        where: { id: user.id },
+        data: { activeSessionId: sessionId },
+      });
+
+      // Create new session
+      await tx.authSession.create({
+        data: {
+          userId: user.id,
+          sessionId,
+          tokenHash: refreshTokenHash,
+          userAgent,
+          ipAddress,
+          expiresAt: sessionExpiresAt,
+        },
+      });
+
+      // Audit log
+      await tx.auditLog.create({
+        data: {
+          action: 'USER_LOGIN',
+          entityType: 'User',
+          entityId: user.id,
+          ipAddress,
+          userAgent,
+        },
+      });
     });
 
-    const accessToken = this.generateAccessToken(user.id, user.role, user.mobile);
-
-    // Audit log
-    await prisma.auditLog.create({
-      data: {
-        action: 'USER_LOGIN',
-        entityType: 'User',
-        entityId: user.id,
-        ipAddress,
-        userAgent,
-      },
-    });
+    const accessToken = this.generateAccessToken(user.id, user.role, user.mobile, sessionId);
 
     return {
       user: {
@@ -449,12 +854,13 @@ export class AuthService {
       accessToken,
       refreshToken,
       token: accessToken,
+      sessionId,
     };
   }
 
   /**
    * Rotates refresh token and issues new access token.
-   * Detects replay attacks and revokes compromised session trees.
+   * Enforces single active session continuity and detects replay attacks.
    */
   static async refreshToken(refreshTokenStr: string, userAgent?: string, ipAddress?: string) {
     if (!refreshTokenStr) {
@@ -476,6 +882,10 @@ export class AuthService {
         where: { userId: session.userId, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+      await prisma.user.update({
+        where: { id: session.userId },
+        data: { activeSessionId: null },
+      });
       throw new Error('Compromised or reused refresh token detected. All active sessions have been revoked.');
     }
 
@@ -491,13 +901,18 @@ export class AuthService {
       throw new Error('User account is invalid or suspended.');
     }
 
+    // Single active session enforcement: check if session matches user.activeSessionId
+    if (user.activeSessionId && session.sessionId && session.sessionId !== user.activeSessionId) {
+      throw new Error('Session has been invalidated by a newer login. Please log in again.');
+    }
+
     // Token Rotation with atomic claim
     const newRefreshToken = generateSecureToken(40);
     const newRefreshTokenHash = sha256Hash(newRefreshToken);
     const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000);
+    const currentSessionId = session.sessionId || user.activeSessionId || crypto.randomUUID();
 
     const rotatedSession = await prisma.$transaction(async (tx) => {
-      // Conditionally claim the session only if it is still active
       const claim = await tx.authSession.updateMany({
         where: {
           id: session.id,
@@ -514,6 +929,7 @@ export class AuthService {
       return await tx.authSession.create({
         data: {
           userId: user.id,
+          sessionId: currentSessionId,
           tokenHash: newRefreshTokenHash,
           userAgent,
           ipAddress,
@@ -527,30 +943,53 @@ export class AuthService {
       throw new Error('Refresh token has already been rotated or revoked.');
     }
 
-    const newAccessToken = this.generateAccessToken(user.id, user.role, user.mobile);
+    const newAccessToken = this.generateAccessToken(user.id, user.role, user.mobile, currentSessionId);
 
     return {
       accessToken: newAccessToken,
       refreshToken: newRefreshToken,
       token: newAccessToken,
+      sessionId: currentSessionId,
     };
   }
 
   /**
-   * Revokes refresh token on user logout.
+   * Revokes user session(s) on logout, clearing activeSessionId immediately.
    */
-  static async logout(refreshTokenStr: string) {
-    if (!refreshTokenStr) return;
-    const tokenHash = sha256Hash(refreshTokenStr);
-    await prisma.authSession.updateMany({
-      where: { tokenHash, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
+  static async logout(refreshTokenStr?: string, userId?: string) {
+    if (refreshTokenStr) {
+      const tokenHash = sha256Hash(refreshTokenStr);
+      const session = await prisma.authSession.findUnique({
+        where: { tokenHash },
+      });
+      if (session) {
+        await prisma.authSession.updateMany({
+          where: { userId: session.userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        await prisma.user.update({
+          where: { id: session.userId },
+          data: { activeSessionId: null },
+        });
+        return;
+      }
+    }
+
+    if (userId) {
+      await prisma.authSession.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      await prisma.user.update({
+        where: { id: userId },
+        data: { activeSessionId: null },
+      });
+    }
   }
 
   /**
    * Real backend password reset consuming verificationToken.
-   * Revokes all active sessions for security.
+   * Revokes all active sessions and clears activeSessionId for security.
    */
   static async completePasswordReset(params: {
     mobile: string;
@@ -595,7 +1034,7 @@ export class AuthService {
 
       await tx.user.update({
         where: { id: user.id },
-        data: { passwordHash: newHash },
+        data: { passwordHash: newHash, activeSessionId: null },
       });
 
       // Revoke all active sessions
@@ -748,9 +1187,13 @@ export class AuthService {
     };
   }
 
-  private static generateAccessToken(userId: string, role: UserRole, mobile: string): string {
+  private static generateAccessToken(userId: string, role: UserRole, mobile: string, sessionId?: string): string {
+    const payload: any = { userId, role, mobile };
+    if (sessionId) {
+      payload.sessionId = sessionId;
+    }
     return jwt.sign(
-      { userId, role, mobile },
+      payload,
       config.jwt.accessSecret,
       { expiresIn: config.jwt.accessExpiresIn as any }
     );

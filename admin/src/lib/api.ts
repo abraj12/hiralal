@@ -20,7 +20,28 @@ export class AdminApiClient {
   static clearToken() {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('hiralal_admin_token');
+      localStorage.removeItem('hiralal_admin_user');
     }
+  }
+
+  static setUser(user: any) {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('hiralal_admin_user', JSON.stringify(user));
+    }
+  }
+
+  static getUser(): any | null {
+    if (typeof window !== 'undefined') {
+      const data = localStorage.getItem('hiralal_admin_user');
+      if (data) {
+        try {
+          return JSON.parse(data);
+        } catch {
+          return null;
+        }
+      }
+    }
+    return null;
   }
 
   static async request<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -124,13 +145,12 @@ export class AdminApiClient {
 
   static handlePayoutAction(
     id: string,
-    action: 'APPROVE' | 'REJECT' | 'COMPLETE' | 'FAIL',
-    reason?: string,
-    gatewayReference?: string
+    action: 'APPROVE' | 'REJECT' | 'FAIL',
+    reason?: string
   ) {
     return this.request(`/admin/payouts/${id}/action`, {
       method: 'POST',
-      body: JSON.stringify({ action, reason, gatewayReference }),
+      body: JSON.stringify({ action, reason }),
     });
   }
 
@@ -209,11 +229,31 @@ export class AdminApiClient {
     return this.request('/admin/audit-logs');
   }
 
-  // Login
-  static login(username: string, password: string) {
-    return this.request('/auth/admin-login', {
+  // Admin OTP-First Authentication Flow
+  static requestOtp(identifier: string) {
+    return this.request('/auth/admin/otp/request', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ identifier }),
+    });
+  }
+
+  static verifyOtp(identifier: string, otpCode: string) {
+    return this.request('/auth/admin/otp/verify', {
+      method: 'POST',
+      body: JSON.stringify({ identifier, otpCode }),
+    });
+  }
+
+  static login(identifier: string, password: string, verificationToken?: string) {
+    if (!verificationToken) {
+      return this.request('/auth/admin-login', {
+        method: 'POST',
+        body: JSON.stringify({ username: identifier, password }),
+      });
+    }
+    return this.request('/auth/admin/login', {
+      method: 'POST',
+      body: JSON.stringify({ identifier, password, verificationToken }),
     });
   }
 }

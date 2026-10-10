@@ -1,5 +1,12 @@
 import { Router, Response } from 'express';
-import { authenticate, requireRole, AuthenticatedRequest } from '../middleware/auth.middleware';
+import {
+  authenticate,
+  requireRole,
+  requireAdmin,
+  requireBillAdmin,
+  requireOperationsAdmin,
+  AuthenticatedRequest,
+} from '../middleware/auth.middleware';
 import { prisma } from '../db';
 import { RewardService } from '../services/reward.service';
 import { RewardRuleService } from '../services/reward-rule.service';
@@ -12,14 +19,13 @@ import { BillStatus, Profession, UserStatus } from '@prisma/client';
 
 const router = Router();
 
-// Protect all admin endpoints with strict ADMIN role check
+// Protect all admin endpoints with authentication
 router.use(authenticate);
-router.use(requireRole(['ADMIN']));
 
 /**
  * 1. Dashboard Overview Stats with Strict Server-Side Profession Filtering
  */
-router.get('/dashboard', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const professionQuery = req.query.profession as string;
     const filterProfession = (professionQuery && professionQuery !== 'ALL') ? (professionQuery as Profession) : undefined;
@@ -115,7 +121,7 @@ router.get('/dashboard', async (req: AuthenticatedRequest, res: Response) => {
 /**
  * 2. User Directory with Server-Side Profession Filtering
  */
-router.get('/users', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/users', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const profession = req.query.profession as string;
     const status = req.query.status as string;
@@ -173,7 +179,7 @@ router.get('/users', async (req: AuthenticatedRequest, res: Response) => {
 /**
  * 3. User Details
  */
-router.get('/users/:id', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/users/:id', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.params.id },
@@ -270,7 +276,7 @@ router.get('/users/:id', async (req: AuthenticatedRequest, res: Response) => {
 /**
  * 3b. Admin Privileged Name Correction for Users (Audited)
  */
-router.put('/users/:id/name', async (req: AuthenticatedRequest, res: Response) => {
+router.put('/users/:id/name', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const admin = req.user!;
     const { firstName, middleName, lastName, fullName, reason } = req.body;
@@ -300,7 +306,7 @@ router.put('/users/:id/name', async (req: AuthenticatedRequest, res: Response) =
 /**
  * 4. Bills Management with Strict Server-Side Profession & Status Filtering
  */
-router.get('/bills', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/bills', requireBillAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const status = req.query.status as string;
     const profession = req.query.profession as string;
@@ -324,7 +330,7 @@ router.get('/bills', async (req: AuthenticatedRequest, res: Response) => {
 /**
  * 5. Bill Verification (Approve / Reject with GST and Financial Snapshot)
  */
-router.post('/bills/:id/verify', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { action, rejectionReason, gstIncluded, gstRate, gstRuleId, gstOverrideReason, customRewardAmount } = req.body;
     const admin = req.user!;
@@ -365,7 +371,7 @@ router.post('/bills/:id/verify', async (req: AuthenticatedRequest, res: Response
 /**
  * 6. Payouts Management with Strict Server-Side Profession Filtering
  */
-router.get('/payouts', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/payouts', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const status = req.query.status as string;
     const profession = req.query.profession as string;
@@ -413,9 +419,9 @@ router.get('/payouts', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-router.post('/payouts/:id/action', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/payouts/:id/action', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { action, reason, gatewayReference } = req.body;
+    const { action, reason } = req.body;
     const { id } = req.params;
     const admin = req.user!;
 
@@ -428,27 +434,9 @@ router.post('/payouts/:id/action', async (req: AuthenticatedRequest, res: Respon
       }
       const payout = await PayoutService.rejectRedemption(id, admin.id, reason.trim());
       return res.json({ success: true, message: 'Payout rejected and refunded to user.', payout });
-    } else if (action === 'COMPLETE') {
-      if (!gatewayReference || !gatewayReference.trim()) {
-        return res.status(400).json({
-          success: false,
-          message: 'Manual completion requires a valid gateway/provider reconciliation reference (UTR or Payout ID).',
-        });
-      }
-      const payout = await PayoutService.finalizeSuccess(id, gatewayReference.trim());
-      await prisma.auditLog.create({
-        data: {
-          adminId: admin.id,
-          action: 'PAYOUT_MANUAL_COMPLETE',
-          entityType: 'Payout',
-          entityId: id,
-          newValue: JSON.stringify({ gatewayReference: gatewayReference.trim() }),
-        },
-      });
-      return res.json({ success: true, message: 'Payout marked as complete with reconciliation reference.', payout });
     }
 
-    return res.status(400).json({ success: false, message: 'Invalid action. Must be APPROVE, REJECT, or COMPLETE.' });
+    return res.status(400).json({ success: false, message: 'Invalid action. Must be APPROVE or REJECT.' });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }
@@ -457,7 +445,7 @@ router.post('/payouts/:id/action', async (req: AuthenticatedRequest, res: Respon
 /**
  * 7. Redemption Settings (Profession-Specific Windows)
  */
-router.get('/settings/redemption', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/settings/redemption', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const profession = req.query.profession as string;
     const prof = (profession && profession !== 'ALL') ? (profession as Profession) : undefined;
@@ -474,7 +462,7 @@ router.get('/settings/redemption', async (req: AuthenticatedRequest, res: Respon
   }
 });
 
-router.put('/settings/redemption', async (req: AuthenticatedRequest, res: Response) => {
+router.put('/settings/redemption', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const admin = req.user!;
     const { isEnabled, startAt, endAt, minimumAmount, maximumAmount, message, profession } = req.body;
@@ -553,7 +541,7 @@ router.put('/settings/redemption', async (req: AuthenticatedRequest, res: Respon
 /**
  * 8. Dynamic Reward Rules Configuration (Profession-Specific & Versioned)
  */
-router.get('/settings/reward-rules', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/settings/reward-rules', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const profession = req.query.profession as string;
     const prof = (profession && profession !== 'ALL') ? (profession as Profession) : undefined;
@@ -583,7 +571,7 @@ router.get('/settings/reward-rules', async (req: AuthenticatedRequest, res: Resp
   }
 });
 
-router.post('/settings/reward-rules', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/settings/reward-rules', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const admin = req.user!;
     const { profession, rewardPercentage, monthlyPoolLimit, minRedemptionAmount, maxRedemptionAmount, effectiveFrom, effectiveUntil } = req.body;
@@ -612,7 +600,7 @@ router.post('/settings/reward-rules', async (req: AuthenticatedRequest, res: Res
   }
 });
 
-router.put('/settings/reward-rules', async (req: AuthenticatedRequest, res: Response) => {
+router.put('/settings/reward-rules', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { percentage, monthlyPoolLimit, minRedemptionAmount, profession } = req.body;
     const admin = req.user!;
@@ -638,7 +626,7 @@ router.put('/settings/reward-rules', async (req: AuthenticatedRequest, res: Resp
 /**
  * 9. GST Rates Configuration
  */
-router.get('/settings/gst-rules', async (_req: AuthenticatedRequest, res: Response) => {
+router.get('/settings/gst-rules', requireOperationsAdmin, async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const rules = await GstService.getActiveGstRules();
     res.json({
@@ -658,7 +646,7 @@ router.get('/settings/gst-rules', async (_req: AuthenticatedRequest, res: Respon
   }
 });
 
-router.post('/settings/gst-rules', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/settings/gst-rules', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const admin = req.user!;
     const { ratePercentage, description, isDefault } = req.body;
@@ -679,7 +667,7 @@ router.post('/settings/gst-rules', async (req: AuthenticatedRequest, res: Respon
   }
 });
 
-router.patch('/settings/gst-rules/:id', async (req: AuthenticatedRequest, res: Response) => {
+router.patch('/settings/gst-rules/:id', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const admin = req.user!;
     const { description, isDefault, isActive } = req.body;
@@ -700,10 +688,7 @@ router.patch('/settings/gst-rules/:id', async (req: AuthenticatedRequest, res: R
   }
 });
 
-/**
- * 10. Audit Logs
- */
-router.get('/audit-logs', async (_req: AuthenticatedRequest, res: Response) => {
+router.get('/audit-logs', requireOperationsAdmin, async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const logs = await prisma.auditLog.findMany({
       take: 100,

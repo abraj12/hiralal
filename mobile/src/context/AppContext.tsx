@@ -21,6 +21,7 @@ interface AppContextType {
   setCurrentScreen: (screen: 'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL') => void;
   setProfession: (profession: ProfessionType) => void;
   login: (mobile: string, pass: string) => Promise<void>;
+  loginAdmin: (identifier: string, pass: string, verificationToken: string) => Promise<void>;
   logout: () => void;
   refreshData: () => Promise<void>;
 }
@@ -147,6 +148,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     refreshData().catch(e => console.warn('Background sync failed:', e));
   };
 
+  const loginAdmin = async (identifier: string, pass: string, verificationToken: string) => {
+    const res = await MobileApiClient.loginAdmin(identifier, pass, verificationToken);
+    await MobileApiClient.setToken(res.accessToken || res.token);
+    setUser(res.user);
+    setCurrentScreen('MAIN');
+  };
+
   const logout = async () => {
     await MobileApiClient.logout();
     setUser(null);
@@ -175,6 +183,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentScreen,
         setProfession: setProfessionState,
         login,
+        loginAdmin,
         logout,
         refreshData,
       }}

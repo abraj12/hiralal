@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import {
@@ -20,25 +20,75 @@ interface SidebarProps {
 
 export default function Sidebar({ pendingBillsCount = 0 }: SidebarProps) {
   const router = useRouter();
+  const [user, setUser] = useState<any>(null);
 
-  const navItems = [
-    { label: 'Dashboard', href: '/', icon: LayoutDashboard },
-    { label: 'Plumbers & Tiles', href: '/users', icon: Users },
+  useEffect(() => {
+    setUser(AdminApiClient.getUser());
+  }, []);
+
+  const role = user?.role; // 'BILL_ADMIN' | 'OPERATIONS_ADMIN' | 'ADMIN'
+
+  // Dynamic role-based navigation filtering:
+  // BILL_ADMIN: Reviews & approves bills, views dashboard
+  // OPERATIONS_ADMIN: Manages payouts, reward rules, GST, settings, user directory
+  const allNavItems = [
+    {
+      label: 'Dashboard',
+      href: '/',
+      icon: LayoutDashboard,
+      roles: ['ADMIN', 'BILL_ADMIN', 'OPERATIONS_ADMIN'],
+    },
+    {
+      label: 'Plumbers & Tiles',
+      href: '/users',
+      icon: Users,
+      roles: ['ADMIN', 'OPERATIONS_ADMIN'],
+    },
     {
       label: 'Bills Verification',
       href: '/bills',
       icon: FileCheck,
       badge: pendingBillsCount > 0 ? pendingBillsCount : null,
+      roles: ['ADMIN', 'BILL_ADMIN'],
     },
-    { label: 'Rewards & Pool', href: '/rewards', icon: Gift },
-    { label: 'Payouts', href: '/payouts', icon: CreditCard },
-    { label: 'Audit Logs', href: '/audit-logs', icon: History },
-    { label: 'Settings', href: '/settings', icon: Settings },
+    {
+      label: 'Rewards & Pool',
+      href: '/rewards',
+      icon: Gift,
+      roles: ['ADMIN', 'OPERATIONS_ADMIN'],
+    },
+    {
+      label: 'Payouts',
+      href: '/payouts',
+      icon: CreditCard,
+      roles: ['ADMIN', 'OPERATIONS_ADMIN'],
+    },
+    {
+      label: 'Audit Logs',
+      href: '/audit-logs',
+      icon: History,
+      roles: ['ADMIN', 'OPERATIONS_ADMIN'],
+    },
+    {
+      label: 'Settings',
+      href: '/settings',
+      icon: Settings,
+      roles: ['ADMIN', 'OPERATIONS_ADMIN'],
+    },
   ];
 
-  const handleLogout = () => {
+  const navItems = allNavItems.filter(item => !role || item.roles.includes(role));
+
+  const handleLogout = async () => {
     AdminApiClient.clearToken();
     router.push('/login');
+  };
+
+  const getRoleLabel = () => {
+    if (role === 'BILL_ADMIN') return 'Bill Review Admin';
+    if (role === 'OPERATIONS_ADMIN') return 'Operations Admin';
+    if (role === 'ADMIN') return 'Executive Admin';
+    return 'Administrator';
   };
 
   return (
@@ -53,7 +103,7 @@ export default function Sidebar({ pendingBillsCount = 0 }: SidebarProps) {
             HIRALAL & SONS
           </div>
           <div className="text-[11px] font-semibold text-red-600 tracking-wider uppercase">
-            Rewards Admin
+            {role === 'BILL_ADMIN' ? 'Bill Review Portal' : role === 'OPERATIONS_ADMIN' ? 'Operations Portal' : 'Rewards Admin'}
           </div>
         </div>
       </div>
@@ -99,8 +149,12 @@ export default function Sidebar({ pendingBillsCount = 0 }: SidebarProps) {
               <ShieldCheck className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <div className="text-xs font-bold text-slate-800">Super Admin</div>
-              <div className="text-[11px] text-slate-500">Master Access</div>
+              <div className="text-xs font-bold text-slate-800">
+                {user?.fullName || getRoleLabel()}
+              </div>
+              <div className="text-[11px] text-slate-500 font-medium">
+                {getRoleLabel()}
+              </div>
             </div>
           </div>
           <button

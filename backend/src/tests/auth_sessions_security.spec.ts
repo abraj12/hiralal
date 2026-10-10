@@ -7,7 +7,7 @@ import { closeRedis, checkRedisConnection, isRedisReady, getRedisClient } from '
 import { clearRateLimitCache } from '../middleware/rateLimit.middleware';
 
 describe('Authentication, Single-Use Verification Tokens & Session Security Tests', () => {
-  const testMobile = '9876543210';
+  const testMobile = '9876500001';
   const testPassword = 'SecureCraftsman@2026';
 
   beforeAll(async () => {

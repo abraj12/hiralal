@@ -17,7 +17,23 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
 
   const token = authHeader.split(' ')[1];
   try {
-    const decoded = jwt.verify(token, config.jwt.accessSecret) as { userId?: string; id?: string };
+    let decoded: any;
+    try {
+      decoded = jwt.verify(token, config.jwt.accessSecret) as any;
+    } catch (primaryErr) {
+      if (config.admin.accessSecret && config.admin.accessSecret !== config.jwt.accessSecret) {
+        try {
+          decoded = jwt.verify(token, config.admin.accessSecret) as any;
+        } catch {
+          res.status(401).json({ success: false, message: 'Invalid or expired token.' });
+          return;
+        }
+      } else {
+        res.status(401).json({ success: false, message: 'Invalid or expired token.' });
+        return;
+      }
+    }
+
     const targetId = decoded.userId || decoded.id;
 
     if (!targetId) {
@@ -37,6 +53,29 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     if (user.status !== 'ACTIVE') {
       res.status(403).json({ success: false, message: 'Account is suspended. Please contact Hiralal & Sons administration.' });
       return;
+    }
+
+    // Single active session validation
+    if (decoded.sessionId && user.activeSessionId && decoded.sessionId !== user.activeSessionId) {
+      res.status(401).json({ success: false, message: 'Session expired or invalidated by a newer login.' });
+      return;
+    }
+
+    // If token has a sessionId, verify that the session has not been explicitly revoked in AuthSession
+    if (decoded.sessionId) {
+      const session = await prisma.authSession.findFirst({
+        where: {
+          userId: user.id,
+          sessionId: decoded.sessionId,
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+      });
+
+      if (!session) {
+        res.status(401).json({ success: false, message: 'Session has been revoked or expired.' });
+        return;
+      }
     }
 
     req.user = user;
@@ -65,4 +104,6 @@ export function requireRole(allowedRoles: UserRole[]) {
   };
 }
 
-export const requireAdmin = requireRole(['ADMIN']);
+export const requireAdmin = requireRole(['ADMIN', 'BILL_ADMIN', 'OPERATIONS_ADMIN']);
+export const requireBillAdmin = requireRole(['BILL_ADMIN', 'ADMIN']);
+export const requireOperationsAdmin = requireRole(['OPERATIONS_ADMIN', 'ADMIN']);

@@ -481,4 +481,77 @@ export class MobileApiClient {
   static getPayouts() {
     return this.request('/payouts');
   }
+
+  // Real Backend Password Reset Flow
+  static requestPasswordReset(mobile: string) {
+    return this.request('/auth/password-reset/request', {
+      method: 'POST',
+      body: JSON.stringify({ mobile }),
+    });
+  }
+
+  static verifyPasswordResetOtp(mobile: string, otpCode: string) {
+    return this.request('/auth/password-reset/verify', {
+      method: 'POST',
+      body: JSON.stringify({ mobile, otpCode }),
+    });
+  }
+
+  static completePasswordReset(data: {
+    mobile: string;
+    verificationToken: string;
+    newPassword: string;
+  }) {
+    return this.request('/auth/password-reset/complete', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Admin Authentication Sequence
+  static requestAdminOtp(identifier: string) {
+    return this.request('/auth/admin/otp/request', {
+      method: 'POST',
+      body: JSON.stringify({ identifier }),
+    });
+  }
+
+  static verifyAdminOtp(identifier: string, otpCode: string) {
+    return this.request('/auth/admin/otp/verify', {
+      method: 'POST',
+      body: JSON.stringify({ identifier, otpCode }),
+    });
+  }
+
+  static loginAdmin(identifier: string, password: string, verificationToken: string) {
+    return this.request('/auth/admin/login', {
+      method: 'POST',
+      body: JSON.stringify({ identifier, password, verificationToken }),
+    });
+  }
+
+  // Mobile Admin Endpoints
+  static getAdminBills(status = 'ALL', profession = 'ALL') {
+    const params = new URLSearchParams({ status, profession });
+    return this.request(`/admin/bills?${params.toString()}`);
+  }
+
+  static verifyAdminBill(id: string, action: 'APPROVE' | 'REJECT', rejectionReason?: string) {
+    return this.request(`/admin/bills/${id}/verify`, {
+      method: 'POST',
+      body: JSON.stringify({ action, rejectionReason }),
+    });
+  }
+
+  static getAdminPayouts(status = 'ALL', profession = 'ALL') {
+    const params = new URLSearchParams({ status, profession });
+    return this.request(`/admin/payouts?${params.toString()}`);
+  }
+
+  static handleAdminPayout(id: string, action: 'APPROVE' | 'REJECT', reason?: string) {
+    return this.request(`/admin/payouts/${id}/action`, {
+      method: 'POST',
+      body: JSON.stringify({ action, reason }),
+    });
+  }
 }

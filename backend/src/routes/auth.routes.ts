@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { AuthService } from '../services/auth.service';
@@ -13,6 +14,7 @@ import {
 } from '../middleware/rateLimit.middleware';
 import { prisma } from '../db';
 import { config } from '../config';
+import { generateSecureToken, sha256Hash } from '../utils/crypto.utils';
 
 const router = Router();
 
@@ -143,9 +145,20 @@ router.post('/refresh', async (req: Request, res: Response) => {
 router.post('/logout', async (req: Request, res: Response) => {
   try {
     const { refreshToken } = req.body;
-    if (refreshToken) {
-      await AuthService.logout(refreshToken);
+    let userId: string | undefined;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.decode(token) as any;
+        if (decoded?.userId || decoded?.id) {
+          userId = decoded.userId || decoded.id;
+        }
+      } catch {
+        // ignore decoding errors
+      }
     }
+    await AuthService.logout(refreshToken, userId);
     res.json({ success: true, message: 'Logged out successfully.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
@@ -208,70 +221,172 @@ router.post('/password-reset/complete', async (req: Request, res: Response) => {
 });
 
 // ==========================================
-// 5. ADMIN AUTHENTICATION
+// 5. ADMIN AUTHENTICATION (OTP-First Flow)
 // ==========================================
+
+router.post('/admin/otp/request', otpRequestLimiter, async (req: Request, res: Response) => {
+  try {
+    const identifier = req.body.identifier || req.body.username;
+    if (!identifier) {
+      return res.status(400).json({ success: false, message: 'Admin identifier is required.' });
+    }
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const result = await AuthService.requestAdminOtp({ identifier, ipAddress });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/admin/otp/verify', otpVerifyLimiter, async (req: Request, res: Response) => {
+  try {
+    const identifier = req.body.identifier || req.body.username;
+    const { otpCode } = req.body;
+    if (!identifier || !otpCode) {
+      return res.status(400).json({ success: false, message: 'Admin identifier and OTP code are required.' });
+    }
+    const result = await AuthService.verifyAdminOtp({ identifier, otpCode });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+router.post(
+  '/admin/login',
+  adminLoginLimiter,
+  adminAccountLoginLimiter,
+  async (req: Request, res: Response) => {
+    try {
+      const identifier = req.body.identifier || req.body.username;
+      const { password, verificationToken } = req.body;
+
+      if (!identifier || !password) {
+        return res.status(400).json({ success: false, message: 'Admin identifier and password are required.' });
+      }
+
+      if (!verificationToken) {
+        return res.status(400).json({
+          success: false,
+          message: 'Admin verification challenge token is required. Please verify OTP first.',
+        });
+      }
+
+      const ipAddress = req.ip || req.socket.remoteAddress;
+      const userAgent = req.headers['user-agent'];
+
+      const result = await AuthService.loginAdmin({
+        identifier,
+        password,
+        verificationToken,
+        userAgent,
+        ipAddress,
+      });
+
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(401).json({ success: false, message: err.message });
+    }
+  }
+);
 
 router.post(
   '/admin-login',
   adminLoginLimiter,
   adminAccountLoginLimiter,
   async (req: Request, res: Response) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ success: false, message: 'Admin mobile/username and password are required.' });
+    try {
+      const identifier = req.body.identifier || req.body.username;
+      const { password, verificationToken } = req.body;
+
+      if (!identifier || !password) {
+        return res.status(400).json({ success: false, message: 'Admin mobile/username and password are required.' });
+      }
+
+      if (verificationToken) {
+        const ipAddress = req.ip || req.socket.remoteAddress;
+        const userAgent = req.headers['user-agent'];
+        const result = await AuthService.loginAdmin({
+          identifier,
+          password,
+          verificationToken,
+          userAgent,
+          ipAddress,
+        });
+        return res.json({ success: true, ...result });
+      }
+
+      // Password-only admin authentication is strictly forbidden in production
+      if (config.isProduction) {
+        return res.status(403).json({
+          success: false,
+          message: 'Password-only admin login is deprecated and disabled for security in production. Admin authentication requires OTP verification (/api/auth/admin/otp/request -> /api/auth/admin/otp/verify -> /api/auth/admin/login).',
+        });
+      }
+
+      const cleanMobile = identifier.replace(/\D/g, '').slice(-10);
+      const admin = await prisma.user.findFirst({
+        where: {
+          mobile: cleanMobile,
+          role: { in: ['ADMIN', 'BILL_ADMIN', 'OPERATIONS_ADMIN'] },
+        },
+      });
+
+      if (!admin) {
+        return res.status(401).json({ success: false, message: 'Invalid admin credentials.' });
+      }
+
+      const isMatch = await bcrypt.compare(password, admin.passwordHash);
+      if (!isMatch) {
+        return res.status(401).json({ success: false, message: 'Invalid admin credentials.' });
+      }
+
+      const sessionId = crypto.randomUUID();
+      await prisma.authSession.updateMany({
+        where: { userId: admin.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      await prisma.user.update({
+        where: { id: admin.id },
+        data: { activeSessionId: sessionId },
+      });
+
+      const token = jwt.sign(
+        { userId: admin.id, role: admin.role, mobile: admin.mobile, sessionId },
+        config.admin.accessSecret || config.jwt.accessSecret,
+        { expiresIn: config.jwt.accessExpiresIn as any }
+      );
+
+      const sessionToken = generateSecureToken(40);
+      const sessionTokenHash = sha256Hash(sessionToken);
+      const sessionExpiresAt = new Date(Date.now() + 24 * 3600 * 1000);
+
+      await prisma.authSession.create({
+        data: {
+          userId: admin.id,
+          sessionId,
+          tokenHash: sessionTokenHash,
+          expiresAt: sessionExpiresAt,
+        },
+      });
+
+      res.json({
+        success: true,
+        user: {
+          id: admin.id,
+          fullName: admin.fullName,
+          mobile: admin.mobile,
+          role: admin.role,
+        },
+        token,
+        accessToken: token,
+        sessionId,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
     }
-
-    const cleanMobile = username.replace(/\D/g, '').slice(-10);
-    const admin = await prisma.user.findFirst({
-      where: {
-        mobile: cleanMobile,
-        role: 'ADMIN',
-      },
-    });
-
-    if (!admin) {
-      return res.status(401).json({ success: false, message: 'Invalid admin credentials.' });
-    }
-
-    const isMatch = await bcrypt.compare(password, admin.passwordHash);
-    if (!isMatch) {
-      return res.status(401).json({ success: false, message: 'Invalid admin credentials.' });
-    }
-
-    const token = jwt.sign(
-      { userId: admin.id, role: admin.role, mobile: admin.mobile },
-      config.jwt.accessSecret,
-      { expiresIn: config.jwt.accessExpiresIn as any }
-    );
-
-    const ipAddress = req.ip || req.socket.remoteAddress;
-    await prisma.auditLog.create({
-      data: {
-        adminId: admin.id,
-        action: 'ADMIN_LOGIN',
-        entityType: 'User',
-        entityId: admin.id,
-        ipAddress,
-        newValue: 'Administrator session authenticated.',
-      },
-    });
-
-    res.json({
-      success: true,
-      user: {
-        id: admin.id,
-        fullName: admin.fullName,
-        mobile: admin.mobile,
-        role: admin.role,
-      },
-      token,
-      accessToken: token,
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
   }
-});
+);
 
 // ==========================================
 // 6. CURRENT USER PROFILE (/me) & NAME EDIT

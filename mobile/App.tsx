@@ -12,9 +12,13 @@ import UploadBillScreen from './src/screens/UploadBillScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
+import BillReviewScreen from './src/screens/BillReviewScreen';
+import OperationsDashboardScreen from './src/screens/OperationsDashboardScreen';
 
 function MainAppNavigator() {
-  const { currentScreen, activeTab } = useApp();
+  const { currentScreen, activeTab, user } = useApp();
+
+  const isAdmin = user?.role === 'BILL_ADMIN' || user?.role === 'OPERATIONS_ADMIN';
 
   const renderActiveScreen = () => {
     if (currentScreen === 'WELCOME') return <WelcomeScreen />;
@@ -22,7 +26,16 @@ function MainAppNavigator() {
     if (currentScreen === 'REGISTER') return <RegisterScreen />;
     if (currentScreen === 'UPLOAD_BILL') return <UploadBillScreen />;
 
-    // Main bottom-tabs navigation
+    // Role-specific screens when logged in
+    if (user?.role === 'BILL_ADMIN') {
+      return <BillReviewScreen />;
+    }
+
+    if (user?.role === 'OPERATIONS_ADMIN') {
+      return <OperationsDashboardScreen />;
+    }
+
+    // Main bottom-tabs navigation for regular craftsman users
     switch (activeTab) {
       case 'HOME':
         return <HomeScreen />;
@@ -47,7 +60,7 @@ function MainAppNavigator() {
           {renderActiveScreen()}
         </View>
 
-        {currentScreen === 'MAIN' && <BottomNav />}
+        {currentScreen === 'MAIN' && !isAdmin && <BottomNav />}
       </View>
     </SafeAreaView>
   );

@@ -26,7 +26,7 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
     await prisma.kycRecord.deleteMany({ where: { user: { mobile: '9666666666' } } });
     await prisma.wallet.deleteMany({ where: { user: { mobile: '9666666666' } } });
     await prisma.user.deleteMany({ where: { mobile: '9666666666' } });
-    await prisma.user.deleteMany({ where: { mobile: '9888888888' } });
+    await prisma.user.deleteMany({ where: { mobile: '9888888889' } });
 
     user = await prisma.user.create({
       data: {
@@ -50,7 +50,7 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
 
     adminUser = await prisma.user.create({
       data: {
-        mobile: '9888888888',
+        mobile: '9888888889',
         fullName: 'Disbursement Approver Admin',
         passwordHash: 'hash',
         role: 'ADMIN',
@@ -71,12 +71,14 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
 
   afterAll(async () => {
     await prisma.webhookEvent.deleteMany({ where: { provider: 'RAZORPAYX' } });
-    await prisma.payout.deleteMany({ where: { userId: user.id } });
-    await prisma.paymentAccount.deleteMany({ where: { userId: user.id } });
-    await prisma.kycRecord.deleteMany({ where: { userId: user.id } });
-    await prisma.walletTransaction.deleteMany({ where: { userId: user.id } });
-    await prisma.wallet.deleteMany({ where: { userId: user.id } });
-    await prisma.user.deleteMany({ where: { id: user.id } });
+    if (user) {
+      await prisma.payout.deleteMany({ where: { userId: user.id } });
+      await prisma.paymentAccount.deleteMany({ where: { userId: user.id } });
+      await prisma.kycRecord.deleteMany({ where: { userId: user.id } });
+      await prisma.walletTransaction.deleteMany({ where: { userId: user.id } });
+      await prisma.wallet.deleteMany({ where: { userId: user.id } });
+      await prisma.user.deleteMany({ where: { id: user.id } });
+    }
     if (adminUser) {
       await prisma.user.deleteMany({ where: { id: adminUser.id } });
     }

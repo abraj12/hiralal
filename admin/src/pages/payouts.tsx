@@ -28,13 +28,12 @@ export default function AdminPayoutsPage() {
 
   const handleAction = async (
     id: string,
-    action: 'APPROVE' | 'REJECT' | 'COMPLETE' | 'FAIL',
-    reason?: string,
-    gatewayReference?: string
+    action: 'APPROVE' | 'REJECT' | 'FAIL',
+    reason?: string
   ) => {
     setActionLoading(id);
     try {
-      await AdminApiClient.handlePayoutAction(id, action, reason, gatewayReference);
+      await AdminApiClient.handlePayoutAction(id, action, reason);
       fetchPayouts();
     } catch (err: any) {
       alert(err.message || 'Action failed');
@@ -209,34 +208,18 @@ export default function AdminPayoutsPage() {
                           </button>
                         )}
                         {p.status === 'PROCESSING' && (
-                          <>
-                            <button
-                              onClick={() => {
-                                const ref = prompt('Enter Bank UTR or Gateway Reconciliation Reference ID (Mandatory):');
-                                if (ref && ref.trim()) {
-                                  handleAction(p.id, 'COMPLETE', undefined, ref.trim());
-                                } else if (ref !== null) {
-                                  alert('Reconciliation reference is mandatory for manual completion.');
-                                }
-                              }}
-                              disabled={actionLoading === p.id}
-                              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs shadow-sm transition"
-                            >
-                              Manual Complete
-                            </button>
-                            <button
-                              onClick={() => {
-                                const reason = prompt('Please enter failure reason:');
-                                if (reason && reason.trim()) {
-                                  handleAction(p.id, 'FAIL', reason.trim());
-                                }
-                              }}
-                              disabled={actionLoading === p.id}
-                              className="px-2.5 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-bold text-xs transition"
-                            >
-                              Fail & Refund
-                            </button>
-                          </>
+                          <button
+                            onClick={() => {
+                              const reason = prompt('Please enter failure reason:');
+                              if (reason && reason.trim()) {
+                                handleAction(p.id, 'FAIL', reason.trim());
+                              }
+                            }}
+                            disabled={actionLoading === p.id}
+                            className="px-2.5 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-bold text-xs transition"
+                          >
+                            Fail & Refund
+                          </button>
                         )}
                       </td>
                     </tr>

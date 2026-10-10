@@ -69,13 +69,15 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
   });
 
   afterAll(async () => {
-    await prisma.payout.deleteMany({ where: { userId: testUserId } });
-    await prisma.walletTransaction.deleteMany({ where: { userId: testUserId } });
-    await prisma.bill.deleteMany({ where: { userId: testUserId } });
-    await prisma.kycRecord.deleteMany({ where: { userId: testUserId } });
-    await prisma.paymentAccount.deleteMany({ where: { userId: testUserId } });
-    await prisma.wallet.deleteMany({ where: { userId: testUserId } });
-    await prisma.user.deleteMany({ where: { id: testUserId } });
+    if (testUserId) {
+      await prisma.payout.deleteMany({ where: { userId: testUserId } });
+      await prisma.walletTransaction.deleteMany({ where: { userId: testUserId } });
+      await prisma.bill.deleteMany({ where: { userId: testUserId } });
+      await prisma.kycRecord.deleteMany({ where: { userId: testUserId } });
+      await prisma.paymentAccount.deleteMany({ where: { userId: testUserId } });
+      await prisma.wallet.deleteMany({ where: { userId: testUserId } });
+      await prisma.user.deleteMany({ where: { id: testUserId } });
+    }
     await prisma.$disconnect();
   });
 
