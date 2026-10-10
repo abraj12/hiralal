@@ -20,7 +20,7 @@ interface AppContextType {
   setActiveTab: (tab: 'HOME' | 'BILLS' | 'REWARDS' | 'WALLET' | 'PROFILE') => void;
   setCurrentScreen: (screen: 'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL') => void;
   setProfession: (profession: ProfessionType) => void;
-  login: (mobile: string, pass: string) => Promise<void>;
+  login: (mobile: string, pass: string) => Promise<any>;
   loginAdmin: (identifier: string, pass: string, verificationToken: string) => Promise<void>;
   loginAdminSession: (user: any, token: string) => Promise<void>;
   logout: () => void;
@@ -128,9 +128,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
-  const login = async (mobile: string, pass: string) => {
+  const login = async (mobile: string, pass: string): Promise<any> => {
     // Authenticate with real server-side endpoint. NO mock/offline fallback.
     const res = await MobileApiClient.login(mobile, pass);
+    if (res?.requiresOtp) {
+      return res;
+    }
     await MobileApiClient.setToken(res.token);
     if (res.refreshToken) {
       await MobileApiClient.setRefreshToken(res.refreshToken);
@@ -147,6 +150,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentScreen('MAIN');
     setActiveTab('HOME');
     refreshData().catch(e => console.warn('Background sync failed:', e));
+    return res;
   };
 
   const loginAdmin = async (identifier: string, pass: string, verificationToken: string) => {

@@ -66,7 +66,7 @@ export default function LoginScreen() {
   const [forgotError, setForgotError] = useState<string | null>(null);
   const [forgotLoading, setForgotLoading] = useState(false);
 
-  // Cooldown countdown timer for admin OTP resend
+  // Cooldown countdown timer for OTP resend
   useEffect(() => {
     let timer: any;
     if (cooldownRemaining > 0) {
@@ -77,16 +77,9 @@ export default function LoginScreen() {
     return () => clearInterval(timer);
   }, [cooldownRemaining]);
 
-  // Client-side detection: whether identifier contains role prefix letters
-  const isAdminIdentifier = (id: string): boolean => {
-    const trimmed = id.trim();
-    return /[a-zA-Z]/.test(trimmed);
-  };
-
-  const detectedIsAdmin = isAdminIdentifier(identifier);
-
   // ========================================================
   // UNIFIED LOGIN SUBMIT HANDLER
+  // Backend classifies ordinary user vs configured admin identifier
   // ========================================================
   const handleUnifiedLogin = async () => {
     if (loginState === 'VALIDATING' || loginState === 'SUBMITTING_CREDENTIALS') {
@@ -95,7 +88,7 @@ export default function LoginScreen() {
 
     const trimmedId = identifier.trim();
     if (!trimmedId) {
-      setErrorMsg('Please enter your mobile number or Administrator ID.');
+      setErrorMsg('Please enter your mobile number.');
       setLoginState('ERROR');
       return;
     }
@@ -108,57 +101,25 @@ export default function LoginScreen() {
 
     setErrorMsg(null);
     setInfoMsg(null);
-    setLoginState('VALIDATING');
-
-    // ----------------------------------------------------
-    // FLOW A: Ordinary Craftsman User (10-Digit Mobile)
-    // ----------------------------------------------------
-    if (!isAdminIdentifier(trimmedId)) {
-      const cleanMobile = trimmedId.replace(/\D/g, '').slice(-10);
-      if (cleanMobile.length !== 10) {
-        setErrorMsg('Please enter a valid 10-digit Indian mobile number.');
-        setLoginState('ERROR');
-        return;
-      }
-
-      setLoginState('SUBMITTING_CREDENTIALS');
-
-      try {
-        await login(cleanMobile, password);
-        setLoginState('AUTHENTICATED');
-      } catch (err: any) {
-        setErrorMsg(err.message || 'Invalid mobile number or password. Please verify credentials.');
-        setLoginState('ERROR');
-      }
-      return;
-    }
-
-    // ----------------------------------------------------
-    // FLOW B: Administrator (Prefix + Mobile Identifier)
-    // Sequence: Password Checked First -> OTP Challenge -> Full Session
-    // ----------------------------------------------------
-    const cleanAdminId = trimmedId.toUpperCase().replace(/\s+/g, '');
-    if (cleanAdminId.length < 11) {
-      setErrorMsg('Please enter a valid Administrator ID (Prefix + 10-digit mobile).');
-      setLoginState('ERROR');
-      return;
-    }
-
     setLoginState('SUBMITTING_CREDENTIALS');
 
     try {
-      const res = await MobileApiClient.requestAdminOtp(cleanAdminId, password);
-      const token = res.challengeToken || res.verificationToken;
+      const res = await login(trimmedId, password);
 
-      setChallengeToken(token);
-      setAdminOtp('');
-      setOtpError(null);
-      setOtpInfo(res.message || 'Verification code dispatched to your registered mobile number.');
-      setCooldownRemaining(res.cooldownSeconds || 60);
-      setShowOtpModal(true);
-      setLoginState('WAITING_FOR_OTP');
+      if (res?.requiresOtp) {
+        // Backend detected valid admin identifier + verified password. Issued OTP challenge.
+        setChallengeToken(res.challengeToken || null);
+        setAdminOtp('');
+        setOtpError(null);
+        setOtpInfo(res.message || 'Verification code dispatched to your registered mobile number.');
+        setCooldownRemaining(res.cooldownSeconds || 60);
+        setShowOtpModal(true);
+        setLoginState('WAITING_FOR_OTP');
+      } else {
+        setLoginState('AUTHENTICATED');
+      }
     } catch (err: any) {
-      setErrorMsg(err.message || 'Invalid administrator credentials. Access denied.');
+      setErrorMsg(err.message || 'Invalid login credentials. Please check your details and try again.');
       setLoginState('ERROR');
     }
   };
@@ -332,7 +293,7 @@ export default function LoginScreen() {
         <View style={styles.welcomeBox}>
           <Text style={styles.welcomeHeading}>Welcome Back!</Text>
           <Text style={styles.welcomeDesc}>
-            Sign in with your mobile number or administrator ID to access your account.
+            Sign in with your mobile number to access your account.
           </Text>
         </View>
 
@@ -356,26 +317,11 @@ export default function LoginScreen() {
         <View style={styles.form}>
           {/* 1. Unified Identifier Field */}
           <View style={styles.inputGroup}>
-            <View style={styles.labelRow}>
-              <Text style={styles.label}>Mobile Number or Admin ID</Text>
-              {detectedIsAdmin && (
-                <View style={styles.adminBadge}>
-                  <Shield size={11} color="#1E60D5" />
-                  <Text style={styles.adminBadgeText}>Admin ID Detected</Text>
-                </View>
-              )}
-            </View>
-
+            <Text style={styles.label}>Mobile Number</Text>
             <View style={styles.inputWrapper}>
-              {!detectedIsAdmin ? (
-                <View style={styles.prefixBox}>
-                  <Text style={styles.prefixText}>🇮🇳 +91</Text>
-                </View>
-              ) : (
-                <View style={[styles.prefixBox, styles.prefixBoxAdmin]}>
-                  <Shield size={14} color="#1E60D5" />
-                </View>
-              )}
+              <View style={styles.prefixBox}>
+                <Text style={styles.prefixText}>🇮🇳 +91</Text>
+              </View>
               <TextInput
                 style={styles.input}
                 value={identifier}
@@ -384,17 +330,15 @@ export default function LoginScreen() {
                   setErrorMsg(null);
                   if (loginState === 'ERROR') setLoginState('IDLE');
                 }}
-                placeholder={detectedIsAdmin ? 'Prefix + 10-digit mobile' : 'Enter 10-digit mobile number'}
+                placeholder="Enter your mobile number"
                 placeholderTextColor="#94A3B8"
-                autoCapitalize={detectedIsAdmin ? 'characters' : 'none'}
-                keyboardType={detectedIsAdmin ? 'default' : 'phone-pad'}
-                maxLength={detectedIsAdmin ? 20 : 15}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="default"
+                maxLength={30}
                 editable={!isSubmitting}
               />
             </View>
-            <Text style={styles.helperText}>
-              Craftsmen enter your 10-digit mobile. Administrators enter your role prefix followed by your mobile.
-            </Text>
           </View>
 
           {/* 2. Password Field */}
@@ -471,7 +415,7 @@ export default function LoginScreen() {
       </ScrollView>
 
       {/* ======================================================== */}
-      {/* ADMINISTRATOR OTP VERIFICATION MODAL                      */}
+      {/* 2-FACTOR SECURITY VERIFICATION MODAL                      */}
       {/* Sequence: Password verified -> OTP verification -> Session*/}
       {/* ======================================================== */}
       <Modal visible={showOtpModal} transparent={true} animationType="slide">
@@ -482,13 +426,13 @@ export default function LoginScreen() {
                 <Shield size={20} color="#1E60D5" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.modalTitle}>Admin Verification</Text>
+                <Text style={styles.modalTitle}>Security Verification</Text>
                 <Text style={styles.modalSubTitle}>Two-Factor Security Verification</Text>
               </View>
             </View>
 
             <Text style={styles.modalDesc}>
-              A 6-digit security code was dispatched to the mobile number associated with your administrator account.
+              A 6-digit security code was dispatched to the mobile number associated with your account.
             </Text>
 
             {otpError && (
@@ -555,7 +499,7 @@ export default function LoginScreen() {
               onPress={handleCancelAdminOtp}
               disabled={loginState === 'VERIFYING_OTP'}
             >
-              <Text style={styles.modalCancelText}>Cancel & Change Account</Text>
+              <Text style={styles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -782,29 +726,10 @@ const styles = StyleSheet.create({
   inputGroup: {
     gap: 6,
   },
-  labelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
   label: {
     fontSize: 13,
     fontWeight: '600',
     color: '#334155',
-  },
-  adminBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    gap: 4,
-  },
-  adminBadgeText: {
-    fontSize: 11,
-    color: '#1E60D5',
-    fontWeight: '700',
   },
   inputWrapper: {
     flexDirection: 'row',
@@ -821,10 +746,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1F5F9',
     borderRightWidth: 1,
     borderRightColor: '#E2E8F0',
-  },
-  prefixBoxAdmin: {
-    backgroundColor: '#EFF6FF',
-    borderRightColor: '#BFDBFE',
   },
   prefixText: {
     fontSize: 13,
@@ -848,11 +769,6 @@ const styles = StyleSheet.create({
   eyeBtn: {
     paddingHorizontal: 12,
     paddingVertical: 10,
-  },
-  helperText: {
-    fontSize: 11,
-    color: '#94A3B8',
-    marginTop: 2,
   },
   forgotBtn: {
     alignSelf: 'flex-end',

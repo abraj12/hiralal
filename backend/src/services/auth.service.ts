@@ -15,6 +15,31 @@ import { SmsService } from './sms';
 
 export class AuthService {
   /**
+   * Checks whether an identifier matches any server-configured administrator prefix
+   * followed by a 10-digit mobile number.
+   */
+  static isConfiguredAdminPrefix(identifier: string): boolean {
+    if (!identifier || typeof identifier !== 'string') return false;
+    const cleanRaw = identifier.trim().toUpperCase();
+    const billPrefix = normalizeAdminPrefix(config.admin.billAdminPrefix);
+    const opsPrefix = normalizeAdminPrefix(config.admin.operationsAdminPrefix);
+
+    if (billPrefix && cleanRaw.startsWith(billPrefix)) {
+      const remainder = cleanRaw.slice(billPrefix.length).replace(/\D/g, '').slice(-10);
+      return remainder.length === 10;
+    }
+    if (opsPrefix && cleanRaw.startsWith(opsPrefix)) {
+      const remainder = cleanRaw.slice(opsPrefix.length).replace(/\D/g, '').slice(-10);
+      return remainder.length === 10;
+    }
+    if (cleanRaw.startsWith('ADMIN')) {
+      const remainder = cleanRaw.slice(5).replace(/\D/g, '').slice(-10);
+      return remainder.length === 10;
+    }
+    return false;
+  }
+
+  /**
    * Resolves an admin identifier with prefix (e.g. XYZ9876543210 or ABC9876543210)
    * to designated role ('BILL_ADMIN' or 'OPERATIONS_ADMIN') and 10-digit mobile number.
    */
@@ -69,14 +94,14 @@ export class AuthService {
 
     if (params.password !== undefined) {
       if (!params.password) {
-        throw new Error('Admin password is required.');
+        throw new Error('Invalid login credentials. Please check your details and try again.');
       }
       if (!admin || admin.status !== 'ACTIVE') {
-        throw new Error('Invalid admin credentials.');
+        throw new Error('Invalid login credentials. Please check your details and try again.');
       }
       const isMatch = await bcrypt.compare(params.password, admin.passwordHash);
       if (!isMatch) {
-        throw new Error('Invalid admin credentials.');
+        throw new Error('Invalid login credentials. Please check your details and try again.');
       }
     } else {
       if (!admin) {

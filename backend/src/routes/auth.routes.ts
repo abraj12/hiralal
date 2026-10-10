@@ -110,18 +110,66 @@ router.post('/register', async (req: Request, res: Response) => {
 
 router.post('/login', loginLimiter, async (req: Request, res: Response) => {
   try {
-    const { mobile, password } = req.body;
-    if (!mobile || !password) {
+    const { mobile, identifier, password } = req.body;
+    const rawIdentifier = String(identifier || mobile || '').trim();
+    if (!rawIdentifier || !password) {
       return res.status(400).json({ success: false, message: 'Mobile number and password are required.' });
     }
 
     const ipAddress = req.ip || req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'];
 
-    const result = await AuthService.login(mobile, password, userAgent, ipAddress);
+    // 1. Silent backend classification: check if identifier matches configured admin prefix
+    if (AuthService.isConfiguredAdminPrefix(rawIdentifier)) {
+      // Flow B: Valid administrator candidate.
+      // Sequence: Validate administrator password FIRST before generating OTP challenge.
+      const result = await AuthService.requestAdminOtp({
+        identifier: rawIdentifier,
+        password,
+        ipAddress,
+      });
+
+      // Issue pre-auth OTP challenge token (no session token or privileged access granted)
+      return res.json({
+        success: true,
+        requiresOtp: true,
+        ...result,
+      });
+    }
+
+    // 2. Reject arbitrary words or invalid prefixes without role enumeration
+    if (/[a-zA-Z]/.test(rawIdentifier)) {
+      // Flow C: Arbitrary alphabetic text or unrecognized prefix.
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid login credentials. Please check your details and try again.',
+      });
+    }
+
+    // 3. Flow A: Ordinary 10-digit mobile number craftsman user login
+    const cleanMobile = rawIdentifier.replace(/\D/g, '').slice(-10);
+    if (cleanMobile.length !== 10) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid login credentials. Please check your details and try again.',
+      });
+    }
+
+    const result = await AuthService.login(cleanMobile, password, userAgent, ipAddress);
     res.json({ success: true, ...result });
   } catch (err: any) {
-    res.status(401).json({ success: false, message: err.message });
+    const isCredentials =
+      err.message.includes('credentials') ||
+      err.message.includes('password') ||
+      err.message.includes('mobile') ||
+      err.message.includes('prefix') ||
+      err.message.includes('format') ||
+      err.message.includes('not found') ||
+      err.message.includes('suspended');
+    res.status(isCredentials ? 401 : 400).json({
+      success: false,
+      message: isCredentials ? 'Invalid login credentials. Please check your details and try again.' : err.message,
+    });
   }
 });
 
@@ -244,7 +292,7 @@ router.post('/admin/otp/request', otpRequestLimiter, async (req: Request, res: R
     const identifier = req.body.identifier || req.body.username;
     const { password } = req.body;
     if (!identifier) {
-      return res.status(400).json({ success: false, message: 'Admin identifier is required.' });
+      return res.status(400).json({ success: false, message: 'Invalid login credentials. Please check your details and try again.' });
     }
     const ipAddress = req.ip || req.socket.remoteAddress;
     const result = await AuthService.requestAdminOtp({ identifier, password, ipAddress });
@@ -254,8 +302,13 @@ router.post('/admin/otp/request', otpRequestLimiter, async (req: Request, res: R
       err.message.includes('credentials') ||
       err.message.includes('password') ||
       err.message.includes('prefix') ||
-      err.message.includes('format');
-    res.status(isCredentials ? 401 : 400).json({ success: false, message: err.message });
+      err.message.includes('format') ||
+      err.message.includes('not found') ||
+      err.message.includes('suspended');
+    res.status(isCredentials ? 401 : 400).json({
+      success: false,
+      message: isCredentials ? 'Invalid login credentials. Please check your details and try again.' : err.message,
+    });
   }
 });
 

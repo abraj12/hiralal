@@ -326,10 +326,10 @@ export class MobileApiClient {
     });
   }
 
-  static login(mobile: string, password: string) {
+  static login(identifier: string, password: string) {
     return this.request('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ mobile, password }),
+      body: JSON.stringify({ identifier, mobile: identifier, password }),
     });
   }
 
