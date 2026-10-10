@@ -36,58 +36,57 @@ export default function Sidebar({ pendingBillsCount = 0 }: SidebarProps) {
       label: 'Dashboard',
       href: '/',
       icon: LayoutDashboard,
-      roles: ['ADMIN', 'BILL_ADMIN', 'OPERATIONS_ADMIN'],
+      roles: ['BILL_ADMIN', 'OPERATIONS_ADMIN'],
     },
     {
       label: 'Plumbers & Tiles',
       href: '/users',
       icon: Users,
-      roles: ['ADMIN', 'OPERATIONS_ADMIN'],
+      roles: ['OPERATIONS_ADMIN'],
     },
     {
       label: 'Bills Verification',
       href: '/bills',
       icon: FileCheck,
       badge: pendingBillsCount > 0 ? pendingBillsCount : null,
-      roles: ['ADMIN', 'BILL_ADMIN'],
+      roles: ['BILL_ADMIN'],
     },
     {
       label: 'Rewards & Pool',
       href: '/rewards',
       icon: Gift,
-      roles: ['ADMIN', 'OPERATIONS_ADMIN'],
+      roles: ['OPERATIONS_ADMIN'],
     },
     {
       label: 'Payouts',
       href: '/payouts',
       icon: CreditCard,
-      roles: ['ADMIN', 'OPERATIONS_ADMIN'],
+      roles: ['OPERATIONS_ADMIN'],
     },
     {
       label: 'Audit Logs',
       href: '/audit-logs',
       icon: History,
-      roles: ['ADMIN', 'OPERATIONS_ADMIN'],
+      roles: ['OPERATIONS_ADMIN'],
     },
     {
       label: 'Settings',
       href: '/settings',
       icon: Settings,
-      roles: ['ADMIN', 'OPERATIONS_ADMIN'],
+      roles: ['OPERATIONS_ADMIN'],
     },
   ];
 
   const navItems = allNavItems.filter(item => !role || item.roles.includes(role));
 
   const handleLogout = async () => {
-    AdminApiClient.clearToken();
+    await AdminApiClient.logout();
     router.push('/login');
   };
 
   const getRoleLabel = () => {
     if (role === 'BILL_ADMIN') return 'Bill Review Admin';
     if (role === 'OPERATIONS_ADMIN') return 'Operations Admin';
-    if (role === 'ADMIN') return 'Executive Admin';
     return 'Administrator';
   };
 

@@ -19,7 +19,7 @@ export class RewardRuleService {
         effectiveFrom: { lte: effectiveAt },
         OR: [
           { effectiveUntil: null },
-          { effectiveUntil: { gte: effectiveAt } },
+          { effectiveUntil: { gt: effectiveAt } },
         ],
       },
       orderBy: { effectiveFrom: 'desc' },
@@ -55,10 +55,8 @@ export class RewardRuleService {
     }
 
     if (rules.length > 1) {
-      // Multiple active rules with overlapping validity window
-      // Take the latest version or specific match, logging warning
-      console.warn(
-        `[REWARD-RULE] Multiple overlapping active rules found for ${profession} at ${effectiveAt.toISOString()}. Selecting latest version ${rules[0].version}.`
+      throw new Error(
+        `[OVERLAPPING_REWARD_RULES] Multiple overlapping active rules found for ${profession} at ${effectiveAt.toISOString()}. Operation halted (fail closed).`
       );
     }
 
@@ -126,7 +124,7 @@ export class RewardRuleService {
             {
               OR: [
                 { effectiveUntil: null },
-                { effectiveUntil: { gte: effectiveFrom } },
+                { effectiveUntil: { gt: effectiveFrom } },
               ],
             },
           ],

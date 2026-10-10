@@ -139,6 +139,9 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
   const apiOnlyVars = [
     'JWT_ACCESS_SECRET',
     'JWT_REFRESH_SECRET',
+    'JWT_ADMIN_ACCESS_SECRET',
+    'BILL_ADMIN_PREFIX',
+    'OPERATIONS_ADMIN_PREFIX',
     'STORAGE_HMAC_SECRET',
     'R2_ACCESS_KEY_ID',
     'R2_SECRET_ACCESS_KEY',
@@ -212,6 +215,9 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
       }
       if (env.JWT_ACCESS_SECRET && env.JWT_ADMIN_ACCESS_SECRET === env.JWT_ACCESS_SECRET) {
         throw new Error('[FATAL] JWT_ADMIN_ACCESS_SECRET and JWT_ACCESS_SECRET must be distinct secrets.');
+      }
+      if (env.JWT_REFRESH_SECRET && env.JWT_ADMIN_ACCESS_SECRET === env.JWT_REFRESH_SECRET) {
+        throw new Error('[FATAL] JWT_ADMIN_ACCESS_SECRET and JWT_REFRESH_SECRET must be distinct secrets.');
       }
     }
     if (env.OTP_TTL_SECONDS) {

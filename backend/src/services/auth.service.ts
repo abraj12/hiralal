@@ -13,10 +13,28 @@ import { validateStructuredName } from '../utils/name.utils';
 import { UserRole, Profession, OtpPurpose } from '@prisma/client';
 import { SmsService } from './sms';
 
+export function normalizeStrictIndianMobile(identifier: string): string | null {
+  if (!identifier || typeof identifier !== 'string') return null;
+  const trimmed = identifier.trim();
+  if (/^[6-9]\d{9}$/.test(trimmed)) {
+    return trimmed;
+  }
+  if (/^\+91[6-9]\d{9}$/.test(trimmed)) {
+    return trimmed.slice(3);
+  }
+  if (/^91[6-9]\d{9}$/.test(trimmed)) {
+    return trimmed.slice(2);
+  }
+  if (/^0[6-9]\d{9}$/.test(trimmed)) {
+    return trimmed.slice(1);
+  }
+  return null;
+}
+
 export class AuthService {
   /**
    * Checks whether an identifier matches any server-configured administrator prefix
-   * followed by a 10-digit mobile number.
+   * followed by an exact 10-digit mobile number.
    */
   static isConfiguredAdminPrefix(identifier: string): boolean {
     if (!identifier || typeof identifier !== 'string') return false;
@@ -25,16 +43,12 @@ export class AuthService {
     const opsPrefix = normalizeAdminPrefix(config.admin.operationsAdminPrefix);
 
     if (billPrefix && cleanRaw.startsWith(billPrefix)) {
-      const remainder = cleanRaw.slice(billPrefix.length).replace(/\D/g, '').slice(-10);
-      return remainder.length === 10;
+      const remainder = cleanRaw.slice(billPrefix.length);
+      return /^[6-9]\d{9}$/.test(remainder);
     }
     if (opsPrefix && cleanRaw.startsWith(opsPrefix)) {
-      const remainder = cleanRaw.slice(opsPrefix.length).replace(/\D/g, '').slice(-10);
-      return remainder.length === 10;
-    }
-    if (cleanRaw.startsWith('ADMIN')) {
-      const remainder = cleanRaw.slice(5).replace(/\D/g, '').slice(-10);
-      return remainder.length === 10;
+      const remainder = cleanRaw.slice(opsPrefix.length);
+      return /^[6-9]\d{9}$/.test(remainder);
     }
     return false;
   }
@@ -45,7 +59,7 @@ export class AuthService {
    */
   static resolveAdminIdentifier(identifier: string): { role: UserRole; mobile: string } {
     if (!identifier || typeof identifier !== 'string') {
-      throw new Error('Admin identifier is required.');
+      throw new Error('Invalid login credentials. Please check your details and try again.');
     }
 
     const cleanRaw = identifier.trim().toUpperCase();
@@ -53,63 +67,53 @@ export class AuthService {
     const opsPrefix = normalizeAdminPrefix(config.admin.operationsAdminPrefix);
 
     if (billPrefix && cleanRaw.startsWith(billPrefix)) {
-      const remainder = cleanRaw.slice(billPrefix.length).replace(/\D/g, '').slice(-10);
-      if (remainder.length !== 10) {
+      const remainder = cleanRaw.slice(billPrefix.length);
+      if (!/^[6-9]\d{9}$/.test(remainder)) {
         throw new Error('Invalid Bill Admin identifier format. Must be prefix followed by 10-digit mobile.');
       }
       return { role: 'BILL_ADMIN', mobile: remainder };
     }
 
     if (opsPrefix && cleanRaw.startsWith(opsPrefix)) {
-      const remainder = cleanRaw.slice(opsPrefix.length).replace(/\D/g, '').slice(-10);
-      if (remainder.length !== 10) {
+      const remainder = cleanRaw.slice(opsPrefix.length);
+      if (!/^[6-9]\d{9}$/.test(remainder)) {
         throw new Error('Invalid Operations Admin identifier format. Must be prefix followed by 10-digit mobile.');
       }
       return { role: 'OPERATIONS_ADMIN', mobile: remainder };
     }
 
-    if (cleanRaw.startsWith('ADMIN')) {
-      const remainder = cleanRaw.slice(5).replace(/\D/g, '').slice(-10);
-      if (remainder.length !== 10) {
-        throw new Error('Invalid Admin identifier format. Must be prefix followed by 10-digit mobile.');
-      }
-      return { role: 'ADMIN', mobile: remainder };
-    }
-
-    throw new Error('Invalid admin identifier prefix. Please enter your designated role prefix followed by your 10-digit mobile number.');
+    throw new Error('Invalid login credentials. Please check your details and try again.');
   }
 
   /**
    * Requests an admin OTP for prefix-based identifier.
-   * When password is provided, verifies credentials FIRST before issuing challenge/OTP.
+   * Requires administrator password. Verifies credentials FIRST before issuing challenge/OTP.
    * Ensures account exists with the designated role, enforces cooldown & rate limits,
    * invalidates prior unused ADMIN_LOGIN OTPs, and uses configured OTP TTL (<= 300s).
    */
-  static async requestAdminOtp(params: { identifier: string; password?: string; ipAddress?: string }) {
+  static async requestAdminOtp(params: {
+    identifier: string;
+    password?: string;
+    ipAddress?: string;
+    userAgent?: string;
+  }) {
+    if (!params.password || typeof params.password !== 'string' || !params.password.trim()) {
+      throw new Error('Invalid login credentials. Please check your details and try again.');
+    }
+
     const { role, mobile } = this.resolveAdminIdentifier(params.identifier);
 
     const admin = await prisma.user.findFirst({
       where: { mobile, role: role as UserRole },
     });
 
-    if (params.password !== undefined) {
-      if (!params.password) {
-        throw new Error('Invalid login credentials. Please check your details and try again.');
-      }
-      if (!admin || admin.status !== 'ACTIVE') {
-        throw new Error('Invalid login credentials. Please check your details and try again.');
-      }
-      const isMatch = await bcrypt.compare(params.password, admin.passwordHash);
-      if (!isMatch) {
-        throw new Error('Invalid login credentials. Please check your details and try again.');
-      }
-    } else {
-      if (!admin) {
-        throw new Error('Admin account not found for the provided identifier.');
-      }
-      if (admin.status !== 'ACTIVE') {
-        throw new Error('Admin account is suspended. Please contact system support.');
-      }
+    if (!admin || admin.status !== 'ACTIVE') {
+      throw new Error('Invalid login credentials. Please check your details and try again.');
+    }
+
+    const isMatch = await bcrypt.compare(params.password, admin.passwordHash);
+    if (!isMatch) {
+      throw new Error('Invalid login credentials. Please check your details and try again.');
     }
 
     const now = new Date();
@@ -215,8 +219,9 @@ export class AuthService {
   }
 
   /**
-   * Verifies an admin OTP and returns a short-lived, single-use verification challenge token,
-   * OR when challengeToken is provided, completes authentication and issues full session.
+   * Verifies an admin OTP and pre-auth challengeToken.
+   * Atomically consumes both OTP and challenge, enforces SINGLE ACTIVE SESSION,
+   * invalidates prior sessions, and issues role-specific JWT.
    */
   static async verifyAdminOtp(params: {
     identifier: string;
@@ -232,29 +237,31 @@ export class AuthService {
       throw new Error('Please enter a valid 6-digit verification code.');
     }
 
+    const activeChallenge = params.challengeToken;
+    if (!activeChallenge || typeof activeChallenge !== 'string' || !activeChallenge.trim()) {
+      throw new Error('Invalid or expired login challenge. Please sign in again.');
+    }
+
     const now = new Date();
 
     const txResult = await prisma.$transaction(async (tx) => {
-      // 1. If challengeToken is provided, atomically validate and consume it
-      if (params.challengeToken) {
-        const cHash = sha256Hash(params.challengeToken);
-        const claim = await tx.verificationToken.updateMany({
-          where: {
-            tokenHash: cHash,
-            mobile,
-            purpose: 'ADMIN_LOGIN',
-            isUsed: false,
-            expiresAt: { gt: now },
-          },
-          data: { isUsed: true },
-        });
+      // 1. Verify that the challenge token is valid and unexpired without prematurely consuming it
+      const cHash = sha256Hash(activeChallenge);
+      const challengeRecord = await tx.verificationToken.findFirst({
+        where: {
+          tokenHash: cHash,
+          mobile,
+          purpose: 'ADMIN_LOGIN',
+          isUsed: false,
+          expiresAt: { gt: now },
+        },
+      });
 
-        if (claim.count !== 1) {
-          return {
-            success: false,
-            message: 'Invalid or expired login challenge. Please sign in again.',
-          };
-        }
+      if (!challengeRecord) {
+        return {
+          success: false,
+          message: 'Invalid or expired login challenge. Please sign in again.',
+        };
       }
 
       const latest = await tx.otpRequest.findFirst({
@@ -292,6 +299,10 @@ export class AuthService {
           where: { id: record.id },
           data: { isUsed: true },
         });
+        await tx.verificationToken.updateMany({
+          where: { id: challengeRecord.id },
+          data: { isUsed: true },
+        });
         return {
           success: false,
           message: 'Maximum verification attempts exceeded. Please request a new code.',
@@ -310,6 +321,10 @@ export class AuthService {
             where: { id: record.id },
             data: { isUsed: true },
           });
+          await tx.verificationToken.updateMany({
+            where: { id: challengeRecord.id },
+            data: { isUsed: true },
+          });
           return {
             success: false,
             message: 'Maximum verification attempts exceeded. Please request a new code.',
@@ -321,101 +336,82 @@ export class AuthService {
         };
       }
 
+      // 2. OTP is verified! Atomically consume both the OTP and the pre-auth challenge
       await tx.otpRequest.update({
         where: { id: record.id },
         data: { isUsed: true },
       });
 
-      // If challengeToken was provided, complete authentication and issue session
-      if (params.challengeToken) {
-        const adminUser = await tx.user.findFirst({
-          where: { mobile, role: role as UserRole },
-        });
-
-        if (!adminUser || adminUser.status !== 'ACTIVE') {
-          return {
-            success: false,
-            message: 'Admin account is suspended or not found.',
-          };
-        }
-
-        const sessionId = crypto.randomUUID();
-
-        await tx.authSession.updateMany({
-          where: { userId: adminUser.id, revokedAt: null },
-          data: { revokedAt: new Date() },
-        });
-
-        await tx.user.update({
-          where: { id: adminUser.id },
-          data: { activeSessionId: sessionId },
-        });
-
-        const sessionToken = generateSecureToken(40);
-        const sessionTokenHash = sha256Hash(sessionToken);
-        const expiresAt = new Date(Date.now() + 24 * 3600 * 1000);
-
-        await tx.authSession.create({
-          data: {
-            userId: adminUser.id,
-            sessionId,
-            tokenHash: sessionTokenHash,
-            userAgent: params.userAgent,
-            ipAddress: params.ipAddress,
-            expiresAt,
-          },
-        });
-
-        await tx.auditLog.create({
-          data: {
-            adminId: adminUser.id,
-            action: 'ADMIN_LOGIN',
-            entityType: 'User',
-            entityId: adminUser.id,
-            ipAddress: params.ipAddress,
-            userAgent: params.userAgent,
-            newValue: `Administrator authenticated via verified OTP challenge for role ${adminUser.role}.`,
-          },
-        });
-
-        return {
-          success: true,
-          message: 'Admin verification code verified successfully.',
-          adminUser,
-          sessionId,
-        };
-      }
-
-      // Legacy path: issue verificationToken
-      const verificationToken = generateSecureToken(32);
-      const tokenHash = sha256Hash(verificationToken);
-      const tokenExpiresAt = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes challenge TTL
-
-      // Invalidate existing unused verification tokens for this mobile and purpose
-      await tx.verificationToken.updateMany({
+      const claim = await tx.verificationToken.updateMany({
         where: {
-          mobile,
-          purpose: 'ADMIN_LOGIN',
+          id: challengeRecord.id,
           isUsed: false,
         },
         data: { isUsed: true },
       });
 
-      await tx.verificationToken.create({
+      if (claim.count !== 1) {
+        return {
+          success: false,
+          message: 'Invalid or expired login challenge. Please sign in again.',
+        };
+      }
+
+      const adminUser = await tx.user.findFirst({
+        where: { mobile, role: role as UserRole },
+      });
+
+      if (!adminUser || adminUser.status !== 'ACTIVE') {
+        return {
+          success: false,
+          message: 'Admin account is suspended or not found.',
+        };
+      }
+
+      const sessionId = crypto.randomUUID();
+
+      await tx.authSession.updateMany({
+        where: { userId: adminUser.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+
+      await tx.user.update({
+        where: { id: adminUser.id },
+        data: { activeSessionId: sessionId },
+      });
+
+      const sessionToken = generateSecureToken(40);
+      const sessionTokenHash = sha256Hash(sessionToken);
+      const expiresAt = new Date(Date.now() + 24 * 3600 * 1000);
+
+      await tx.authSession.create({
         data: {
-          mobile,
-          tokenHash,
-          purpose: 'ADMIN_LOGIN',
-          isUsed: false,
-          expiresAt: tokenExpiresAt,
+          userId: adminUser.id,
+          sessionId,
+          tokenHash: sessionTokenHash,
+          userAgent: params.userAgent,
+          ipAddress: params.ipAddress,
+          expiresAt,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          adminId: adminUser.id,
+          action: 'ADMIN_LOGIN',
+          entityType: 'User',
+          entityId: adminUser.id,
+          ipAddress: params.ipAddress,
+          userAgent: params.userAgent,
+          newValue: `Administrator authenticated via verified OTP challenge for role ${adminUser.role}.`,
         },
       });
 
       return {
         success: true,
         message: 'Admin verification code verified successfully.',
-        verificationToken,
-        expiresAt: tokenExpiresAt.toISOString(),
+        adminUser,
+        sessionId,
       };
     });
 
@@ -423,39 +419,30 @@ export class AuthService {
       throw new Error(txResult.message);
     }
 
-    if (txResult.adminUser && txResult.sessionId) {
-      const accessToken = jwt.sign(
-        {
-          userId: txResult.adminUser.id,
-          role: txResult.adminUser.role,
-          mobile: txResult.adminUser.mobile,
-          sessionId: txResult.sessionId,
-        },
-        config.admin.accessSecret || config.jwt.accessSecret,
-        { expiresIn: (config.admin.accessTokenExpiresIn || '1d') as any }
-      );
-
-      return {
-        success: true,
-        message: txResult.message,
-        verificationToken: params.challengeToken || txResult.sessionId,
-        token: accessToken,
-        accessToken,
-        user: {
-          id: txResult.adminUser.id,
-          mobile: txResult.adminUser.mobile,
-          fullName: txResult.adminUser.fullName,
-          role: txResult.adminUser.role,
-        },
+    const accessToken = jwt.sign(
+      {
+        userId: txResult.adminUser!.id,
+        role: txResult.adminUser!.role,
+        mobile: txResult.adminUser!.mobile,
         sessionId: txResult.sessionId,
-        role,
-      };
-    }
+      },
+      config.admin.accessSecret || config.jwt.accessSecret,
+      { expiresIn: (config.admin.accessTokenExpiresIn || '1d') as any }
+    );
 
     return {
+      success: true,
       message: txResult.message,
-      verificationToken: txResult.verificationToken!,
-      expiresAt: txResult.expiresAt!,
+      verificationToken: activeChallenge,
+      token: accessToken,
+      accessToken,
+      user: {
+        id: txResult.adminUser!.id,
+        mobile: txResult.adminUser!.mobile,
+        fullName: txResult.adminUser!.fullName,
+        role: txResult.adminUser!.role,
+      },
+      sessionId: txResult.sessionId,
       role,
     };
   }

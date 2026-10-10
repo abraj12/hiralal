@@ -20,7 +20,6 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   const [selectedGstRate, setSelectedGstRate] = useState<number>(18.0);
   const [selectedGstRuleId, setSelectedGstRuleId] = useState<string>('');
   const [gstOverrideReason, setGstOverrideReason] = useState<string>('');
-  const [customRewardAmount, setCustomRewardAmount] = useState<string>('');
 
   const [rewardPercentage, setRewardPercentage] = useState<number | null>(null);
   const [rulesUnavailable, setRulesUnavailable] = useState(false);
@@ -70,9 +69,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
 
   // Profession-specific reward rate preview (internal admin display from authoritative database rule)
   const configuredRewardPercentage = rewardPercentage ?? (isPlumber ? 0.50 : 0.75);
-  const calculatedReward = customRewardAmount && !isNaN(parseFloat(customRewardAmount))
-    ? parseFloat(customRewardAmount)
-    : Math.round(eligibleRewardAmount * (configuredRewardPercentage / 100) * 100) / 100;
+  const calculatedReward = Math.round(eligibleRewardAmount * (configuredRewardPercentage / 100) * 100) / 100;
 
   const handleApprove = async () => {
     setIsSubmitting(true);
@@ -84,7 +81,6 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
         gstRate: gstIncluded ? selectedGstRate : 0,
         gstRuleId: gstIncluded ? (selectedGstRuleId || undefined) : undefined,
         gstOverrideReason: gstOverrideReason.trim() || undefined,
-        customRewardAmount: customRewardAmount ? parseFloat(customRewardAmount) : undefined,
       });
       onVerified();
       onClose();

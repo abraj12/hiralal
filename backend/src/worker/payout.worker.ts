@@ -164,8 +164,8 @@ export class PayoutWorker {
       const contactData: any = await contactRes.json();
       const contactId = contactData.id;
 
-      if (!contactId && !contactRes.ok) {
-        throw new Error(contactData.error?.description || 'Failed to create recipient contact on RazorpayX');
+      if (!contactRes.ok || !contactId || typeof contactId !== 'string') {
+        throw new Error(contactData.error?.description || `Failed to create recipient contact on RazorpayX (HTTP ${contactRes.status})`);
       }
 
       // 2. Resolve Fund Account on RazorpayX with timeout
@@ -210,8 +210,8 @@ export class PayoutWorker {
       const fundAccData: any = await fundAccRes.json();
       const fundAccountId = fundAccData.id;
 
-      if (!fundAccountId && !fundAccRes.ok) {
-        throw new Error(fundAccData.error?.description || 'Failed to create fund account on RazorpayX');
+      if (!fundAccRes.ok || !fundAccountId || typeof fundAccountId !== 'string') {
+        throw new Error(fundAccData.error?.description || `Failed to create fund account on RazorpayX (HTTP ${fundAccRes.status})`);
       }
 
       // Save fund account ID

@@ -1,30 +1,34 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/router';
-import { Shield, Lock, Phone, AlertCircle, ArrowRight, CheckCircle2, ArrowLeft, KeyRound } from 'lucide-react';
+import { Shield, Lock, AlertCircle, ArrowRight, CheckCircle2, ArrowLeft, KeyRound } from 'lucide-react';
 import { AdminApiClient } from '../lib/api';
 
 export default function AdminLoginPage() {
   const router = useRouter();
 
-  // Multi-step authentication state
-  // 1: Enter Identifier & Request OTP
-  // 2: Enter OTP & Verify Challenge
-  // 3: Enter Password & Establish Single Active Session
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  // Password-First, OTP-Second Authentication Flow:
+  // Step 1: Enter Identifier & Password -> Validates credentials and dispatches OTP
+  // Step 2: Enter 6-digit OTP Challenge -> Validates OTP and establishes single active session
+  const [step, setStep] = useState<1 | 2>(1);
   const [identifier, setIdentifier] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [verificationToken, setVerificationToken] = useState('');
   const [password, setPassword] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [challengeToken, setChallengeToken] = useState('');
+  const [mobileMasked, setMobileMasked] = useState('');
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
-  // Step 1: Request OTP
-  const handleRequestOtp = async (e: React.FormEvent) => {
+  // Step 1: Password Login & OTP Dispatch
+  const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!identifier.trim()) {
       setError('Please enter your admin identifier (Role Prefix + 10-digit Mobile).');
+      return;
+    }
+    if (!password) {
+      setError('Please enter your administrator password.');
       return;
     }
 
@@ -33,17 +37,29 @@ export default function AdminLoginPage() {
     setInfoMessage(null);
 
     try {
-      const res = await AdminApiClient.requestOtp(identifier.trim());
-      setInfoMessage(res.message || 'Verification code dispatched to your registered mobile number.');
-      setStep(2);
+      const res = await AdminApiClient.login(identifier.trim(), password);
+      if (res.requiresOtp) {
+        setChallengeToken(res.challengeToken);
+        setMobileMasked(res.mobileMasked || '');
+        setInfoMessage(res.message || `Verification code sent to your registered mobile (${res.mobileMasked || '***'}).`);
+        setStep(2);
+      } else if (res.token || res.accessToken) {
+        AdminApiClient.setToken(res.token || res.accessToken);
+        if (res.user) {
+          AdminApiClient.setUser(res.user);
+        }
+        router.push('/');
+      } else {
+        setError('Unexpected authentication response. Please try again.');
+      }
     } catch (err: any) {
-      setError(err.message || 'Failed to dispatch verification code. Please check your identifier.');
+      setError(err.message || 'Invalid administrator credentials. Please check your details and try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Step 2: Verify OTP
+  // Step 2: Verify OTP Challenge
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otpCode.trim() || otpCode.trim().length !== 6) {
@@ -56,37 +72,14 @@ export default function AdminLoginPage() {
     setInfoMessage(null);
 
     try {
-      const res = await AdminApiClient.verifyOtp(identifier.trim(), otpCode.trim());
-      setVerificationToken(res.verificationToken);
-      setInfoMessage('Verification code confirmed. Enter password to establish active session.');
-      setStep(3);
-    } catch (err: any) {
-      setError(err.message || 'Invalid or expired verification code.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Step 3: Complete Login
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!password) {
-      setError('Please enter your administrator password.');
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const res = await AdminApiClient.login(identifier.trim(), password, verificationToken);
-      AdminApiClient.setToken(res.accessToken || res.token);
+      const res = await AdminApiClient.verifyOtp(identifier.trim(), otpCode.trim(), challengeToken);
+      AdminApiClient.setToken(res.token || res.accessToken);
       if (res.user) {
         AdminApiClient.setUser(res.user);
       }
       router.push('/');
     } catch (err: any) {
-      setError(err.message || 'Authentication failed. Please verify credentials.');
+      setError(err.message || 'Invalid or expired verification code.');
     } finally {
       setIsLoading(false);
     }
@@ -116,9 +109,8 @@ export default function AdminLoginPage() {
 
         {/* Step indicator */}
         <div className="flex items-center justify-center space-x-2 mb-6">
-          <div className={`h-1.5 rounded-full transition-all ${step >= 1 ? 'w-8 bg-blue-600' : 'w-4 bg-slate-200'}`} />
-          <div className={`h-1.5 rounded-full transition-all ${step >= 2 ? 'w-8 bg-blue-600' : 'w-4 bg-slate-200'}`} />
-          <div className={`h-1.5 rounded-full transition-all ${step >= 3 ? 'w-8 bg-blue-600' : 'w-4 bg-slate-200'}`} />
+          <div className={`h-1.5 rounded-full transition-all ${step >= 1 ? 'w-12 bg-blue-600' : 'w-6 bg-slate-200'}`} />
+          <div className={`h-1.5 rounded-full transition-all ${step >= 2 ? 'w-12 bg-blue-600' : 'w-6 bg-slate-200'}`} />
         </div>
 
         {error && (
@@ -135,9 +127,9 @@ export default function AdminLoginPage() {
           </div>
         )}
 
-        {/* STEP 1: Admin Identifier */}
+        {/* STEP 1: Admin Identifier & Password */}
         {step === 1 && (
-          <form onSubmit={handleRequestOtp} className="space-y-4">
+          <form onSubmit={handlePasswordLogin} className="space-y-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
                 Admin Role Identifier
@@ -148,15 +140,32 @@ export default function AdminLoginPage() {
                   type="text"
                   value={identifier}
                   onChange={e => setIdentifier(e.target.value)}
-                  placeholder="e.g. XYZ9876543210 (Prefix + Mobile)"
+                  placeholder="e.g. BADM9876543210 or OADM9876543210"
                   required
                   autoFocus
                   className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                 />
               </div>
               <p className="text-[11px] text-slate-400 mt-1.5">
-                Enter your designated role prefix (e.g. Bill Admin or Operations Admin) followed by your registered 10-digit mobile number.
+                Enter your designated role prefix (e.g. BADM for Bill Admin or OADM for Operations Admin) followed by your 10-digit mobile number.
               </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                Administrator Password
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="Enter secure password"
+                  required
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                />
+              </div>
             </div>
 
             <button
@@ -164,19 +173,19 @@ export default function AdminLoginPage() {
               disabled={isLoading}
               className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center space-x-2 transition duration-150 disabled:opacity-50"
             >
-              <span>{isLoading ? 'Sending Verification Code...' : 'Request Verification OTP'}</span>
+              <span>{isLoading ? 'Verifying Credentials...' : 'Sign In & Request OTP'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
         )}
 
-        {/* STEP 2: Verify OTP */}
+        {/* STEP 2: Verify OTP Challenge */}
         {step === 2 && (
           <form onSubmit={handleVerifyOtp} className="space-y-4">
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="block text-xs font-bold text-slate-700">
-                  Enter 6-Digit OTP
+                  Enter 6-Digit OTP {mobileMasked ? `(sent to ${mobileMasked})` : ''}
                 </label>
                 <button
                   type="button"
@@ -184,7 +193,7 @@ export default function AdminLoginPage() {
                   className="text-[11px] text-blue-600 hover:underline flex items-center space-x-1"
                 >
                   <ArrowLeft className="w-3 h-3" />
-                  <span>Change Identifier</span>
+                  <span>Change Credentials</span>
                 </button>
               </div>
               <div className="relative">
@@ -201,7 +210,7 @@ export default function AdminLoginPage() {
                 />
               </div>
               <p className="text-[11px] text-slate-400 mt-1.5">
-                Valid for 5 minutes. Protect your OTP code and never share it.
+                Valid for 5 minutes. Logging in establishes a single active session and invalidates previous sessions.
               </p>
             </div>
 
@@ -210,42 +219,7 @@ export default function AdminLoginPage() {
               disabled={isLoading}
               className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center space-x-2 transition duration-150 disabled:opacity-50"
             >
-              <span>{isLoading ? 'Verifying OTP...' : 'Verify OTP Challenge'}</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </form>
-        )}
-
-        {/* STEP 3: Password & Session Creation */}
-        {step === 3 && (
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                Administrator Password
-              </label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
-                <input
-                  type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  placeholder="Enter secure password"
-                  required
-                  autoFocus
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
-                />
-              </div>
-              <p className="text-[11px] text-slate-400 mt-1.5">
-                Logging in will terminate any previous active administrator session on other devices.
-              </p>
-            </div>
-
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center space-x-2 transition duration-150 disabled:opacity-50"
-            >
-              <span>{isLoading ? 'Establishing Session...' : 'Sign In to Dashboard'}</span>
+              <span>{isLoading ? 'Verifying OTP...' : 'Confirm OTP & Open Dashboard'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>

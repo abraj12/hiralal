@@ -142,12 +142,12 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
     });
 
     test('throws error for missing or empty identifier', () => {
-      expect(() => AuthService.resolveAdminIdentifier('')).toThrow(/Admin identifier is required/i);
-      expect(() => AuthService.resolveAdminIdentifier(null as any)).toThrow(/Admin identifier is required/i);
+      expect(() => AuthService.resolveAdminIdentifier('')).toThrow(/Invalid login credentials/i);
+      expect(() => AuthService.resolveAdminIdentifier(null as any)).toThrow(/Invalid login credentials/i);
     });
 
     test('throws error for invalid prefix', () => {
-      expect(() => AuthService.resolveAdminIdentifier(`INVALID${billAdminMobile}`)).toThrow(/Invalid admin identifier prefix/i);
+      expect(() => AuthService.resolveAdminIdentifier(`INVALID${billAdminMobile}`)).toThrow(/Invalid login credentials/i);
     });
 
     test('throws error for malformed mobile number in identifier', () => {
@@ -159,18 +159,24 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
   describe('2. AuthService - requestAdminOtp & requestOtp branches', () => {
     test('throws error if admin account does not exist', async () => {
       await expect(
-        AuthService.requestAdminOtp({ identifier: 'XYZ9999900000' })
-      ).rejects.toThrow(/Admin account not found/i);
+        AuthService.requestAdminOtp({ identifier: 'XYZ9999900000', password: testPassword })
+      ).rejects.toThrow(/Invalid login credentials/i);
     });
 
     test('throws error if admin account is suspended', async () => {
       await expect(
-        AuthService.requestAdminOtp({ identifier: `XYZ${suspendedAdminMobile}` })
-      ).rejects.toThrow(/Admin account is suspended/i);
+        AuthService.requestAdminOtp({ identifier: `XYZ${suspendedAdminMobile}`, password: testPassword })
+      ).rejects.toThrow(/Invalid login credentials/i);
+    });
+
+    test('throws error if admin password is invalid', async () => {
+      await expect(
+        AuthService.requestAdminOtp({ identifier: `XYZ${billAdminMobile}`, password: 'WrongPassword@999' })
+      ).rejects.toThrow(/Invalid login credentials/i);
     });
 
     test('successfully generates admin OTP record with role and TTL <= 300s', async () => {
-      const res = await AuthService.requestAdminOtp({ identifier: `XYZ${billAdminMobile}` });
+      const res = await AuthService.requestAdminOtp({ identifier: `XYZ${billAdminMobile}`, password: testPassword });
       expect(res.role).toBe('BILL_ADMIN');
       expect(res.cooldownSeconds).toBe(60);
       expect(res.expiresAt).toBeDefined();
@@ -184,7 +190,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
 
     test('enforces 60-second cooldown on consecutive requests', async () => {
       await expect(
-        AuthService.requestAdminOtp({ identifier: `XYZ${billAdminMobile}` })
+        AuthService.requestAdminOtp({ identifier: `XYZ${billAdminMobile}`, password: testPassword })
       ).rejects.toThrow(/Please wait \d+ seconds before requesting/i);
     });
 
@@ -207,7 +213,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       }
 
       await expect(
-        AuthService.requestAdminOtp({ identifier: `XYZ${billAdminMobile}` })
+        AuthService.requestAdminOtp({ identifier: `XYZ${billAdminMobile}`, password: testPassword })
       ).rejects.toThrow(/Too many verification requests/i);
     });
 
@@ -231,14 +237,26 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
   describe('3. AuthService - verifyAdminOtp & verifyOtp branches', () => {
     const testOtpCode = '654321';
 
+    let testChallengeToken: string;
+
     beforeEach(async () => {
       await prisma.otpRequest.deleteMany({ where: { mobile: opsAdminMobile } });
       await prisma.verificationToken.deleteMany({ where: { mobile: opsAdminMobile } });
+      testChallengeToken = 'valid_test_challenge_token_123';
+      await prisma.verificationToken.create({
+        data: {
+          mobile: opsAdminMobile,
+          tokenHash: sha256Hash(testChallengeToken),
+          purpose: 'ADMIN_LOGIN',
+          isUsed: false,
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      });
     });
 
     test('rejects non-6-digit OTP codes', async () => {
       await expect(
-        AuthService.verifyAdminOtp({ identifier: `ABC${opsAdminMobile}`, otpCode: '123' })
+        AuthService.verifyAdminOtp({ identifier: `ABC${opsAdminMobile}`, otpCode: '123', challengeToken: testChallengeToken })
       ).rejects.toThrow(/Please enter a valid 6-digit/i);
 
       await expect(
@@ -248,7 +266,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
 
     test('rejects expired or non-existent OTP codes', async () => {
       await expect(
-        AuthService.verifyAdminOtp({ identifier: `ABC${opsAdminMobile}`, otpCode: '999999' })
+        AuthService.verifyAdminOtp({ identifier: `ABC${opsAdminMobile}`, otpCode: '999999', challengeToken: testChallengeToken })
       ).rejects.toThrow(/Admin verification code has expired or is invalid/i);
 
       await expect(
@@ -268,7 +286,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       });
 
       await expect(
-        AuthService.verifyAdminOtp({ identifier: `ABC${opsAdminMobile}`, otpCode: '000000' })
+        AuthService.verifyAdminOtp({ identifier: `ABC${opsAdminMobile}`, otpCode: '000000', challengeToken: testChallengeToken })
       ).rejects.toThrow(/Invalid verification code/i);
 
       const record = await prisma.otpRequest.findFirst({
@@ -289,7 +307,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       });
 
       await expect(
-        AuthService.verifyAdminOtp({ identifier: `ABC${opsAdminMobile}`, otpCode: '000000' })
+        AuthService.verifyAdminOtp({ identifier: `ABC${opsAdminMobile}`, otpCode: '000000', challengeToken: testChallengeToken })
       ).rejects.toThrow(/Maximum verification attempts exceeded/i);
 
       const record = await prisma.otpRequest.findFirst({
@@ -298,7 +316,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       expect(record?.isUsed).toBe(true);
     });
 
-    test('successfully validates OTP and issues verification challenge token', async () => {
+    test('successfully validates OTP and issues single active administrator session', async () => {
       await prisma.otpRequest.create({
         data: {
           mobile: opsAdminMobile,
@@ -311,16 +329,23 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       const res = await AuthService.verifyAdminOtp({
         identifier: `ABC${opsAdminMobile}`,
         otpCode: testOtpCode,
+        challengeToken: testChallengeToken,
       });
 
-      expect(res.role).toBe('OPERATIONS_ADMIN');
-      expect(res.verificationToken).toBeDefined();
+      expect(res.user.role).toBe('OPERATIONS_ADMIN');
+      expect(res.token).toBeDefined();
 
       const tokenRecord = await prisma.verificationToken.findFirst({
-        where: { mobile: opsAdminMobile, purpose: 'ADMIN_LOGIN', isUsed: false },
+        where: { mobile: opsAdminMobile, purpose: 'ADMIN_LOGIN' },
       });
       expect(tokenRecord).not.toBeNull();
-      expect(tokenRecord?.tokenHash).toBe(sha256Hash(res.verificationToken));
+      expect(tokenRecord?.isUsed).toBe(true);
+    });
+
+    test('rejects missing or invalid challengeToken', async () => {
+      await expect(
+        AuthService.verifyAdminOtp({ identifier: `ABC${opsAdminMobile}`, otpCode: '123456', challengeToken: '' })
+      ).rejects.toThrow(/Invalid or expired login challenge/i);
     });
   });
 

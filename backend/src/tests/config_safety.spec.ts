@@ -78,6 +78,9 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       MSG91_TEMPLATE_ID: 'msg91_dlt_template_id_1234567890',
       CORS_ALLOWED_ORIGINS: 'https://admin.hiralalandsons.com,https://app.hiralalandsons.com',
       ADMIN_INITIAL_PASSWORD: 'HiralalExecutiveAdmin2026!SecureKey',
+      JWT_ADMIN_ACCESS_SECRET: 'admin_access_secret_high_entropy_32_characters_long_prod_key_3',
+      BILL_ADMIN_PREFIX: 'BADM',
+      OPERATIONS_ADMIN_PREFIX: 'OADM',
     };
 
     it('passes when all production secrets are valid and high-entropy', () => {

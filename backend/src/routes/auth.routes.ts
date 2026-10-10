@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { AuthService } from '../services/auth.service';
+import { AuthService, normalizeStrictIndianMobile } from '../services/auth.service';
 import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
 import {
   otpRequestLimiter,
@@ -147,8 +147,8 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
     }
 
     // 3. Flow A: Ordinary 10-digit mobile number craftsman user login
-    const cleanMobile = rawIdentifier.replace(/\D/g, '').slice(-10);
-    if (cleanMobile.length !== 10) {
+    const cleanMobile = normalizeStrictIndianMobile(rawIdentifier);
+    if (!cleanMobile) {
       return res.status(401).json({
         success: false,
         message: 'Invalid login credentials. Please check your details and try again.',
@@ -291,11 +291,12 @@ router.post('/admin/otp/request', otpRequestLimiter, async (req: Request, res: R
   try {
     const identifier = req.body.identifier || req.body.username;
     const { password } = req.body;
-    if (!identifier) {
+    if (!identifier || !password) {
       return res.status(400).json({ success: false, message: 'Invalid login credentials. Please check your details and try again.' });
     }
     const ipAddress = req.ip || req.socket.remoteAddress;
-    const result = await AuthService.requestAdminOtp({ identifier, password, ipAddress });
+    const userAgent = req.headers['user-agent'];
+    const result = await AuthService.requestAdminOtp({ identifier, password, ipAddress, userAgent });
     res.json({ success: true, ...result });
   } catch (err: any) {
     const isCredentials =
@@ -316,19 +317,23 @@ router.post('/admin/otp/verify', otpVerifyLimiter, async (req: Request, res: Res
   try {
     const identifier = req.body.identifier || req.body.username;
     const { otpCode, challengeToken, verificationToken } = req.body;
-    if (!identifier || !otpCode) {
-      return res.status(400).json({ success: false, message: 'Admin identifier and OTP code are required.' });
+    const activeChallenge = challengeToken || verificationToken;
+    if (!identifier || !otpCode || !activeChallenge) {
+      return res.status(400).json({
+        success: false,
+        message: 'Admin identifier, OTP code, and verification challenge token are required.',
+      });
     }
     const ipAddress = req.ip || req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'];
     const result = await AuthService.verifyAdminOtp({
       identifier,
       otpCode,
-      challengeToken: challengeToken || verificationToken,
+      challengeToken: activeChallenge,
       userAgent,
       ipAddress,
     });
-    res.json({ success: true, ...result });
+    res.json(result);
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }
@@ -468,6 +473,69 @@ router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response)
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.patch('/me', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const user = req.user!;
+    const { fullName, profession } = req.body;
+
+    const dataToUpdate: any = {};
+
+    if (profession !== undefined) {
+      if (!['PLUMBER', 'TILE_WORKER'].includes(profession)) {
+        return res.status(400).json({ success: false, message: 'Invalid profession. Must be PLUMBER or TILE_WORKER.' });
+      }
+      dataToUpdate.profession = profession;
+    }
+
+    if (fullName !== undefined) {
+      await AuthService.updateUserName(user.id, { fullName });
+    }
+
+    if (Object.keys(dataToUpdate).length > 0) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: dataToUpdate,
+      });
+    }
+
+    const freshUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      include: {
+        wallet: true,
+        kycRecords: { where: { panStatus: 'VERIFIED' } },
+        paymentAccounts: { where: { isVerified: true, isDefault: true } },
+      },
+    });
+
+    if (!freshUser) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully.',
+      user: {
+        id: freshUser.id,
+        mobile: freshUser.mobile,
+        fullName: freshUser.fullName,
+        firstName: freshUser.firstName,
+        middleName: freshUser.middleName,
+        lastName: freshUser.lastName,
+        isNameLocked: freshUser.isNameLocked,
+        nameLockedAt: freshUser.nameLockedAt,
+        profession: freshUser.profession,
+        role: freshUser.role,
+        isKycVerified: freshUser.kycRecords.length > 0 && freshUser.kycRecords[0].nameMatched,
+        isPaymentVerified: freshUser.paymentAccounts.length > 0,
+        createdAt: freshUser.createdAt,
+      },
+    });
+  } catch (err: any) {
+    const isLockedError = err.message && err.message.includes('locked');
+    res.status(isLockedError ? 403 : 400).json({ success: false, message: err.message });
   }
 });
 

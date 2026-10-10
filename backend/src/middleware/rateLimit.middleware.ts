@@ -19,11 +19,20 @@ export interface RateLimitOptions {
 
 export function normalizeIdentifier(val: string | undefined): string {
   if (!val) return 'anon';
-  const clean = val.replace(/\D/g, '');
+  const trimmed = val.trim();
+  // Preserve uppercase alphanumeric prefix for admin identifiers so admins and craftsmen sharing phone numbers do not collide
+  const adminMatch = trimmed.match(/^([A-Za-z]+)\s*([0-9]+)$/);
+  if (adminMatch) {
+    const prefix = adminMatch[1].toUpperCase();
+    const digits = adminMatch[2];
+    const phone = digits.length >= 10 ? digits.slice(-10) : digits;
+    return `${prefix}:${phone}`;
+  }
+  const clean = trimmed.replace(/\D/g, '');
   if (clean.length >= 10) {
     return clean.slice(-10);
   }
-  return val.trim().toLowerCase();
+  return trimmed.toLowerCase();
 }
 
 export function createRateLimiter(options: {

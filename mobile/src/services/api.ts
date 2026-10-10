@@ -346,12 +346,10 @@ export class MobileApiClient {
   static async logout() {
     const rf = this.getRefreshToken();
     try {
-      if (rf) {
-        await this.request('/auth/logout', {
-          method: 'POST',
-          body: JSON.stringify({ refreshToken: rf }),
-        });
-      }
+      await this.request('/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify({ refreshToken: rf || undefined }),
+      });
     } catch {
       // safe fallback
     } finally {

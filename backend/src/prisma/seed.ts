@@ -20,39 +20,7 @@ async function main() {
   console.log('🌱 Starting Hiralal & Sons Production Database Seeding...');
 
   try {
-    // 1. Provision Company Executive Admin
-    const initialAdminMobile = process.env.ADMIN_INITIAL_MOBILE || '9999999999';
-    const initialAdminPassword =
-      process.env.ADMIN_INITIAL_PASSWORD ||
-      (process.env.NODE_ENV === 'production' ? '' : 'Admin@123');
-
-    let admin = await prisma.user.findFirst({
-      where: { role: 'ADMIN' },
-    });
-
-    if (!admin) {
-      if (!initialAdminPassword) {
-        throw new Error(
-          'ADMIN_INITIAL_PASSWORD environment variable is required to provision initial administrator in production.'
-        );
-      }
-      const adminPasswordHash = await bcrypt.hash(initialAdminPassword, 10);
-      admin = await prisma.user.create({
-        data: {
-          mobile: initialAdminMobile,
-          fullName: 'Hiralal & Sons Executive Administrator',
-          passwordHash: adminPasswordHash,
-          role: 'ADMIN',
-          status: 'ACTIVE',
-          isVerified: true,
-        },
-      });
-      console.log(`✅ Company Admin provisioned: ${admin.fullName} (${admin.mobile})`);
-    } else {
-      console.log(`ℹ️ Existing Admin detected (${admin.mobile}). Preserving existing credentials.`);
-    }
-
-    // 1b. Provision Bill Review Administrator (BILL_ADMIN)
+    // 1. Provision Bill Review Administrator (BILL_ADMIN)
     const billAdminMobile = process.env.BILL_ADMIN_MOBILE || '9999999991';
     const billAdminPassword =
       process.env.BILL_ADMIN_INITIAL_PASSWORD ||
@@ -85,7 +53,7 @@ async function main() {
       console.log(`ℹ️ Existing Bill Admin detected (${billAdmin.mobile}). Preserving existing credentials.`);
     }
 
-    // 1c. Provision Operations Administrator (OPERATIONS_ADMIN)
+    // 2. Provision Operations Administrator (OPERATIONS_ADMIN)
     const opsAdminMobile = process.env.OPERATIONS_ADMIN_MOBILE || '9999999992';
     const opsAdminPassword =
       process.env.OPERATIONS_ADMIN_INITIAL_PASSWORD ||
@@ -202,21 +170,21 @@ async function main() {
             description: 'Standard 18% GST (Plumbing & Tile Hardware)',
             isDefault: true,
             isActive: true,
-            createdByAdminId: admin.id,
+            createdByAdminId: opsAdmin.id,
           },
           {
             ratePercentage: 12.0,
             description: 'Concessional 12% GST',
             isDefault: false,
             isActive: true,
-            createdByAdminId: admin.id,
+            createdByAdminId: opsAdmin.id,
           },
           {
             ratePercentage: 0.0,
             description: 'Tax Exempt (0% GST)',
             isDefault: false,
             isActive: true,
-            createdByAdminId: admin.id,
+            createdByAdminId: opsAdmin.id,
           },
         ],
       });
@@ -235,7 +203,7 @@ async function main() {
         minimumAmount: 500.0,
         maximumAmount: 10000.0,
         message: 'Rewards redemption is currently unavailable.',
-        updatedByAdminId: admin.id,
+        updatedByAdminId: opsAdmin.id,
       },
     });
 

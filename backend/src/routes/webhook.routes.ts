@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { config } from '../config';
 import { prisma } from '../db';
 import { PayoutService } from '../services/payout.service';
+import { toPaise } from '../utils/money.utils';
 
 const router = Router();
 
@@ -17,6 +18,16 @@ router.post('/razorpayx', async (req: Request, res: Response): Promise<void> => 
 
     if (!signature && config.nodeEnv !== 'test') {
       res.status(400).json({ error: 'Missing x-razorpay-signature header' });
+      return;
+    }
+
+    if (config.isProduction && !config.razorpayx.webhookSecret) {
+      res.status(500).json({ error: 'Webhook secret not configured on server' });
+      return;
+    }
+
+    if (config.isProduction && !(req as any).rawBody) {
+      res.status(400).json({ error: 'Raw request body buffer missing for cryptographic verification' });
       return;
     }
 
@@ -38,9 +49,6 @@ router.post('/razorpayx', async (req: Request, res: Response): Promise<void> => 
         res.status(400).json({ error: 'Invalid webhook signature' });
         return;
       }
-    } else if (config.isProduction && !config.razorpayx.webhookSecret) {
-      res.status(500).json({ error: 'Webhook secret not configured on server' });
-      return;
     }
 
     const event = req.body;
@@ -143,6 +151,17 @@ router.post('/razorpayx', async (req: Request, res: Response): Promise<void> => 
         });
         res.status(200).json({ status: 'unmatched_held_for_retry' });
         return;
+      }
+
+      if (payoutEntity.currency && payoutEntity.currency !== 'INR') {
+        throw new Error(`[WEBHOOK] Invalid currency in webhook payload: expected INR, received ${payoutEntity.currency}`);
+      }
+
+      if (payoutEntity.amount !== undefined) {
+        const expectedPaise = Number(toPaise(payoutRecord.amount));
+        if (Number(payoutEntity.amount) !== expectedPaise) {
+          throw new Error(`[WEBHOOK] Amount mismatch in webhook payload: expected ${expectedPaise} paise, received ${payoutEntity.amount} paise`);
+        }
       }
 
       if (eventType === 'payout.processed') {

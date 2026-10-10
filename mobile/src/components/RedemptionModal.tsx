@@ -55,10 +55,8 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
   const [idempotencyKey, setIdempotencyKey] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const maxAllowed = eligibility?.maximumAmount
-    ? Math.min(wallet.availableBalance, Number(eligibility.maximumAmount))
-    : wallet.availableBalance;
-  const amountToRedeem = maxAllowed;
+  // 100% full balance redemption rule
+  const amountToRedeem = wallet.availableBalance;
 
   // On open, fetch real eligibility & existing KYC/Account status
   useEffect(() => {

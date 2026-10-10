@@ -104,6 +104,6 @@ export function requireRole(allowedRoles: UserRole[]) {
   };
 }
 
-export const requireAdmin = requireRole(['ADMIN', 'BILL_ADMIN', 'OPERATIONS_ADMIN']);
-export const requireBillAdmin = requireRole(['BILL_ADMIN', 'ADMIN']);
-export const requireOperationsAdmin = requireRole(['OPERATIONS_ADMIN', 'ADMIN']);
+export const requireAdmin = requireRole(['BILL_ADMIN', 'OPERATIONS_ADMIN']);
+export const requireBillAdmin = requireRole(['BILL_ADMIN']);
+export const requireOperationsAdmin = requireRole(['OPERATIONS_ADMIN']);

@@ -229,31 +229,28 @@ export class AdminApiClient {
     return this.request('/admin/audit-logs');
   }
 
-  // Admin OTP-First Authentication Flow
-  static requestOtp(identifier: string) {
-    return this.request('/auth/admin/otp/request', {
+  // Admin Password-First OTP-Second Authentication Flow
+  static login(identifier: string, password: string) {
+    return this.request('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ identifier }),
+      body: JSON.stringify({ identifier, password }),
     });
   }
 
-  static verifyOtp(identifier: string, otpCode: string) {
+  static verifyOtp(identifier: string, otpCode: string, challengeToken: string) {
     return this.request('/auth/admin/otp/verify', {
       method: 'POST',
-      body: JSON.stringify({ identifier, otpCode }),
+      body: JSON.stringify({ identifier, otpCode, challengeToken }),
     });
   }
 
-  static login(identifier: string, password: string, verificationToken?: string) {
-    if (!verificationToken) {
-      return this.request('/auth/admin-login', {
-        method: 'POST',
-        body: JSON.stringify({ username: identifier, password }),
-      });
+  static async logout() {
+    try {
+      await this.request('/auth/logout', { method: 'POST' });
+    } catch {
+      // Ignore network errors during logout
+    } finally {
+      this.clearToken();
     }
-    return this.request('/auth/admin/login', {
-      method: 'POST',
-      body: JSON.stringify({ identifier, password, verificationToken }),
-    });
   }
 }

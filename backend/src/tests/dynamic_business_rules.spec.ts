@@ -532,4 +532,49 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     expect(auditLogs.length).toBeGreaterThan(0);
     expect(auditLogs[0].newValue).toContain('Special tax rate verification');
   });
+
+  // -------------------------------------------------------------
+  // Test 11: Fail Closed on Overlapping Reward Rules
+  // -------------------------------------------------------------
+  it('Scenario 11: getApplicableRule fails closed (throws OVERLAPPING_REWARD_RULES) when multiple active rules overlap', async () => {
+    // Manually create two overlapping active rules in DB
+    const overlapFrom = new Date('2026-11-01T00:00:00Z');
+    const overlapUntil = new Date('2026-11-30T23:59:59Z');
+
+    const rule1 = await prisma.rewardRule.create({
+      data: {
+        profession: 'PLUMBER',
+        rewardPercentage: 0.80,
+        monthlyPoolLimit: 50000.0,
+        minRedemptionAmount: 500.0,
+        maxRedemptionAmount: 10000.0,
+        effectiveFrom: overlapFrom,
+        effectiveUntil: overlapUntil,
+        isActive: true,
+        version: 991,
+      },
+    });
+
+    const rule2 = await prisma.rewardRule.create({
+      data: {
+        profession: 'PLUMBER',
+        rewardPercentage: 0.90,
+        monthlyPoolLimit: 50000.0,
+        minRedemptionAmount: 500.0,
+        maxRedemptionAmount: 10000.0,
+        effectiveFrom: overlapFrom,
+        effectiveUntil: overlapUntil,
+        isActive: true,
+        version: 992,
+      },
+    });
+
+    try {
+      await expect(
+        RewardRuleService.getApplicableRule('PLUMBER', new Date('2026-11-15T12:00:00Z'))
+      ).rejects.toThrow(/OVERLAPPING_REWARD_RULES/);
+    } finally {
+      await prisma.rewardRule.deleteMany({ where: { id: { in: [rule1.id, rule2.id] } } });
+    }
+  });
 });

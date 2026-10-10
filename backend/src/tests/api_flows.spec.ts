@@ -10,6 +10,7 @@ import { closeRedis } from '../redis';
 describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
   let userToken: string;
   let adminToken: string;
+  let billAdminToken: string;
   let testUserId: string;
   let testAdminId: string;
 
@@ -38,41 +39,69 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
       },
     });
 
-    // 1. Provision Test Admin in PostgreSQL
+    // 1. Provision Test Operations Admin in PostgreSQL
     const adminPasswordHash = await bcrypt.hash('Admin@123', 10);
-    const admin = await prisma.user.upsert({
-      where: { mobile: '9999999999' },
-      update: { role: 'ADMIN', status: 'ACTIVE', passwordHash: adminPasswordHash },
+    const opsAdmin = await prisma.user.upsert({
+      where: { mobile: '9999999992' },
+      update: { role: 'OPERATIONS_ADMIN', status: 'ACTIVE', passwordHash: adminPasswordHash },
       create: {
-        mobile: '9999999999',
-        fullName: 'Hiralal Admin',
+        mobile: '9999999992',
+        fullName: 'Hiralal Operations Admin',
         passwordHash: adminPasswordHash,
-        role: 'ADMIN',
+        role: 'OPERATIONS_ADMIN',
         status: 'ACTIVE',
         isVerified: true,
       },
     });
-    testAdminId = admin.id;
+    testAdminId = opsAdmin.id;
 
-    const challengeToken = crypto.randomBytes(32).toString('hex');
+    const opsChallengeToken = crypto.randomBytes(32).toString('hex');
     await prisma.verificationToken.create({
       data: {
-        mobile: '9999999999',
-        tokenHash: crypto.createHash('sha256').update(challengeToken).digest('hex'),
+        mobile: '9999999992',
+        tokenHash: crypto.createHash('sha256').update(opsChallengeToken).digest('hex'),
         purpose: 'ADMIN_LOGIN',
         isUsed: false,
         expiresAt: new Date(Date.now() + 15 * 60 * 1000),
       },
     });
 
-    const adminLoginRes = await request(app)
+    const opsAdminLoginRes = await request(app)
       .post('/api/auth/admin-login')
-      .send({ username: 'ADMIN9999999999', password: 'Admin@123', verificationToken: challengeToken });
-    if (adminLoginRes.status !== 200) {
-      console.error('adminLoginRes failed with status:', adminLoginRes.status, adminLoginRes.body);
-    }
-    expect(adminLoginRes.status).toBe(200);
-    adminToken = adminLoginRes.body.token;
+      .send({ username: `${config.admin.operationsAdminPrefix}9999999992`, password: 'Admin@123', verificationToken: opsChallengeToken });
+    expect(opsAdminLoginRes.status).toBe(200);
+    adminToken = opsAdminLoginRes.body.token;
+
+    // 1b. Provision Test Bill Admin in PostgreSQL
+    await prisma.user.upsert({
+      where: { mobile: '9999999991' },
+      update: { role: 'BILL_ADMIN', status: 'ACTIVE', passwordHash: adminPasswordHash },
+      create: {
+        mobile: '9999999991',
+        fullName: 'Hiralal Bill Admin',
+        passwordHash: adminPasswordHash,
+        role: 'BILL_ADMIN',
+        status: 'ACTIVE',
+        isVerified: true,
+      },
+    });
+
+    const billChallengeToken = crypto.randomBytes(32).toString('hex');
+    await prisma.verificationToken.create({
+      data: {
+        mobile: '9999999991',
+        tokenHash: crypto.createHash('sha256').update(billChallengeToken).digest('hex'),
+        purpose: 'ADMIN_LOGIN',
+        isUsed: false,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      },
+    });
+
+    const billAdminLoginRes = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: `${config.admin.billAdminPrefix}9999999991`, password: 'Admin@123', verificationToken: billChallengeToken });
+    expect(billAdminLoginRes.status).toBe(200);
+    billAdminToken = billAdminLoginRes.body.token;
 
     // 2. Provision Test Plumber User
     const userPasswordHash = await bcrypt.hash('Password@123', 10);
@@ -228,7 +257,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     // Admin verifies and approves
     const approveRes = await request(app)
       .post(`/api/admin/bills/${billId}/verify`)
-      .set('Authorization', `Bearer ${adminToken}`)
+      .set('Authorization', `Bearer ${billAdminToken}`)
       .send({ action: 'APPROVE', remarks: 'Valid authorized plumbing invoice' });
 
     expect(approveRes.status).toBe(200);
@@ -281,7 +310,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
   test('Contract A: Admin cannot authenticate via regular /api/auth/login', async () => {
     const res = await request(app)
       .post('/api/auth/login')
-      .send({ mobile: '9999900001', password: 'AdminPassword@123' });
+      .send({ mobile: '9999999991', password: 'AdminPassword@123' });
     expect(res.status).toBe(401);
     expect(res.body.success).toBe(false);
   });
@@ -289,7 +318,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
   test('Contract D: POST /api/admin/bills/:id/verify rejects customRewardAmount with 400', async () => {
     const res = await request(app)
       .post('/api/admin/bills/any-bill-id/verify')
-      .set('Authorization', `Bearer ${adminToken}`)
+      .set('Authorization', `Bearer ${billAdminToken}`)
       .send({ action: 'APPROVE', customRewardAmount: 500 });
     expect(res.status).toBe(400);
     expect(res.body.message).toContain('Manual customRewardAmount overrides are strictly prohibited');

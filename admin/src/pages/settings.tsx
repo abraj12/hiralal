@@ -30,15 +30,11 @@ export default function AdminSettingsPage() {
   const [tileRules, setTileRules] = useState<any[]>([]);
   const [plumberForm, setPlumberForm] = useState({
     rewardPercentage: '0.5',
-    monthlyPoolLimit: '50000',
     minRedemptionAmount: '500',
-    maxRedemptionAmount: '10000',
   });
   const [tileForm, setTileForm] = useState({
     rewardPercentage: '0.75',
-    monthlyPoolLimit: '50000',
     minRedemptionAmount: '500',
-    maxRedemptionAmount: '10000',
   });
 
   // GST State
@@ -74,9 +70,7 @@ export default function AdminSettingsPage() {
         const active = pRes.rules.find((r: any) => r.isActive) || pRes.rules[0];
         setPlumberForm({
           rewardPercentage: (active.rewardPercentage || active.percentage || 0.5).toString(),
-          monthlyPoolLimit: active.monthlyPoolLimit.toString(),
           minRedemptionAmount: active.minRedemptionAmount.toString(),
-          maxRedemptionAmount: active.maxRedemptionAmount?.toString() || '10000',
         });
       }
 
@@ -87,9 +81,7 @@ export default function AdminSettingsPage() {
         const active = tRes.rules.find((r: any) => r.isActive) || tRes.rules[0];
         setTileForm({
           rewardPercentage: (active.rewardPercentage || active.percentage || 0.75).toString(),
-          monthlyPoolLimit: active.monthlyPoolLimit.toString(),
           minRedemptionAmount: active.minRedemptionAmount.toString(),
-          maxRedemptionAmount: active.maxRedemptionAmount?.toString() || '10000',
         });
       }
 
