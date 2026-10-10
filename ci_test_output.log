@@ -1,0 +1,590 @@
+
+> hiralal-rewards-backend@1.0.0 test
+> jest --runInBand --detectOpenHandles --forceExit --coverage --forceExit
+
+PASS src/tests/dynamic_business_rules.spec.ts (5.62 s)
+  ● Console
+
+    console.warn
+      [REWARD-RULE] Multiple overlapping active rules found for PLUMBER at 2026-10-04T00:00:00.000Z. Selecting latest version 2.
+
+    [0m [90m 58 |[39m       [90m// Multiple active rules with overlapping validity window[39m
+     [90m 59 |[39m       [90m// Take the latest version or specific match, logging warning[39m
+    [31m[1m>[22m[39m[90m 60 |[39m       console[33m.[39mwarn(
+     [90m    |[39m               [31m[1m^[22m[39m
+     [90m 61 |[39m         [32m`[REWARD-RULE] Multiple overlapping active rules found for ${profession} at ${effectiveAt.toISOString()}. Selecting latest version ${rules[0].version}.`[39m
+     [90m 62 |[39m       )[33m;[39m
+     [90m 63 |[39m     }[0m
+
+      at Function.warn [as getApplicableRule] (src/services/reward-rule.service.ts:60:15)
+      at Object.<anonymous> (src/tests/dynamic_business_rules.spec.ts:336:31)
+
+    console.warn
+      [REWARD-RULE] Multiple overlapping active rules found for PLUMBER at 2026-10-04T00:00:00.000Z. Selecting latest version 2.
+
+    [0m [90m 58 |[39m       [90m// Multiple active rules with overlapping validity window[39m
+     [90m 59 |[39m       [90m// Take the latest version or specific match, logging warning[39m
+    [31m[1m>[22m[39m[90m 60 |[39m       console[33m.[39mwarn(
+     [90m    |[39m               [31m[1m^[22m[39m
+     [90m 61 |[39m         [32m`[REWARD-RULE] Multiple overlapping active rules found for ${profession} at ${effectiveAt.toISOString()}. Selecting latest version ${rules[0].version}.`[39m
+     [90m 62 |[39m       )[33m;[39m
+     [90m 63 |[39m     }[0m
+
+      at Function.warn [as getApplicableRule] (src/services/reward-rule.service.ts:60:15)
+      at src/services/bill.service.ts:318:20
+      at Proxy._transactionWithCallback (node_modules/@prisma/client/src/runtime/getPrismaClient.ts:722:18)
+      at Function.approveBill (src/services/bill.service.ts:279:12)
+      at Object.<anonymous> (src/tests/dynamic_business_rules.spec.ts:358:19)
+
+    console.warn
+      [REWARD-RULE] Multiple overlapping active rules found for PLUMBER at 2026-10-05T00:00:00.000Z. Selecting latest version 3.
+
+    [0m [90m 58 |[39m       [90m// Multiple active rules with overlapping validity window[39m
+     [90m 59 |[39m       [90m// Take the latest version or specific match, logging warning[39m
+    [31m[1m>[22m[39m[90m 60 |[39m       console[33m.[39mwarn(
+     [90m    |[39m               [31m[1m^[22m[39m
+     [90m 61 |[39m         [32m`[REWARD-RULE] Multiple overlapping active rules found for ${profession} at ${effectiveAt.toISOString()}. Selecting latest version ${rules[0].version}.`[39m
+     [90m 62 |[39m       )[33m;[39m
+     [90m 63 |[39m     }[0m
+
+      at Function.warn [as getApplicableRule] (src/services/reward-rule.service.ts:60:15)
+      at src/services/bill.service.ts:318:20
+      at Proxy._transactionWithCallback (node_modules/@prisma/client/src/runtime/getPrismaClient.ts:722:18)
+      at Function.approveBill (src/services/bill.service.ts:279:12)
+      at Object.<anonymous> (src/tests/dynamic_business_rules.spec.ts:391:19)
+
+PASS src/tests/backup_restore.spec.ts
+  ● Console
+
+    console.log
+      [R2-BACKUP] Preparing upload of /home/runner/work/hiralal/hiralal/backend/src/tests/temp_backup_test.enc (0.00 MB, SHA256: f971fd9b087d7390f343238b1cc9e9bd5fda3ba7c18b847508f0ceef5620ffb6)
+
+      at log (../scripts/upload-backup.js:53:11)
+
+    console.log
+      [R2-BACKUP] Target: s3://test-bucket/backups/test.enc
+
+      at log (../scripts/upload-backup.js:54:11)
+
+    console.log
+      [R2-BACKUP] Preparing upload of /home/runner/work/hiralal/hiralal/backend/src/tests/temp_backup_test.enc (0.00 MB, SHA256: f971fd9b087d7390f343238b1cc9e9bd5fda3ba7c18b847508f0ceef5620ffb6)
+
+      at log (../scripts/upload-backup.js:53:11)
+
+    console.log
+      [R2-BACKUP] Target: s3://test-bucket/backups/test.enc
+
+      at log (../scripts/upload-backup.js:54:11)
+
+    console.log
+      [R2-BACKUP] Upload finished. Commencing remote verification...
+
+      at log (../scripts/upload-backup.js:70:11)
+
+    console.log
+      [R2-BACKUP] Preparing upload of /home/runner/work/hiralal/hiralal/backend/src/tests/temp_backup_test.enc (0.00 MB, SHA256: f971fd9b087d7390f343238b1cc9e9bd5fda3ba7c18b847508f0ceef5620ffb6)
+
+      at log (../scripts/upload-backup.js:53:11)
+
+    console.log
+      [R2-BACKUP] Target: s3://test-bucket/backups/test.enc
+
+      at log (../scripts/upload-backup.js:54:11)
+
+    console.log
+      [R2-BACKUP] Upload finished. Commencing remote verification...
+
+      at log (../scripts/upload-backup.js:70:11)
+
+    console.log
+      [R2-BACKUP-VERIFIED] External backup verified successfully: s3://test-bucket/backups/test.enc (Size: 43 bytes, SHA256: f971fd9b087d7390f343238b1cc9e9bd5fda3ba7c18b847508f0ceef5620ffb6)
+
+      at log (../scripts/upload-backup.js:94:11)
+
+    console.log
+      [R2-BACKUP] Preparing upload of /home/runner/work/hiralal/hiralal/backend/src/tests/temp_backup_test.enc (0.00 MB, SHA256: f971fd9b087d7390f343238b1cc9e9bd5fda3ba7c18b847508f0ceef5620ffb6)
+
+      at log (../scripts/upload-backup.js:53:11)
+
+    console.log
+      [R2-BACKUP] Target: s3://test-bucket/backups/test.enc
+
+      at log (../scripts/upload-backup.js:54:11)
+
+    console.log
+      [R2-BACKUP] Upload finished. Commencing remote verification...
+
+      at log (../scripts/upload-backup.js:70:11)
+
+PASS src/tests/concurrency_financial.spec.ts
+PASS src/tests/hardening_verification.spec.ts
+  ● Console
+
+    console.error
+      [MSG91-ERROR] Delivery to 123*****45 failed: Invalid mobile number format
+
+    [0m [90m 60 |[39m       [36mif[39m ([33m![39mresponse[33m.[39mok [33m||[39m [33m![39mresponseData) {
+     [90m 61 |[39m         [36mconst[39m errorMsg [33m=[39m responseData[33m?[39m[33m.[39mmessage [33m||[39m responseData[33m?[39m[33m.[39merror [33m||[39m [32m`MSG91 returned HTTP ${response.status}`[39m[33m;[39m
+    [31m[1m>[22m[39m[90m 62 |[39m         console[33m.[39merror([32m`[MSG91-ERROR] Delivery to ${maskedMobile} failed: ${errorMsg}`[39m)[33m;[39m
+     [90m    |[39m                 [31m[1m^[22m[39m
+     [90m 63 |[39m         [36mreturn[39m {
+     [90m 64 |[39m           success[33m:[39m [36mfalse[39m[33m,[39m
+     [90m 65 |[39m           provider[33m:[39m [36mthis[39m[33m.[39mname[33m,[39m[0m
+
+      at MSG91SmsProvider.error [as sendOtp] (src/services/sms/msg91.provider.ts:62:17)
+      at Object.<anonymous> (src/tests/hardening_verification.spec.ts:147:22)
+
+    console.log
+      📡 [HTTP] GET /health/live - 200 (7ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      ✅ Connected to PostgreSQL database successfully.
+
+      at log (src/db/index.ts:19:13)
+
+    console.log
+      📡 [HTTP] GET /health/ready - 200 (6ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+
+  ●  Cannot log after tests are done. Did you forget to wait for something async in your test?
+    Attempted to log "✅ [REDIS] Connected and ready".
+
+    [0m [90m 39 |[39m
+     [90m 40 |[39m   redisClient[33m.[39mon([32m'ready'[39m[33m,[39m () [33m=>[39m {
+    [31m[1m>[22m[39m[90m 41 |[39m     console[33m.[39mlog([32m'✅ [REDIS] Connected and ready'[39m)[33m;[39m
+     [90m    |[39m             [31m[1m^[22m[39m
+     [90m 42 |[39m   })[33m;[39m
+     [90m 43 |[39m
+     [90m 44 |[39m   [36mreturn[39m redisClient[33m;[39m[0m
+
+      at console.log (node_modules/@jest/console/build/BufferedConsole.js:156:10)
+      at EventEmitter.log (src/redis/index.ts:41:13)
+
+PASS src/tests/rewards_and_rules.spec.ts
+FAIL src/tests/auth_sessions_security.spec.ts
+  ● Console
+
+    console.log
+      📡 [HTTP] POST /otp/request - 200 (19ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /otp/verify - 200 (14ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /register - 201 (347ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /register - 400 (326ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /login - 200 (328ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /refresh - 200 (10ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /refresh - 200 (10ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /login - 200 (325ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /refresh - 200 (11ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /refresh - 401 (5ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /refresh - 401 (4ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /password-reset/verify - 200 (10ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /password-reset/complete - 200 (339ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /login - 401 (325ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /login - 200 (327ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /otp/verify - 200 (10ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /register - 201 (657ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /register - 400 (662ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /admin-login - 401 (92ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      ✅ [REDIS] Connected and ready
+
+      at EventEmitter.log (src/redis/index.ts:41:13)
+
+    console.log
+      📡 [HTTP] POST /admin-login - 401 (87ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /admin-login - 401 (88ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /admin-login - 401 (86ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /admin-login - 401 (85ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /admin-login - 401 (86ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+  ● Authentication, Single-Use Verification Tokens & Session Security Tests › 8. Admin Login Rate Limiting: 6th attempt within window receives 429 Too Many Requests
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 429
+    Received: 401
+
+    [0m [90m 276 |[39m       [33m.[39msend({ username[33m:[39m [32m'9999999999'[39m[33m,[39m password[33m:[39m [32m'WrongPassword@123'[39m })[33m;[39m
+     [90m 277 |[39m
+    [31m[1m>[22m[39m[90m 278 |[39m     expect(blockedRes[33m.[39mstatus)[33m.[39mtoBe([35m429[39m)[33m;[39m
+     [90m     |[39m                               [31m[1m^[22m[39m
+     [90m 279 |[39m     expect(blockedRes[33m.[39mbody[33m.[39mcode)[33m.[39mtoBe([32m'RATE_LIMIT_EXCEEDED'[39m)[33m;[39m
+     [90m 280 |[39m   })[33m;[39m
+     [90m 281 |[39m })[33m;[39m[0m
+
+      at Object.<anonymous> (src/tests/auth_sessions_security.spec.ts:278:31)
+
+FAIL src/tests/payout_safety_worker.spec.ts
+  ● Console
+
+    console.log
+      [PAYOUT-WORKER] [DEV/TEST MODE] Simulating payout dispatch for 62cc0391-a7cc-44b7-b009-65c01dd045b1
+
+      at Function.log [as processPayout] (src/worker/payout.worker.ts:124:15)
+
+    console.log
+      [PAYOUT-WORKER] [DEV/TEST MODE] Simulating payout dispatch for bbd7773d-950e-4173-b770-40759a5d66f1
+
+      at Function.log [as processPayout] (src/worker/payout.worker.ts:124:15)
+
+    console.log
+      📥 [WEBHOOK] Received RazorpayX Event: payout.processed (Event ID: evt_dedup_1791625008430, Payout ID: pout_fake_test_1)
+
+      at log (src/routes/webhook.routes.ts:55:13)
+
+    console.warn
+      [WEBHOOK] No local payout matched Razorpay payout pout_fake_test_1 or ref ref_dummy
+
+    [0m [90m 133 |[39m
+     [90m 134 |[39m       [36mif[39m ([33m![39mpayoutRecord) {
+    [31m[1m>[22m[39m[90m 135 |[39m         console[33m.[39mwarn([32m`[WEBHOOK] No local payout matched Razorpay payout ${razorpayPayoutId} or ref ${payoutEntity.reference_id}`[39m)[33m;[39m
+     [90m     |[39m                 [31m[1m^[22m[39m
+     [90m 136 |[39m         [36mawait[39m prisma[33m.[39mwebhookEvent[33m.[39mupdate({
+     [90m 137 |[39m           where[33m:[39m { provider_event_unique[33m:[39m { provider[33m:[39m [32m'RAZORPAYX'[39m[33m,[39m eventId } }[33m,[39m
+     [90m 138 |[39m           data[33m:[39m {[0m
+
+      at warn (src/routes/webhook.routes.ts:135:17)
+
+    console.log
+      📡 [HTTP] POST /razorpayx - 200 (17ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📥 [WEBHOOK] Received RazorpayX Event: payout.processed (Event ID: evt_dedup_1791625008430, Payout ID: pout_fake_test_1)
+
+      at log (src/routes/webhook.routes.ts:55:13)
+
+    console.log
+      [WEBHOOK] Duplicate event evt_dedup_1791625008430 already processed. Returning 200 OK.
+
+      at log (src/routes/webhook.routes.ts:104:17)
+
+    console.log
+      📡 [HTTP] POST /razorpayx - 200 (9ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+  ● Payout Worker, Webhook Deduplication & Timeout Safety Tests › 1. Timeout Safety: Simulated gateway network failure holds payout in PROCESSING without reversing funds
+
+    expect(received).toMatch(expected)
+
+    Matcher error: received value must be a string
+
+    Received has value: null
+
+    [0m [90m  95 |[39m       [36mconst[39m payoutAfter [33m=[39m [36mawait[39m prisma[33m.[39mpayout[33m.[39mfindUnique({ where[33m:[39m { id[33m:[39m payoutId } })[33m;[39m
+     [90m  96 |[39m       expect(payoutAfter[33m?[39m[33m.[39mstatus)[33m.[39mtoBe([32m'PROCESSING'[39m)[33m;[39m
+    [31m[1m>[22m[39m[90m  97 |[39m       expect(payoutAfter[33m?[39m[33m.[39mfailureReason)[33m.[39mtoMatch([35m/Network error\/timeout/i[39m)[33m;[39m
+     [90m     |[39m                                          [31m[1m^[22m[39m
+     [90m  98 |[39m
+     [90m  99 |[39m       [90m// Critical check: Wallet funds MUST NOT be refunded yet![39m
+     [90m 100 |[39m       [36mconst[39m walletAfter [33m=[39m [36mawait[39m prisma[33m.[39mwallet[33m.[39mfindUnique({ where[33m:[39m { userId[33m:[39m user[33m.[39mid } })[33m;[39m[0m
+
+      at Object.<anonymous> (src/tests/payout_safety_worker.spec.ts:97:42)
+
+  ● Payout Worker, Webhook Deduplication & Timeout Safety Tests › 2. Definite 4xx Rejection: Safely marks FAILED, refunds available balance, creates PAYOUT_REVERSAL
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "FAILED"
+    Received: "PROCESSING"
+
+    [0m [90m 140 |[39m
+     [90m 141 |[39m       [36mconst[39m payoutAfter [33m=[39m [36mawait[39m prisma[33m.[39mpayout[33m.[39mfindUnique({ where[33m:[39m { id[33m:[39m payoutId } })[33m;[39m
+    [31m[1m>[22m[39m[90m 142 |[39m       expect(payoutAfter[33m?[39m[33m.[39mstatus)[33m.[39mtoBe([32m'FAILED'[39m)[33m;[39m
+     [90m     |[39m                                   [31m[1m^[22m[39m
+     [90m 143 |[39m       expect(payoutAfter[33m?[39m[33m.[39mfailureReason)[33m.[39mtoContain([32m'Beneficiary VPA handle invalid'[39m)[33m;[39m
+     [90m 144 |[39m
+     [90m 145 |[39m       [90m// Reversal ledger check[39m[0m
+
+      at Object.<anonymous> (src/tests/payout_safety_worker.spec.ts:142:35)
+
+FAIL src/tests/api_flows.spec.ts
+  ● Console
+
+    console.log
+      📡 [HTTP] POST /admin-login - 200 (98ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /login - 200 (91ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] GET /health - 200 (2ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /send-otp - 200 (11ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /register - 201 (341ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] GET /me - 200 (8ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST / - 201 (17ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] GET /dashboard - 200 (33ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST / - 201 (10ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] POST /bills/952c3798-7b8e-4a64-baa4-df2f728b1728/verify - 200 (25ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] PUT /settings/redemption - 200 (10ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📡 [HTTP] GET /eligibility - 200 (9ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+    console.log
+      📥 [WEBHOOK] Received RazorpayX Event: payout.processed (Event ID: payout.processed_pout_123, Payout ID: pout_123)
+
+      at log (src/routes/webhook.routes.ts:55:13)
+
+    console.warn
+      [WEBHOOK] No local payout matched Razorpay payout pout_123 or ref ref_123
+
+    [0m [90m 133 |[39m
+     [90m 134 |[39m       [36mif[39m ([33m![39mpayoutRecord) {
+    [31m[1m>[22m[39m[90m 135 |[39m         console[33m.[39mwarn([32m`[WEBHOOK] No local payout matched Razorpay payout ${razorpayPayoutId} or ref ${payoutEntity.reference_id}`[39m)[33m;[39m
+     [90m     |[39m                 [31m[1m^[22m[39m
+     [90m 136 |[39m         [36mawait[39m prisma[33m.[39mwebhookEvent[33m.[39mupdate({
+     [90m 137 |[39m           where[33m:[39m { provider_event_unique[33m:[39m { provider[33m:[39m [32m'RAZORPAYX'[39m[33m,[39m eventId } }[33m,[39m
+     [90m 138 |[39m           data[33m:[39m {[0m
+
+      at warn (src/routes/webhook.routes.ts:135:17)
+
+    console.log
+      📡 [HTTP] POST /razorpayx - 200 (12ms)
+
+      at ServerResponse.log (src/server.ts:35:13)
+
+  ● Hiralal & Sons - End-to-End API Integration Tests › Webhook rejects invalid signatures and accepts valid ones
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 400
+    Received: 200
+
+    [0m [90m 265 |[39m       [33m.[39m[36mset[39m([32m'x-razorpay-signature'[39m[33m,[39m [32m'invalidsig123'[39m)
+     [90m 266 |[39m       [33m.[39msend([33mJSON[39m[33m.[39mparse(payload))[33m;[39m
+    [31m[1m>[22m[39m[90m 267 |[39m     expect(invalidRes[33m.[39mstatus)[33m.[39mtoBe([35m400[39m)[33m;[39m
+     [90m     |[39m                               [31m[1m^[22m[39m
+     [90m 268 |[39m   })[33m;[39m
+     [90m 269 |[39m })[33m;[39m
+     [90m 270 |[39m[0m
+
+      at Object.<anonymous> (src/tests/api_flows.spec.ts:267:31)
+
+PASS src/tests/kyc_and_storage.spec.ts
+PASS src/tests/config_safety.spec.ts
+PASS src/tests/payout_restore_reconciliation.spec.ts
+PASS src/tests/pan_migration.spec.ts
+PASS src/tests/migration_scenarios.spec.ts
+PASS src/tests/admin_api_config.spec.ts
+  ● Console
+
+    console.warn
+      Insecure HTTP API URL rejected in production. Falling back to same-origin /api
+
+    [0m [90m 17 |[39m       [33m![39mtrimmed[33m.[39mincludes([32m'127.0.0.1'[39m)
+     [90m 18 |[39m     ) {
+    [31m[1m>[22m[39m[90m 19 |[39m       console[33m.[39mwarn([32m'Insecure HTTP API URL rejected in production. Falling back to same-origin /api'[39m)[33m;[39m
+     [90m    |[39m               [31m[1m^[22m[39m
+     [90m 20 |[39m       [36mreturn[39m [32m'/api'[39m[33m;[39m
+     [90m 21 |[39m     }
+     [90m 22 |[39m     [36mreturn[39m trimmed[33m;[39m[0m
+
+      at warn (src/utils/adminApi.utils.ts:19:15)
+      at Object.<anonymous> (src/tests/admin_api_config.spec.ts:9:27)
+
+PASS src/tests/seed_safety.spec.ts
+---------------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------------------------------
+File                       | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s                                                                                                                   
+---------------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------------------------------
+All files                  |   58.36 |    41.02 |   50.61 |   59.34 |                                                                                                                                     
+ src                       |   71.42 |    23.52 |      70 |   71.95 |                                                                                                                                     
+  server.ts                |   71.42 |    23.52 |      70 |   71.95 | 50-57,117,138,148-165,176-184                                                                                                       
+ src/config                |   87.71 |    77.96 |     100 |   87.27 |                                                                                                                                     
+  index.ts                 |   87.71 |    77.96 |     100 |   87.27 | 70,180,185,188,194,197,204                                                                                                          
+ src/db                    |   84.61 |       80 |     100 |   84.61 |                                                                                                                                     
+  index.ts                 |   84.61 |       80 |     100 |   84.61 | 22-23                                                                                                                               
+ src/middleware            |   59.81 |    27.86 |   43.75 |   60.37 |                                                                                                                                     
+  auth.middleware.ts       |   62.85 |       30 |     100 |   62.85 | 14-15,24-25,33-34,38-39,45,52-53,57-61                                                                                              
+  rateLimit.middleware.ts  |   58.33 |    27.45 |   30.76 |   59.15 | 21-26,40,68-74,80-94,109-126,135,143,151,156,163,171,179                                                                            
+ src/prisma                |   16.66 |    11.53 |      50 |   16.66 |                                                                                                                                     
+  seed.ts                  |   16.66 |    11.53 |      50 |   16.66 | 20-280,287                                                                                                                          
+ src/redis                 |    65.9 |    58.33 |   55.55 |   66.66 |                                                                                                                                     
+  index.ts                 |    65.9 |    58.33 |   55.55 |   66.66 | 19-22,27,33-36,52,64-70,79                                                                                                          
+ src/routes                |   48.77 |    32.08 |   26.66 |   48.92 |                                                                                                                                     
+  admin.routes.ts          |    40.7 |    28.27 |   15.38 |      40 | 110,118-168,176-265,273-289,302,322-330,338-378,383-397,405-417,430,437,493,501-526,531-555,560-578,586-601,606-622,627-643,651-662 
+  auth.routes.ts           |      75 |       50 |   81.81 |      75 | 27,33,44,49,64,68,80,110,127,141-148,157-166,174,179,187,203,219,231,269,290,314                                                    
+  bill.routes.ts           |   48.78 |     41.5 |   33.33 |   48.78 | 24,32,39,47,57,63,77,85,92,99,110-112,117-123,131,162,170-177,185-212                                                               
+  kyc.routes.ts            |   38.09 |        0 |       0 |   38.09 | 9-30,35-40                                                                                                                          
+  payment.routes.ts        |   27.58 |        0 |       0 |   27.58 | 8-30,35-67,72-81                                                                                                                    
+  payout.routes.ts         |   37.83 |        0 |      25 |   37.83 | 18,27-76,84-112                                                                                                                     
+  reward.routes.ts         |   27.58 |        0 |       0 |      32 | 9-63,68-72                                                                                                                          
+  wallet.routes.ts         |      40 |        0 |       0 |      40 | 8-50                                                                                                                                
+  webhook.routes.ts        |   52.05 |    34.88 |     100 |   52.05 | 19-20,27-39,42-43,58-59,108-110,116-121,149-187                                                                                     
+ src/scripts               |   62.22 |    14.28 |      25 |   62.22 |                                                                                                                                     
+  migrate-legacy-pan.ts    |   62.22 |    14.28 |      25 |   62.22 | 42-43,70-75,83-88,106-107,118-134                                                                                                   
+ src/services              |   71.07 |    48.08 |   72.13 |   72.33 |                                                                                                                                     
+  auth.service.ts          |   74.53 |    35.08 |   91.66 |      75 | 26,37-44,58-59,72,98,122,140,154,161-165,174-188,224,251,255,259,263,300,369,373,436,445,458,466,486,502,518-520,540,560,568        
+  bill.service.ts          |    80.3 |    69.31 |     100 |   81.53 | 30,34,105-110,175,179-180,289,302,305,308,311,337-340,364,469,482,485,488,491                                                       
+  gst.service.ts           |   58.62 |    48.14 |   33.33 |   60.71 | 60-86,106,156-183                                                                                                                   
+  kyc.service.ts           |     100 |      100 |     100 |     100 |                                                                                                                                     
+  payment.service.ts       |   35.21 |      9.3 |      40 |   36.76 | 21-24,37,48-75,114-202,226-230                                                                                                      
+  payout.service.ts        |   77.39 |    55.12 |   76.92 |   79.43 | 27,45,48,94-95,97-98,142,147,154,157,160,165,181,250-261,273-274,299,388,400,415-420,500,513,553-554                                
+  reward-rule.service.ts   |   59.57 |    44.06 |      50 |   60.86 | 29-43,89,93,100,107,204-252                                                                                                         
+  reward.service.ts        |   83.63 |    53.84 |   85.71 |   83.33 | 32-35,64-65,74,117-119                                                                                                              
+  storage.service.ts       |     100 |      100 |     100 |     100 |                                                                                                                                     
+ src/services/kyc          |   72.52 |       50 |   54.54 |   76.74 |                                                                                                                                     
+  index.ts                 |   70.83 |    31.25 |      50 |   73.91 | 19-24,44,75-84,97,143-162                                                                                                           
+  mock.provider.ts         |   72.72 |       20 |     100 |   72.72 | 15,19,29                                                                                                                            
+  signcare.provider.ts     |      75 |    62.16 |      50 |   82.75 | 22-25,34,87                                                                                                                         
+ src/services/sms          |   69.86 |    41.93 |   45.45 |      75 |                                                                                                                                     
+  index.ts                 |   68.18 |       20 |   66.66 |   71.42 | 18-29                                                                                                                               
+  mock.provider.ts         |   54.54 |      100 |      25 |      60 | 28-34                                                                                                                               
+  msg91.provider.ts        |      75 |    46.15 |      50 |   81.08 | 24-27,39,79-82                                                                                                                      
+ src/services/storage      |   58.53 |    44.44 |   47.82 |   59.66 |                                                                                                                                     
+  index.ts                 |   66.23 |    45.45 |      70 |   68.49 | 22-26,30-34,43,79,96,182-204                                                                                                        
+  local.provider.ts        |   69.56 |       75 |   57.14 |   69.56 | 38-46,55-56                                                                                                                         
+  r2.provider.ts           |   21.73 |        0 |       0 |   21.73 | 9-89                                                                                                                                
+ src/utils                 |   89.74 |    52.17 |   86.66 |   93.33 |                                                                                                                                     
+  adminApi.utils.ts        |     100 |       90 |     100 |     100 | 8                                                                                                                                   
+  crypto.utils.ts          |   90.47 |    22.22 |     100 |   97.43 | 40                                                                                                                                  
+  money.utils.ts           |   82.35 |        0 |      75 |   82.35 | 39-41                                                                                                                               
+  timezone.utils.ts        |    90.9 |    33.33 |   66.66 |    90.9 | 30                                                                                                                                  
+ src/worker                |   18.53 |     5.37 |   11.76 |   19.28 |                                                                                                                                     
+  payout.worker.ts         |   19.68 |     5.55 |    9.09 |   20.49 | 12-26,33-41,62-63,74-75,91-92,106-107,119,137-397                                                                                   
+  reconciliation.worker.ts |   16.66 |     5.12 |   16.66 |   17.33 | 38-174                                                                                                                              
+---------------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------------------------------
+
+Test Suites: 3 failed, 12 passed, 15 total
+Tests:       4 failed, 105 passed, 109 total
+Snapshots:   0 total
+Time:        28.189 s
+Ran all test suites.
