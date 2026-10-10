@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,35 +10,52 @@ import {
   ActivityIndicator,
   Modal,
 } from 'react-native';
-import { ArrowLeft, Phone, Lock, ShieldCheck, AlertCircle, KeyRound, CheckCircle2 } from 'lucide-react-native';
+import {
+  ArrowLeft,
+  Lock,
+  Shield,
+  AlertCircle,
+  CheckCircle2,
+  Phone,
+  Eye,
+  EyeOff,
+  User,
+  KeyRound,
+} from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
 
+type LoginState =
+  | 'IDLE'
+  | 'VALIDATING'
+  | 'SUBMITTING_CREDENTIALS'
+  | 'WAITING_FOR_OTP'
+  | 'VERIFYING_OTP'
+  | 'AUTHENTICATED'
+  | 'ERROR';
+
 export default function LoginScreen() {
-  const { setCurrentScreen, login, loginAdmin } = useApp();
+  const { setCurrentScreen, login, loginAdminSession } = useApp();
 
-  // Mode: 'USER' or 'ADMIN'
-  const [loginMode, setLoginMode] = useState<'USER' | 'ADMIN'>('USER');
-
-  // Normal User login fields
-  const [mobile, setMobile] = useState('');
+  // Unified Single Input Fields
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
-  // Admin login flow
-  // 1: Enter Identifier & Request OTP
-  // 2: Enter OTP & Verify Challenge
-  // 3: Enter Password & Complete Admin Login
-  const [adminStep, setAdminStep] = useState<1 | 2 | 3>(1);
-  const [adminIdentifier, setAdminIdentifier] = useState('');
-  const [adminOtp, setAdminOtp] = useState('');
-  const [adminToken, setAdminToken] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
-
-  const [loading, setLoading] = useState(false);
+  // Explicit Authentication State Machine
+  const [loginState, setLoginState] = useState<LoginState>('IDLE');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
-  // Forgot Password modal (Real backend flow: request -> verify -> complete)
+  // Administrator OTP Verification State
+  const [showOtpModal, setShowOtpModal] = useState(false);
+  const [adminOtp, setAdminOtp] = useState('');
+  const [challengeToken, setChallengeToken] = useState<string | null>(null);
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [otpInfo, setOtpInfo] = useState<string | null>(null);
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
+
+  // Forgot Password modal state (Real 3-step sequence)
   const [showForgot, setShowForgot] = useState(false);
   const [forgotStep, setForgotStep] = useState<1 | 2 | 3>(1);
   const [forgotMobile, setForgotMobile] = useState('');
@@ -49,88 +66,166 @@ export default function LoginScreen() {
   const [forgotError, setForgotError] = useState<string | null>(null);
   const [forgotLoading, setForgotLoading] = useState(false);
 
-  // User Login Handler
-  const handleUserLogin = async () => {
-    if (!mobile || !password) {
-      setErrorMsg('Please enter both mobile number and password.');
-      return;
+  // Cooldown countdown timer for admin OTP resend
+  useEffect(() => {
+    let timer: any;
+    if (cooldownRemaining > 0) {
+      timer = setInterval(() => {
+        setCooldownRemaining((prev) => (prev > 0 ? prev - 1 : 0));
+      }, 1000);
     }
+    return () => clearInterval(timer);
+  }, [cooldownRemaining]);
 
-    setLoading(true);
-    setErrorMsg(null);
-
-    try {
-      await login(mobile, password);
-    } catch (e: any) {
-      setErrorMsg(e.message || 'Login failed. Please check credentials.');
-    } finally {
-      setLoading(false);
-    }
+  // Client-side detection: whether identifier contains role prefix letters
+  const isAdminIdentifier = (id: string): boolean => {
+    const trimmed = id.trim();
+    return /[a-zA-Z]/.test(trimmed);
   };
 
-  // Admin Login Flow Handlers
-  const handleAdminRequestOtp = async () => {
-    if (!adminIdentifier.trim()) {
-      setErrorMsg('Please enter your admin identifier (e.g. XYZ9876543210).');
+  const detectedIsAdmin = isAdminIdentifier(identifier);
+
+  // ========================================================
+  // UNIFIED LOGIN SUBMIT HANDLER
+  // ========================================================
+  const handleUnifiedLogin = async () => {
+    if (loginState === 'VALIDATING' || loginState === 'SUBMITTING_CREDENTIALS') {
+      return; // Prevent duplicate submissions
+    }
+
+    const trimmedId = identifier.trim();
+    if (!trimmedId) {
+      setErrorMsg('Please enter your mobile number or Administrator ID.');
+      setLoginState('ERROR');
       return;
     }
 
-    setLoading(true);
-    setErrorMsg(null);
-    setInfoMsg(null);
-
-    try {
-      const res = await MobileApiClient.requestAdminOtp(adminIdentifier.trim());
-      setInfoMsg(res.message || 'OTP dispatched to registered mobile number.');
-      setAdminStep(2);
-    } catch (e: any) {
-      setErrorMsg(e.message || 'Failed to dispatch admin OTP.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAdminVerifyOtp = async () => {
-    if (!adminOtp.trim() || adminOtp.trim().length !== 6) {
-      setErrorMsg('Please enter a valid 6-digit verification code.');
+    if (!password) {
+      setErrorMsg('Please enter your password.');
+      setLoginState('ERROR');
       return;
     }
 
-    setLoading(true);
     setErrorMsg(null);
     setInfoMsg(null);
+    setLoginState('VALIDATING');
 
-    try {
-      const res = await MobileApiClient.verifyAdminOtp(adminIdentifier.trim(), adminOtp.trim());
-      setAdminToken(res.verificationToken);
-      setInfoMsg('OTP verified successfully. Please enter your administrator password.');
-      setAdminStep(3);
-    } catch (e: any) {
-      setErrorMsg(e.message || 'Invalid or expired verification code.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    // ----------------------------------------------------
+    // FLOW A: Ordinary Craftsman User (10-Digit Mobile)
+    // ----------------------------------------------------
+    if (!isAdminIdentifier(trimmedId)) {
+      const cleanMobile = trimmedId.replace(/\D/g, '').slice(-10);
+      if (cleanMobile.length !== 10) {
+        setErrorMsg('Please enter a valid 10-digit Indian mobile number.');
+        setLoginState('ERROR');
+        return;
+      }
 
-  const handleAdminCompleteLogin = async () => {
-    if (!adminPassword) {
-      setErrorMsg('Please enter your administrator password.');
+      setLoginState('SUBMITTING_CREDENTIALS');
+
+      try {
+        await login(cleanMobile, password);
+        setLoginState('AUTHENTICATED');
+      } catch (err: any) {
+        setErrorMsg(err.message || 'Invalid mobile number or password. Please verify credentials.');
+        setLoginState('ERROR');
+      }
       return;
     }
 
-    setLoading(true);
-    setErrorMsg(null);
+    // ----------------------------------------------------
+    // FLOW B: Administrator (Prefix + Mobile Identifier)
+    // Sequence: Password Checked First -> OTP Challenge -> Full Session
+    // ----------------------------------------------------
+    const cleanAdminId = trimmedId.toUpperCase().replace(/\s+/g, '');
+    if (cleanAdminId.length < 11) {
+      setErrorMsg('Please enter a valid Administrator ID (Prefix + 10-digit mobile).');
+      setLoginState('ERROR');
+      return;
+    }
+
+    setLoginState('SUBMITTING_CREDENTIALS');
 
     try {
-      await loginAdmin(adminIdentifier.trim(), adminPassword, adminToken);
-    } catch (e: any) {
-      setErrorMsg(e.message || 'Admin login failed. Please check password.');
-    } finally {
-      setLoading(false);
+      const res = await MobileApiClient.requestAdminOtp(cleanAdminId, password);
+      const token = res.challengeToken || res.verificationToken;
+
+      setChallengeToken(token);
+      setAdminOtp('');
+      setOtpError(null);
+      setOtpInfo(res.message || 'Verification code dispatched to your registered mobile number.');
+      setCooldownRemaining(res.cooldownSeconds || 60);
+      setShowOtpModal(true);
+      setLoginState('WAITING_FOR_OTP');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Invalid administrator credentials. Access denied.');
+      setLoginState('ERROR');
     }
   };
 
-  // Forgot Password Step 1: Request OTP
+  // ========================================================
+  // ADMIN OTP VERIFY HANDLER
+  // ========================================================
+  const handleVerifyAdminOtp = async () => {
+    if (loginState === 'VERIFYING_OTP') return;
+
+    const cleanOtp = adminOtp.trim();
+    if (!cleanOtp || cleanOtp.length !== 6) {
+      setOtpError('Please enter the 6-digit verification code.');
+      return;
+    }
+
+    const cleanAdminId = identifier.trim().toUpperCase().replace(/\s+/g, '');
+    setOtpError(null);
+    setLoginState('VERIFYING_OTP');
+
+    try {
+      const res = await MobileApiClient.verifyAdminOtp(cleanAdminId, cleanOtp, challengeToken || undefined);
+
+      if (res.token && res.user) {
+        await loginAdminSession(res.user, res.token);
+        setShowOtpModal(false);
+        setLoginState('AUTHENTICATED');
+      } else {
+        throw new Error('Failed to establish administrator session. Please retry.');
+      }
+    } catch (err: any) {
+      setOtpError(err.message || 'Invalid or expired verification code. Please check and retry.');
+      setLoginState('WAITING_FOR_OTP');
+    }
+  };
+
+  // Resend Admin OTP
+  const handleResendAdminOtp = async () => {
+    if (cooldownRemaining > 0) return;
+    const cleanAdminId = identifier.trim().toUpperCase().replace(/\s+/g, '');
+
+    try {
+      setOtpError(null);
+      setOtpInfo('Requesting a new verification code...');
+      const res = await MobileApiClient.requestAdminOtp(cleanAdminId, password);
+      const token = res.challengeToken || res.verificationToken;
+      setChallengeToken(token);
+      setCooldownRemaining(res.cooldownSeconds || 60);
+      setOtpInfo(res.message || 'New verification code dispatched.');
+    } catch (err: any) {
+      setOtpError(err.message || 'Failed to resend verification code.');
+    }
+  };
+
+  // Safe Cancel / Reset from Admin OTP Challenge
+  const handleCancelAdminOtp = () => {
+    setShowOtpModal(false);
+    setChallengeToken(null);
+    setAdminOtp('');
+    setOtpError(null);
+    setOtpInfo(null);
+    setLoginState('IDLE');
+  };
+
+  // ========================================================
+  // FORGOT PASSWORD FLOW HANDLERS (Real Backend API)
+  // ========================================================
   const handleSendForgotOtp = async () => {
     const clean = forgotMobile.replace(/\D/g, '').slice(-10);
     if (clean.length !== 10) {
@@ -152,7 +247,6 @@ export default function LoginScreen() {
     }
   };
 
-  // Forgot Password Step 2: Verify OTP
   const handleVerifyForgotOtp = async () => {
     const clean = forgotMobile.replace(/\D/g, '').slice(-10);
     if (!forgotOtp || forgotOtp.trim().length !== 6) {
@@ -175,7 +269,6 @@ export default function LoginScreen() {
     }
   };
 
-  // Forgot Password Step 3: Complete Reset
   const handleCompleteForgot = async () => {
     const clean = forgotMobile.replace(/\D/g, '').slice(-10);
     if (!newPassword || newPassword.length < 6) {
@@ -194,8 +287,9 @@ export default function LoginScreen() {
       });
       setShowForgot(false);
       setInfoMsg(res.message || 'Password reset successfully. Please login.');
-      setMobile(clean);
+      setIdentifier(clean);
       setPassword('');
+      setLoginState('IDLE');
     } catch (e: any) {
       setForgotError(e.message || 'Password reset failed. Please retry.');
     } finally {
@@ -203,24 +297,25 @@ export default function LoginScreen() {
     }
   };
 
+  const isSubmitting = loginState === 'SUBMITTING_CREDENTIALS' || loginState === 'VALIDATING';
+
   return (
     <View style={styles.container}>
-      {/* Top Header */}
+      {/* Top Header Bar */}
       <View style={styles.topBar}>
         <TouchableOpacity
           style={styles.backBtn}
           onPress={() => setCurrentScreen('WELCOME')}
+          activeOpacity={0.8}
         >
           <ArrowLeft size={20} color="#0F172A" />
         </TouchableOpacity>
-        <Text style={styles.topBarTitle}>
-          {loginMode === 'ADMIN' ? 'Admin Portal' : 'Login'}
-        </Text>
+        <Text style={styles.topBarTitle}>Sign In</Text>
         <View style={{ width: 36 }} />
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 40 }}>
-        {/* Brand Banner */}
+      <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+        {/* Hiralal & Sons Branding */}
         <View style={styles.brandRow}>
           <Image
             source={require('../../assets/brand_logo.png')}
@@ -229,241 +324,246 @@ export default function LoginScreen() {
           />
           <View>
             <Text style={styles.brandTitle}>HIRALAL AND SONS</Text>
-            <Text style={styles.brandSub}>
-              {loginMode === 'ADMIN' ? 'ADMINISTRATION' : 'REWARDS PROGRAM'}
-            </Text>
+            <Text style={styles.brandSub}>REWARDS PLATFORM</Text>
           </View>
         </View>
 
-        {/* Mode Selector Tab */}
-        <View style={styles.modeTabs}>
-          <TouchableOpacity
-            style={[styles.modeTab, loginMode === 'USER' && styles.modeTabActive]}
-            onPress={() => { setLoginMode('USER'); setErrorMsg(null); setInfoMsg(null); }}
-          >
-            <Text style={[styles.modeTabText, loginMode === 'USER' && styles.modeTabTextActive]}>
-              Craftsman Login
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.modeTab, loginMode === 'ADMIN' && styles.modeTabActive]}
-            onPress={() => { setLoginMode('ADMIN'); setErrorMsg(null); setInfoMsg(null); setAdminStep(1); }}
-          >
-            <Text style={[styles.modeTabText, loginMode === 'ADMIN' && styles.modeTabTextActive]}>
-              Admin Access
-            </Text>
-          </TouchableOpacity>
-        </View>
-
+        {/* Heading & Subtitle */}
         <View style={styles.welcomeBox}>
-          <Text style={styles.welcomeHeading}>
-            {loginMode === 'ADMIN' ? 'Administrator Login' : 'Welcome Back!'}
-          </Text>
+          <Text style={styles.welcomeHeading}>Welcome Back!</Text>
           <Text style={styles.welcomeDesc}>
-            {loginMode === 'ADMIN'
-              ? 'Authorized personnel only. Sequence: Identifier → OTP → Password.'
-              : 'Enter your 10-digit mobile number and password to access your rewards.'}
+            Sign in with your mobile number or administrator ID to access your account.
           </Text>
         </View>
 
+        {/* Error Notification Banner */}
         {errorMsg && (
           <View style={styles.errorBox}>
-            <AlertCircle size={15} color="#DC2626" />
+            <AlertCircle size={16} color="#DC2626" />
             <Text style={styles.errorText}>{errorMsg}</Text>
           </View>
         )}
 
+        {/* Success / Info Notification Banner */}
         {infoMsg && (
           <View style={styles.infoBox}>
-            <CheckCircle2 size={15} color="#059669" />
+            <CheckCircle2 size={16} color="#059669" />
             <Text style={styles.infoText}>{infoMsg}</Text>
           </View>
         )}
 
-        {/* ================= USER LOGIN FORM ================= */}
-        {loginMode === 'USER' && (
-          <View style={styles.form}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Mobile Number</Text>
-              <View style={styles.inputWrapper}>
+        {/* Unified Login Form */}
+        <View style={styles.form}>
+          {/* 1. Unified Identifier Field */}
+          <View style={styles.inputGroup}>
+            <View style={styles.labelRow}>
+              <Text style={styles.label}>Mobile Number or Admin ID</Text>
+              {detectedIsAdmin && (
+                <View style={styles.adminBadge}>
+                  <Shield size={11} color="#1E60D5" />
+                  <Text style={styles.adminBadgeText}>Admin ID Detected</Text>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.inputWrapper}>
+              {!detectedIsAdmin ? (
                 <View style={styles.prefixBox}>
                   <Text style={styles.prefixText}>🇮🇳 +91</Text>
                 </View>
-                <TextInput
-                  style={styles.input}
-                  value={mobile}
-                  onChangeText={setMobile}
-                  placeholder="Enter 10-digit mobile"
-                  keyboardType="phone-pad"
-                  maxLength={10}
-                />
-              </View>
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Password</Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={[styles.input, { paddingLeft: 14 }]}
-                  value={password}
-                  onChangeText={setPassword}
-                  placeholder="Enter your password"
-                  secureTextEntry
-                />
-              </View>
-            </View>
-
-            <TouchableOpacity
-              style={styles.forgotBtn}
-              onPress={() => {
-                setShowForgot(true);
-                setForgotStep(1);
-                setForgotMobile(mobile);
-                setForgotError(null);
-                setForgotMsg(null);
-              }}
-            >
-              <Text style={styles.forgotText}>Forgot Password?</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.loginBtn}
-              onPress={handleUserLogin}
-              disabled={loading}
-              activeOpacity={0.85}
-            >
-              {loading ? (
-                <ActivityIndicator color="#ffffff" />
               ) : (
-                <Text style={styles.loginBtnText}>Login</Text>
+                <View style={[styles.prefixBox, styles.prefixBoxAdmin]}>
+                  <Shield size={14} color="#1E60D5" />
+                </View>
               )}
-            </TouchableOpacity>
+              <TextInput
+                style={styles.input}
+                value={identifier}
+                onChangeText={(val) => {
+                  setIdentifier(val);
+                  setErrorMsg(null);
+                  if (loginState === 'ERROR') setLoginState('IDLE');
+                }}
+                placeholder={detectedIsAdmin ? 'Prefix + 10-digit mobile' : 'Enter 10-digit mobile number'}
+                placeholderTextColor="#94A3B8"
+                autoCapitalize={detectedIsAdmin ? 'characters' : 'none'}
+                keyboardType={detectedIsAdmin ? 'default' : 'phone-pad'}
+                maxLength={detectedIsAdmin ? 20 : 15}
+                editable={!isSubmitting}
+              />
+            </View>
+            <Text style={styles.helperText}>
+              Craftsmen enter your 10-digit mobile. Administrators enter your role prefix followed by your mobile.
+            </Text>
+          </View>
 
-            <View style={styles.createAccountRow}>
-              <Text style={styles.noAccountText}>Don't have an account yet? </Text>
-              <TouchableOpacity onPress={() => setCurrentScreen('REGISTER')}>
-                <Text style={styles.createAccountLink}>Register Now</Text>
+          {/* 2. Password Field */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Password</Text>
+            <View style={styles.inputWrapper}>
+              <View style={styles.iconBox}>
+                <Lock size={16} color="#64748B" />
+              </View>
+              <TextInput
+                style={[styles.input, { paddingLeft: 8 }]}
+                value={password}
+                onChangeText={(val) => {
+                  setPassword(val);
+                  setErrorMsg(null);
+                  if (loginState === 'ERROR') setLoginState('IDLE');
+                }}
+                placeholder="Enter your password"
+                placeholderTextColor="#94A3B8"
+                secureTextEntry={!showPassword}
+                editable={!isSubmitting}
+              />
+              <TouchableOpacity
+                style={styles.eyeBtn}
+                onPress={() => setShowPassword(!showPassword)}
+                activeOpacity={0.7}
+              >
+                {showPassword ? (
+                  <EyeOff size={18} color="#64748B" />
+                ) : (
+                  <Eye size={18} color="#64748B" />
+                )}
               </TouchableOpacity>
             </View>
           </View>
-        )}
 
-        {/* ================= ADMIN LOGIN FLOW ================= */}
-        {loginMode === 'ADMIN' && (
-          <View style={styles.form}>
-            {/* Step 1: Identifier */}
-            {adminStep === 1 && (
-              <>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Admin Role Identifier</Text>
-                  <View style={styles.inputWrapper}>
-                    <TextInput
-                      style={[styles.input, { paddingLeft: 14 }]}
-                      value={adminIdentifier}
-                      onChangeText={setAdminIdentifier}
-                      placeholder="e.g. XYZ9876543210 (Prefix + Mobile)"
-                      autoCapitalize="characters"
-                    />
-                  </View>
-                  <Text style={styles.helperText}>
-                    Enter your role prefix (e.g. Bill Admin or Ops Admin) followed by your 10-digit mobile number.
-                  </Text>
-                </View>
+          {/* 3. Forgot Password Link */}
+          <TouchableOpacity
+            style={styles.forgotBtn}
+            onPress={() => {
+              setShowForgot(true);
+              setForgotStep(1);
+              setForgotMobile(identifier.replace(/\D/g, '').slice(-10));
+              setForgotError(null);
+              setForgotMsg(null);
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.forgotText}>Forgot Password?</Text>
+          </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.loginBtn}
-                  onPress={handleAdminRequestOtp}
-                  disabled={loading}
-                  activeOpacity={0.85}
-                >
-                  {loading ? (
-                    <ActivityIndicator color="#ffffff" />
-                  ) : (
-                    <Text style={styles.loginBtnText}>Request Verification OTP</Text>
-                  )}
-                </TouchableOpacity>
-              </>
+          {/* 4. Primary Sign In Button */}
+          <TouchableOpacity
+            style={[styles.loginBtn, isSubmitting && styles.loginBtnDisabled]}
+            onPress={handleUnifiedLogin}
+            disabled={isSubmitting}
+            activeOpacity={0.85}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator color="#ffffff" size="small" />
+            ) : (
+              <Text style={styles.loginBtnText}>Sign In</Text>
             )}
+          </TouchableOpacity>
 
-            {/* Step 2: OTP */}
-            {adminStep === 2 && (
-              <>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Enter 6-Digit Verification Code</Text>
-                  <View style={styles.inputWrapper}>
-                    <TextInput
-                      style={[styles.input, { paddingLeft: 14, textAlign: 'center', letterSpacing: 6 }]}
-                      value={adminOtp}
-                      onChangeText={setAdminOtp}
-                      placeholder="Enter OTP"
-                      keyboardType="numeric"
-                      maxLength={6}
-                    />
-                  </View>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.loginBtn}
-                  onPress={handleAdminVerifyOtp}
-                  disabled={loading}
-                  activeOpacity={0.85}
-                >
-                  {loading ? (
-                    <ActivityIndicator color="#ffffff" />
-                  ) : (
-                    <Text style={styles.loginBtnText}>Verify OTP Challenge</Text>
-                  )}
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={{ marginTop: 12, alignItems: 'center' }}
-                  onPress={() => setAdminStep(1)}
-                >
-                  <Text style={{ fontSize: 13, color: '#2563EB', fontWeight: '600' }}>
-                    Change Identifier
-                  </Text>
-                </TouchableOpacity>
-              </>
-            )}
-
-            {/* Step 3: Password */}
-            {adminStep === 3 && (
-              <>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Administrator Password</Text>
-                  <View style={styles.inputWrapper}>
-                    <TextInput
-                      style={[styles.input, { paddingLeft: 14 }]}
-                      value={adminPassword}
-                      onChangeText={setAdminPassword}
-                      placeholder="Enter administrator password"
-                      secureTextEntry
-                    />
-                  </View>
-                  <Text style={styles.helperText}>
-                    Logging in creates a single active session, terminating prior sessions on other devices.
-                  </Text>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.loginBtn}
-                  onPress={handleAdminCompleteLogin}
-                  disabled={loading}
-                  activeOpacity={0.85}
-                >
-                  {loading ? (
-                    <ActivityIndicator color="#ffffff" />
-                  ) : (
-                    <Text style={styles.loginBtnText}>Sign In to Admin Portal</Text>
-                  )}
-                </TouchableOpacity>
-              </>
-            )}
+          {/* 5. Create Account Navigation */}
+          <View style={styles.createAccountRow}>
+            <Text style={styles.noAccountText}>Don't have an account yet? </Text>
+            <TouchableOpacity onPress={() => setCurrentScreen('REGISTER')}>
+              <Text style={styles.createAccountLink}>Register Now</Text>
+            </TouchableOpacity>
           </View>
-        )}
+        </View>
       </ScrollView>
 
-      {/* Forgot Password Modal (Real 3-Step Flow) */}
+      {/* ======================================================== */}
+      {/* ADMINISTRATOR OTP VERIFICATION MODAL                      */}
+      {/* Sequence: Password verified -> OTP verification -> Session*/}
+      {/* ======================================================== */}
+      <Modal visible={showOtpModal} transparent={true} animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeaderRow}>
+              <View style={styles.shieldIconWrap}>
+                <Shield size={20} color="#1E60D5" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Admin Verification</Text>
+                <Text style={styles.modalSubTitle}>Two-Factor Security Verification</Text>
+              </View>
+            </View>
+
+            <Text style={styles.modalDesc}>
+              A 6-digit security code was dispatched to the mobile number associated with your administrator account.
+            </Text>
+
+            {otpError && (
+              <View style={[styles.errorBox, { marginBottom: 12 }]}>
+                <AlertCircle size={14} color="#DC2626" />
+                <Text style={styles.errorText}>{otpError}</Text>
+              </View>
+            )}
+
+            {otpInfo && !otpError && (
+              <View style={[styles.infoBox, { marginBottom: 12 }]}>
+                <CheckCircle2 size={14} color="#059669" />
+                <Text style={styles.infoText}>{otpInfo}</Text>
+              </View>
+            )}
+
+            {/* OTP Code Input */}
+            <View style={styles.otpInputWrap}>
+              <TextInput
+                style={styles.otpInput}
+                value={adminOtp}
+                onChangeText={(val) => {
+                  setAdminOtp(val.replace(/\D/g, ''));
+                  setOtpError(null);
+                }}
+                placeholder="------"
+                placeholderTextColor="#CBD5E1"
+                keyboardType="numeric"
+                maxLength={6}
+                autoFocus={true}
+              />
+            </View>
+
+            {/* Resend OTP Timer Action */}
+            <View style={styles.resendRow}>
+              {cooldownRemaining > 0 ? (
+                <Text style={styles.resendCooldownText}>
+                  Resend code in {cooldownRemaining}s
+                </Text>
+              ) : (
+                <TouchableOpacity onPress={handleResendAdminOtp}>
+                  <Text style={styles.resendActiveText}>Resend Security Code</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Verify & Sign In Action */}
+            <TouchableOpacity
+              style={[styles.modalBtn, loginState === 'VERIFYING_OTP' && styles.loginBtnDisabled]}
+              onPress={handleVerifyAdminOtp}
+              disabled={loginState === 'VERIFYING_OTP'}
+              activeOpacity={0.85}
+            >
+              {loginState === 'VERIFYING_OTP' ? (
+                <ActivityIndicator color="#ffffff" size="small" />
+              ) : (
+                <Text style={styles.modalBtnText}>Verify & Sign In</Text>
+              )}
+            </TouchableOpacity>
+
+            {/* Cancel & Return Safely to Login */}
+            <TouchableOpacity
+              style={styles.modalCancelBtn}
+              onPress={handleCancelAdminOtp}
+              disabled={loginState === 'VERIFYING_OTP'}
+            >
+              <Text style={styles.modalCancelText}>Cancel & Change Account</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ======================================================== */}
+      {/* FORGOT PASSWORD MODAL (Real 3-Step Verification Sequence) */}
+      {/* ======================================================== */}
       {showForgot && (
         <Modal visible={true} transparent={true} animationType="slide">
           <View style={styles.modalOverlay}>
@@ -628,41 +728,11 @@ const styles = StyleSheet.create({
     color: '#DC2626',
     letterSpacing: 1,
   },
-  modeTabs: {
-    flexDirection: 'row',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 12,
-    padding: 3,
-    marginBottom: 20,
-  },
-  modeTab: {
-    flex: 1,
-    paddingVertical: 9,
-    alignItems: 'center',
-    borderRadius: 9,
-  },
-  modeTabActive: {
-    backgroundColor: '#ffffff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  modeTabText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#64748B',
-  },
-  modeTabTextActive: {
-    color: '#0F172A',
-    fontWeight: '700',
-  },
   welcomeBox: {
     marginBottom: 20,
   },
   welcomeHeading: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '800',
     color: '#0F172A',
     marginBottom: 6,
@@ -712,10 +782,29 @@ const styles = StyleSheet.create({
   inputGroup: {
     gap: 6,
   },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   label: {
     fontSize: 13,
     fontWeight: '600',
     color: '#334155',
+  },
+  adminBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    gap: 4,
+  },
+  adminBadgeText: {
+    fontSize: 11,
+    color: '#1E60D5',
+    fontWeight: '700',
   },
   inputWrapper: {
     flexDirection: 'row',
@@ -733,10 +822,20 @@ const styles = StyleSheet.create({
     borderRightWidth: 1,
     borderRightColor: '#E2E8F0',
   },
+  prefixBoxAdmin: {
+    backgroundColor: '#EFF6FF',
+    borderRightColor: '#BFDBFE',
+  },
   prefixText: {
     fontSize: 13,
     fontWeight: '600',
     color: '#475569',
+  },
+  iconBox: {
+    paddingLeft: 12,
+    paddingRight: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   input: {
     flex: 1,
@@ -746,10 +845,14 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontWeight: '500',
   },
+  eyeBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
   helperText: {
     fontSize: 11,
     color: '#94A3B8',
-    marginTop: 4,
+    marginTop: 2,
   },
   forgotBtn: {
     alignSelf: 'flex-end',
@@ -761,17 +864,20 @@ const styles = StyleSheet.create({
     color: '#2563EB',
   },
   loginBtn: {
-    backgroundColor: '#2563EB',
+    backgroundColor: '#1E60D5',
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 8,
-    shadowColor: '#2563EB',
+    shadowColor: '#1E60D5',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 4,
+  },
+  loginBtnDisabled: {
+    opacity: 0.65,
   },
   loginBtnText: {
     fontSize: 15,
@@ -791,7 +897,7 @@ const styles = StyleSheet.create({
   createAccountLink: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#2563EB',
+    color: '#1E60D5',
   },
   modalOverlay: {
     flex: 1,
@@ -812,17 +918,67 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 10,
   },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 12,
+  },
+  shieldIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   modalTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: '#0F172A',
-    marginBottom: 6,
+  },
+  modalSubTitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
   },
   modalDesc: {
     fontSize: 12,
     color: '#64748B',
-    lineHeight: 16,
+    lineHeight: 17,
     marginBottom: 16,
+  },
+  otpInputWrap: {
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  otpInput: {
+    width: '80%',
+    borderWidth: 2,
+    borderColor: '#1E60D5',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0F172A',
+    textAlign: 'center',
+    letterSpacing: 10,
+    backgroundColor: '#F8FAFC',
+  },
+  resendRow: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  resendCooldownText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '500',
+  },
+  resendActiveText: {
+    fontSize: 12,
+    color: '#1E60D5',
+    fontWeight: '700',
   },
   modalInput: {
     borderWidth: 1.5,
@@ -836,7 +992,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   modalBtn: {
-    backgroundColor: '#2563EB',
+    backgroundColor: '#1E60D5',
     paddingVertical: 13,
     borderRadius: 12,
     alignItems: 'center',

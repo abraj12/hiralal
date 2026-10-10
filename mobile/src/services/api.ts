@@ -524,18 +524,18 @@ export class MobileApiClient {
     });
   }
 
-  // Admin Authentication Sequence
-  static requestAdminOtp(identifier: string) {
+  // Admin Authentication Sequence (Password-First, OTP-Challenge Flow)
+  static requestAdminOtp(identifier: string, password?: string) {
     return this.request('/auth/admin/otp/request', {
       method: 'POST',
-      body: JSON.stringify({ identifier }),
+      body: JSON.stringify({ identifier, password }),
     });
   }
 
-  static verifyAdminOtp(identifier: string, otpCode: string) {
+  static verifyAdminOtp(identifier: string, otpCode: string, challengeToken?: string) {
     return this.request('/auth/admin/otp/verify', {
       method: 'POST',
-      body: JSON.stringify({ identifier, otpCode }),
+      body: JSON.stringify({ identifier, otpCode, challengeToken }),
     });
   }
 

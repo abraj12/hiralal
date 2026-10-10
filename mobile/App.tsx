@@ -18,7 +18,7 @@ import OperationsDashboardScreen from './src/screens/OperationsDashboardScreen';
 function MainAppNavigator() {
   const { currentScreen, activeTab, user } = useApp();
 
-  const isAdmin = user?.role === 'BILL_ADMIN' || user?.role === 'OPERATIONS_ADMIN';
+  const isAdmin = user?.role === 'BILL_ADMIN' || user?.role === 'OPERATIONS_ADMIN' || user?.role === 'ADMIN';
 
   const renderActiveScreen = () => {
     if (currentScreen === 'WELCOME') return <WelcomeScreen />;
@@ -31,7 +31,7 @@ function MainAppNavigator() {
       return <BillReviewScreen />;
     }
 
-    if (user?.role === 'OPERATIONS_ADMIN') {
+    if (user?.role === 'OPERATIONS_ADMIN' || user?.role === 'ADMIN') {
       return <OperationsDashboardScreen />;
     }
 

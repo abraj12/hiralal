@@ -56,22 +56,35 @@ export class AuthService {
 
   /**
    * Requests an admin OTP for prefix-based identifier.
+   * When password is provided, verifies credentials FIRST before issuing challenge/OTP.
    * Ensures account exists with the designated role, enforces cooldown & rate limits,
    * invalidates prior unused ADMIN_LOGIN OTPs, and uses configured OTP TTL (<= 300s).
    */
-  static async requestAdminOtp(params: { identifier: string; ipAddress?: string }) {
+  static async requestAdminOtp(params: { identifier: string; password?: string; ipAddress?: string }) {
     const { role, mobile } = this.resolveAdminIdentifier(params.identifier);
 
     const admin = await prisma.user.findFirst({
       where: { mobile, role: role as UserRole },
     });
 
-    if (!admin) {
-      throw new Error('Admin account not found for the provided identifier.');
-    }
-
-    if (admin.status !== 'ACTIVE') {
-      throw new Error('Admin account is suspended. Please contact system support.');
+    if (params.password !== undefined) {
+      if (!params.password) {
+        throw new Error('Admin password is required.');
+      }
+      if (!admin || admin.status !== 'ACTIVE') {
+        throw new Error('Invalid admin credentials.');
+      }
+      const isMatch = await bcrypt.compare(params.password, admin.passwordHash);
+      if (!isMatch) {
+        throw new Error('Invalid admin credentials.');
+      }
+    } else {
+      if (!admin) {
+        throw new Error('Admin account not found for the provided identifier.');
+      }
+      if (admin.status !== 'ACTIVE') {
+        throw new Error('Admin account is suspended. Please contact system support.');
+      }
     }
 
     const now = new Date();
@@ -131,7 +144,31 @@ export class AuthService {
       },
     });
 
-    // 5. Dispatch SMS
+    // 5. Generate and store pre-auth challenge token
+    const challengeToken = generateSecureToken(32);
+    const challengeTokenHash = sha256Hash(challengeToken);
+    const challengeExpiresAt = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes
+
+    await prisma.verificationToken.updateMany({
+      where: {
+        mobile,
+        purpose: 'ADMIN_LOGIN',
+        isUsed: false,
+      },
+      data: { isUsed: true },
+    });
+
+    await prisma.verificationToken.create({
+      data: {
+        mobile,
+        tokenHash: challengeTokenHash,
+        purpose: 'ADMIN_LOGIN',
+        isUsed: false,
+        expiresAt: challengeExpiresAt,
+      },
+    });
+
+    // 6. Dispatch SMS
     const smsResult = await SmsService.sendOtp({
       mobile,
       otpCode,
@@ -146,13 +183,23 @@ export class AuthService {
       cooldownSeconds: 60,
       expiresAt: expiresAt.toISOString(),
       role,
+      requireOtp: true,
+      challengeToken,
+      verificationToken: challengeToken,
     };
   }
 
   /**
-   * Verifies an admin OTP and returns a short-lived, single-use verification challenge token.
+   * Verifies an admin OTP and returns a short-lived, single-use verification challenge token,
+   * OR when challengeToken is provided, completes authentication and issues full session.
    */
-  static async verifyAdminOtp(params: { identifier: string; otpCode: string }) {
+  static async verifyAdminOtp(params: {
+    identifier: string;
+    otpCode: string;
+    challengeToken?: string;
+    userAgent?: string;
+    ipAddress?: string;
+  }) {
     const { role, mobile } = this.resolveAdminIdentifier(params.identifier);
     const cleanOtp = (params.otpCode || '').trim();
 
@@ -163,6 +210,28 @@ export class AuthService {
     const now = new Date();
 
     const txResult = await prisma.$transaction(async (tx) => {
+      // 1. If challengeToken is provided, atomically validate and consume it
+      if (params.challengeToken) {
+        const cHash = sha256Hash(params.challengeToken);
+        const claim = await tx.verificationToken.updateMany({
+          where: {
+            tokenHash: cHash,
+            mobile,
+            purpose: 'ADMIN_LOGIN',
+            isUsed: false,
+            expiresAt: { gt: now },
+          },
+          data: { isUsed: true },
+        });
+
+        if (claim.count !== 1) {
+          return {
+            success: false,
+            message: 'Invalid or expired login challenge. Please sign in again.',
+          };
+        }
+      }
+
       const latest = await tx.otpRequest.findFirst({
         where: {
           mobile,
@@ -232,6 +301,67 @@ export class AuthService {
         data: { isUsed: true },
       });
 
+      // If challengeToken was provided, complete authentication and issue session
+      if (params.challengeToken) {
+        const adminUser = await tx.user.findFirst({
+          where: { mobile, role: role as UserRole },
+        });
+
+        if (!adminUser || adminUser.status !== 'ACTIVE') {
+          return {
+            success: false,
+            message: 'Admin account is suspended or not found.',
+          };
+        }
+
+        const sessionId = crypto.randomUUID();
+
+        await tx.authSession.updateMany({
+          where: { userId: adminUser.id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+
+        await tx.user.update({
+          where: { id: adminUser.id },
+          data: { activeSessionId: sessionId },
+        });
+
+        const sessionToken = generateSecureToken(40);
+        const sessionTokenHash = sha256Hash(sessionToken);
+        const expiresAt = new Date(Date.now() + 24 * 3600 * 1000);
+
+        await tx.authSession.create({
+          data: {
+            userId: adminUser.id,
+            sessionId,
+            tokenHash: sessionTokenHash,
+            userAgent: params.userAgent,
+            ipAddress: params.ipAddress,
+            expiresAt,
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            adminId: adminUser.id,
+            action: 'ADMIN_LOGIN',
+            entityType: 'User',
+            entityId: adminUser.id,
+            ipAddress: params.ipAddress,
+            userAgent: params.userAgent,
+            newValue: `Administrator authenticated via verified OTP challenge for role ${adminUser.role}.`,
+          },
+        });
+
+        return {
+          success: true,
+          message: 'Admin verification code verified successfully.',
+          adminUser,
+          sessionId,
+        };
+      }
+
+      // Legacy path: issue verificationToken
       const verificationToken = generateSecureToken(32);
       const tokenHash = sha256Hash(verificationToken);
       const tokenExpiresAt = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes challenge TTL
@@ -266,6 +396,35 @@ export class AuthService {
 
     if (!txResult.success) {
       throw new Error(txResult.message);
+    }
+
+    if (txResult.adminUser && txResult.sessionId) {
+      const accessToken = jwt.sign(
+        {
+          userId: txResult.adminUser.id,
+          role: txResult.adminUser.role,
+          mobile: txResult.adminUser.mobile,
+          sessionId: txResult.sessionId,
+        },
+        config.admin.accessSecret || config.jwt.accessSecret,
+        { expiresIn: (config.admin.accessTokenExpiresIn || '1d') as any }
+      );
+
+      return {
+        success: true,
+        message: txResult.message,
+        verificationToken: params.challengeToken || txResult.sessionId,
+        token: accessToken,
+        accessToken,
+        user: {
+          id: txResult.adminUser.id,
+          mobile: txResult.adminUser.mobile,
+          fullName: txResult.adminUser.fullName,
+          role: txResult.adminUser.role,
+        },
+        sessionId: txResult.sessionId,
+        role,
+      };
     }
 
     return {

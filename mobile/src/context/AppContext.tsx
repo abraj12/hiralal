@@ -22,6 +22,7 @@ interface AppContextType {
   setProfession: (profession: ProfessionType) => void;
   login: (mobile: string, pass: string) => Promise<void>;
   loginAdmin: (identifier: string, pass: string, verificationToken: string) => Promise<void>;
+  loginAdminSession: (user: any, token: string) => Promise<void>;
   logout: () => void;
   refreshData: () => Promise<void>;
 }
@@ -155,6 +156,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentScreen('MAIN');
   };
 
+  const loginAdminSession = async (adminUser: any, token: string) => {
+    await MobileApiClient.setToken(token);
+    setUser(adminUser);
+    setCurrentScreen('MAIN');
+  };
+
   const logout = async () => {
     await MobileApiClient.logout();
     setUser(null);
@@ -184,6 +191,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setProfession: setProfessionState,
         login,
         loginAdmin,
+        loginAdminSession,
         logout,
         refreshData,
       }}

@@ -242,25 +242,39 @@ router.post('/password-reset/complete', async (req: Request, res: Response) => {
 router.post('/admin/otp/request', otpRequestLimiter, async (req: Request, res: Response) => {
   try {
     const identifier = req.body.identifier || req.body.username;
+    const { password } = req.body;
     if (!identifier) {
       return res.status(400).json({ success: false, message: 'Admin identifier is required.' });
     }
     const ipAddress = req.ip || req.socket.remoteAddress;
-    const result = await AuthService.requestAdminOtp({ identifier, ipAddress });
+    const result = await AuthService.requestAdminOtp({ identifier, password, ipAddress });
     res.json({ success: true, ...result });
   } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
+    const isCredentials =
+      err.message.includes('credentials') ||
+      err.message.includes('password') ||
+      err.message.includes('prefix') ||
+      err.message.includes('format');
+    res.status(isCredentials ? 401 : 400).json({ success: false, message: err.message });
   }
 });
 
 router.post('/admin/otp/verify', otpVerifyLimiter, async (req: Request, res: Response) => {
   try {
     const identifier = req.body.identifier || req.body.username;
-    const { otpCode } = req.body;
+    const { otpCode, challengeToken, verificationToken } = req.body;
     if (!identifier || !otpCode) {
       return res.status(400).json({ success: false, message: 'Admin identifier and OTP code are required.' });
     }
-    const result = await AuthService.verifyAdminOtp({ identifier, otpCode });
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+    const result = await AuthService.verifyAdminOtp({
+      identifier,
+      otpCode,
+      challengeToken: challengeToken || verificationToken,
+      userAgent,
+      ipAddress,
+    });
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
