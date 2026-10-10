@@ -57,6 +57,9 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     const adminLoginRes = await request(app)
       .post('/api/auth/admin-login')
       .send({ username: '9999999999', password: 'Admin@123' });
+    if (adminLoginRes.status !== 200) {
+      console.error('adminLoginRes failed with status:', adminLoginRes.status, adminLoginRes.body);
+    }
     expect(adminLoginRes.status).toBe(200);
     adminToken = adminLoginRes.body.token;
 

@@ -3,12 +3,15 @@ import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
-export function assertDemoSeedAllowed(): void {
-  if (process.env.NODE_ENV === 'production') {
+export function assertDemoSeedAllowed(
+  nodeEnv: string = process.env.NODE_ENV || 'development',
+  enableDemoSeed: string | undefined = process.env.ENABLE_DEMO_SEED
+): void {
+  if (nodeEnv === 'production') {
     throw new Error('Demo seed is disabled in production.');
   }
 
-  if (process.env.ENABLE_DEMO_SEED !== 'true') {
+  if (enableDemoSeed !== 'true') {
     throw new Error('Set ENABLE_DEMO_SEED=true to provision demo users.');
   }
 }
