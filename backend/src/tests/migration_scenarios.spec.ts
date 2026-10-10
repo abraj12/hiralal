@@ -6,9 +6,7 @@ describe('Phase 19 — Database Migrations Verification', () => {
   it('Scenario A: verifies migration deployment on a fresh database', async () => {
     // 1. Using active connection, create a fresh database for migration testing
     const baseDbUrl = process.env.DATABASE_URL || 'postgresql://postgres:1234@localhost:5432/hiralal_rewards?schema=public';
-    const parsedAdminUrl = new URL(baseDbUrl);
-    parsedAdminUrl.pathname = '/postgres';
-    const adminDbUrl = parsedAdminUrl.toString();
+    const adminDbUrl = baseDbUrl;
 
     const parsedScenarioUrl = new URL(baseDbUrl);
     parsedScenarioUrl.pathname = '/hiralal_scenario_a_test';
