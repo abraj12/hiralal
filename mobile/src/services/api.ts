@@ -3,13 +3,14 @@ import { Platform, NativeModules } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
 const getBaseUrl = () => {
-  // 1. If explicit EXPO_PUBLIC_API_URL is configured and not emulator 10.0.2.2
-  const envUrl = process.env.EXPO_PUBLIC_API_URL;
-  if (envUrl && !envUrl.includes('10.0.2.2')) {
-    return envUrl;
+  // 1. If running on Web, dynamically connect to current hostname
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
+    const host = window.location.hostname || 'localhost';
+    return `http://${host}:5000/api`;
   }
 
   // 2. Auto-detect host IP from Expo Constants (hostUri or debuggerHost)
+  // This automatically matches the Metro IP that the phone connected to over Wi-Fi
   try {
     const hostUri = Constants.expoConfig?.hostUri || (Constants as any).expoGoConfig?.debuggerHost;
     if (hostUri) {
@@ -36,12 +37,21 @@ const getBaseUrl = () => {
     // ignore
   }
 
-  // 4. If EXPO_PUBLIC_API_URL was set to 10.0.2.2 and no network host was found
-  if (envUrl) {
+  // 4. If explicit EXPO_PUBLIC_API_URL is configured (excluding outdated 10.205.173.1 or 10.0.2.2)
+  const envUrl = process.env.EXPO_PUBLIC_API_URL;
+  if (envUrl && !envUrl.includes('10.205.173.1') && !envUrl.includes('10.0.2.2')) {
+    if (process.env.NODE_ENV === 'production' && !envUrl.startsWith('https://')) {
+      throw new Error('Production mobile builds require an explicit HTTPS EXPO_PUBLIC_API_URL.');
+    }
     return envUrl;
   }
 
-  // 5. Default fallback
+  // 5. Production check: enforce HTTPS in production builds
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Production mobile builds require an explicit HTTPS EXPO_PUBLIC_API_URL.');
+  }
+
+  // 6. Default development fallback
   if (Platform.OS === 'android') {
     return 'http://10.0.2.2:5000/api';
   }
