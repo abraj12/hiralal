@@ -240,7 +240,7 @@ jobs:
       - name: Compose Stack Teardown
         if: always()
         run: |
-          docker compose down -v
+          docker compose down -v || true
 
   mobile-check:
     name: Mobile App Typecheck Verification
