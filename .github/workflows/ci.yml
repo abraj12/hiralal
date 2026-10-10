@@ -2,7 +2,7 @@ name: Production CI Pipeline - Hiralal & Sons Rewards Platform
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'feat/**', 'fix/**' ]
   pull_request:
     branches: [ main ]
 
