@@ -192,6 +192,24 @@ jobs:
       - name: Prepare Docker Environment Configuration
         run: |
           cp .env.example .env
+          sed -i 's/REPLACE_WITH_SECURE_POSTGRES_PASSWORD/HiralalTestPostgresPass2026!/g' .env
+          sed -i 's/REPLACE_WITH_64_CHAR_HEX_JWT_ACCESS_SECRET/a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90/g' .env
+          sed -i 's/REPLACE_WITH_64_CHAR_HEX_JWT_REFRESH_SECRET/b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1/g' .env
+          sed -i 's/REPLACE_WITH_64_CHAR_HEX_ENCRYPTION_KEY/c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2/g' .env
+          sed -i 's/REPLACE_WITH_64_CHAR_HEX_FIELD_ENCRYPTION_KEY/d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3/g' .env
+          sed -i 's/REPLACE_WITH_SECURE_STORAGE_HMAC_SECRET/e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4/g' .env
+          sed -i 's/REPLACE_WITH_CF_R2_ACCESS_KEY_ID/ci_test_r2_access_key_valid/g' .env
+          sed -i 's/REPLACE_WITH_CF_R2_SECRET_ACCESS_KEY/ci_test_r2_secret_key_valid_secret/g' .env
+          sed -i 's/REPLACE_WITH_ACCOUNT_ID/ci-test-account-id-2026/g' .env
+          sed -i 's/REPLACE_WITH_SIGNCARE_API_KEY/ci_test_signcare_api_key_valid/g' .env
+          sed -i 's/REPLACE_WITH_SIGNCARE_APP_ID/ci_test_signcare_app_id_valid/g' .env
+          sed -i 's/REPLACE_WITH_RAZORPAYX_KEY_ID/rzp_test_hiralal2026/g' .env
+          sed -i 's/REPLACE_WITH_RAZORPAYX_KEY_SECRET/rzp_secret_hiralal2026/g' .env
+          sed -i 's/REPLACE_WITH_RAZORPAYX_ACCOUNT_NUMBER/2323230041123456/g' .env
+          sed -i 's/REPLACE_WITH_RAZORPAYX_WEBHOOK_SECRET/ci_test_webhook_secret_rzpx_2026/g' .env
+          sed -i 's/REPLACE_WITH_MSG91_AUTH_KEY/ci_test_msg91_auth_key_valid/g' .env
+          sed -i 's/REPLACE_WITH_MSG91_TEMPLATE_ID/ci_test_msg91_template_valid/g' .env
+          sed -i 's/REPLACE_WITH_INITIAL_ADMIN_PASSWORD/HiralalInitialAdminPass2026!/g' .env
 
       - name: Validate Docker Compose Configuration
         run: |
