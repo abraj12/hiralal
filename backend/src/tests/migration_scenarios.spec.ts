@@ -5,9 +5,18 @@ import { PrismaClient } from '@prisma/client';
 describe('Phase 19 — Database Migrations Verification', () => {
   it('Scenario A: verifies migration deployment on a fresh database', async () => {
     // 1. Using active connection, create a fresh database for migration testing
+    const baseDbUrl = process.env.DATABASE_URL || 'postgresql://postgres:1234@localhost:5432/hiralal_rewards?schema=public';
+    const parsedAdminUrl = new URL(baseDbUrl);
+    parsedAdminUrl.pathname = '/postgres';
+    const adminDbUrl = parsedAdminUrl.toString();
+
+    const parsedScenarioUrl = new URL(baseDbUrl);
+    parsedScenarioUrl.pathname = '/hiralal_scenario_a_test';
+    const scenarioADbUrl = parsedScenarioUrl.toString();
+
     const adminPrisma = new PrismaClient({
       datasources: {
-        db: { url: 'postgresql://postgres:1234@localhost:5432/postgres?schema=public' },
+        db: { url: adminDbUrl },
       },
     });
 
@@ -18,8 +27,6 @@ describe('Phase 19 — Database Migrations Verification', () => {
     } finally {
       await adminPrisma.$disconnect();
     }
-
-    const scenarioADbUrl = 'postgresql://postgres:1234@localhost:5432/hiralal_scenario_a_test?schema=public';
 
     // 2. Execute prisma migrate deploy against fresh database
     const migrateOutput = execSync('npx prisma migrate deploy', {
@@ -59,7 +66,7 @@ describe('Phase 19 — Database Migrations Verification', () => {
       // Cleanup test database
       const cleanupPrisma = new PrismaClient({
         datasources: {
-          db: { url: 'postgresql://postgres:1234@localhost:5432/postgres?schema=public' },
+          db: { url: adminDbUrl },
         },
       });
       await cleanupPrisma.$connect();

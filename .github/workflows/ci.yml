@@ -76,6 +76,13 @@ jobs:
           DATABASE_URL: postgresql://postgres:testpassword@localhost:5432/hiralal_rewards_test?schema=public
         run: npx prisma migrate deploy
 
+      - name: Seed Initial Test Data
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:testpassword@localhost:5432/hiralal_rewards_test?schema=public
+          ADMIN_INITIAL_PASSWORD: AdminCiTest2026!
+        run: npm run seed
+
       - name: Run Production Test Suite with Coverage
         working-directory: backend
         env:
@@ -239,7 +246,7 @@ jobs:
 
       - name: Install Mobile Dependencies
         working-directory: mobile
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
       - name: TypeScript Typecheck
         working-directory: mobile

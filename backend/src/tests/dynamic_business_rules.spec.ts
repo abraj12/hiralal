@@ -119,12 +119,17 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     gst0RuleId = gst0.id;
 
     // 6. Setup Active Reward Rules
+    await prisma.rewardRule.deleteMany({
+      where: { profession: { in: ['PLUMBER', 'TILE_INSTALLER'] } },
+    });
+
     await RewardRuleService.createRule(adminUserId, {
       profession: 'PLUMBER',
       rewardPercentage: 0.50,
       monthlyPoolLimit: 50000.0,
       minRedemptionAmount: 500.0,
       maxRedemptionAmount: 10000.0,
+      effectiveFrom: new Date('2026-10-01'),
     });
 
     await RewardRuleService.createRule(adminUserId, {
@@ -133,6 +138,7 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       monthlyPoolLimit: 40000.0,
       minRedemptionAmount: 500.0,
       maxRedemptionAmount: 10000.0,
+      effectiveFrom: new Date('2026-10-01'),
     });
 
     // Reset current month pools for both professions
@@ -320,13 +326,14 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       profession: 'PLUMBER',
       rewardPercentage: 0.60,
       monthlyPoolLimit: 60000.0,
+      effectiveFrom: new Date('2026-10-04'),
     });
 
     expect(Number(newPlumberRule.rewardPercentage)).toBe(0.60);
 
     // Fetch applicable rule for Plumber and Tile Installer
-    const activePlumberRule = await RewardRuleService.getApplicableRule('PLUMBER');
-    const activeTileRule = await RewardRuleService.getApplicableRule('TILE_INSTALLER');
+    const activePlumberRule = await RewardRuleService.getApplicableRule('PLUMBER', new Date('2026-10-04'));
+    const activeTileRule = await RewardRuleService.getApplicableRule('TILE_INSTALLER', new Date('2026-10-04'));
 
     expect(Number(activePlumberRule.rewardPercentage)).toBe(0.60);
     expect(Number(activeTileRule.rewardPercentage)).toBe(0.75); // Tile rule unaffected
@@ -361,6 +368,7 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       profession: 'PLUMBER',
       rewardPercentage: 1.25,
       monthlyPoolLimit: 80000.0,
+      effectiveFrom: new Date('2026-10-05'),
     });
 
     // 3. Re-query past approved bill from database

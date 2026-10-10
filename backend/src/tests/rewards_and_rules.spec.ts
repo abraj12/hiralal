@@ -111,6 +111,23 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
       expect(analytics.totalPoolCap).toBe(50000.0);
       expect(typeof analytics.usedAmount).toBe('number');
       expect(typeof analytics.remainingAmount).toBe('number');
+
+      // Combined analytics for both professions
+      const combined = await RewardService.getPoolAnalytics();
+      expect(combined.plumber).toBeDefined();
+      expect(combined.tileInstaller).toBeDefined();
+      expect(combined.totalPoolCap).toBeGreaterThan(0);
+      expect(typeof combined.usedAmount).toBe('number');
+    });
+
+    test('Updates reward rules for profession', async () => {
+      const updated = await RewardService.updateRewardRules(testAdminId, {
+        percentage: 0.55,
+        monthlyPoolLimit: 55000.0,
+        profession: 'PLUMBER',
+      });
+      expect(Number(updated.rewardPercentage)).toBe(0.55);
+      expect(Number(updated.monthlyPoolLimit)).toBe(55000.0);
     });
   });
 
