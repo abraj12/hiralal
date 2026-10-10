@@ -8,6 +8,8 @@ import {
   otpVerifyLimiter,
   loginLimiter,
   passwordResetLimiter,
+  adminLoginLimiter,
+  adminAccountLoginLimiter,
 } from '../middleware/rateLimit.middleware';
 import { prisma } from '../db';
 import { config } from '../config';
@@ -206,7 +208,11 @@ router.post('/password-reset/complete', async (req: Request, res: Response) => {
 // 5. ADMIN AUTHENTICATION
 // ==========================================
 
-router.post('/admin-login', async (req: Request, res: Response) => {
+router.post(
+  '/admin-login',
+  adminLoginLimiter,
+  adminAccountLoginLimiter,
+  async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) {

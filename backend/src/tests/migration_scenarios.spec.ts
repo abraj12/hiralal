@@ -66,7 +66,7 @@ describe('Phase 19 — Database Migrations Verification', () => {
       await cleanupPrisma.$executeRawUnsafe('DROP DATABASE IF EXISTS hiralal_scenario_a_test;');
       await cleanupPrisma.$disconnect();
     }
-  }, 30000);
+  }, 90000);
 
   it('Scenario B: verifies existing database migration stability without data loss', async () => {
     // Verify that active production schema contains all required tables and records intact

@@ -54,24 +54,9 @@ router.post('/razorpayx', async (req: Request, res: Response): Promise<void> => 
 
   console.log(`📥 [WEBHOOK] Received RazorpayX Event: ${eventType} (Event ID: ${eventId}, Payout ID: ${payoutEntity?.id})`);
 
-  // Deduplication check using durable WebhookEvent ledger
+  // Deduplication check using durable WebhookEvent ledger with atomic insert
   if (eventId) {
-    const existingEvent = await prisma.webhookEvent.findUnique({
-      where: {
-        provider_event_unique: {
-          provider: 'RAZORPAYX',
-          eventId,
-        },
-      },
-    });
-
-    if (existingEvent && existingEvent.isProcessed) {
-      console.log(`[WEBHOOK] Duplicate event ${eventId} already processed. Returning 200 OK.`);
-      res.status(200).json({ status: 'duplicate_ignored' });
-      return;
-    }
-
-    if (!existingEvent) {
+    try {
       await prisma.webhookEvent.create({
         data: {
           provider: 'RAZORPAYX',
@@ -81,6 +66,22 @@ router.post('/razorpayx', async (req: Request, res: Response): Promise<void> => 
           isProcessed: false,
         },
       });
+    } catch (err: any) {
+      // If event record already exists, check if already processed
+      const existingEvent = await prisma.webhookEvent.findUnique({
+        where: {
+          provider_event_unique: {
+            provider: 'RAZORPAYX',
+            eventId,
+          },
+        },
+      });
+
+      if (existingEvent && existingEvent.isProcessed) {
+        console.log(`[WEBHOOK] Duplicate event ${eventId} already processed. Returning 200 OK.`);
+        res.status(200).json({ status: 'duplicate_ignored' });
+        return;
+      }
     }
   }
 
@@ -114,7 +115,11 @@ router.post('/razorpayx', async (req: Request, res: Response): Promise<void> => 
   if (eventType === 'payout.processed') {
     await PayoutService.finalizeSuccess(payoutRecord.id, razorpayPayoutId);
     console.log(`[WEBHOOK] Payout ${payoutRecord.id} successfully finalized via webhook.`);
-  } else if (eventType === 'payout.failed' || eventType === 'payout.reversed') {
+  } else if (eventType === 'payout.reversed') {
+    const reason = payoutEntity.failure_reason || 'Disbursement reversed by banking partner';
+    await PayoutService.handleReversedPayout(payoutRecord.id, reason);
+    console.log(`[WEBHOOK] Payout ${payoutRecord.id} handled post-success reversal via webhook: ${reason}`);
+  } else if (eventType === 'payout.failed' || eventType === 'payout.rejected') {
     const reason = payoutEntity.failure_reason || 'Disbursement rejected by banking partner';
     await PayoutService.reversePayout(payoutRecord.id, reason);
     console.log(`[WEBHOOK] Payout ${payoutRecord.id} reversed via webhook: ${reason}`);

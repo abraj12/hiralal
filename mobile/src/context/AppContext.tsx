@@ -76,7 +76,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     async function checkExistingSession() {
       try {
-        const token = MobileApiClient.getToken();
+        const token = await MobileApiClient.initToken();
         if (token) {
           const profileRes = await MobileApiClient.getProfile();
           if (profileRes && profileRes.user && mounted) {
@@ -98,14 +98,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
             setCurrentScreen('MAIN');
           } else {
-            MobileApiClient.setToken(null);
+            await MobileApiClient.setToken(null);
             if (mounted) setCurrentScreen('WELCOME');
           }
         } else {
           if (mounted) setCurrentScreen('WELCOME');
         }
       } catch (e) {
-        MobileApiClient.setToken(null);
+        await MobileApiClient.setToken(null);
         if (mounted) setCurrentScreen('WELCOME');
       } finally {
         if (mounted) setIsLoading(false);
@@ -121,7 +121,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const login = async (mobile: string, pass: string) => {
     // Authenticate with real server-side endpoint. NO mock/offline fallback.
     const res = await MobileApiClient.login(mobile, pass);
-    MobileApiClient.setToken(res.token);
+    await MobileApiClient.setToken(res.token);
     setUser(res.user);
 
     if (res.user.profession && (res.user.profession === 'PLUMBER' || res.user.profession === 'TILE_INSTALLER')) {
@@ -136,8 +136,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     refreshData().catch(e => console.warn('Background sync failed:', e));
   };
 
-  const logout = () => {
-    MobileApiClient.setToken(null);
+  const logout = async () => {
+    await MobileApiClient.setToken(null);
     setUser(null);
     setWallet({ availableBalance: 0, processingAmount: 0, totalRedeemed: 0 });
     setTransactions([]);

@@ -9,9 +9,19 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { Camera, Image as ImageIcon, ArrowLeft, CheckCircle2, ShieldCheck, AlertCircle } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+import { Camera, Image as ImageIcon, ArrowLeft, CheckCircle2, AlertCircle, FileText, X } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
+
+interface SelectedFileInfo {
+  uri: string;
+  name: string;
+  type: string;
+  size?: number;
+  file?: any;
+}
 
 export default function UploadBillScreen() {
   const { theme, setCurrentScreen, setActiveTab, refreshData } = useApp();
@@ -20,12 +30,105 @@ export default function UploadBillScreen() {
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [billAmount, setBillAmount] = useState('');
   const [remarks, setRemarks] = useState('');
-  const [hasFile, setHasFile] = useState(true);
+  const [selectedFile, setSelectedFile] = useState<SelectedFileInfo | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const handlePickCamera = async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        setErrorMsg('Camera permission is required to photograph your invoice receipt.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        if (asset.fileSize && asset.fileSize > 10 * 1024 * 1024) {
+          setErrorMsg('Captured photo exceeds the 10MB maximum file size limit.');
+          return;
+        }
+        setSelectedFile({
+          uri: asset.uri,
+          name: asset.fileName || `invoice_${Date.now()}.jpg`,
+          type: asset.mimeType || 'image/jpeg',
+          size: asset.fileSize,
+          file: (asset as any).file,
+        });
+        setErrorMsg(null);
+      }
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Failed to open camera.');
+    }
+  };
+
+  const handlePickGallery = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        setErrorMsg('Photo library permission is required to select your invoice receipt.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        if (asset.fileSize && asset.fileSize > 10 * 1024 * 1024) {
+          setErrorMsg('Selected image exceeds the 10MB maximum file size limit.');
+          return;
+        }
+        setSelectedFile({
+          uri: asset.uri,
+          name: asset.fileName || `invoice_${Date.now()}.jpg`,
+          type: asset.mimeType || 'image/jpeg',
+          size: asset.fileSize,
+          file: (asset as any).file,
+        });
+        setErrorMsg(null);
+      }
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Failed to open photo library.');
+    }
+  };
+
+  const handlePickDocument = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'image/*'],
+        copyToCacheDirectory: true,
+      });
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        if (asset.size && asset.size > 10 * 1024 * 1024) {
+          setErrorMsg('Selected document exceeds the 10MB maximum file size limit.');
+          return;
+        }
+        setSelectedFile({
+          uri: asset.uri,
+          name: asset.name || `invoice_${Date.now()}.pdf`,
+          type: asset.mimeType || 'application/pdf',
+          size: asset.size,
+          file: (asset as any).file,
+        });
+        setErrorMsg(null);
+      }
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Failed to open document picker.');
+    }
+  };
+
   const handleSubmit = async () => {
+    if (!selectedFile) {
+      setErrorMsg('Please attach a valid invoice image or PDF document.');
+      return;
+    }
+
     if (!invoiceNumber.trim() || !invoiceDate || !billAmount.trim()) {
       setErrorMsg('Please fill in Invoice Number, Date, and Amount.');
       return;
@@ -33,7 +136,7 @@ export default function UploadBillScreen() {
 
     const amount = parseFloat(billAmount);
     if (isNaN(amount) || amount <= 0) {
-      setErrorMsg('Please enter a valid bill amount.');
+      setErrorMsg('Please enter a valid positive bill amount.');
       return;
     }
 
@@ -46,6 +149,7 @@ export default function UploadBillScreen() {
         invoiceDate,
         billAmount: amount,
         remarks: remarks.trim() || undefined,
+        file: selectedFile,
       });
       setIsSuccess(true);
       refreshData();
@@ -114,32 +218,50 @@ export default function UploadBillScreen() {
 
         {/* Document Picker Box */}
         <View style={styles.documentPickerContainer}>
-          <Text style={styles.pickerTitle}>Take Photo or Choose from Gallery</Text>
+          <Text style={styles.pickerTitle}>Attach Real Invoice Receipt (PDF / Image) *</Text>
           <View style={styles.pickerButtonsRow}>
             <TouchableOpacity
-              style={[styles.pickerBtn, hasFile && { borderColor: theme.primaryColor, backgroundColor: theme.primaryLight }]}
-              onPress={() => setHasFile(true)}
+              style={[styles.pickerBtn, { backgroundColor: '#F8FAFC' }]}
+              onPress={handlePickCamera}
               activeOpacity={0.8}
             >
-              <Camera size={20} color={theme.primaryColor} />
+              <Camera size={18} color={theme.primaryColor} />
               <Text style={[styles.pickerBtnText, { color: theme.primaryColor }]}>Camera</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.pickerBtn, { backgroundColor: '#F8FAFC' }]}
-              onPress={() => setHasFile(true)}
+              onPress={handlePickGallery}
               activeOpacity={0.8}
             >
-              <ImageIcon size={20} color="#64748B" />
+              <ImageIcon size={18} color="#64748B" />
               <Text style={styles.pickerBtnText}>Gallery</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.pickerBtn, { backgroundColor: '#F8FAFC' }]}
+              onPress={handlePickDocument}
+              activeOpacity={0.8}
+            >
+              <FileText size={18} color="#64748B" />
+              <Text style={styles.pickerBtnText}>Document</Text>
             </TouchableOpacity>
           </View>
 
-          {hasFile && (
+          {selectedFile ? (
             <View style={styles.fileSelectedPreview}>
               <CheckCircle2 size={16} color="#16A34A" />
-              <Text style={styles.fileSelectedText}>Invoice document attached (PDF/Image)</Text>
+              <Text style={styles.fileSelectedText} numberOfLines={1}>
+                {selectedFile.name} {selectedFile.size ? `(${Math.round(selectedFile.size / 1024)} KB)` : ''}
+              </Text>
+              <TouchableOpacity onPress={() => setSelectedFile(null)} style={{ padding: 2 }}>
+                <X size={14} color="#64748B" />
+              </TouchableOpacity>
             </View>
+          ) : (
+            <Text style={styles.noFileNotice}>
+              No document selected. Photo or PDF required (max 10MB).
+            </Text>
           )}
         </View>
 
@@ -207,15 +329,21 @@ export default function UploadBillScreen() {
           </View>
 
           <TouchableOpacity
-            style={[styles.primaryButton, { backgroundColor: theme.primaryColor }]}
+            style={[
+              styles.primaryButton,
+              { backgroundColor: theme.primaryColor },
+              (!selectedFile || isSubmitting) && { opacity: 0.5 },
+            ]}
             onPress={handleSubmit}
-            disabled={isSubmitting}
+            disabled={isSubmitting || !selectedFile}
             activeOpacity={0.85}
           >
             {isSubmitting ? (
               <ActivityIndicator color="#ffffff" />
             ) : (
-              <Text style={styles.primaryButtonText}>Submit Bill</Text>
+              <Text style={styles.primaryButtonText}>
+                {selectedFile ? 'Submit Bill for Verification' : 'Select Invoice to Submit'}
+              </Text>
             )}
           </TouchableOpacity>
         </View>
@@ -303,6 +431,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#16A34A',
+    flex: 1,
+  },
+  noFileNotice: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 10,
+    fontWeight: '600',
   },
   formContainer: {
     paddingHorizontal: 20,

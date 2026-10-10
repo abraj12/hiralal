@@ -38,20 +38,38 @@ export class PayoutWorker {
       return;
     }
 
-    // Only process payouts that are in PENDING status
-    if (payout.status !== 'PENDING') {
-      console.log(`[PAYOUT-WORKER] Payout ${payoutId} is in status ${payout.status}. Skipping dispatch.`);
-      return;
-    }
-
-    // Mark as PAYOUT_INITIATED
-    await prisma.payout.update({
-      where: { id: payout.id },
+    // Only process payouts that can be claimed from PENDING status atomically
+    const claim = await prisma.payout.updateMany({
+      where: {
+        id: payoutId,
+        status: 'PENDING',
+      },
       data: {
         status: 'PAYOUT_INITIATED',
         initiatedAt: new Date(),
       },
     });
+
+    if (claim.count !== 1) {
+      console.log(`[PAYOUT-WORKER] Payout ${payoutId} is not in PENDING state or already claimed. Skipping dispatch.`);
+      return;
+    }
+
+    // Reload payout with relations after atomic claim
+    const freshPayout = await prisma.payout.findUnique({
+      where: { id: payoutId },
+      include: {
+        user: true,
+        paymentAccount: true,
+        wallet: true,
+      },
+    });
+
+    if (!freshPayout) {
+      console.warn(`[PAYOUT-WORKER] Payout ${payoutId} not found after claiming.`);
+      return;
+    }
+    payout = freshPayout;
 
     const isRazorpayConfigured = Boolean(
       config.razorpayx.keyId &&
@@ -83,20 +101,28 @@ export class PayoutWorker {
       const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
       const paymentAccount = payout.paymentAccount;
 
-      // 1. Resolve Contact on RazorpayX
-      const contactRes = await fetch('https://api.razorpay.com/v1/contacts', {
-        method: 'POST',
-        headers: {
-          Authorization: auth,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: payout.user.fullName,
-          contact: payout.user.mobile,
-          type: 'vendor',
-          reference_id: payout.user.id,
-        }),
-      });
+      // 1. Resolve Contact on RazorpayX with timeout
+      const contactController = new AbortController();
+      const contactTimer = setTimeout(() => contactController.abort(), 10000);
+      let contactRes: globalThis.Response;
+      try {
+        contactRes = await fetch('https://api.razorpay.com/v1/contacts', {
+          method: 'POST',
+          signal: contactController.signal,
+          headers: {
+            Authorization: auth,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: payout.user.fullName,
+            contact: payout.user.mobile,
+            type: 'vendor',
+            reference_id: payout.user.id,
+          }),
+        });
+      } finally {
+        clearTimeout(contactTimer);
+      }
 
       const contactData: any = await contactRes.json();
       const contactId = contactData.id;
@@ -105,7 +131,7 @@ export class PayoutWorker {
         throw new Error(contactData.error?.description || 'Failed to create recipient contact on RazorpayX');
       }
 
-      // 2. Resolve Fund Account on RazorpayX
+      // 2. Resolve Fund Account on RazorpayX with timeout
       let fundAccountBody: any;
       if (paymentAccount.accountType === 'UPI') {
         fundAccountBody = {
@@ -129,14 +155,22 @@ export class PayoutWorker {
         };
       }
 
-      const fundAccRes = await fetch('https://api.razorpay.com/v1/fund_accounts', {
-        method: 'POST',
-        headers: {
-          Authorization: auth,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(fundAccountBody),
-      });
+      const fundAccController = new AbortController();
+      const fundAccTimer = setTimeout(() => fundAccController.abort(), 10000);
+      let fundAccRes: globalThis.Response;
+      try {
+        fundAccRes = await fetch('https://api.razorpay.com/v1/fund_accounts', {
+          method: 'POST',
+          signal: fundAccController.signal,
+          headers: {
+            Authorization: auth,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(fundAccountBody),
+        });
+      } finally {
+        clearTimeout(fundAccTimer);
+      }
 
       const fundAccData: any = await fundAccRes.json();
       const fundAccountId = fundAccData.id;
@@ -166,7 +200,7 @@ export class PayoutWorker {
           headers: {
             Authorization: auth,
             'Content-Type': 'application/json',
-            'X-Payout-Idempotency': payout.idempotencyKey,
+            'X-Payout-Idempotency': payout.id, // Globally unique internal payout ID
           },
           body: JSON.stringify({
             account_number: config.razorpayx.accountNumber,

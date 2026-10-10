@@ -80,26 +80,35 @@ export class BillService {
 
     // 5. Persist bill record in PostgreSQL
     // Notice: reward is NOT committed until Admin verifies and approves the invoice.
-    return await prisma.bill.create({
-      data: {
-        id: billId,
-        userId: data.userId,
-        invoiceNumber: cleanInvoiceNumber,
-        invoiceDate: new Date(data.invoiceDate),
-        billAmount: data.billAmount,
-        grossBillAmount: data.billAmount,
-        gstIncluded: false,
-        calculatedReward: 0.0, // Pending verification
-        rewardPercentage: null, // Hidden from unapproved bills
-        status: 'PENDING',
-        fileUrl: uploadResult.fileUrl,
-        fileKey: uploadResult.fileKey,
-        fileHash,
-        fileSize: uploadResult.fileSize,
-        mimeType: normalizedMime,
-        remarks: data.remarks || null,
-      },
-    });
+    try {
+      return await prisma.bill.create({
+        data: {
+          id: billId,
+          userId: data.userId,
+          invoiceNumber: cleanInvoiceNumber,
+          invoiceDate: new Date(data.invoiceDate),
+          billAmount: data.billAmount,
+          grossBillAmount: data.billAmount,
+          gstIncluded: false,
+          calculatedReward: 0.0, // Pending verification
+          rewardPercentage: null, // Hidden from unapproved bills
+          status: 'PENDING',
+          fileUrl: uploadResult.fileUrl,
+          fileKey: uploadResult.fileKey,
+          fileHash,
+          fileSize: uploadResult.fileSize,
+          mimeType: normalizedMime,
+          remarks: data.remarks || null,
+        },
+      });
+    } catch (dbErr: any) {
+      try {
+        await StorageService.getProvider().delete(uploadResult.fileKey);
+      } catch (cleanupErr: any) {
+        console.error(`[STORAGE-CLEANUP-FAILED] Failed to delete orphaned file ${uploadResult.fileKey}:`, cleanupErr.message);
+      }
+      throw dbErr;
+    }
   }
 
   /**
@@ -268,7 +277,18 @@ export class BillService {
     }
 
     return await prisma.$transaction(async (tx) => {
-      // 1. Fetch and lock bill
+      // 1. Fetch and lock bill row
+      const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Bill"
+        WHERE "id" = ${billId}
+        FOR UPDATE
+      `;
+
+      if (!lockedRows || lockedRows.length === 0) {
+        throw new Error('Bill not found.');
+      }
+
       const bill = await tx.bill.findUnique({
         where: { id: billId },
         include: { user: true },
@@ -278,8 +298,17 @@ export class BillService {
       if (bill.status === 'APPROVED') {
         throw new Error('This bill has already been approved.');
       }
+      if (bill.status === 'REJECTED') {
+        throw new Error('Rejected bills cannot be approved.');
+      }
       if (bill.status === 'CANCELLED') {
         throw new Error('Cancelled bills cannot be approved.');
+      }
+      if (bill.status === 'DUPLICATE') {
+        throw new Error('Duplicate bills cannot be approved.');
+      }
+      if (bill.status !== 'PENDING' && bill.status !== 'UNDER_REVIEW') {
+        throw new Error(`Bills with status ${bill.status} cannot be approved.`);
       }
 
       const profession: Profession = bill.user.profession || 'PLUMBER';
@@ -428,39 +457,64 @@ export class BillService {
       throw new Error('A valid rejection reason (minimum 3 characters) is required to reject a bill.');
     }
 
-    const bill = await prisma.bill.findUnique({
-      where: { id: billId },
-      include: { user: true },
-    });
+    return await prisma.$transaction(async (tx) => {
+      const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Bill"
+        WHERE "id" = ${billId}
+        FOR UPDATE
+      `;
 
-    if (!bill) throw new Error('Bill not found.');
-    if (bill.status === 'APPROVED') {
-      throw new Error('Approved bills cannot be rejected.');
-    }
+      if (!lockedRows || lockedRows.length === 0) {
+        throw new Error('Bill not found.');
+      }
 
-    const updated = await prisma.bill.update({
-      where: { id: billId },
-      data: {
-        status: 'REJECTED',
-        rejectionReason: rejectionReason.trim(),
-        verifiedByAdminId: adminId,
-      },
-    });
+      const bill = await tx.bill.findUnique({
+        where: { id: billId },
+        include: { user: true },
+      });
 
-    await prisma.auditLog.create({
-      data: {
-        adminId,
-        action: 'BILL_REJECTED',
-        entityType: 'Bill',
-        entityId: billId,
-        newValue: JSON.stringify({
-          invoiceNumber: bill.invoiceNumber,
-          profession: bill.user?.profession,
+      if (!bill) throw new Error('Bill not found.');
+      if (bill.status === 'APPROVED') {
+        throw new Error('Approved bills cannot be rejected.');
+      }
+      if (bill.status === 'REJECTED') {
+        throw new Error('This bill has already been rejected.');
+      }
+      if (bill.status === 'CANCELLED') {
+        throw new Error('Cancelled bills cannot be rejected.');
+      }
+      if (bill.status === 'DUPLICATE') {
+        throw new Error('Duplicate bills cannot be rejected.');
+      }
+      if (bill.status !== 'PENDING' && bill.status !== 'UNDER_REVIEW') {
+        throw new Error(`Bills with status ${bill.status} cannot be rejected.`);
+      }
+
+      const updated = await tx.bill.update({
+        where: { id: billId },
+        data: {
+          status: 'REJECTED',
           rejectionReason: rejectionReason.trim(),
-        }),
-      },
-    });
+          verifiedByAdminId: adminId,
+        },
+      });
 
-    return updated;
+      await tx.auditLog.create({
+        data: {
+          adminId,
+          action: 'BILL_REJECTED',
+          entityType: 'Bill',
+          entityId: billId,
+          newValue: JSON.stringify({
+            invoiceNumber: bill.invoiceNumber,
+            profession: bill.user?.profession,
+            rejectionReason: rejectionReason.trim(),
+          }),
+        },
+      });
+
+      return updated;
+    });
   }
 }

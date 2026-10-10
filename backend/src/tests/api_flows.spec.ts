@@ -62,7 +62,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     const userPasswordHash = await bcrypt.hash('Password@123', 10);
     const user = await prisma.user.upsert({
       where: { mobile: '9876543210' },
-      update: { status: 'ACTIVE', passwordHash: userPasswordHash },
+      update: { fullName: 'Raj Kumar', status: 'ACTIVE', passwordHash: userPasswordHash },
       create: {
         mobile: '9876543210',
         fullName: 'Raj Kumar',

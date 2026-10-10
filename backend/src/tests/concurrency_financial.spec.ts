@@ -216,4 +216,113 @@ describe('Concurrency & Financial Integrity Tests', () => {
     expect(Number(wallet?.availableBalance)).toBe(1000.0);
     expect(Number(wallet?.processingAmount)).toBe(500.0);
   });
+
+  test('4. Duplicate Bill Approval Race: Firing 2 concurrent approvals on same bill produces exactly 1 approval and 1 credit', async () => {
+    const { year, month } = getIstYearAndMonth();
+    await prisma.rewardPool.update({
+      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
+      data: { usedAmount: 0.0, isCapped: false },
+    });
+
+    const pdfBuffer = Buffer.from(`%PDF-1.4 test duplicate approval bill ${Date.now()}`);
+    const bill = await BillService.submitBill({
+      userId: craftsmanUser.id,
+      invoiceNumber: `INV-DUP-APP-${Date.now()}`,
+      invoiceDate: '2026-10-01',
+      billAmount: 10000, // 0.5% = ₹50
+      fileBuffer: pdfBuffer,
+      fileName: 'dup_app.pdf',
+      mimeType: 'application/pdf',
+    });
+
+    const initialWallet = await prisma.wallet.findUnique({ where: { userId: craftsmanUser.id } });
+    const initialBal = Number(initialWallet?.availableBalance || 0);
+
+    // Fire 2 approvals concurrently
+    const [res1, res2] = await Promise.allSettled([
+      BillService.approveBill(bill.id, adminUser.id),
+      BillService.approveBill(bill.id, adminUser.id),
+    ]);
+
+    const successes = [res1, res2].filter((r) => r.status === 'fulfilled');
+    const failures = [res1, res2].filter((r) => r.status === 'rejected');
+
+    expect(successes.length).toBe(1);
+    expect(failures.length).toBe(1);
+
+    // Verify exactly 1 wallet credit transaction
+    const txs = await prisma.walletTransaction.findMany({
+      where: { referenceId: bill.id, type: 'REWARD_CREDIT' },
+    });
+    expect(txs.length).toBe(1);
+
+    // Verify wallet balance increased by exactly ₹50
+    const finalWallet = await prisma.wallet.findUnique({ where: { userId: craftsmanUser.id } });
+    expect(Number(finalWallet?.availableBalance)).toBe(initialBal + 50);
+  });
+
+  test('5. Bill Approval vs Rejection Race: Concurrently approving and rejecting same bill allows exactly one terminal transition', async () => {
+    const { year, month } = getIstYearAndMonth();
+    await prisma.rewardPool.update({
+      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
+      data: { usedAmount: 0.0, isCapped: false },
+    });
+
+    const pdfBuffer = Buffer.from(`%PDF-1.4 test race approve reject bill ${Date.now()}`);
+    const bill = await BillService.submitBill({
+      userId: craftsmanUser.id,
+      invoiceNumber: `INV-RACE-AR-${Date.now()}`,
+      invoiceDate: '2026-10-01',
+      billAmount: 10000,
+      fileBuffer: pdfBuffer,
+      fileName: 'race_ar.pdf',
+      mimeType: 'application/pdf',
+    });
+
+    const [resApprove, resReject] = await Promise.allSettled([
+      BillService.approveBill(bill.id, adminUser.id),
+      BillService.rejectBill(bill.id, adminUser.id, 'Duplicate invoice submitted'),
+    ]);
+
+    const successes = [resApprove, resReject].filter((r) => r.status === 'fulfilled');
+    const failures = [resApprove, resReject].filter((r) => r.status === 'rejected');
+
+    expect(successes.length).toBe(1);
+    expect(failures.length).toBe(1);
+
+    const finalBill = await prisma.bill.findUnique({ where: { id: bill.id } });
+    expect(['APPROVED', 'REJECTED']).toContain(finalBill?.status);
+  });
+
+  test('6. Double-Refund Prevention: Concurrently reversing the same payout refunds wallet exactly once', async () => {
+    // Top up wallet
+    await prisma.wallet.update({
+      where: { userId: craftsmanUser.id },
+      data: { availableBalance: 1000.0, processingAmount: 0.0 },
+    });
+
+    const key = `idem-dbl-rev-${Date.now()}`;
+    const redemption = await PayoutService.requestRedemption(craftsmanUser.id, key, 500);
+    const payoutId = redemption.payout.id;
+
+    // Concurrent reversePayout calls
+    const [rev1, rev2] = await Promise.allSettled([
+      PayoutService.reversePayout(payoutId, 'Gateway failure 1'),
+      PayoutService.reversePayout(payoutId, 'Gateway failure 2'),
+    ]);
+
+    const successes = [rev1, rev2].filter((r) => r.status === 'fulfilled');
+    expect(successes.length).toBe(2);
+
+    // Verify wallet: exactly 500 refunded (1000 - 500 + 500 = 1000)
+    const wallet = await prisma.wallet.findUnique({ where: { userId: craftsmanUser.id } });
+    expect(Number(wallet?.availableBalance)).toBe(1000.0);
+    expect(Number(wallet?.processingAmount)).toBe(0.0);
+
+    // Verify exactly 1 PAYOUT_REVERSAL transaction
+    const reversalTxs = await prisma.walletTransaction.findMany({
+      where: { referenceId: payoutId, type: 'PAYOUT_REVERSAL' },
+    });
+    expect(reversalTxs.length).toBe(1);
+  });
 });

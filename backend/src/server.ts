@@ -29,7 +29,7 @@ app.use((req: any, res: Response, next: NextFunction) => {
 
   res.on('finish', () => {
     const duration = Date.now() - start;
-    console.log(`📡 [HTTP] ${req.method} ${req.originalUrl || req.url} - ${res.statusCode} (${duration}ms)`);
+    console.log(`📡 [HTTP] ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`);
   });
   next();
 });
@@ -48,7 +48,10 @@ const corsOptions: cors.CorsOptions = {
     if (config.cors.allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-    callback(new Error(`Origin '${origin}' blocked by Hiralal CORS policy`));
+    const corsErr: any = new Error(`Origin '${origin}' blocked by Hiralal CORS policy`);
+    corsErr.status = 403;
+    corsErr.code = 'CORS_FORBIDDEN';
+    callback(corsErr);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -151,10 +154,15 @@ app.use((err: any, req: any, res: Response, _next: NextFunction) => {
       ? 'FORBIDDEN'
       : 'INTERNAL_SERVER_ERROR');
 
+  const message =
+    config.isProduction && status >= 500
+      ? `Internal server error. Reference ID: ${req.requestId}`
+      : err.message || 'Internal Server Error';
+
   res.status(status).json({
     success: false,
     code,
-    message: err.message || 'Internal Server Error',
+    message,
     requestId: req.requestId,
   });
 });

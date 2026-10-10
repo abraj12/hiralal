@@ -31,9 +31,9 @@ export default function WalletScreen() {
     setRefreshing(false);
   };
 
-  const isWindowOpen = eligibility?.windowSettings?.isEnabled ?? false;
+  const isWindowOpen = eligibility?.isWindowOpen ?? false;
   const minAmount = eligibility?.minimumAmount ?? 500;
-  const canRedeem = (wallet.availableBalance >= minAmount) && isWindowOpen;
+  const canRedeem = eligibility?.canRedeem ?? false;
 
   return (
     <View style={styles.container}>
@@ -96,22 +96,21 @@ export default function WalletScreen() {
             style={[
               styles.redeemBtn,
               { backgroundColor: theme.primaryColor },
-              (!canRedeem) && { opacity: 0.6 },
+              (!canRedeem) && { opacity: 0.5 },
             ]}
             onPress={() => setShowRedeemModal(true)}
+            disabled={!canRedeem}
             activeOpacity={0.85}
           >
             <Text style={styles.redeemBtnText}>Redeem Rewards</Text>
           </TouchableOpacity>
 
-          {!isWindowOpen && (
+          {!canRedeem && (
             <Text style={styles.minRedeemNotice}>
-              Redemption is currently closed by administration
-            </Text>
-          )}
-          {isWindowOpen && wallet.availableBalance < minAmount && (
-            <Text style={styles.minRedeemNotice}>
-              Minimum balance of ₹{minAmount} required for payout
+              {eligibility?.reason ||
+                (!isWindowOpen
+                  ? 'Redemption is currently closed by administration'
+                  : `Minimum balance of ₹${minAmount} required for payout`)}
             </Text>
           )}
         </View>

@@ -265,7 +265,7 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
       expect(Number(updatedWallet?.availableBalance)).toBe(initialAvailable);
 
       const reversalTx = await prisma.walletTransaction.findFirst({
-        where: { referenceId: idempotencyKey, type: 'PAYOUT_REVERSAL' },
+        where: { referenceId: result.payout.id, type: 'PAYOUT_REVERSAL' },
       });
       expect(reversalTx).not.toBeNull();
       expect(Number(reversalTx?.amount)).toBe(500);

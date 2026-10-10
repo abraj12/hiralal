@@ -169,94 +169,118 @@ export class PayoutService {
     payoutAmount = fromPaise(toPaise(payoutAmount));
 
     // 4. Atomic PostgreSQL Transaction: lock wallet, reserve funds, create payout, create outbox event
-    const { payout } = await prisma.$transaction(async (tx) => {
-      // Lock wallet row for update
-      const walletRows: any[] = await tx.$queryRaw`
-        SELECT * FROM "Wallet" WHERE "userId" = ${userId} FOR UPDATE;
-      `;
+    let payoutResult: any;
+    try {
+      const { payout } = await prisma.$transaction(async (tx) => {
+        // Lock wallet row for update
+        const walletRows: any[] = await tx.$queryRaw`
+          SELECT * FROM "Wallet" WHERE "userId" = ${userId} FOR UPDATE;
+        `;
 
-      if (!walletRows || walletRows.length === 0) {
-        throw new Error('User wallet not found.');
-      }
+        if (!walletRows || walletRows.length === 0) {
+          throw new Error('User wallet not found.');
+        }
 
-      const userWallet = walletRows[0];
-      const currentAvailable = Number(userWallet.availableBalance);
+        const userWallet = walletRows[0];
+        const currentAvailable = Number(userWallet.availableBalance);
 
-      if (currentAvailable < payoutAmount) {
-        throw new Error(`Insufficient available balance for payout. Current: ₹${currentAvailable.toFixed(2)}, Required: ₹${payoutAmount.toFixed(2)}.`);
-      }
+        if (currentAvailable < payoutAmount) {
+          throw new Error(`Insufficient available balance for payout. Current: ₹${currentAvailable.toFixed(2)}, Required: ₹${payoutAmount.toFixed(2)}.`);
+        }
 
-      // Move funds from availableBalance to processingAmount atomically
-      await tx.$executeRaw`
-        UPDATE "Wallet"
-        SET "availableBalance" = "availableBalance" - ${payoutAmount}::decimal,
-            "processingAmount" = "processingAmount" + ${payoutAmount}::decimal,
-            "version" = "version" + 1,
-            "updatedAt" = CURRENT_TIMESTAMP
-        WHERE "id" = ${userWallet.id};
-      `;
+        // Move funds from availableBalance to processingAmount atomically
+        await tx.$executeRaw`
+          UPDATE "Wallet"
+          SET "availableBalance" = "availableBalance" - ${payoutAmount}::decimal,
+              "processingAmount" = "processingAmount" + ${payoutAmount}::decimal,
+              "version" = "version" + 1,
+              "updatedAt" = CURRENT_TIMESTAMP
+          WHERE "id" = ${userWallet.id};
+        `;
 
-      const newAvailable = currentAvailable - payoutAmount;
+        const newAvailable = currentAvailable - payoutAmount;
 
-      // Create immutable ledger record
-      await tx.walletTransaction.create({
-        data: {
-          walletId: userWallet.id,
-          userId,
-          amount: payoutAmount,
-          type: 'PAYOUT_DEBIT',
-          balanceAfter: newAvailable,
-          referenceType: 'PAYOUT',
-          referenceId: cleanKey,
-          description: `Payout debit of ₹${payoutAmount.toFixed(2)} reserved for ${verifiedAccount.maskedInfo}`,
-        },
-      });
-
-      // Create Payout record with PENDING status
-      const newPayout = await tx.payout.create({
-        data: {
-          userId,
-          walletId: userWallet.id,
-          amount: payoutAmount,
-          paymentAccountId: verifiedAccount.id,
-          paymentType: verifiedAccount.accountType,
-          idempotencyKey: cleanKey,
-          status: 'PENDING',
-        },
-      });
-
-      // Create durable OutboxEvent for background dispatch
-      await tx.outboxEvent.create({
-        data: {
-          eventType: 'PAYOUT_DISPATCH',
-          payload: {
-            payoutId: newPayout.id,
+        // Create Payout record with PENDING status first to obtain stable internal ID
+        const newPayout = await tx.payout.create({
+          data: {
             userId,
+            walletId: userWallet.id,
             amount: payoutAmount,
             paymentAccountId: verifiedAccount.id,
+            paymentType: verifiedAccount.accountType,
             idempotencyKey: cleanKey,
+            status: 'PENDING',
           },
-          status: 'PENDING',
-        },
-      });
+        });
 
-      return { payout: newPayout };
-    });
+        // Create immutable ledger record using stable payout ID as reference
+        await tx.walletTransaction.create({
+          data: {
+            walletId: userWallet.id,
+            userId,
+            amount: payoutAmount,
+            type: 'PAYOUT_DEBIT',
+            balanceAfter: newAvailable,
+            referenceType: 'PAYOUT',
+            referenceId: newPayout.id,
+            description: `Payout debit of ₹${payoutAmount.toFixed(2)} reserved for ${verifiedAccount.maskedInfo}`,
+          },
+        });
+
+        // Create durable OutboxEvent for background dispatch
+        await tx.outboxEvent.create({
+          data: {
+            eventType: 'PAYOUT_DISPATCH',
+            payload: {
+              payoutId: newPayout.id,
+              userId,
+              amount: payoutAmount,
+              paymentAccountId: verifiedAccount.id,
+              idempotencyKey: cleanKey,
+            },
+            status: 'PENDING',
+          },
+        });
+
+        return { payout: newPayout };
+      });
+      payoutResult = payout;
+    } catch (err: any) {
+      if (err.code === 'P2002' || (err.message && err.message.includes('user_payout_idempotency_unique'))) {
+        const racePayout = await prisma.payout.findUnique({
+          where: {
+            user_payout_idempotency_unique: {
+              userId,
+              idempotencyKey: cleanKey,
+            },
+          },
+          include: { paymentAccount: true },
+        });
+
+        if (racePayout) {
+          return {
+            payout: racePayout,
+            amountDebited: Number(racePayout.amount),
+            message: 'Returning existing redemption request for this reference.',
+          };
+        }
+      }
+      throw err;
+    }
 
     // 5. Trigger dispatch worker asynchronously (in non-test environment)
     if (config.nodeEnv !== 'test') {
-      this.triggerPayoutDispatch(payout.id).catch((err) => {
-        console.warn(`[PAYOUT-DISPATCH-DEFERRED] Payout ${payout.id} queued for background worker: ${err.message}`);
+      this.triggerPayoutDispatch(payoutResult.id).catch((err) => {
+        console.warn(`[PAYOUT-DISPATCH-DEFERRED] Payout ${payoutResult.id} queued for background worker: ${err.message}`);
       });
     }
 
     return {
-      payout,
+      payout: payoutResult,
       amountDebited: payoutAmount,
       message: 'Redemption initiated successfully. Disbursement dispatched to your verified account.',
     };
   }
-
   /**
    * Reverses a failed payout: refunds funds from processingAmount back to availableBalance,
    * creates an immutable PAYOUT_REVERSAL transaction, updates payout status to FAILED,
@@ -264,6 +288,17 @@ export class PayoutService {
    */
   static async reversePayout(payoutId: string, reason: string) {
     return await prisma.$transaction(async (tx) => {
+      const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Payout"
+        WHERE "id" = ${payoutId}
+        FOR UPDATE
+      `;
+
+      if (!lockedRows || lockedRows.length === 0) {
+        throw new Error(`Payout ${payoutId} not found`);
+      }
+
       const payout = await tx.payout.findUnique({
         where: { id: payoutId },
         include: { wallet: true },
@@ -271,9 +306,9 @@ export class PayoutService {
 
       if (!payout) throw new Error(`Payout ${payoutId} not found`);
 
-      // Forbidden transition: SUCCESS payouts cannot be reversed without manual ledger compensation
+      // Forbidden transition: SUCCESS payouts cannot be reversed via standard pre-disbursement reversal
       if (payout.status === 'SUCCESS') {
-        throw new Error(`Cannot reverse payout ${payoutId} because it has already successfully completed.`);
+        throw new Error(`Cannot reverse payout ${payoutId} because it has already successfully completed. Use handleReversedPayout for post-settlement reversal.`);
       }
 
       // Idempotency: if already in FAILED or REVERSED state, return current record without duplicate refund
@@ -308,7 +343,7 @@ export class PayoutService {
           type: 'PAYOUT_REVERSAL',
           balanceAfter,
           referenceType: 'PAYOUT',
-          referenceId: payout.idempotencyKey,
+          referenceId: payout.id,
           description: `Payout reversed: ${reason}`,
         },
       });
@@ -337,11 +372,134 @@ export class PayoutService {
   }
 
   /**
+   * Handles confirmed post-settlement or in-flight payout reversal (e.g. payout.reversed gateway webhook event).
+   * Restores funds to user's available balance and creates an immutable audit and ledger trail.
+   */
+  static async handleReversedPayout(payoutId: string, reason: string) {
+    return await prisma.$transaction(async (tx) => {
+      const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Payout"
+        WHERE "id" = ${payoutId}
+        FOR UPDATE
+      `;
+
+      if (!lockedRows || lockedRows.length === 0) {
+        throw new Error(`Payout ${payoutId} not found`);
+      }
+
+      const payout = await tx.payout.findUnique({
+        where: { id: payoutId },
+        include: { wallet: true },
+      });
+
+      if (!payout) throw new Error(`Payout ${payoutId} not found`);
+
+      // Idempotent: already marked REVERSED
+      if (payout.status === 'REVERSED') {
+        return payout;
+      }
+
+      const payoutAmount = Number(payout.amount);
+
+      if (payout.status === 'SUCCESS') {
+        // Compensating transaction for settled payout: decrement totalRedeemed, restore availableBalance
+        await tx.wallet.update({
+          where: { id: payout.walletId },
+          data: {
+            totalRedeemed: { decrement: payoutAmount },
+            availableBalance: { increment: payoutAmount },
+            version: { increment: 1 },
+          },
+        });
+      } else if (payout.status === 'FAILED') {
+        // Already refunded from processingAmount earlier
+        return payout;
+      } else {
+        // In-flight payout (PENDING, PAYOUT_INITIATED, PROCESSING)
+        await tx.wallet.update({
+          where: { id: payout.walletId },
+          data: {
+            processingAmount: { decrement: payoutAmount },
+            availableBalance: { increment: payoutAmount },
+            version: { increment: 1 },
+          },
+        });
+      }
+
+      const updatedWallet = await tx.wallet.findUnique({
+        where: { id: payout.walletId },
+      });
+      const balanceAfter = Number(updatedWallet?.availableBalance || 0);
+
+      // Create immutable compensation ledger record
+      await tx.walletTransaction.create({
+        data: {
+          walletId: payout.walletId,
+          userId: payout.userId,
+          amount: payoutAmount,
+          type: 'PAYOUT_REVERSAL',
+          balanceAfter,
+          referenceType: 'PAYOUT',
+          referenceId: payout.id,
+          description: `Post-success reversal / compensation: ${reason}`,
+        },
+      });
+
+      const updatedPayout = await tx.payout.update({
+        where: { id: payout.id },
+        data: {
+          status: 'REVERSED',
+          failureReason: reason,
+        },
+      });
+
+      // Immutable Audit Log
+      await tx.auditLog.create({
+        data: {
+          action: 'PAYOUT_REVERSED',
+          entityType: 'Payout',
+          entityId: payout.id,
+          newValue: JSON.stringify({
+            payoutId: payout.id,
+            amount: payoutAmount,
+            previousStatus: payout.status,
+            reason,
+          }),
+        },
+      });
+
+      // Notify user
+      await tx.notification.create({
+        data: {
+          userId: payout.userId,
+          title: 'Payout Reversed & Credited',
+          message: `Your payout of ₹${payoutAmount.toFixed(2)} was reversed by the banking network (${reason}). The funds have been restored to your available wallet balance.`,
+          type: 'PAYOUT_FAILED',
+        },
+      });
+
+      return updatedPayout;
+    });
+  }
+
+  /**
    * Finalizes a successful payout: moves funds out of processingAmount, increments totalRedeemed,
    * updates payout status to SUCCESS, and notifies user.
    */
   static async finalizeSuccess(payoutId: string, razorpayPayoutId?: string) {
     return await prisma.$transaction(async (tx) => {
+      const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Payout"
+        WHERE "id" = ${payoutId}
+        FOR UPDATE
+      `;
+
+      if (!lockedRows || lockedRows.length === 0) {
+        throw new Error(`Payout ${payoutId} not found`);
+      }
+
       const payout = await tx.payout.findUnique({
         where: { id: payoutId },
         include: { wallet: true },

@@ -5,8 +5,8 @@ import { AdminApiClient } from '../lib/api';
 
 export default function AdminLoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState('9999999999');
-  const [password, setPassword] = useState('Admin@123');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,14 +90,6 @@ export default function AdminLoginPage() {
             </div>
           </div>
 
-          <div className="p-3 bg-blue-50/60 rounded-xl border border-blue-100 text-[11px] text-blue-800">
-            <div className="font-bold flex items-center space-x-1 mb-0.5">
-              <Shield className="w-3.5 h-3.5 text-blue-600" />
-              <span>Demo Admin Credentials Pre-Filled:</span>
-            </div>
-            <div>Username: <span className="font-mono font-bold">9999999999</span></div>
-            <div>Password: <span className="font-mono font-bold">Admin@123</span></div>
-          </div>
 
           <button
             type="submit"

@@ -46,9 +46,18 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
   // Step 3: Transaction execution state
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [transactionId, setTransactionId] = useState('');
+  const [payoutResult, setPayoutResult] = useState<{
+    id: string;
+    status: string;
+    razorpayPayoutId?: string | null;
+  } | null>(null);
+  const [idempotencyKey, setIdempotencyKey] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const amountToRedeem = wallet.availableBalance;
+  const maxAllowed = eligibility?.maximumAmount
+    ? Math.min(wallet.availableBalance, Number(eligibility.maximumAmount))
+    : wallet.availableBalance;
+  const amountToRedeem = maxAllowed;
 
   // On open, fetch real eligibility & existing KYC/Account status
   useEffect(() => {
@@ -57,6 +66,8 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
     let mounted = true;
     setLoadingEligibility(true);
     setErrorMsg(null);
+    setPayoutResult(null);
+    setIdempotencyKey(`idem-${Date.now()}-${Math.random().toString(36).substring(2, 12)}`);
 
     MobileApiClient.getPayoutEligibility()
       .then((res) => {
@@ -165,14 +176,24 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
   const handleConfirmRedeem = async () => {
     setErrorMsg(null);
     setIsSubmitting(true);
-    const idempotencyKey = `idem-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    const currentKey = idempotencyKey || `idem-${Date.now()}-${Math.random().toString(36).substring(2, 12)}`;
+    if (!idempotencyKey) {
+      setIdempotencyKey(currentKey);
+    }
 
     try {
       const res = await MobileApiClient.redeemRewards({
         amount: amountToRedeem,
-        idempotencyKey,
+        idempotencyKey: currentKey,
       });
-      setTransactionId(res.payout?.razorpayPayoutId || res.payout?.id || `TXN-${Date.now()}`);
+      if (res.payout) {
+        setPayoutResult({
+          id: res.payout.id,
+          status: res.payout.status,
+          razorpayPayoutId: res.payout.razorpayPayoutId,
+        });
+        setTransactionId(res.payout.id);
+      }
       setStep(4);
       await refreshData();
     } catch (e: any) {
@@ -460,7 +481,7 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
                 </View>
               )}
 
-              {/* STEP 4: SUCCESS CONFIRMATION */}
+              {/* STEP 4: SUCCESS / QUEUED CONFIRMATION */}
               {step === 4 && (
                 <View style={styles.successContent}>
                   <Image
@@ -469,15 +490,26 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
                     resizeMode="contain"
                   />
 
-                  <Text style={styles.successTitle}>Redemption Dispatched!</Text>
+                  <Text style={styles.successTitle}>
+                    {payoutResult?.status === 'PROCESSED'
+                      ? 'Transfer Completed Successfully!'
+                      : 'Payout Queued for Processing'}
+                  </Text>
                   <Text style={styles.successAmount}>₹{amountToRedeem.toLocaleString('en-IN')}</Text>
                   <Text style={styles.successDesc}>
-                    Your rewards payout has been initiated to your verified payment account ({maskedPayment}).
+                    {payoutResult?.status === 'PROCESSED'
+                      ? `Your rewards payout has been successfully transferred to your verified payment account (${maskedPayment}).`
+                      : `Your rewards payout request has been registered and is being processed. Funds will be transferred shortly to your verified account (${maskedPayment}).`}
                   </Text>
 
                   <View style={styles.txnBox}>
-                    <Text style={styles.txnLabel}>Reference / Transaction ID</Text>
-                    <Text style={styles.txnValue}>{transactionId}</Text>
+                    <Text style={styles.txnLabel}>Payout Reference ID</Text>
+                    <Text style={styles.txnValue}>{payoutResult?.id || transactionId}</Text>
+                    {payoutResult?.razorpayPayoutId && (
+                      <Text style={{ marginTop: 4, fontSize: 11, color: '#64748B', fontWeight: '500' }}>
+                        Gateway Ref: {payoutResult.razorpayPayoutId}
+                      </Text>
+                    )}
                   </View>
 
                   <TouchableOpacity

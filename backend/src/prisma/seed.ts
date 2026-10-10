@@ -8,25 +8,36 @@ async function main() {
 
   try {
     // 1. Provision Company Executive Admin
-    const adminPasswordHash = await bcrypt.hash('Admin@123', 10);
-    const admin = await prisma.user.upsert({
-      where: { mobile: '9999999999' },
-      update: {
-        role: 'ADMIN',
-        status: 'ACTIVE',
-        isVerified: true,
-        passwordHash: adminPasswordHash,
-      },
-      create: {
-        mobile: '9999999999',
-        fullName: 'Hiralal & Sons Executive Administrator',
-        passwordHash: adminPasswordHash,
-        role: 'ADMIN',
-        status: 'ACTIVE',
-        isVerified: true,
-      },
+    const initialAdminMobile = process.env.ADMIN_INITIAL_MOBILE || '9999999999';
+    const initialAdminPassword =
+      process.env.ADMIN_INITIAL_PASSWORD ||
+      (process.env.NODE_ENV === 'production' ? '' : 'Admin@123');
+
+    let admin = await prisma.user.findFirst({
+      where: { role: 'ADMIN' },
     });
-    console.log(`✅ Company Admin provisioned: ${admin.fullName} (${admin.mobile})`);
+
+    if (!admin) {
+      if (!initialAdminPassword) {
+        throw new Error(
+          'ADMIN_INITIAL_PASSWORD environment variable is required to provision initial administrator in production.'
+        );
+      }
+      const adminPasswordHash = await bcrypt.hash(initialAdminPassword, 10);
+      admin = await prisma.user.create({
+        data: {
+          mobile: initialAdminMobile,
+          fullName: 'Hiralal & Sons Executive Administrator',
+          passwordHash: adminPasswordHash,
+          role: 'ADMIN',
+          status: 'ACTIVE',
+          isVerified: true,
+        },
+      });
+      console.log(`✅ Company Admin provisioned: ${admin.fullName} (${admin.mobile})`);
+    } else {
+      console.log(`ℹ️ Existing Admin detected (${admin.mobile}). Preserving existing credentials.`);
+    }
 
     // 2. Provision Initial Monthly Reward Pools per Profession
     const now = new Date();

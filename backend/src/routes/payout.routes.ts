@@ -26,12 +26,45 @@ router.get('/eligibility', authenticate, async (req: AuthenticatedRequest, res: 
 router.post('/redeem', authenticate, payoutRedeemLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
-    const { idempotencyKey, amount } = req.body;
+    const amountRaw: unknown = req.body?.amount;
+    const idempotencyRaw: unknown = req.body?.idempotencyKey;
 
-    const cleanKey = (idempotencyKey && String(idempotencyKey).trim()) || `idem-${Date.now()}-${user.id.substring(0, 8)}`;
-    const parsedAmount = amount ? parseFloat(amount) : undefined;
+    const amountText =
+      typeof amountRaw === 'number'
+        ? String(amountRaw)
+        : typeof amountRaw === 'string'
+          ? amountRaw.trim()
+          : '';
 
-    const result = await PayoutService.requestRedemption(user.id, cleanKey, parsedAmount);
+    if (!amountText || !/^\d+(?:\.\d{1,2})?$/.test(amountText)) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid payout amount with no more than two decimal places is required.',
+      });
+    }
+
+    const parsedAmount = Number(amountText);
+
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payout amount must be greater than zero.',
+      });
+    }
+
+    const idempotencyKey =
+      typeof idempotencyRaw === 'string'
+        ? idempotencyRaw.trim()
+        : '';
+
+    if (idempotencyKey.length < 16 || idempotencyKey.length > 128) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid payout request reference is required.',
+      });
+    }
+
+    const result = await PayoutService.requestRedemption(user.id, idempotencyKey, parsedAmount);
 
     res.status(201).json({
       success: true,

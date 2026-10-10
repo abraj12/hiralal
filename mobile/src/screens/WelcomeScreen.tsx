@@ -73,22 +73,24 @@ export default function WelcomeScreen() {
 
   // Safe content column width ensuring it never intersects the right-side artwork
   const maxContentWidth = Math.min(currentW * 0.58, 290 * scale);
+  const cardMaxWidth = Math.min(currentW * 0.54, 248 * scale);
+  const brandHeaderMaxWidth = Math.min(maxContentWidth * 0.86, 230 * scale);
 
   // Scaled typography and sizing
-  const headlineFontSize = Math.max(24, Math.round(28 * Math.min(scale, 1.1)));
-  const headlineLineHeight = Math.round(headlineFontSize * 1.22);
-  const subFontSize = Math.max(11, Math.round(12 * Math.min(scale, 1.1)));
+  const headlineFontSize = Math.max(26, Math.round(30 * Math.min(scale, 1.15)));
+  const headlineLineHeight = Math.round(headlineFontSize * 1.18);
+  const subFontSize = Math.max(11.5, Math.round(12.5 * Math.min(scale, 1.1)));
   const subLineHeight = Math.round(subFontSize * 1.45);
 
-  const logoSize = Math.max(50, Math.round(58 * Math.min(scale, 1.1)));
-  const brandNameSize = Math.max(13, Math.round(15 * Math.min(scale, 1.1)));
-  const brandSubSize = Math.max(8.5, Math.round(9.5 * Math.min(scale, 1.1)));
+  const logoSize = Math.max(86, Math.round(102 * Math.min(scale, 1.15)));
+  const brandNameSize = Math.max(16, Math.round(18 * Math.min(scale, 1.15)));
+  const brandSubSize = Math.max(9.5, Math.round(10.5 * Math.min(scale, 1.15)));
 
-  const cardPadV = Math.max(7, Math.round(9 * Math.min(scale, 1.05)));
-  const cardPadH = Math.max(8, Math.round(10 * Math.min(scale, 1.05)));
-  const iconBoxSize = Math.max(28, Math.round(32 * Math.min(scale, 1.05)));
-  const cardTitleSize = Math.max(11, Math.round(12 * Math.min(scale, 1.05)));
-  const cardSubSize = Math.max(8.5, Math.round(9.5 * Math.min(scale, 1.05)));
+  const cardPadV = Math.max(8, Math.round(10 * Math.min(scale, 1.05)));
+  const cardPadH = Math.max(10, Math.round(13 * Math.min(scale, 1.05)));
+  const cardIconSize = Math.max(18, Math.round(21 * Math.min(scale, 1.1)));
+  const cardTitleSize = Math.max(12, Math.round(13.2 * Math.min(scale, 1.08)));
+  const cardSubSize = Math.max(8.8, Math.round(9.8 * Math.min(scale, 1.05)));
 
   return (
     <View style={styles.root} onLayout={onLayout}>
@@ -194,10 +196,10 @@ export default function WelcomeScreen() {
           {/* Top content container bounded within left content column */}
           <View style={[styles.topContent, { maxWidth: maxContentWidth }]}>
             {/* Brand Header */}
-            <View style={styles.brandHeader}>
+            <View style={[styles.brandHeader, { maxWidth: brandHeaderMaxWidth }]}>
               <Image
                 source={require('../../assets/brand_logo.png')}
-                style={{ width: logoSize, height: logoSize, marginBottom: 6 }}
+                style={{ width: logoSize, height: logoSize, marginBottom: 8 }}
                 resizeMode="contain"
               />
               <Text style={[styles.brandName, { fontSize: brandNameSize }]}>
@@ -255,22 +257,14 @@ export default function WelcomeScreen() {
                 style={[
                   styles.card,
                   styles.cardBlue,
-                  { paddingVertical: cardPadV, paddingHorizontal: cardPadH },
+                  { maxWidth: cardMaxWidth, paddingVertical: cardPadV, paddingHorizontal: cardPadH },
                 ]}
               >
-                <View
-                  style={[
-                    styles.iconBox,
-                    styles.iconBlue,
-                    { width: iconBoxSize, height: iconBoxSize },
-                  ]}
-                >
-                  <FileText
-                    size={Math.round(iconBoxSize * 0.55)}
-                    color="#1E60D5"
-                    strokeWidth={2.2}
-                  />
-                </View>
+                <FileText
+                  size={cardIconSize}
+                  color="#1E60D5"
+                  strokeWidth={2.4}
+                />
                 <View style={styles.cardTextWrap}>
                   <Text style={[styles.cardTitle, { fontSize: cardTitleSize }]}>
                     Upload Bills
@@ -286,22 +280,14 @@ export default function WelcomeScreen() {
                 style={[
                   styles.card,
                   styles.cardPink,
-                  { paddingVertical: cardPadV, paddingHorizontal: cardPadH },
+                  { maxWidth: cardMaxWidth, paddingVertical: cardPadV, paddingHorizontal: cardPadH },
                 ]}
               >
-                <View
-                  style={[
-                    styles.iconBox,
-                    styles.iconPink,
-                    { width: iconBoxSize, height: iconBoxSize },
-                  ]}
-                >
-                  <Gift
-                    size={Math.round(iconBoxSize * 0.55)}
-                    color="#DC2626"
-                    strokeWidth={2.2}
-                  />
-                </View>
+                <Gift
+                  size={cardIconSize}
+                  color="#DC2626"
+                  strokeWidth={2.4}
+                />
                 <View style={styles.cardTextWrap}>
                   <Text style={[styles.cardTitle, { fontSize: cardTitleSize }]}>
                     Earn Rewards
@@ -317,22 +303,14 @@ export default function WelcomeScreen() {
                 style={[
                   styles.card,
                   styles.cardGreen,
-                  { paddingVertical: cardPadV, paddingHorizontal: cardPadH },
+                  { maxWidth: cardMaxWidth, paddingVertical: cardPadV, paddingHorizontal: cardPadH },
                 ]}
               >
-                <View
-                  style={[
-                    styles.iconBox,
-                    styles.iconGreen,
-                    { width: iconBoxSize, height: iconBoxSize },
-                  ]}
-                >
-                  <ShieldCheck
-                    size={Math.round(iconBoxSize * 0.55)}
-                    color="#16A34A"
-                    strokeWidth={2.2}
-                  />
-                </View>
+                <ShieldCheck
+                  size={cardIconSize}
+                  color="#16A34A"
+                  strokeWidth={2.4}
+                />
                 <View style={styles.cardTextWrap}>
                   <Text style={[styles.cardTitle, { fontSize: cardTitleSize }]}>
                     Safe & Verified
@@ -429,24 +407,25 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // Brand Header: Logo centered above text
+  // Brand Header: Logo centered above text, shifted safely to the left
   brandHeader: {
     alignItems: 'center',
+    alignSelf: 'flex-start',
     width: '100%',
     marginBottom: 44,
   },
   brandName: {
     fontWeight: '900',
-    color: '#0F172A',
-    letterSpacing: 0.8,
+    color: '#070C1E',
+    letterSpacing: 0.2,
     textAlign: 'center',
   },
   subRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 3,
-    gap: 5,
+    marginTop: 2,
+    gap: 4,
   },
   subLine: {
     width: 14,
@@ -456,7 +435,7 @@ const styles = StyleSheet.create({
   brandSub: {
     fontWeight: '800',
     color: '#DC2626',
-    letterSpacing: 1.2,
+    letterSpacing: 0.6,
     textAlign: 'center',
   },
 
@@ -467,7 +446,7 @@ const styles = StyleSheet.create({
   },
   headlineDark: {
     fontWeight: '900',
-    color: '#0F172A',
+    color: '#070C1E',
     letterSpacing: -0.3,
   },
   headlineRed: {
@@ -490,8 +469,8 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 16,
-    gap: 8,
+    borderRadius: 26,
+    gap: 10,
   },
   cardBlue: {
     backgroundColor: '#EFF6FF',
@@ -502,26 +481,12 @@ const styles = StyleSheet.create({
   cardGreen: {
     backgroundColor: '#F0FDF4',
   },
-  iconBox: {
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconBlue: {
-    backgroundColor: '#DBEAFE',
-  },
-  iconPink: {
-    backgroundColor: '#FFE4E6',
-  },
-  iconGreen: {
-    backgroundColor: '#DCFCE7',
-  },
   cardTextWrap: {
     flex: 1,
   },
   cardTitle: {
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#070C1E',
   },
   cardSub: {
     color: '#64748B',

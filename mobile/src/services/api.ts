@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import { Platform, NativeModules } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 
 const getBaseUrl = () => {
   // 1. If explicit EXPO_PUBLIC_API_URL is configured and not emulator 10.0.2.2
@@ -50,29 +51,55 @@ const getBaseUrl = () => {
 export const API_BASE = getBaseUrl();
 console.log('📡 Mobile API configured at:', API_BASE);
 
+const STORAGE_KEY = 'hiralal_jwt_token';
+
 export class MobileApiClient {
   private static token: string | null = null;
 
-  static setToken(token: string | null) {
+  static async initToken(): Promise<string | null> {
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          this.token = window.localStorage.getItem(STORAGE_KEY);
+        }
+      } else {
+        this.token = await SecureStore.getItemAsync(STORAGE_KEY);
+      }
+    } catch (e) {
+      console.warn('Storage read warning:', e);
+      this.token = null;
+    }
+    return this.token;
+  }
+
+  static async setToken(token: string | null): Promise<void> {
     this.token = token;
     try {
-      if (typeof window !== 'undefined' && window.localStorage) {
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          if (token) {
+            window.localStorage.setItem(STORAGE_KEY, token);
+          } else {
+            window.localStorage.removeItem(STORAGE_KEY);
+          }
+        }
+      } else {
         if (token) {
-          window.localStorage.setItem('hiralal_jwt_token', token);
+          await SecureStore.setItemAsync(STORAGE_KEY, token);
         } else {
-          window.localStorage.removeItem('hiralal_jwt_token');
+          await SecureStore.deleteItemAsync(STORAGE_KEY);
         }
       }
     } catch (e) {
-      // Storage access ignored
+      console.warn('Storage write warning:', e);
     }
   }
 
   static getToken(): string | null {
-    if (!this.token) {
+    if (!this.token && Platform.OS === 'web') {
       try {
         if (typeof window !== 'undefined' && window.localStorage) {
-          this.token = window.localStorage.getItem('hiralal_jwt_token');
+          this.token = window.localStorage.getItem(STORAGE_KEY);
         }
       } catch (e) {
         // Storage access ignored
@@ -83,9 +110,15 @@ export class MobileApiClient {
 
   static async request<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
       ...(options.headers as Record<string, string>),
     };
+
+    // If options.body is FormData, let the fetch environment generate multipart boundary
+    if (!(options.body instanceof FormData)) {
+      if (!headers['Content-Type']) {
+        headers['Content-Type'] = 'application/json';
+      }
+    }
 
     const currentToken = this.getToken();
     if (currentToken) {
@@ -172,13 +205,60 @@ export class MobileApiClient {
     return this.request(`/bills?status=${status}`);
   }
 
-  static uploadBill(data: {
+  static async uploadBill(data: {
     invoiceNumber: string;
     invoiceDate: string;
     billAmount: number;
     remarks?: string;
+    file?: {
+      uri: string;
+      name: string;
+      type: string;
+      file?: any;
+    };
     fileBase64?: string;
+    fileName?: string;
+    mimeType?: string;
   }) {
+    if (data.file) {
+      const formData = new FormData();
+      formData.append('invoiceNumber', data.invoiceNumber);
+      formData.append('invoiceDate', data.invoiceDate);
+      formData.append('billAmount', String(data.billAmount));
+      if (data.remarks) {
+        formData.append('remarks', data.remarks);
+      }
+
+      if (Platform.OS === 'web') {
+        if (data.file.file instanceof Blob || (typeof File !== 'undefined' && data.file.file instanceof File)) {
+          formData.append('invoiceFile', data.file.file, data.file.name);
+        } else {
+          try {
+            const resp = await fetch(data.file.uri);
+            const blob = await resp.blob();
+            formData.append('invoiceFile', blob, data.file.name);
+          } catch {
+            formData.append('invoiceFile', {
+              uri: data.file.uri,
+              name: data.file.name,
+              type: data.file.type,
+            } as any);
+          }
+        }
+      } else {
+        formData.append('invoiceFile', {
+          uri: data.file.uri,
+          name: data.file.name,
+          type: data.file.type,
+        } as any);
+      }
+
+      return this.request('/bills', {
+        method: 'POST',
+        body: formData,
+      });
+    }
+
     return this.request('/bills', {
       method: 'POST',
       body: JSON.stringify(data),

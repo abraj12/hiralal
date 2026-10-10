@@ -203,4 +203,76 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
       .send({ mobile: testMobile, password: newPassword });
     expect(newLoginRes.status).toBe(200);
   });
+
+  test('7. Concurrent Registration with Single-Use Token: only 1 succeeds, second receives 400', async () => {
+    const concurrentMobile = `92${Math.floor(10000000 + Math.random() * 90000000)}`;
+    const testOtp = '987123';
+    await prisma.otpRequest.create({
+      data: {
+        mobile: concurrentMobile,
+        otpHash: sha256Hash(testOtp),
+        purpose: 'REGISTRATION',
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+
+    const verifyRes = await request(app)
+      .post('/api/auth/otp/verify')
+      .send({ mobile: concurrentMobile, otpCode: testOtp, purpose: 'REGISTRATION' });
+
+    expect(verifyRes.status).toBe(200);
+    const token = verifyRes.body.verificationToken;
+
+    // Fire 2 concurrent registration requests with the exact same token
+    const [reg1, reg2] = await Promise.all([
+      request(app)
+        .post('/api/auth/register')
+        .send({
+          mobile: concurrentMobile,
+          fullName: 'Concurrent Craftsman 1',
+          password: 'Password@123',
+          profession: 'PLUMBER',
+          verificationToken: token,
+        }),
+      request(app)
+        .post('/api/auth/register')
+        .send({
+          mobile: concurrentMobile,
+          fullName: 'Concurrent Craftsman 2',
+          password: 'Password@123',
+          profession: 'PLUMBER',
+          verificationToken: token,
+        }),
+    ]);
+
+    const statuses = [reg1.status, reg2.status].sort();
+    expect(statuses).toEqual([201, 400]);
+
+    // Cleanup
+    await prisma.authSession.deleteMany({ where: { user: { mobile: concurrentMobile } } });
+    await prisma.wallet.deleteMany({ where: { user: { mobile: concurrentMobile } } });
+    await prisma.user.deleteMany({ where: { mobile: concurrentMobile } });
+    await prisma.verificationToken.deleteMany({ where: { mobile: concurrentMobile } });
+    await prisma.otpRequest.deleteMany({ where: { mobile: concurrentMobile } });
+  });
+
+  test('8. Admin Login Rate Limiting: 6th attempt within window receives 429 Too Many Requests', async () => {
+    // Send 5 login requests with x-test-rate-limit header
+    for (let i = 0; i < 5; i++) {
+      const res = await request(app)
+        .post('/api/auth/admin-login')
+        .set('x-test-rate-limit', 'true')
+        .send({ username: '9999999999', password: 'WrongPassword@123' });
+      expect([400, 401]).toContain(res.status);
+    }
+
+    // 6th attempt should be blocked by rate limiter
+    const blockedRes = await request(app)
+      .post('/api/auth/admin-login')
+      .set('x-test-rate-limit', 'true')
+      .send({ username: '9999999999', password: 'WrongPassword@123' });
+
+    expect(blockedRes.status).toBe(429);
+    expect(blockedRes.body.code).toBe('RATE_LIMIT_EXCEEDED');
+  });
 });

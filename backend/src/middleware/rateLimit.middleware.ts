@@ -155,3 +155,19 @@ export const payoutRedeemLimiter = createRateLimiter({
   getIdentifier: (req: any) => req.user?.id || req.ip || 'anon',
   message: 'Redemption request limit reached. Please wait a minute before requesting another payout.',
 });
+
+export const adminLoginLimiter = createRateLimiter({
+  keyPrefix: 'auth:admin_login_ip',
+  limit: 5,
+  windowSeconds: 900, // 5 attempts per 15 minutes by IP
+  getIdentifier: (req) => req.ip || 'anon',
+  message: 'Too many admin login attempts from this IP. Please wait 15 minutes.',
+});
+
+export const adminAccountLoginLimiter = createRateLimiter({
+  keyPrefix: 'auth:admin_login_user',
+  limit: 5,
+  windowSeconds: 900, // 5 attempts per 15 minutes by username
+  getIdentifier: (req) => req.body?.username || 'anon',
+  message: 'Too many admin login attempts for this account. Please wait 15 minutes.',
+});

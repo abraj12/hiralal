@@ -165,7 +165,7 @@ export class StorageService {
     if (!fileKey) return '';
     const expiresAt = Math.floor(Date.now() / 1000) + expiresInMinutes * 60;
     const dataToSign = `${fileKey}:${expiresAt}`;
-    const secret = config.jwt.accessSecret || 'hiralal_doc_secret';
+    const secret = config.storageHmacSecret || 'hiralal_dev_storage_hmac_secret_2026';
     const signature = crypto
       .createHmac('sha256', secret)
       .update(dataToSign)
@@ -185,7 +185,7 @@ export class StorageService {
     }
 
     const dataToSign = `${fileKey}:${expires}`;
-    const secret = config.jwt.accessSecret || 'hiralal_doc_secret';
+    const secret = config.storageHmacSecret || 'hiralal_dev_storage_hmac_secret_2026';
     const expectedSignature = crypto
       .createHmac('sha256', secret)
       .update(dataToSign)

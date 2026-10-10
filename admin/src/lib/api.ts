@@ -31,22 +31,40 @@ export class AdminApiClient {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const res = await fetch(`${API_BASE}${endpoint}`, {
-      ...options,
-      headers,
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000); // 15-second timeout
 
-    const data = await res.json();
+    try {
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+        ...options,
+        headers,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
 
-    if (!res.ok) {
-      if (res.status === 401 && typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
-        this.clearToken();
-        window.location.href = '/login';
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch (e) {
+        data = { message: res.statusText || 'Unexpected server response' };
       }
-      throw new Error(data.message || 'API request failed');
-    }
 
-    return data;
+      if (!res.ok) {
+        if (res.status === 401 && typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+          this.clearToken();
+          window.location.href = '/login';
+        }
+        throw new Error(data.message || `API request failed (${res.status})`);
+      }
+
+      return data;
+    } catch (err: any) {
+      clearTimeout(timer);
+      if (err.name === 'AbortError') {
+        throw new Error('Request timed out. Please check server connectivity.');
+      }
+      throw err;
+    }
   }
 
   // Dashboard Overview with Profession Filtering

@@ -144,7 +144,7 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
 
       // Reversal ledger check
       const reversalTx = await prisma.walletTransaction.findFirst({
-        where: { referenceId: key, type: 'PAYOUT_REVERSAL' },
+        where: { referenceId: payoutId, type: 'PAYOUT_REVERSAL' },
       });
       expect(reversalTx).not.toBeNull();
       expect(Number(reversalTx?.amount)).toBe(500.0);
@@ -190,5 +190,63 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
     const report = await ReconciliationWorker.reconcileStuckPayouts();
     expect(typeof report.reconciledCount).toBe('number');
     expect(Array.isArray(report.errors)).toBe(true);
+  });
+
+  test('5. Post-Success Reversal: handleReversedPayout safely reverses PROCESSED payout, decrements totalRedeemed, and refunds availableBalance', async () => {
+    // 1. Setup a PROCESSED payout
+    const key = `idem-post-rev-${Date.now()}`;
+    const redemption = await PayoutService.requestRedemption(user.id, key, 500);
+    const payoutId = redemption.payout.id;
+
+    // Finalize it as successful (simulating gateway settlement)
+    await PayoutService.finalizeSuccess(payoutId, 'pout_gateway_success_123');
+
+    const payoutBefore = await prisma.payout.findUnique({ where: { id: payoutId } });
+    expect(payoutBefore?.status).toBe('SUCCESS');
+
+    const walletBefore = await prisma.wallet.findUnique({ where: { userId: user.id } });
+    const initialRedeemed = Number(walletBefore?.totalRedeemed);
+    const initialAvail = Number(walletBefore?.availableBalance);
+
+    // 2. Gateway notifies payout was reversed post-settlement (e.g. beneficiary bank clawback)
+    await PayoutService.handleReversedPayout(payoutId, 'Beneficiary bank rejected credit after clearing');
+
+    // 3. Verify payout status is REVERSED
+    const payoutAfter = await prisma.payout.findUnique({ where: { id: payoutId } });
+    expect(payoutAfter?.status).toBe('REVERSED');
+    expect(payoutAfter?.failureReason).toContain('Beneficiary bank rejected credit');
+
+    // 4. Verify wallet compensation: totalRedeemed decremented by 500, availableBalance incremented by 500
+    const walletAfter = await prisma.wallet.findUnique({ where: { userId: user.id } });
+    expect(Number(walletAfter?.totalRedeemed)).toBe(initialRedeemed - 500);
+    expect(Number(walletAfter?.availableBalance)).toBe(initialAvail + 500);
+
+    // 5. Verify compensation ledger entry was recorded
+    const reversalTx = await prisma.walletTransaction.findFirst({
+      where: { referenceId: payoutId, type: 'PAYOUT_REVERSAL' },
+    });
+    expect(reversalTx).not.toBeNull();
+    expect(Number(reversalTx?.amount)).toBe(500);
+  });
+
+  test('6. Payout Worker atomic claim: atomic status transition ensures worker idempotency', async () => {
+    const key = `idem-claim-${Date.now()}`;
+    const redemption = await PayoutService.requestRedemption(user.id, key, 500);
+    const payoutId = redemption.payout.id;
+
+    // Simulate 2 workers concurrently attempting to claim this payout
+    const [claim1, claim2] = await Promise.all([
+      prisma.payout.updateMany({
+        where: { id: payoutId, status: 'PENDING' },
+        data: { status: 'PAYOUT_INITIATED', updatedAt: new Date() },
+      }),
+      prisma.payout.updateMany({
+        where: { id: payoutId, status: 'PENDING' },
+        data: { status: 'PAYOUT_INITIATED', updatedAt: new Date() },
+      }),
+    ]);
+
+    expect(claim1.count + claim2.count).toBe(1);
+    expect([claim1.count, claim2.count].sort()).toEqual([0, 1]);
   });
 });

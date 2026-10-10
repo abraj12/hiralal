@@ -178,7 +178,7 @@ model Bill {
   status               BillStatus  @default(PENDING)
   fileUrl              String
   fileKey              String
-  fileHash             String?
+  fileHash             String?     @unique
   fileSize             Int?
   mimeType             String?
   rejectionReason      String?
@@ -191,7 +191,6 @@ model Bill {
   @@index([userId])
   @@index([status])
   @@index([invoiceNumber])
-  @@index([fileHash])
   @@index([rewardRuleId])
   @@index([gstRuleId])
   @@index([createdAt])

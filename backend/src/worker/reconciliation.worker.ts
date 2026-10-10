@@ -43,24 +43,42 @@ export class ReconciliationWorker {
 
         // 1. Fetch by razorpayPayoutId if known
         if (payout.razorpayPayoutId) {
-          const res = await fetch(`https://api.razorpay.com/v1/payouts/${payout.razorpayPayoutId}`, {
-            headers: { Authorization: auth },
-          });
-          if (res.ok) {
-            razorpayPayout = await res.json();
+          const controller1 = new AbortController();
+          const timer1 = setTimeout(() => controller1.abort(), 10000);
+          try {
+            const res = await fetch(`https://api.razorpay.com/v1/payouts/${payout.razorpayPayoutId}`, {
+              headers: { Authorization: auth },
+              signal: controller1.signal,
+            });
+            if (res.ok) {
+              razorpayPayout = await res.json();
+            }
+          } catch (e) {
+            // continue to fallback
+          } finally {
+            clearTimeout(timer1);
           }
         }
 
         // 2. Fallback: Search by our payout reference_id
         if (!razorpayPayout) {
-          const res = await fetch(`https://api.razorpay.com/v1/payouts?reference_id=${payout.id}`, {
-            headers: { Authorization: auth },
-          });
-          if (res.ok) {
-            const listData: any = await res.json();
-            if (listData.items && listData.items.length > 0) {
-              razorpayPayout = listData.items[0];
+          const controller2 = new AbortController();
+          const timer2 = setTimeout(() => controller2.abort(), 10000);
+          try {
+            const res = await fetch(`https://api.razorpay.com/v1/payouts?reference_id=${payout.id}`, {
+              headers: { Authorization: auth },
+              signal: controller2.signal,
+            });
+            if (res.ok) {
+              const listData: any = await res.json();
+              if (listData.items && listData.items.length > 0) {
+                razorpayPayout = listData.items[0];
+              }
             }
+          } catch (e) {
+            // search failed
+          } finally {
+            clearTimeout(timer2);
           }
         }
 
@@ -72,8 +90,13 @@ export class ReconciliationWorker {
             await PayoutService.finalizeSuccess(payout.id, razorpayPayout.id);
             reconciledCount++;
             console.log(`[RECONCILIATION] Payout ${payout.id} finalized as SUCCESS via gateway status.`);
-          } else if (gatewayStatus === 'failed' || gatewayStatus === 'reversed' || gatewayStatus === 'rejected') {
-            const reason = razorpayPayout.failure_reason || 'Disbursement rejected/reversed on banking network';
+          } else if (gatewayStatus === 'reversed') {
+            const reason = razorpayPayout.failure_reason || 'Disbursement reversed on banking network';
+            await PayoutService.handleReversedPayout(payout.id, reason);
+            reconciledCount++;
+            console.log(`[RECONCILIATION] Payout ${payout.id} handled post-settlement reversal as REVERSED (${reason}) via gateway status.`);
+          } else if (gatewayStatus === 'failed' || gatewayStatus === 'rejected') {
+            const reason = razorpayPayout.failure_reason || 'Disbursement rejected on banking network';
             await PayoutService.reversePayout(payout.id, reason);
             reconciledCount++;
             console.log(`[RECONCILIATION] Payout ${payout.id} reversed as FAILED (${reason}) via gateway status.`);
