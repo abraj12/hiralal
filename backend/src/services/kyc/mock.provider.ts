@@ -7,9 +7,20 @@ export class MockKycProvider implements KycProvider {
     panNumber: string;
     panName: string;
     userId: string;
+    consent?: boolean;
+    consentText?: string;
     requestId?: string;
   }): Promise<PanVerificationResult> {
     const cleanPan = params.panNumber.trim().toUpperCase();
+
+    if (params.consent !== true) {
+      return {
+        isValid: false,
+        panNumber: cleanPan,
+        panName: '',
+        rejectionReason: 'User informed consent is mandatory before querying tax verification database.',
+      };
+    }
 
     if (cleanPan.startsWith('ERROR')) {
       throw new Error('SignCare verification network error: Gateway timeout');
@@ -19,8 +30,27 @@ export class MockKycProvider implements KycProvider {
       return {
         isValid: false,
         panNumber: cleanPan,
-        panName: params.panName,
+        panName: '',
         rejectionReason: 'PAN is invalid or not registered in the tax database',
+      };
+    }
+
+    if (cleanPan.startsWith('NONAME')) {
+      return {
+        isValid: false,
+        panNumber: cleanPan,
+        panName: '',
+        rejectionReason: 'Provider response missing authoritative PAN holder name.',
+      };
+    }
+
+    if (cleanPan.startsWith('DIFFNAME')) {
+      return {
+        isValid: true,
+        panNumber: cleanPan,
+        panName: 'UNMATCHED HOLDER NAME',
+        providerRequestId: `mock-req-${Date.now()}`,
+        providerStatus: 'VALID',
       };
     }
 
@@ -29,7 +59,7 @@ export class MockKycProvider implements KycProvider {
       return {
         isValid: false,
         panNumber: cleanPan,
-        panName: params.panName,
+        panName: '',
         rejectionReason: 'Invalid PAN syntax format',
       };
     }

@@ -46,18 +46,23 @@ export default function WalletScreen() {
       >
         {/* Main Balance Card */}
         <View style={styles.balanceCard}>
-          <Text style={styles.balanceLabel}>Available Balance</Text>
+          <Text style={styles.balanceLabel}>Redeemable Balance</Text>
           <Text style={styles.balanceValue}>₹{wallet.availableBalance.toLocaleString('en-IN')}</Text>
 
           <View style={styles.balanceSubRow}>
             <View style={styles.balanceSubItem}>
-              <Text style={styles.subLabel}>Processing</Text>
-              <Text style={styles.subVal}>₹{wallet.processingAmount.toLocaleString('en-IN')}</Text>
+              <Text style={styles.subLabel}>Lifetime</Text>
+              <Text style={styles.subVal}>₹{(wallet.lifetimeCashback ?? (wallet.availableBalance + wallet.totalRedeemed + wallet.processingAmount)).toLocaleString('en-IN')}</Text>
             </View>
             <View style={styles.balanceDivider} />
             <View style={styles.balanceSubItem}>
-              <Text style={styles.subLabel}>Total Redeemed</Text>
+              <Text style={styles.subLabel}>Redeemed</Text>
               <Text style={styles.subVal}>₹{wallet.totalRedeemed.toLocaleString('en-IN')}</Text>
+            </View>
+            <View style={styles.balanceDivider} />
+            <View style={styles.balanceSubItem}>
+              <Text style={styles.subLabel}>Pending</Text>
+              <Text style={styles.subVal}>₹{wallet.processingAmount.toLocaleString('en-IN')}</Text>
             </View>
           </View>
 
@@ -96,21 +101,25 @@ export default function WalletScreen() {
             style={[
               styles.redeemBtn,
               { backgroundColor: theme.primaryColor },
-              (!canRedeem) && { opacity: 0.5 },
+              (!canRedeem || wallet.availableBalance <= 0) && { opacity: 0.5 },
             ]}
             onPress={() => setShowRedeemModal(true)}
-            disabled={!canRedeem}
+            disabled={!canRedeem || wallet.availableBalance <= 0}
             activeOpacity={0.85}
           >
-            <Text style={styles.redeemBtnText}>Redeem Rewards</Text>
+            <Text style={styles.redeemBtnText}>
+              Redeem Cashback ₹{wallet.availableBalance.toLocaleString('en-IN')}
+            </Text>
           </TouchableOpacity>
 
-          {!canRedeem && (
+          {(!canRedeem || wallet.availableBalance <= 0) && (
             <Text style={styles.minRedeemNotice}>
               {eligibility?.reason ||
                 (!isWindowOpen
                   ? 'Redemption is currently closed by administration'
-                  : `Minimum balance of ₹${minAmount} required for payout`)}
+                  : wallet.availableBalance <= 0
+                    ? 'No balance available for redemption'
+                    : `Minimum balance of ₹${minAmount} required for payout`)}
             </Text>
           )}
         </View>

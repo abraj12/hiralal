@@ -30,6 +30,7 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
   // Step 1: KYC PAN state
   const [panNumber, setPanNumber] = useState('');
   const [panName, setPanName] = useState('');
+  const [panConsent, setPanConsent] = useState(false);
   const [panVerified, setPanVerified] = useState(false);
   const [maskedPan, setMaskedPan] = useState('');
 
@@ -123,11 +124,20 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
       setErrorMsg('Please enter the name as per PAN records.');
       return;
     }
+    if (!panConsent) {
+      setErrorMsg('Informed consent is required to verify your PAN identity with tax databases.');
+      return;
+    }
 
     setErrorMsg(null);
     setIsSubmitting(true);
     try {
-      const res = await MobileApiClient.verifyPan(panNumber.trim().toUpperCase(), panName.trim());
+      const res = await MobileApiClient.verifyPan(
+        panNumber.trim().toUpperCase(),
+        panName.trim(),
+        true,
+        'I provide consent to verify my PAN identity for rewards payout compliance.'
+      );
       setPanVerified(true);
       setMaskedPan(res.kyc?.maskedPan || 'ABCDE••••F');
       if (paymentVerified) {
@@ -299,9 +309,22 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
                   </View>
 
                   <TouchableOpacity
-                    style={[styles.primaryButton, { backgroundColor: theme.primaryColor }]}
+                    style={styles.consentRow}
+                    onPress={() => setPanConsent(!panConsent)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={[styles.checkbox, panConsent && { backgroundColor: theme.primaryColor, borderColor: theme.primaryColor }]}>
+                      {panConsent && <CheckCircle2 size={16} color="#ffffff" />}
+                    </View>
+                    <Text style={styles.consentText}>
+                      I hereby give consent to verify my PAN identity with the income tax database for reward disbursement compliance.
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.primaryButton, { backgroundColor: theme.primaryColor }, !panConsent && { opacity: 0.6 }]}
                     onPress={handleVerifyPan}
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || !panConsent}
                   >
                     {isSubmitting ? (
                       <ActivityIndicator color="#ffffff" />
@@ -491,15 +514,15 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
                   />
 
                   <Text style={styles.successTitle}>
-                    {payoutResult?.status === 'PROCESSED'
+                    {payoutResult?.status === 'SUCCESS' || payoutResult?.status === 'PROCESSED'
                       ? 'Transfer Completed Successfully!'
-                      : 'Payout Queued for Processing'}
+                      : 'Submitted! Awaiting Admin Approval'}
                   </Text>
                   <Text style={styles.successAmount}>₹{amountToRedeem.toLocaleString('en-IN')}</Text>
                   <Text style={styles.successDesc}>
-                    {payoutResult?.status === 'PROCESSED'
+                    {payoutResult?.status === 'SUCCESS' || payoutResult?.status === 'PROCESSED'
                       ? `Your rewards payout has been successfully transferred to your verified payment account (${maskedPayment}).`
-                      : `Your rewards payout request has been registered and is being processed. Funds will be transferred shortly to your verified account (${maskedPayment}).`}
+                      : `Your redemption request has been submitted and is awaiting administrator approval. Funds will be dispatched directly to your verified account (${maskedPayment}) upon approval.`}
                   </Text>
 
                   <View style={styles.txnBox}>
@@ -828,5 +851,28 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0F172A',
     fontFamily: 'monospace',
+  },
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 14,
+    marginBottom: 16,
+    gap: 10,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#94A3B8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  consentText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#475569',
+    lineHeight: 18,
   },
 });

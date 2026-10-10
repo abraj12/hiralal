@@ -10,6 +10,7 @@ import { config } from '../config';
 
 describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
   let user: any;
+  let adminUser: any;
   let paymentAccount: any;
 
   beforeAll(async () => {
@@ -25,6 +26,7 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
     await prisma.kycRecord.deleteMany({ where: { user: { mobile: '9666666666' } } });
     await prisma.wallet.deleteMany({ where: { user: { mobile: '9666666666' } } });
     await prisma.user.deleteMany({ where: { mobile: '9666666666' } });
+    await prisma.user.deleteMany({ where: { mobile: '9888888888' } });
 
     user = await prisma.user.create({
       data: {
@@ -46,6 +48,17 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
       include: { wallet: true },
     });
 
+    adminUser = await prisma.user.create({
+      data: {
+        mobile: '9888888888',
+        fullName: 'Disbursement Approver Admin',
+        passwordHash: 'hash',
+        role: 'ADMIN',
+        status: 'ACTIVE',
+        isVerified: true,
+      },
+    });
+
     await KycService.submitPan(user.id, 'ABCDE9876K', 'Disbursement Craftsman');
     paymentAccount = await PaymentService.addUpiAccount(user.id, 'disbursementsafety@upi');
 
@@ -64,12 +77,24 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
     await prisma.walletTransaction.deleteMany({ where: { userId: user.id } });
     await prisma.wallet.deleteMany({ where: { userId: user.id } });
     await prisma.user.deleteMany({ where: { id: user.id } });
+    if (adminUser) {
+      await prisma.user.deleteMany({ where: { id: adminUser.id } });
+    }
   });
 
   test('1. Timeout Safety: Simulated gateway network failure holds payout in PROCESSING without reversing funds', async () => {
+    await prisma.payout.deleteMany({ where: { userId: user.id } });
+    await prisma.wallet.update({
+      where: { userId: user.id },
+      data: { availableBalance: 5000.0, processingAmount: 0.0, totalRedeemed: 0.0 },
+    });
+
     const key = `idem-timeout-${Date.now()}`;
-    const result = await PayoutService.requestRedemption(user.id, key, 1000);
+    const result = await PayoutService.requestRedemption(user.id, key);
     const payoutId = result.payout.id;
+
+    // Admin approves redemption before worker dispatch
+    await PayoutService.approveRedemption(payoutId, adminUser.id);
 
     // Simulate network error during dispatch
     const originalFetch = globalThis.fetch;
@@ -100,12 +125,12 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
       // Verify DB state
       const payoutAfter = await prisma.payout.findUnique({ where: { id: payoutId } });
       expect(payoutAfter?.status).toBe('PROCESSING');
-      expect(payoutAfter?.failureReason).toMatch(/Network error\/timeout/i);
+      expect(payoutAfter?.failureReason).toMatch(/Network error\/timeout|ETIMEDOUT/i);
 
       // Critical check: Wallet funds MUST NOT be refunded yet!
       const walletAfter = await prisma.wallet.findUnique({ where: { userId: user.id } });
-      expect(Number(walletAfter?.availableBalance)).toBe(4000.0);
-      expect(Number(walletAfter?.processingAmount)).toBe(1000.0);
+      expect(Number(walletAfter?.availableBalance)).toBe(0.0);
+      expect(Number(walletAfter?.processingAmount)).toBe(5000.0);
 
       // Verify no reversal transaction was generated
       const reversalTx = await prisma.walletTransaction.findFirst({
@@ -114,13 +139,26 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
       expect(reversalTx).toBeNull();
     } finally {
       globalThis.fetch = originalFetch;
+      await prisma.payout.deleteMany({ where: { userId: user.id } });
+      await prisma.wallet.update({
+        where: { userId: user.id },
+        data: { availableBalance: 5000.0, processingAmount: 0.0, totalRedeemed: 0.0 },
+      });
     }
   });
 
   test('2. Definite 4xx Rejection: Safely marks FAILED, refunds available balance, creates PAYOUT_REVERSAL', async () => {
+    await prisma.payout.deleteMany({ where: { userId: user.id } });
+    await prisma.wallet.update({
+      where: { userId: user.id },
+      data: { availableBalance: 5000.0, processingAmount: 0.0, totalRedeemed: 0.0 },
+    });
+
     const key = `idem-rejected-${Date.now()}`;
-    const result = await PayoutService.requestRedemption(user.id, key, 500);
+    const result = await PayoutService.requestRedemption(user.id, key);
     const payoutId = result.payout.id;
+
+    await PayoutService.approveRedemption(payoutId, adminUser.id);
 
     const originalFetch = globalThis.fetch;
     globalThis.fetch = jest.fn().mockImplementation((url: string) => {
@@ -153,13 +191,37 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
         where: { referenceId: payoutId, type: 'PAYOUT_REVERSAL' },
       });
       expect(reversalTx).not.toBeNull();
-      expect(Number(reversalTx?.amount)).toBe(500.0);
+      expect(Number(reversalTx?.amount)).toBe(5000.0);
+
+      const walletAfter = await prisma.wallet.findUnique({ where: { userId: user.id } });
+      expect(Number(walletAfter?.availableBalance)).toBe(5000.0);
+      expect(Number(walletAfter?.processingAmount)).toBe(0.0);
     } finally {
       globalThis.fetch = originalFetch;
+      await prisma.payout.deleteMany({ where: { userId: user.id } });
+      await prisma.walletTransaction.deleteMany({ where: { userId: user.id } });
+      await prisma.wallet.update({
+        where: { userId: user.id },
+        data: { availableBalance: 5000.0, processingAmount: 0.0, totalRedeemed: 0.0 },
+      });
     }
   });
 
-  test('3. Webhook Deduplication: Prevents double-processing of identical eventId', async () => {
+  test('3. Webhook Deduplication: Prevents double-processing of identical eventId and holds unmatched event', async () => {
+    // Create matching payout in PROCESSING status
+    const payout = await prisma.payout.create({
+      data: {
+        userId: user.id,
+        walletId: user.wallet.id,
+        paymentAccountId: paymentAccount.id,
+        paymentType: 'UPI',
+        amount: 1000.0,
+        status: 'PROCESSING',
+        razorpayPayoutId: 'pout_webhook_dedup_test',
+        idempotencyKey: `idem-webhook-${Date.now()}`,
+      },
+    });
+
     const eventId = `evt_dedup_${Date.now()}`;
     const payload = {
       id: eventId,
@@ -167,14 +229,14 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
       payload: {
         payout: {
           entity: {
-            id: 'pout_fake_test_1',
-            reference_id: 'ref_dummy',
+            id: 'pout_webhook_dedup_test',
+            reference_id: payout.id,
           },
         },
       },
     };
 
-    // First delivery
+    // First delivery: matches payout and completes processing
     const res1 = await request(app)
       .post('/api/webhooks/razorpayx')
       .set('x-razorpay-event-id', eventId)
@@ -182,7 +244,7 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
 
     expect(res1.status).toBe(200);
 
-    // Duplicate delivery
+    // Duplicate delivery of processed event returns duplicate_ignored
     const res2 = await request(app)
       .post('/api/webhooks/razorpayx')
       .set('x-razorpay-event-id', eventId)
@@ -190,6 +252,27 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
 
     expect(res2.status).toBe(200);
     expect(res2.body.status).toBe('duplicate_ignored');
+
+    // Unmatched delivery is held for retry rather than marked permanently processed
+    const unmatchedEventId = `evt_unmatched_${Date.now()}`;
+    const unmatchedRes = await request(app)
+      .post('/api/webhooks/razorpayx')
+      .set('x-razorpay-event-id', unmatchedEventId)
+      .send({
+        id: unmatchedEventId,
+        event: 'payout.processed',
+        payload: {
+          payout: {
+            entity: {
+              id: 'pout_non_existent',
+              reference_id: 'ref_dummy_non_existent',
+            },
+          },
+        },
+      });
+
+    expect(unmatchedRes.status).toBe(200);
+    expect(unmatchedRes.body.status).toBe('unmatched_held_for_retry');
   });
 
   test('4. Reconciliation Worker: Gracefully handles offline or mock gateway sync', async () => {
@@ -199,10 +282,18 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
   });
 
   test('5. Post-Success Reversal: handleReversedPayout safely reverses PROCESSED payout, decrements totalRedeemed, and refunds availableBalance', async () => {
+    await prisma.payout.deleteMany({ where: { userId: user.id } });
+    await prisma.wallet.update({
+      where: { userId: user.id },
+      data: { availableBalance: 5000.0, processingAmount: 0.0, totalRedeemed: 0.0 },
+    });
+
     // 1. Setup a PROCESSED payout
     const key = `idem-post-rev-${Date.now()}`;
-    const redemption = await PayoutService.requestRedemption(user.id, key, 500);
+    const redemption = await PayoutService.requestRedemption(user.id, key);
     const payoutId = redemption.payout.id;
+
+    await PayoutService.approveRedemption(payoutId, adminUser.id);
 
     // Finalize it as successful (simulating gateway settlement)
     await PayoutService.finalizeSuccess(payoutId, 'pout_gateway_success_123');
@@ -222,32 +313,48 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
     expect(payoutAfter?.status).toBe('REVERSED');
     expect(payoutAfter?.failureReason).toContain('Beneficiary bank rejected credit');
 
-    // 4. Verify wallet compensation: totalRedeemed decremented by 500, availableBalance incremented by 500
+    // 4. Verify wallet compensation: totalRedeemed decremented by 5000, availableBalance incremented by 5000
     const walletAfter = await prisma.wallet.findUnique({ where: { userId: user.id } });
-    expect(Number(walletAfter?.totalRedeemed)).toBe(initialRedeemed - 500);
-    expect(Number(walletAfter?.availableBalance)).toBe(initialAvail + 500);
+    expect(Number(walletAfter?.totalRedeemed)).toBe(initialRedeemed - 5000);
+    expect(Number(walletAfter?.availableBalance)).toBe(initialAvail + 5000);
 
     // 5. Verify compensation ledger entry was recorded
     const reversalTx = await prisma.walletTransaction.findFirst({
       where: { referenceId: payoutId, type: 'PAYOUT_REVERSAL' },
     });
     expect(reversalTx).not.toBeNull();
-    expect(Number(reversalTx?.amount)).toBe(500);
+    expect(Number(reversalTx?.amount)).toBe(5000);
+
+    // Clean up
+    await prisma.payout.deleteMany({ where: { userId: user.id } });
+    await prisma.walletTransaction.deleteMany({ where: { userId: user.id } });
+    await prisma.wallet.update({
+      where: { userId: user.id },
+      data: { availableBalance: 5000.0, processingAmount: 0.0, totalRedeemed: 0.0 },
+    });
   });
 
   test('6. Payout Worker atomic claim: atomic status transition ensures worker idempotency', async () => {
+    await prisma.payout.deleteMany({ where: { userId: user.id } });
+    await prisma.wallet.update({
+      where: { userId: user.id },
+      data: { availableBalance: 5000.0, processingAmount: 0.0, totalRedeemed: 0.0 },
+    });
+
     const key = `idem-claim-${Date.now()}`;
-    const redemption = await PayoutService.requestRedemption(user.id, key, 500);
+    const redemption = await PayoutService.requestRedemption(user.id, key);
     const payoutId = redemption.payout.id;
+
+    await PayoutService.approveRedemption(payoutId, adminUser.id);
 
     // Simulate 2 workers concurrently attempting to claim this payout
     const [claim1, claim2] = await Promise.all([
       prisma.payout.updateMany({
-        where: { id: payoutId, status: 'PENDING' },
+        where: { id: payoutId, status: 'APPROVED' },
         data: { status: 'PAYOUT_INITIATED', updatedAt: new Date() },
       }),
       prisma.payout.updateMany({
-        where: { id: payoutId, status: 'PENDING' },
+        where: { id: payoutId, status: 'APPROVED' },
         data: { status: 'PAYOUT_INITIATED', updatedAt: new Date() },
       }),
     ]);

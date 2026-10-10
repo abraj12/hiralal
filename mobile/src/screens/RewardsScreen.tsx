@@ -7,7 +7,7 @@ import { useApp } from '../context/AppContext';
 export default function RewardsScreen() {
   const { theme, wallet, bills } = useApp();
 
-  const totalRewards = wallet.availableBalance + wallet.totalRedeemed;
+  const totalRewards = wallet.lifetimeCashback ?? (wallet.availableBalance + wallet.totalRedeemed + wallet.processingAmount);
   const approvedBills = bills.filter(b => b.status === 'APPROVED');
   const pendingBills = bills.filter(b => b.status === 'PENDING' || b.status === 'UNDER_REVIEW');
 

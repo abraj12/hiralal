@@ -30,7 +30,9 @@ export default function RegisterScreen() {
   const [verificationToken, setVerificationToken] = useState<string | null>(null);
 
   // Step 3: Name & Password
-  const [fullName, setFullName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [middleName, setMiddleName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [password, setPassword] = useState('');
 
   const [loading, setLoading] = useState(false);
@@ -79,7 +81,11 @@ export default function RegisterScreen() {
   };
 
   const handleCompleteRegistration = async () => {
-    if (!fullName || !password) {
+    if (!firstName.trim()) {
+      setErrorMsg('First name is required.');
+      return;
+    }
+    if (!password) {
       setErrorMsg('Please enter your full name and choose a secure password.');
       return;
     }
@@ -92,10 +98,15 @@ export default function RegisterScreen() {
     setLoading(true);
     setErrorMsg(null);
 
+    const computedFullName = [firstName.trim(), middleName.trim(), lastName.trim()].filter(Boolean).join(' ');
+
     try {
       const res = await MobileApiClient.register({
         mobile,
-        fullName,
+        firstName: firstName.trim(),
+        middleName: middleName.trim() || undefined,
+        lastName: lastName.trim() || undefined,
+        fullName: computedFullName,
         password,
         profession: selectedProfession,
         verificationToken,
@@ -328,18 +339,46 @@ export default function RegisterScreen() {
               Almost done! Enter your name and create a password for login.
             </Text>
 
+            {/* PAN Guidance Notice */}
+            <View style={styles.panNoticeBox}>
+              <Text style={styles.panNoticeTitle}>📋 Name as per PAN Card</Text>
+              <Text style={styles.panNoticeText}>
+                Enter your name exactly as printed on your PAN card for hassle-free rewards redemption.
+              </Text>
+            </View>
+
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Full Name</Text>
+              <Text style={styles.inputLabel}>First Name *</Text>
               <TextInput
                 style={styles.inputBox}
-                value={fullName}
-                onChangeText={setFullName}
-                placeholder="e.g. Raj Kumar"
+                value={firstName}
+                onChangeText={setFirstName}
+                placeholder="e.g. Rajesh"
               />
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Set Password</Text>
+              <Text style={styles.inputLabel}>Middle Name (Optional)</Text>
+              <TextInput
+                style={styles.inputBox}
+                value={middleName}
+                onChangeText={setMiddleName}
+                placeholder="e.g. Kumar"
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Last Name (Optional)</Text>
+              <TextInput
+                style={styles.inputBox}
+                value={lastName}
+                onChangeText={setLastName}
+                placeholder="e.g. Sharma"
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Set Password *</Text>
               <TextInput
                 style={styles.inputBox}
                 value={password}
@@ -628,5 +667,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#DC2626',
     fontWeight: '600',
+  },
+  panNoticeBox: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+  },
+  panNoticeTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E40AF',
+    marginBottom: 4,
+  },
+  panNoticeText: {
+    fontSize: 12,
+    color: '#3B82F6',
+    lineHeight: 16,
   },
 });

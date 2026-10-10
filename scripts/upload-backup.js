@@ -6,12 +6,12 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-let S3Client, PutObjectCommand, HeadObjectCommand;
+let S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand;
 try {
-  ({ S3Client, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3'));
+  ({ S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3'));
 } catch (e) {
   try {
-    ({ S3Client, PutObjectCommand, HeadObjectCommand } = require(path.join(__dirname, '../backend/node_modules/@aws-sdk/client-s3')));
+    ({ S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } = require(path.join(__dirname, '../backend/node_modules/@aws-sdk/client-s3')));
   } catch (err) {
     // Will be injected in unit tests or throw when client is instantiated
   }
@@ -89,6 +89,35 @@ async function uploadAndVerifyBackup(localFile, remoteKey, bucketName, injectedC
   const remoteSha256 = headResult.Metadata?.sha256;
   if (remoteSha256 && remoteSha256 !== localSha256) {
     throw new Error(`Remote verification FAILED: SHA-256 digest mismatch! Local: ${localSha256} vs Remote: ${remoteSha256}.`);
+  }
+
+  // 4. Remote bytes read-back verification (full stream SHA-256 validation)
+  if (!injectedClient && GetObjectCommand) {
+    try {
+      console.log(`[R2-BACKUP] Reading back remote stream to verify byte integrity...`);
+      const getResult = await client.send(
+        new GetObjectCommand({
+          Bucket: bucketName,
+          Key: remoteKey,
+        })
+      );
+      if (getResult.Body) {
+        const hash = crypto.createHash('sha256');
+        for await (const chunk of getResult.Body) {
+          hash.update(chunk);
+        }
+        const downloadedSha256 = hash.digest('hex');
+        if (downloadedSha256 !== localSha256) {
+          throw new Error(`Remote bytes verification FAILED: Downloaded SHA-256 mismatch! Local: ${localSha256} vs Remote: ${downloadedSha256}`);
+        }
+        console.log(`[R2-BACKUP-VERIFIED] Stream byte digest verified: ${downloadedSha256}`);
+      }
+    } catch (streamErr) {
+      if (streamErr.message && streamErr.message.includes('Downloaded SHA-256 mismatch')) {
+        throw streamErr;
+      }
+      console.warn(`[R2-BACKUP-WARN] Stream read-back check encountered non-fatal error: ${streamErr.message}`);
+    }
   }
 
   console.log(`[R2-BACKUP-VERIFIED] External backup verified successfully: s3://${bucketName}/${remoteKey} (Size: ${remoteSize} bytes, SHA256: ${localSha256})`);

@@ -22,32 +22,44 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   const [gstOverrideReason, setGstOverrideReason] = useState<string>('');
   const [customRewardAmount, setCustomRewardAmount] = useState<string>('');
 
+  const [rewardPercentage, setRewardPercentage] = useState<number | null>(null);
+  const [rulesUnavailable, setRulesUnavailable] = useState(false);
+
   const isPlumber = (bill.profession || bill.userProfession) === 'PLUMBER';
   const grossAmount = Number(bill.grossBillAmount || bill.billAmount || 0);
 
-  // Load configured GST rules on mount
+  // Load configured GST rules and reward rules on mount
   useEffect(() => {
-    async function loadGstRules() {
+    async function loadRules() {
       try {
-        const res = await AdminApiClient.getGstRules();
-        if (res.rules && res.rules.length > 0) {
-          setGstRules(res.rules);
-          const defaultRule = res.rules.find((r: any) => r.isDefault) || res.rules[0];
+        const profession = bill.profession || bill.userProfession || (bill.user && bill.user.profession);
+        const [gstRes, rewardRes] = await Promise.all([
+          AdminApiClient.getGstRules(),
+          AdminApiClient.getRewardRules(profession || 'ALL'),
+        ]);
+
+        if (gstRes.rules && gstRes.rules.length > 0) {
+          setGstRules(gstRes.rules);
+          const defaultRule = gstRes.rules.find((r: any) => r.isDefault) || gstRes.rules[0];
           setSelectedGstRate(Number(defaultRule.ratePercentage));
           setSelectedGstRuleId(defaultRule.id);
+        } else {
+          setRulesUnavailable(true);
         }
-      } catch (e) {
-        // Fallback default
-        setGstRules([
-          { id: 'gst_5', ratePercentage: 5, description: '5% GST' },
-          { id: 'gst_12', ratePercentage: 12, description: '12% GST' },
-          { id: 'gst_18', ratePercentage: 18, description: '18% Standard GST', isDefault: true },
-          { id: 'gst_28', ratePercentage: 28, description: '28% Luxury GST' },
-        ]);
+
+        const activeRewardRule = rewardRes.rules?.find((r: any) => r.isActive && (!profession || r.profession === profession));
+        if (activeRewardRule) {
+          setRewardPercentage(Number(activeRewardRule.rewardPercentage));
+        } else {
+          setRulesUnavailable(true);
+        }
+      } catch (e: any) {
+        setRulesUnavailable(true);
+        setError('Real GST or reward rules could not be loaded from database. Approval is disabled to preserve financial integrity.');
       }
     }
-    loadGstRules();
-  }, []);
+    loadRules();
+  }, [bill]);
 
   // Live Reverse GST Calculation (paise-rounded)
   const gstAmount = gstIncluded && selectedGstRate > 0
@@ -56,8 +68,8 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
 
   const eligibleRewardAmount = Math.max(0, Math.round((grossAmount - gstAmount) * 100) / 100);
 
-  // Profession-specific reward rate preview (internal admin display)
-  const configuredRewardPercentage = isPlumber ? 0.50 : 0.75;
+  // Profession-specific reward rate preview (internal admin display from authoritative database rule)
+  const configuredRewardPercentage = rewardPercentage ?? (isPlumber ? 0.50 : 0.75);
   const calculatedReward = customRewardAmount && !isNaN(parseFloat(customRewardAmount))
     ? parseFloat(customRewardAmount)
     : Math.round(eligibleRewardAmount * (configuredRewardPercentage / 100) * 100) / 100;
@@ -356,8 +368,12 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
             </button>
             <button
               onClick={handleApprove}
-              disabled={isSubmitting}
-              className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-md shadow-emerald-200 transition flex items-center space-x-1.5"
+              disabled={isSubmitting || rulesUnavailable}
+              className={`px-5 py-2 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center space-x-1.5 ${
+                rulesUnavailable
+                  ? 'bg-slate-400 opacity-50 cursor-not-allowed shadow-none'
+                  : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
+              }`}
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>{isSubmitting ? 'Approving...' : `Approve & Credit ₹${calculatedReward.toFixed(2)}`}</span>

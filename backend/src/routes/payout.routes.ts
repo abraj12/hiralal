@@ -21,36 +21,13 @@ router.get('/eligibility', authenticate, async (req: AuthenticatedRequest, res: 
 
 /**
  * Request Reward Redemption
- * Backend determines verified recipient account, checks window, and enforces server-controlled payout amount.
+ * Enforces 100% full-balance redemption computed from database available balance.
+ * Awaiting admin approval before dispatch.
  */
 router.post('/redeem', authenticate, payoutRedeemLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
-    const amountRaw: unknown = req.body?.amount;
     const idempotencyRaw: unknown = req.body?.idempotencyKey;
-
-    const amountText =
-      typeof amountRaw === 'number'
-        ? String(amountRaw)
-        : typeof amountRaw === 'string'
-          ? amountRaw.trim()
-          : '';
-
-    if (!amountText || !/^\d+(?:\.\d{1,2})?$/.test(amountText)) {
-      return res.status(400).json({
-        success: false,
-        message: 'A valid payout amount with no more than two decimal places is required.',
-      });
-    }
-
-    const parsedAmount = Number(amountText);
-
-    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Payout amount must be greater than zero.',
-      });
-    }
 
     const idempotencyKey =
       typeof idempotencyRaw === 'string'
@@ -64,11 +41,12 @@ router.post('/redeem', authenticate, payoutRedeemLimiter, async (req: Authentica
       });
     }
 
-    const result = await PayoutService.requestRedemption(user.id, idempotencyKey, parsedAmount);
+    // 100% full available balance redemption (server-controlled)
+    const result = await PayoutService.requestRedemption(user.id, idempotencyKey);
 
     res.status(201).json({
       success: true,
-      message: 'Redemption initiated successfully. Disbursement dispatched to your verified account.',
+      message: result.message || 'Redemption request submitted successfully. Awaiting admin approval before disbursement.',
       payout: result.payout,
       amountDebited: result.amountDebited,
     });

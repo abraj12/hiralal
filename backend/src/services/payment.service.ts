@@ -27,6 +27,7 @@ export class PaymentService {
 
   /**
    * Verifies and saves a UPI ID using RazorpayX Fund Account Validation API.
+   * Requires explicit documented success from provider.
    */
   static async verifyAndAddUpi(userId: string, upiId: string) {
     const cleanUpi = upiId.trim().toLowerCase();
@@ -40,11 +41,26 @@ export class PaymentService {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new Error('User not found.');
 
+    // Prevent cross-user account takeover: ensure UPI is not already verified to another user
+    const existingOther = await prisma.paymentAccount.findFirst({
+      where: {
+        upiId: cleanUpi,
+        userId: { not: userId },
+        isVerified: true,
+      },
+    });
+    if (existingOther) {
+      throw new Error('This UPI ID is already registered and verified with another user account.');
+    }
+
     let isValid = true;
     let registeredName = user.fullName;
 
     // Real RazorpayX VPA Validation
     if (config.razorpayx.keyId && config.razorpayx.keySecret && config.nodeEnv !== 'test') {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000); // 10s strict timeout
+
       try {
         const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
         const res = await fetch('https://api.razorpay.com/v1/fund_accounts/validations', {
@@ -62,17 +78,35 @@ export class PaymentService {
             amount: 100, // 1 Rupee penny validation
             currency: 'INR',
           }),
+          signal: controller.signal,
         });
 
-        const data: any = await res.json();
-        if (res.ok && data.status !== 'failed') {
+        const data: any = await res.json().catch(() => null);
+
+        // Explicit documented success contract
+        const isExplicitSuccess =
+          res.ok &&
+          data &&
+          (data.status === 'completed' || data.status === 'created') &&
+          data.results?.account_status === 'active';
+
+        if (isExplicitSuccess) {
           isValid = true;
           registeredName = data.results?.registered_name || user.fullName;
         } else {
-          throw new Error(data.error?.description || 'UPI ID validation failed with banking network.');
+          const errorMsg =
+            data?.error?.description ||
+            data?.results?.status_details?.description ||
+            `UPI validation failed with status: ${data?.status || 'network_error'}`;
+          throw new Error(errorMsg);
         }
       } catch (err: any) {
+        if (err.name === 'AbortError') {
+          throw new Error('UPI account validation timed out. Please try again.');
+        }
         throw new Error(`UPI Validation failed: ${err.message}`);
+      } finally {
+        clearTimeout(timeout);
       }
     }
 
@@ -103,6 +137,7 @@ export class PaymentService {
 
   /**
    * Verifies and saves a Bank Account using RazorpayX Penny Drop / Validation.
+   * Requires explicit documented success from provider.
    */
   static async verifyAndAddBankAccount(params: {
     userId: string;
@@ -126,11 +161,29 @@ export class PaymentService {
     const user = await prisma.user.findUnique({ where: { id: params.userId } });
     if (!user) throw new Error('User not found.');
 
+    const maskedInfo = this.maskPaymentInfo('BANK_ACCOUNT', cleanAccount, params.bankName);
+
+    // Prevent cross-user duplicate registration
+    const existingOther = await prisma.paymentAccount.findFirst({
+      where: {
+        maskedInfo,
+        ifscCode: cleanIfsc,
+        userId: { not: params.userId },
+        isVerified: true,
+      },
+    });
+    if (existingOther) {
+      throw new Error('This bank account is already registered and verified with another user account.');
+    }
+
     let isValid = true;
     let registeredName = cleanName;
 
     // Real RazorpayX Bank Account Validation
     if (config.razorpayx.keyId && config.razorpayx.keySecret && config.nodeEnv !== 'test') {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000); // 10s strict timeout
+
       try {
         const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
         const res = await fetch('https://api.razorpay.com/v1/fund_accounts/validations', {
@@ -152,21 +205,38 @@ export class PaymentService {
             amount: 100,
             currency: 'INR',
           }),
+          signal: controller.signal,
         });
 
-        const data: any = await res.json();
-        if (res.ok && data.status !== 'failed') {
+        const data: any = await res.json().catch(() => null);
+
+        // Explicit documented success contract
+        const isExplicitSuccess =
+          res.ok &&
+          data &&
+          (data.status === 'completed' || data.status === 'created') &&
+          data.results?.account_status === 'active';
+
+        if (isExplicitSuccess) {
           isValid = true;
           registeredName = data.results?.registered_name || cleanName;
         } else {
-          throw new Error(data.error?.description || 'Bank account validation failed with IFSC switch.');
+          const errorMsg =
+            data?.error?.description ||
+            data?.results?.status_details?.description ||
+            `Bank account validation failed with status: ${data?.status || 'network_error'}`;
+          throw new Error(errorMsg);
         }
       } catch (err: any) {
+        if (err.name === 'AbortError') {
+          throw new Error('Bank account validation timed out. Please try again.');
+        }
         throw new Error(`Bank Account validation failed: ${err.message}`);
+      } finally {
+        clearTimeout(timeout);
       }
     }
 
-    const maskedInfo = this.maskPaymentInfo('BANK_ACCOUNT', cleanAccount, params.bankName);
     const encryptedAccount = encryptSensitive(cleanAccount);
 
     return await prisma.$transaction(async (tx) => {

@@ -6,7 +6,9 @@ import {
   generateSecureOtp,
   sha256Hash,
   generateSecureToken,
+  hmacHashOtp,
 } from '../utils/crypto.utils';
+import { validateStructuredName } from '../utils/name.utils';
 import { UserRole, Profession } from '@prisma/client';
 import { SmsService } from './sms';
 
@@ -41,7 +43,12 @@ export class AuthService {
         where: { mobile: cleanMobile },
       });
       if (!existingUser) {
-        throw new Error('No registered account was found with this mobile number.');
+        // Privacy protection: do not reveal account non-existence
+        return {
+          message: 'If an account is associated with this mobile number, a verification code has been dispatched.',
+          cooldownSeconds: 60,
+          expiresAt: new Date(now.getTime() + 10 * 60 * 1000).toISOString(),
+        };
       }
     }
 
@@ -72,9 +79,9 @@ export class AuthService {
       throw new Error('Too many verification requests. Please try again after 10 minutes.');
     }
 
-    // 4. Generate cryptographically secure OTP & Hash
+    // 4. Generate cryptographically secure OTP & Hash (server-secret-keyed HMAC)
     const otpCode = generateSecureOtp();
-    const otpHash = sha256Hash(otpCode);
+    const otpHash = hmacHashOtp(otpCode);
     const expiresAt = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes
     const cooldownUntil = new Date(now.getTime() + 60 * 1000); // 60 seconds
 
@@ -168,9 +175,10 @@ export class AuthService {
         };
       }
 
-      // Verify cryptographic SHA-256 hash
-      const inputHash = sha256Hash(cleanOtp);
-      if (inputHash !== record.otpHash) {
+      // Verify cryptographic HMAC or SHA-256 hash (backward-compatible)
+      const inputHmac = hmacHashOtp(cleanOtp);
+      const inputSha = sha256Hash(cleanOtp);
+      if (inputHmac !== record.otpHash && inputSha !== record.otpHash) {
         const updated = await tx.otpRequest.update({
           where: { id: record.id },
           data: { attemptsCount: { increment: 1 } },
@@ -232,12 +240,15 @@ export class AuthService {
   }
 
   /**
-   * Consumes registrationVerificationToken and creates user account.
+   * Consumes registrationVerificationToken and creates user account with structured names.
    * NEVER re-verifies original OTP.
    */
   static async registerUser(params: {
     mobile: string;
-    fullName: string;
+    firstName?: string;
+    middleName?: string;
+    lastName?: string;
+    fullName?: string;
     password: string;
     profession: Profession;
     verificationToken: string;
@@ -245,10 +256,16 @@ export class AuthService {
     ipAddress?: string;
   }) {
     const cleanMobile = params.mobile.replace(/\D/g, '').slice(-10);
-    const cleanName = params.fullName.trim();
 
-    if (!cleanName || cleanName.length < 2) {
-      throw new Error('Please enter your full name.');
+    const nameValidation = validateStructuredName(
+      params.firstName,
+      params.middleName,
+      params.lastName,
+      params.fullName
+    );
+
+    if (!nameValidation.isValid) {
+      throw new Error(nameValidation.error || 'Please enter a valid first name.');
     }
 
     if (!params.password || params.password.length < 6) {
@@ -302,7 +319,11 @@ export class AuthService {
       const newUser = await tx.user.create({
         data: {
           mobile: cleanMobile,
-          fullName: cleanName,
+          fullName: nameValidation.fullName,
+          firstName: nameValidation.firstName,
+          middleName: nameValidation.middleName,
+          lastName: nameValidation.lastName,
+          isNameLocked: false,
           passwordHash,
           profession: params.profession,
           role: 'USER',
@@ -340,6 +361,10 @@ export class AuthService {
         id: user.id,
         mobile: user.mobile,
         fullName: user.fullName,
+        firstName: user.firstName,
+        middleName: user.middleName,
+        lastName: user.lastName,
+        isNameLocked: user.isNameLocked,
         profession: user.profession,
         role: user.role,
       },
@@ -593,6 +618,133 @@ export class AuthService {
 
     return {
       message: 'Password reset successfully. Please log in with your new password.',
+    };
+  }
+
+  /**
+   * User updates their own name in Account Settings prior to PAN identity verification lock.
+   */
+  static async updateUserName(userId: string, params: {
+    firstName?: string;
+    middleName?: string;
+    lastName?: string;
+    fullName?: string;
+  }) {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new Error('User not found.');
+
+    if (user.isNameLocked) {
+      throw new Error('Your name is locked following identity verification. Please contact an administrator for any corrections.');
+    }
+
+    const val = validateStructuredName(params.firstName, params.middleName, params.lastName, params.fullName);
+    if (!val.isValid) {
+      throw new Error(val.error || 'Please enter a valid first name.');
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        firstName: val.firstName,
+        middleName: val.middleName,
+        lastName: val.lastName,
+        fullName: val.fullName,
+      },
+    });
+
+    return {
+      id: updated.id,
+      fullName: updated.fullName,
+      firstName: updated.firstName,
+      middleName: updated.middleName,
+      lastName: updated.lastName,
+      isNameLocked: updated.isNameLocked,
+    };
+  }
+
+  /**
+   * Privileged administrator updates user name with required reason and comprehensive audit trail.
+   * Enforces re-verification policy by resetting KYC nameMatched flag.
+   */
+  static async adminUpdateUserName(params: {
+    userId: string;
+    adminId: string;
+    firstName?: string;
+    middleName?: string;
+    lastName?: string;
+    fullName?: string;
+    reason: string;
+    ipAddress?: string;
+  }) {
+    if (!params.reason || !params.reason.trim()) {
+      throw new Error('A specific justification reason is mandatory for administrator name correction.');
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: params.userId },
+      include: { kycRecords: true },
+    });
+    if (!user) throw new Error('User not found.');
+
+    const val = validateStructuredName(params.firstName, params.middleName, params.lastName, params.fullName);
+    if (!val.isValid) {
+      throw new Error(val.error || 'Please enter a valid first name.');
+    }
+
+    const oldFullName = user.fullName;
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Update user name and unlock for re-verification
+      const updatedUser = await tx.user.update({
+        where: { id: user.id },
+        data: {
+          firstName: val.firstName,
+          middleName: val.middleName,
+          lastName: val.lastName,
+          fullName: val.fullName,
+          isNameLocked: false,
+          nameLockedAt: null,
+        },
+      });
+
+      // 2. Reset KYC nameMatched flag to enforce re-match policy before next payout
+      await tx.kycRecord.updateMany({
+        where: { userId: user.id },
+        data: { nameMatched: false },
+      });
+
+      // 3. Create comprehensive immutable Audit Log
+      await tx.auditLog.create({
+        data: {
+          adminId: params.adminId,
+          action: 'ADMIN_NAME_CORRECTION',
+          entityType: 'User',
+          entityId: user.id,
+          oldValue: JSON.stringify({
+            fullName: oldFullName,
+            firstName: user.firstName,
+            lastName: user.lastName,
+          }),
+          newValue: JSON.stringify({
+            fullName: val.fullName,
+            firstName: val.firstName,
+            lastName: val.lastName,
+            reason: params.reason.trim(),
+          }),
+          ipAddress: params.ipAddress,
+        },
+      });
+
+      return updatedUser;
+    });
+
+    return {
+      id: result.id,
+      fullName: result.fullName,
+      firstName: result.firstName,
+      middleName: result.middleName,
+      lastName: result.lastName,
+      isNameLocked: result.isNameLocked,
     };
   }
 

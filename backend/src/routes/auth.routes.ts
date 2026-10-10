@@ -59,9 +59,9 @@ router.post('/verify-otp', otpVerifyLimiter, handleOtpVerify); // Backwards comp
 
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { mobile, fullName, password, profession, verificationToken, otpCode } = req.body;
-    if (!mobile || !fullName || !password) {
-      return res.status(400).json({ success: false, message: 'Mobile, full name, and password are required.' });
+    const { mobile, firstName, middleName, lastName, fullName, password, profession, verificationToken, otpCode } = req.body;
+    if (!mobile || (!firstName && !fullName) || !password) {
+      return res.status(400).json({ success: false, message: 'Mobile, first name, and password are required.' });
     }
 
     if (!['PLUMBER', 'TILE_INSTALLER'].includes(profession)) {
@@ -85,6 +85,9 @@ router.post('/register', async (req: Request, res: Response) => {
 
     const result = await AuthService.registerUser({
       mobile,
+      firstName,
+      middleName,
+      lastName,
       fullName,
       password,
       profession,
@@ -271,8 +274,20 @@ router.post(
 });
 
 // ==========================================
-// 6. CURRENT USER PROFILE (/me)
+// 6. CURRENT USER PROFILE (/me) & NAME EDIT
 // ==========================================
+
+router.put('/profile/name', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const user = req.user!;
+    const { firstName, middleName, lastName, fullName } = req.body;
+    const result = await AuthService.updateUserName(user.id, { firstName, middleName, lastName, fullName });
+    res.json({ success: true, message: 'Name updated successfully.', user: result });
+  } catch (err: any) {
+    const isLockedError = err.message && err.message.includes('locked');
+    res.status(isLockedError ? 403 : 400).json({ success: false, message: err.message });
+  }
+});
 
 router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -296,9 +311,14 @@ router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response)
         id: freshUser.id,
         mobile: freshUser.mobile,
         fullName: freshUser.fullName,
+        firstName: freshUser.firstName,
+        middleName: freshUser.middleName,
+        lastName: freshUser.lastName,
+        isNameLocked: freshUser.isNameLocked,
+        nameLockedAt: freshUser.nameLockedAt,
         profession: freshUser.profession,
         role: freshUser.role,
-        isKycVerified: freshUser.kycRecords.length > 0,
+        isKycVerified: freshUser.kycRecords.length > 0 && freshUser.kycRecords[0].nameMatched,
         isPaymentVerified: freshUser.paymentAccounts.length > 0,
         createdAt: freshUser.createdAt,
       },

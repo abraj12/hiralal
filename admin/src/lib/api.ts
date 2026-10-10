@@ -122,10 +122,15 @@ export class AdminApiClient {
     return this.request(`/admin/payouts?${params.toString()}`);
   }
 
-  static handlePayoutAction(id: string, action: 'COMPLETE' | 'FAIL', reason?: string) {
+  static handlePayoutAction(
+    id: string,
+    action: 'APPROVE' | 'REJECT' | 'COMPLETE' | 'FAIL',
+    reason?: string,
+    gatewayReference?: string
+  ) {
     return this.request(`/admin/payouts/${id}/action`, {
       method: 'POST',
-      body: JSON.stringify({ action, reason }),
+      body: JSON.stringify({ action, reason, gatewayReference }),
     });
   }
 

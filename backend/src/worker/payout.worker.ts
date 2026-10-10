@@ -75,11 +75,11 @@ export class PayoutWorker {
       return;
     }
 
-    // Only process payouts that can be claimed from PENDING status atomically
+    // Only process payouts that can be claimed from APPROVED status atomically
     const claim = await prisma.payout.updateMany({
       where: {
         id: payoutId,
-        status: 'PENDING',
+        status: 'APPROVED',
       },
       data: {
         status: 'PAYOUT_INITIATED',
@@ -88,7 +88,7 @@ export class PayoutWorker {
     });
 
     if (claim.count !== 1) {
-      console.log(`[PAYOUT-WORKER] Payout ${payoutId} is not in PENDING state or already claimed. Skipping dispatch.`);
+      console.log(`[PAYOUT-WORKER] Payout ${payoutId} is not in APPROVED state or already claimed. Skipping dispatch.`);
       return;
     }
 

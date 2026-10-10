@@ -427,22 +427,8 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
   // -------------------------------------------------------------
   // Test 8: Pool Isolation & Budget Exhaustion Safety
   // -------------------------------------------------------------
-  it('Scenario 8: Profession Monthly Pools are isolated; exhausting Plumber pool does not block Tile Installer', async () => {
-    const { year, month } = getIstYearAndMonth();
-
-    // Set Plumber pool usedAmount very close to totalPoolCap (₹5 remaining)
-    await prisma.rewardPool.update({
-      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
-      data: { usedAmount: 79995.0, totalPoolCap: 80000.0, isCapped: false },
-    });
-
-    // Tile pool has ample space (₹40,000 cap, ₹100 used)
-    await prisma.rewardPool.update({
-      where: { pool_profession_year_month_unique: { profession: 'TILE_INSTALLER', year, month } },
-      data: { usedAmount: 100.0, totalPoolCap: 40000.0, isCapped: false },
-    });
-
-    // Plumber attempts to approve bill yielding ₹125 reward (exceeds ₹5 remaining)
+  it('Scenario 8: Reward distribution is not blocked by monthly reward pool exhaustion', async () => {
+    // Plumber submits and approves bill yielding ₹125 reward
     const plumberBill = await BillService.submitBill({
       userId: plumberUserId,
       invoiceNumber: `INV-POOL-CAP-${Date.now()}`,
@@ -453,15 +439,16 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       mimeType: 'application/pdf',
     });
 
-    await expect(
-      BillService.approveBill({
-        billId: plumberBill.id,
-        adminId: adminUserId,
-        gstIncluded: false,
-      })
-    ).rejects.toThrow(/reward pool ceiling.*reached|MONTHLY_POOL_EXHAUSTED/i);
+    const resPlumber = await BillService.approveBill({
+      billId: plumberBill.id,
+      adminId: adminUserId,
+      gstIncluded: false,
+    });
 
-    // Meanwhile, Tile Installer bill approval SUCCEEDS
+    expect(resPlumber.bill.status).toBe('APPROVED');
+    expect(Number(resPlumber.bill.calculatedReward)).toBe(125.0);
+
+    // Meanwhile, Tile Installer bill approval also SUCCEEDS without pool restrictions
     const tileBill = await BillService.submitBill({
       userId: tileUserId,
       invoiceNumber: `INV-TILE-SUCCEED-${Date.now()}`,

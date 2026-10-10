@@ -79,20 +79,39 @@ export class PayoutService {
 
     const availableBalance = user.wallet ? Number(user.wallet.availableBalance) : 0;
     const hasVerifiedKyc = user.kycRecords.length > 0;
+    const verifiedKycRecord = hasVerifiedKyc ? user.kycRecords[0] : null;
+    const isNameMatched = Boolean(verifiedKycRecord?.nameMatched || user.isNameLocked);
     const verifiedAccount = user.paymentAccounts[0] || null;
 
     let canRedeem = true;
     let reason = '';
 
+    // Check active payout in flight
+    const activePayout = await prisma.payout.findFirst({
+      where: {
+        userId,
+        status: { in: ['PENDING', 'APPROVED', 'PAYOUT_INITIATED', 'PROCESSING'] },
+      },
+    });
+
     if (!isWindowOpen) {
       canRedeem = false;
       reason = settings.message || 'Rewards redemption window is currently closed by administration.';
+    } else if (activePayout) {
+      canRedeem = false;
+      reason = 'You have a redemption request currently in progress. Please wait until it completes.';
     } else if (!hasVerifiedKyc) {
       canRedeem = false;
       reason = 'Please verify your PAN card details before redeeming rewards.';
+    } else if (!isNameMatched) {
+      canRedeem = false;
+      reason = 'Your verified PAN name does not match your registered account name. Please update your profile name or complete verification.';
     } else if (!verifiedAccount) {
       canRedeem = false;
       reason = 'Please add and verify a bank account or UPI ID to receive payouts.';
+    } else if (availableBalance <= 0) {
+      canRedeem = false;
+      reason = 'No balance available for redemption.';
     } else if (availableBalance < settings.minimumAmount) {
       canRedeem = false;
       reason = `Minimum redemption amount is ₹${settings.minimumAmount}. Your current balance is ₹${availableBalance.toFixed(2)}.`;
@@ -104,7 +123,7 @@ export class PayoutService {
       availableBalance,
       minimumAmount: settings.minimumAmount,
       maximumAmount: settings.maximumAmount,
-      verifiedKyc: hasVerifiedKyc ? user.kycRecords[0] : null,
+      verifiedKyc: verifiedKycRecord,
       verifiedAccount,
       windowSettings: settings,
     };
@@ -113,6 +132,7 @@ export class PayoutService {
   /**
    * Requests reward redemption using durable outbox architecture.
    * Scopes idempotency strictly to (userId, idempotencyKey).
+   * Redeems 100% full balance by default. Requires admin approval before dispatch.
    */
   static async requestRedemption(userId: string, idempotencyKey: string, requestedAmount?: number) {
     const cleanKey = idempotencyKey.trim();
@@ -147,28 +167,22 @@ export class PayoutService {
       throw new Error('A verified bank account or UPI ID is required for payout.');
     }
 
-    // 3. Server validates payout amount: NO silent clamping!
+    // 3. Server validates payout amount: default to 100% full available balance
     let payoutAmount = eligibility.availableBalance;
     if (requestedAmount !== undefined) {
       if (requestedAmount < eligibility.minimumAmount) {
         throw new Error(`Requested amount ₹${requestedAmount} is below the minimum redemption limit of ₹${eligibility.minimumAmount}.`);
       }
-      if (requestedAmount > eligibility.maximumAmount) {
-        throw new Error(`Requested amount ₹${requestedAmount} exceeds the maximum single payout limit of ₹${eligibility.maximumAmount}.`);
-      }
       if (requestedAmount > eligibility.availableBalance) {
         throw new Error(`Requested amount ₹${requestedAmount} exceeds your available balance of ₹${eligibility.availableBalance.toFixed(2)}.`);
       }
       payoutAmount = requestedAmount;
-    } else {
-      // Default: redeem all available balance up to maximum
-      payoutAmount = Math.min(eligibility.availableBalance, eligibility.maximumAmount);
     }
 
     // Format to 2-decimal paise precision
     payoutAmount = fromPaise(toPaise(payoutAmount));
 
-    // 4. Atomic PostgreSQL Transaction: lock wallet, reserve funds, create payout, create outbox event
+    // 4. Atomic PostgreSQL Transaction: lock wallet, reserve funds, create payout in PENDING status
     let payoutResult: any;
     try {
       const { payout } = await prisma.$transaction(async (tx) => {
@@ -200,7 +214,7 @@ export class PayoutService {
 
         const newAvailable = currentAvailable - payoutAmount;
 
-        // Create Payout record with PENDING status first to obtain stable internal ID
+        // Create Payout record with PENDING status awaiting admin approval
         const newPayout = await tx.payout.create({
           data: {
             userId,
@@ -227,18 +241,13 @@ export class PayoutService {
           },
         });
 
-        // Create durable OutboxEvent for background dispatch
-        await tx.outboxEvent.create({
+        // Notify user of redemption request submission
+        await tx.notification.create({
           data: {
-            eventType: 'PAYOUT_DISPATCH',
-            payload: {
-              payoutId: newPayout.id,
-              userId,
-              amount: payoutAmount,
-              paymentAccountId: verifiedAccount.id,
-              idempotencyKey: cleanKey,
-            },
-            status: 'PENDING',
+            userId,
+            title: 'Redemption Request Submitted',
+            message: `Your redemption request of ₹${payoutAmount.toFixed(2)} has been submitted and is pending admin approval.`,
+            type: 'PAYOUT_PENDING',
           },
         });
 
@@ -268,18 +277,216 @@ export class PayoutService {
       throw err;
     }
 
-    // 5. Trigger dispatch worker asynchronously (in non-test environment)
-    if (config.nodeEnv !== 'test') {
-      this.triggerPayoutDispatch(payoutResult.id).catch((err) => {
-        console.warn(`[PAYOUT-DISPATCH-DEFERRED] Payout ${payoutResult.id} queued for background worker: ${err.message}`);
-      });
-    }
-
     return {
       payout: payoutResult,
       amountDebited: payoutAmount,
-      message: 'Redemption initiated successfully. Disbursement dispatched to your verified account.',
+      message: 'Redemption request submitted successfully. Awaiting admin approval before disbursement.',
     };
+  }
+
+  /**
+   * Approves a PENDING payout request. Admin authorization is required.
+   * Transitions status to APPROVED, creates an outbox event, creates audit log,
+   * notifies user, and triggers dispatch worker.
+   */
+  static async approveRedemption(payoutId: string, adminId: string) {
+    const updatedPayout = await prisma.$transaction(async (tx) => {
+      const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Payout"
+        WHERE "id" = ${payoutId}
+        FOR UPDATE
+      `;
+
+      if (!lockedRows || lockedRows.length === 0) {
+        throw new Error(`Payout ${payoutId} not found`);
+      }
+
+      const payout = await tx.payout.findUnique({
+        where: { id: payoutId },
+        include: { paymentAccount: true },
+      });
+
+      if (!payout) throw new Error(`Payout ${payoutId} not found`);
+
+      if (payout.status === 'APPROVED') {
+        return payout;
+      }
+
+      if (payout.status !== 'PENDING') {
+        throw new Error(`Cannot approve payout in ${payout.status} state. Only PENDING payouts can be approved.`);
+      }
+
+      const updated = await tx.payout.update({
+        where: { id: payout.id },
+        data: {
+          status: 'APPROVED',
+          approvedByAdminId: adminId,
+          approvedAt: new Date(),
+        },
+      });
+
+      // Create durable OutboxEvent for background dispatch
+      await tx.outboxEvent.create({
+        data: {
+          eventType: 'PAYOUT_DISPATCH',
+          payload: {
+            payoutId: payout.id,
+            userId: payout.userId,
+            amount: Number(payout.amount),
+            paymentAccountId: payout.paymentAccountId,
+            idempotencyKey: payout.idempotencyKey,
+          },
+          status: 'PENDING',
+        },
+      });
+
+      // Audit Log
+      await tx.auditLog.create({
+        data: {
+          adminId,
+          action: 'PAYOUT_APPROVED',
+          entityType: 'Payout',
+          entityId: payout.id,
+          newValue: JSON.stringify({
+            payoutId: payout.id,
+            amount: Number(payout.amount),
+            status: 'APPROVED',
+            approvedByAdminId: adminId,
+          }),
+        },
+      });
+
+      // Notify User
+      await tx.notification.create({
+        data: {
+          userId: payout.userId,
+          title: 'Payout Approved',
+          message: `Your payout request of ₹${Number(payout.amount).toFixed(2)} has been approved and is being dispatched.`,
+          type: 'PAYOUT_APPROVED',
+        },
+      });
+
+      return updated;
+    });
+
+    // Trigger dispatch worker asynchronously in non-test environment
+    if (config.nodeEnv !== 'test') {
+      this.triggerPayoutDispatch(updatedPayout.id).catch((err) => {
+        console.warn(`[PAYOUT-DISPATCH-DEFERRED] Payout ${updatedPayout.id} queued for background worker: ${err.message}`);
+      });
+    }
+
+    return updatedPayout;
+  }
+
+  /**
+   * Rejects a redemption request before final settlement.
+   * Atomically restores reserved processingAmount back to availableBalance,
+   * creates immutable PAYOUT_REVERSAL ledger entry, updates payout status to FAILED with rejection reason,
+   * creates audit log, and notifies user.
+   */
+  static async rejectRedemption(payoutId: string, adminId: string, reason: string) {
+    if (!reason || !reason.trim()) {
+      throw new Error('Rejection reason is required.');
+    }
+
+    return await prisma.$transaction(async (tx) => {
+      const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Payout"
+        WHERE "id" = ${payoutId}
+        FOR UPDATE
+      `;
+
+      if (!lockedRows || lockedRows.length === 0) {
+        throw new Error(`Payout ${payoutId} not found`);
+      }
+
+      const payout = await tx.payout.findUnique({
+        where: { id: payoutId },
+        include: { wallet: true },
+      });
+
+      if (!payout) throw new Error(`Payout ${payoutId} not found`);
+
+      if (payout.status === 'SUCCESS') {
+        throw new Error(`Cannot reject payout ${payoutId} because it has already successfully completed.`);
+      }
+
+      if (payout.status === 'FAILED' || payout.status === 'REVERSED') {
+        return payout;
+      }
+
+      const payoutAmount = Number(payout.amount);
+
+      // Atomically shift funds from processingAmount back to availableBalance
+      await tx.wallet.update({
+        where: { id: payout.walletId },
+        data: {
+          processingAmount: { decrement: payoutAmount },
+          availableBalance: { increment: payoutAmount },
+          version: { increment: 1 },
+        },
+      });
+
+      const updatedWallet = await tx.wallet.findUnique({
+        where: { id: payout.walletId },
+      });
+      const balanceAfter = Number(updatedWallet?.availableBalance || 0);
+
+      // Create immutable ledger reversal entry
+      await tx.walletTransaction.create({
+        data: {
+          walletId: payout.walletId,
+          userId: payout.userId,
+          amount: payoutAmount,
+          type: 'PAYOUT_REVERSAL',
+          balanceAfter,
+          referenceType: 'PAYOUT',
+          referenceId: payout.id,
+          description: `Payout rejected by admin: ${reason.trim()}`,
+        },
+      });
+
+      const updatedPayout = await tx.payout.update({
+        where: { id: payout.id },
+        data: {
+          status: 'FAILED',
+          adminRejectionReason: reason.trim(),
+          failureReason: reason.trim(),
+        },
+      });
+
+      // Audit Log
+      await tx.auditLog.create({
+        data: {
+          adminId,
+          action: 'PAYOUT_REJECTED',
+          entityType: 'Payout',
+          entityId: payout.id,
+          newValue: JSON.stringify({
+            payoutId: payout.id,
+            amount: payoutAmount,
+            status: 'FAILED',
+            reason: reason.trim(),
+            adminId,
+          }),
+        },
+      });
+
+      // Notify User
+      await tx.notification.create({
+        data: {
+          userId: payout.userId,
+          title: 'Payout Request Rejected',
+          message: `Your payout request of ₹${payoutAmount.toFixed(2)} was rejected (${reason.trim()}). The funds have been refunded to your wallet.`,
+          type: 'PAYOUT_REJECTED',
+        },
+      });
+
+      return updatedPayout;
+    });
   }
   /**
    * Reverses a failed payout: refunds funds from processingAmount back to availableBalance,

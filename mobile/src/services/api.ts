@@ -307,7 +307,10 @@ export class MobileApiClient {
 
   static register(data: {
     mobile: string;
-    fullName: string;
+    fullName?: string;
+    firstName?: string;
+    middleName?: string;
+    lastName?: string;
     password: string;
     profession: string;
     verificationToken?: string;
@@ -429,10 +432,10 @@ export class MobileApiClient {
   }
 
   // KYC (PAN)
-  static verifyPan(panNumber: string, panName: string) {
+  static verifyPan(panNumber: string, panName: string, consent = true, consentText?: string) {
     return this.request('/kyc/pan/verify', {
       method: 'POST',
-      body: JSON.stringify({ panNumber, panName }),
+      body: JSON.stringify({ panNumber, panName, consent, consentText }),
     });
   }
 
@@ -461,7 +464,7 @@ export class MobileApiClient {
 
   // Payouts
   static redeemRewards(data: {
-    amount: number;
+    amount?: number;
     paymentAccountId?: string;
     idempotencyKey: string;
   }) {

@@ -40,11 +40,24 @@ describe('Final Hardening Phase — Providers, State Machine, Ledger & Health', 
         panNumber: 'ABCDE1234F',
         panName: 'Ramesh Sharma',
         userId: 'usr_test_1',
+        consent: true,
       });
 
       expect(result.isValid).toBe(true);
       expect(result.panName).toBe('RAMESH CHANDRA SHARMA');
       expect(result.providerRequestId).toBe('sc_req_12345');
+    });
+
+    it('rejects verification if explicit user consent is missing', async () => {
+      const result = await provider.verifyPan({
+        panNumber: 'ABCDE1234F',
+        panName: 'Ramesh Sharma',
+        userId: 'usr_test_no_consent',
+        consent: false,
+      });
+
+      expect(result.isValid).toBe(false);
+      expect(result.rejectionReason).toContain('User informed consent is mandatory');
     });
 
     it('handles invalid or non-existent PAN from SignCare', async () => {
@@ -65,6 +78,7 @@ describe('Final Hardening Phase — Providers, State Machine, Ledger & Health', 
         panNumber: 'ZZZZZ9999Z',
         panName: 'Unknown',
         userId: 'usr_test_2',
+        consent: true,
       });
 
       expect(result.isValid).toBe(false);
@@ -84,6 +98,7 @@ describe('Final Hardening Phase — Providers, State Machine, Ledger & Health', 
         panNumber: 'ABCDE1234F',
         panName: 'Ramesh Sharma',
         userId: 'usr_test_3',
+        consent: true,
       });
 
       expect(result.isValid).toBe(false);
@@ -102,6 +117,7 @@ describe('Final Hardening Phase — Providers, State Machine, Ledger & Health', 
           panNumber: 'ABCDE1234F',
           panName: 'Ramesh Sharma',
           userId: 'usr_test_4',
+          consent: true,
         })
       ).rejects.toThrow('timed out');
     });

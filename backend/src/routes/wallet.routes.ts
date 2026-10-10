@@ -29,12 +29,19 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
       take: 50,
     });
 
+    const lifetimeAggregate = await prisma.walletTransaction.aggregate({
+      where: { userId: user.id, type: 'REWARD_CREDIT' },
+      _sum: { amount: true },
+    });
+    const lifetimeCashback = Number(lifetimeAggregate._sum.amount || 0);
+
     res.json({
       success: true,
       wallet: {
         availableBalance: Number(wallet.availableBalance),
         processingAmount: Number(wallet.processingAmount),
         totalRedeemed: Number(wallet.totalRedeemed),
+        lifetimeCashback,
         updatedAt: wallet.updatedAt,
       },
       transactions: transactions.map((t) => ({

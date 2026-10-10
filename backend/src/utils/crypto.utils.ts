@@ -84,3 +84,13 @@ export function generateBlindIndex(plaintext: string): string {
   const hmacKey = config.fieldEncryptionKey || config.encryptionKey;
   return crypto.createHmac('sha256', hmacKey).update(normalized).digest('hex');
 }
+
+/**
+ * Computes server-secret-keyed HMAC-SHA256 for 6-digit OTPs
+ * to prevent precomputation / rainbow table attacks on low-entropy numbers.
+ */
+export function hmacHashOtp(otpCode: string): string {
+  const secret = config.jwt.accessSecret || config.encryptionKey;
+  return crypto.createHmac('sha256', secret).update(otpCode).digest('hex');
+}
+

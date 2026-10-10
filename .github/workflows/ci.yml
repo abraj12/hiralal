@@ -2,12 +2,12 @@ name: Production CI Pipeline - Hiralal & Sons Rewards Platform
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   backend-test:

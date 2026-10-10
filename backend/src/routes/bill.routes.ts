@@ -9,7 +9,13 @@ import { BillStatus } from '@prisma/client';
 const router = Router();
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB file limit
+    files: 1, // Only 1 file per upload
+    fields: 10, // Max 10 text fields
+    fieldSize: 64 * 1024, // 64KB per field
+    parts: 15, // Max 15 parts total
+  },
 });
 
 /**

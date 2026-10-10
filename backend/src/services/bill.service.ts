@@ -352,10 +352,7 @@ export class BillService {
         finalReward = RewardService.calculateReward(gstCalc.eligibleRewardAmount, rulePercentage);
       }
 
-      // 5. Atomically claim reward amount from profession-specific monthly pool
-      await RewardService.claimPoolAmount(tx, profession, finalReward);
-
-      // 6. Ensure wallet exists and credit atomically
+      // 5. Ensure wallet exists and credit atomically
       let wallet = await tx.wallet.findUnique({
         where: { userId: bill.userId },
       });

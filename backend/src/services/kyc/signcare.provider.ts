@@ -13,10 +13,22 @@ export class SignCareKycProvider implements KycProvider {
     panNumber: string;
     panName: string;
     userId: string;
+    consent?: boolean;
+    consentText?: string;
     requestId?: string;
   }): Promise<PanVerificationResult> {
     const cleanPan = params.panNumber.trim().toUpperCase();
     const maskedPan = this.maskPanForLog(cleanPan);
+
+    // Fail-closed consent check
+    if (params.consent !== true) {
+      return {
+        isValid: false,
+        panNumber: cleanPan,
+        panName: '',
+        rejectionReason: 'User informed consent is mandatory before querying tax verification database.',
+      };
+    }
 
     if (!config.signcare.apiKey || !config.signcare.appId) {
       if (config.isProduction) {
@@ -45,7 +57,7 @@ export class SignCareKycProvider implements KycProvider {
         body: JSON.stringify({
           pan: cleanPan,
           consent: 'Y',
-          consent_text: 'I provide consent to verify my PAN identity for rewards payout compliance.',
+          consent_text: params.consentText || 'I provide consent to verify my PAN identity for rewards payout compliance.',
         }),
         signal: controller.signal,
       });
@@ -57,28 +69,48 @@ export class SignCareKycProvider implements KycProvider {
         return {
           isValid: false,
           panNumber: cleanPan,
-          panName: params.panName,
+          panName: '',
           providerRequestId: responseData?.request_id || responseData?.requestId,
           rejectionReason: errorMsg,
         };
       }
 
-      // Check SignCare success response status
+      // Check SignCare documented success response status
       const isSuccess =
-        responseData.status === 'SUCCESS' ||
-        responseData.success === true ||
-        responseData.data?.status === 'VALID' ||
-        responseData.data?.pan_status === 'EXISTING AND VALID';
+        (responseData.status === 'SUCCESS' || responseData.success === true) &&
+        (responseData.data?.status === 'VALID' || responseData.data?.pan_status === 'EXISTING AND VALID');
 
-      const verifiedName = responseData.data?.full_name || responseData.data?.name || params.panName;
+      // STRICT: Authoritative verified name MUST come from the provider, never user input
+      const verifiedName = (responseData.data?.full_name || responseData.data?.name || '').trim();
+
+      if (!isSuccess) {
+        return {
+          isValid: false,
+          panNumber: cleanPan,
+          panName: '',
+          providerRequestId: responseData.request_id || responseData.requestId || responseData.data?.client_id,
+          providerStatus: responseData.status || 'INVALID',
+          rejectionReason: responseData.message || responseData.data?.pan_status || 'PAN status is inactive or invalid with tax database',
+        };
+      }
+
+      if (!verifiedName) {
+        return {
+          isValid: false,
+          panNumber: cleanPan,
+          panName: '',
+          providerRequestId: responseData.request_id || responseData.requestId || responseData.data?.client_id,
+          providerStatus: responseData.status || 'INVALID',
+          rejectionReason: 'Provider response missing authoritative PAN holder name.',
+        };
+      }
 
       return {
-        isValid: isSuccess,
+        isValid: true,
         panNumber: cleanPan,
         panName: verifiedName,
         providerRequestId: responseData.request_id || responseData.requestId || responseData.data?.client_id,
-        providerStatus: responseData.status || (isSuccess ? 'VALID' : 'INVALID'),
-        rejectionReason: isSuccess ? undefined : (responseData.message || 'PAN status is inactive or invalid with tax database'),
+        providerStatus: responseData.status || 'VALID',
       };
     } catch (err: any) {
       if (err.name === 'AbortError') {

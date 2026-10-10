@@ -26,10 +26,15 @@ export default function AdminPayoutsPage() {
     fetchPayouts();
   }, [statusFilter, professionFilter]);
 
-  const handleAction = async (id: string, action: 'COMPLETE' | 'FAIL') => {
+  const handleAction = async (
+    id: string,
+    action: 'APPROVE' | 'REJECT' | 'COMPLETE' | 'FAIL',
+    reason?: string,
+    gatewayReference?: string
+  ) => {
     setActionLoading(id);
     try {
-      await AdminApiClient.handlePayoutAction(id, action, action === 'FAIL' ? 'Admin manual rejection / reversal' : undefined);
+      await AdminApiClient.handlePayoutAction(id, action, reason, gatewayReference);
       fetchPayouts();
     } catch (err: any) {
       alert(err.message || 'Action failed');
@@ -56,7 +61,7 @@ export default function AdminPayoutsPage() {
           <div className="flex items-center space-x-3">
             {/* Status Filter */}
             <div className="bg-slate-200/80 p-1 rounded-xl flex space-x-1 text-xs font-bold">
-              {['ALL', 'PROCESSING', 'SUCCESS', 'FAILED'].map(st => (
+              {['ALL', 'PENDING', 'APPROVED', 'PROCESSING', 'SUCCESS', 'FAILED'].map(st => (
                 <button
                   key={st}
                   onClick={() => setStatusFilter(st)}
@@ -115,7 +120,12 @@ export default function AdminPayoutsPage() {
                     <tr key={p.id} className="hover:bg-slate-50/70 transition">
                       <td className="py-4 px-5">
                         <div className="font-mono font-bold text-slate-900">{p.id}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">Key: {p.idempotencyKey.slice(0, 16)}...</div>
+                        {p.idempotencyKey && (
+                          <div className="text-[10px] text-slate-400 font-mono">Key: {p.idempotencyKey.slice(0, 16)}...</div>
+                        )}
+                        {p.razorpayPayoutId && (
+                          <div className="text-[10px] text-indigo-500 font-mono">Gateway: {p.razorpayPayoutId}</div>
+                        )}
                       </td>
                       <td className="py-4 px-4">
                         <div className="font-bold text-slate-800">{p.userName}</div>
@@ -145,6 +155,10 @@ export default function AdminPayoutsPage() {
                           className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-bold ${
                             p.status === 'SUCCESS'
                               ? 'bg-emerald-100 text-emerald-700'
+                              : p.status === 'PENDING'
+                              ? 'bg-amber-100 text-amber-800'
+                              : p.status === 'APPROVED'
+                              ? 'bg-blue-100 text-blue-800'
                               : p.status === 'FAILED' || p.status === 'REVERSED'
                               ? 'bg-red-100 text-red-700'
                               : 'bg-purple-100 text-purple-800'
@@ -157,17 +171,66 @@ export default function AdminPayoutsPage() {
                         {new Date(p.createdAt).toLocaleDateString('en-IN')}
                       </td>
                       <td className="py-4 px-5 text-right space-x-2">
-                        {p.status === 'PROCESSING' && (
+                        {p.status === 'PENDING' && (
                           <>
                             <button
-                              onClick={() => handleAction(p.id, 'COMPLETE')}
+                              onClick={() => handleAction(p.id, 'APPROVE')}
                               disabled={actionLoading === p.id}
                               className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs shadow-sm transition"
                             >
-                              Succeed
+                              Approve
                             </button>
                             <button
-                              onClick={() => handleAction(p.id, 'FAIL')}
+                              onClick={() => {
+                                const reason = prompt('Please enter rejection reason:');
+                                if (reason && reason.trim()) {
+                                  handleAction(p.id, 'REJECT', reason.trim());
+                                }
+                              }}
+                              disabled={actionLoading === p.id}
+                              className="px-2.5 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-bold text-xs transition"
+                            >
+                              Reject & Refund
+                            </button>
+                          </>
+                        )}
+                        {p.status === 'APPROVED' && (
+                          <button
+                            onClick={() => {
+                              const reason = prompt('Please enter cancellation reason:');
+                              if (reason && reason.trim()) {
+                                handleAction(p.id, 'REJECT', reason.trim());
+                              }
+                            }}
+                            disabled={actionLoading === p.id}
+                            className="px-2.5 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-bold text-xs transition"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                        {p.status === 'PROCESSING' && (
+                          <>
+                            <button
+                              onClick={() => {
+                                const ref = prompt('Enter Bank UTR or Gateway Reconciliation Reference ID (Mandatory):');
+                                if (ref && ref.trim()) {
+                                  handleAction(p.id, 'COMPLETE', undefined, ref.trim());
+                                } else if (ref !== null) {
+                                  alert('Reconciliation reference is mandatory for manual completion.');
+                                }
+                              }}
+                              disabled={actionLoading === p.id}
+                              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs shadow-sm transition"
+                            >
+                              Manual Complete
+                            </button>
+                            <button
+                              onClick={() => {
+                                const reason = prompt('Please enter failure reason:');
+                                if (reason && reason.trim()) {
+                                  handleAction(p.id, 'FAIL', reason.trim());
+                                }
+                              }}
                               disabled={actionLoading === p.id}
                               className="px-2.5 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-bold text-xs transition"
                             >

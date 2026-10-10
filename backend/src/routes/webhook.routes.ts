@@ -136,13 +136,12 @@ router.post('/razorpayx', async (req: Request, res: Response): Promise<void> => 
         await prisma.webhookEvent.update({
           where: { provider_event_unique: { provider: 'RAZORPAYX', eventId } },
           data: {
-            isProcessed: true,
-            processedAt: new Date(),
+            isProcessed: false,
             lastError: `Unmatched payout entity: ${razorpayPayoutId}`,
             processingStartedAt: null,
           },
         });
-        res.status(200).json({ status: 'unmatched' });
+        res.status(200).json({ status: 'unmatched_held_for_retry' });
         return;
       }
 

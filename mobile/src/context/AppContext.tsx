@@ -10,6 +10,7 @@ interface AppContextType {
     availableBalance: number;
     processingAmount: number;
     totalRedeemed: number;
+    lifetimeCashback?: number;
   };
   transactions: any[];
   bills: any[];
@@ -37,6 +38,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     availableBalance: 0,
     processingAmount: 0,
     totalRedeemed: 0,
+    lifetimeCashback: 0,
   });
 
   const [transactions, setTransactions] = useState<any[]>([]);
@@ -148,7 +150,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const logout = async () => {
     await MobileApiClient.logout();
     setUser(null);
-    setWallet({ availableBalance: 0, processingAmount: 0, totalRedeemed: 0 });
+    setWallet({ availableBalance: 0, processingAmount: 0, totalRedeemed: 0, lifetimeCashback: 0 });
     setTransactions([]);
     setBills([]);
     setCurrentScreen('WELCOME');

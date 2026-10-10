@@ -12,25 +12,33 @@
 #   2. All 16 core Prisma schema tables exist and have valid rows.
 #   3. Authoritative financial reconciliation passes:
 #      wallet.availableBalance == sum of valid ledger transactions
-#   4. Reward pool usedAmount matches approved bill credits.
-#   5. Payout state machine ledger correlation passes (no orphaned debits).
+#   4. Payout state machine ledger correlation passes (no orphaned debits).
 # ==============================================================================
 
 set -euo pipefail
 
 ENC_BACKUP="${1:-}"
 TARGET_DB="${2:-${POSTGRES_DB:-hiralal_rewards}}"
+ALLOW_OVERWRITE="${3:-${RESTORE_CONFIRM_OVERWRITE:-false}}"
 DB_CONTAINER="${DB_CONTAINER:-hiralal_postgres}"
 DB_USER="${POSTGRES_USER:-postgres}"
 
 if [ -z "${ENC_BACKUP}" ]; then
-  echo "Usage: $0 <path_to_backup.sql.gz.enc> [TARGET_DB_NAME]" >&2
+  echo "Usage: $0 <path_to_backup.sql.gz.enc> [TARGET_DB_NAME] [--allow-production-overwrite]" >&2
   exit 1
 fi
 
 if [ ! -f "${ENC_BACKUP}" ]; then
   echo "[FATAL ERROR] Backup file not found: ${ENC_BACKUP}" >&2
   exit 1
+fi
+
+# Production database safety guard
+if [ "${TARGET_DB}" = "hiralal_rewards" ] || [ "${TARGET_DB}" = "${POSTGRES_DB:-hiralal_rewards}" ]; then
+  if [ "${ALLOW_OVERWRITE}" != "--allow-production-overwrite" ] && [ "${ALLOW_OVERWRITE}" != "true" ]; then
+    echo "[FATAL SAFETY GUARD] Refusing to restore into production database '${TARGET_DB}' without explicit overwrite flag: --allow-production-overwrite (or RESTORE_CONFIRM_OVERWRITE=true)." >&2
+    exit 1
+  fi
 fi
 
 if [ -z "${BACKUP_ENCRYPTION_PASSPHRASE:-}" ]; then
@@ -45,7 +53,12 @@ DEC_FILE="${TEMP_DIR}/decrypted.sql.gz"
 SQL_FILE="${TEMP_DIR}/restore.sql"
 
 echo "[$(date -u)] [1/4] Decrypting AES-256 backup: ${ENC_BACKUP}..."
-openssl enc -d -aes-256-cbc -pbkdf2 -in "${ENC_BACKUP}" -out "${DEC_FILE}" -pass pass:"${BACKUP_ENCRYPTION_PASSPHRASE}"
+CRYPTO_SCRIPT="$(dirname "$0")/crypto-backup.js"
+if [ -f "${CRYPTO_SCRIPT}" ] && command -v node >/dev/null 2>&1; then
+  node "${CRYPTO_SCRIPT}" decrypt "${ENC_BACKUP}" "${DEC_FILE}"
+else
+  openssl enc -d -aes-256-cbc -pbkdf2 -in "${ENC_BACKUP}" -out "${DEC_FILE}" -pass pass:"${BACKUP_ENCRYPTION_PASSPHRASE}"
+fi
 
 echo "[$(date -u)] [2/4] Decompressing SQL dump..."
 gunzip -c "${DEC_FILE}" > "${SQL_FILE}"

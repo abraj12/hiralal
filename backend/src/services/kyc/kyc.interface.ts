@@ -13,6 +13,8 @@ export interface KycProvider {
     panNumber: string;
     panName: string;
     userId: string;
+    consent?: boolean;
+    consentText?: string;
     requestId?: string;
   }): Promise<PanVerificationResult>;
 }

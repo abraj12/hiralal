@@ -21,8 +21,18 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
     const approvedBills = userBills.filter((b) => b.status === 'APPROVED');
     const pendingBills = userBills.filter((b) => b.status === 'PENDING' || b.status === 'UNDER_REVIEW');
 
-    const totalApprovedRewards = approvedBills.reduce((acc, b) => acc + Number(b.calculatedReward), 0);
-    const processingAmount = pendingBills.reduce((acc, b) => acc + Number(b.calculatedReward), 0);
+    const totalRewardCredits = await prisma.walletTransaction.aggregate({
+      where: {
+        userId: user.id,
+        type: 'REWARD_CREDIT',
+      },
+      _sum: {
+        amount: true,
+      },
+    });
+    const totalApprovedRewards = approvedBills.reduce((acc, b) => acc + Number(b.calculatedReward || 0), 0);
+    const lifetimeCashback = Number(totalRewardCredits._sum.amount || totalApprovedRewards || 0);
+    const processingAmount = wallet ? Number(wallet.processingAmount) : 0;
 
     const ledgerTx = await prisma.walletTransaction.findMany({
       where: { userId: user.id },
@@ -33,8 +43,10 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
     res.json({
       success: true,
       summary: {
-        totalRewards: Math.round(totalApprovedRewards * 100) / 100,
+        lifetimeCashback: Math.round(lifetimeCashback * 100) / 100,
+        totalRewards: Math.round(lifetimeCashback * 100) / 100,
         processingAmount: Math.round(processingAmount * 100) / 100,
+        pendingRedemptionAmount: Math.round(processingAmount * 100) / 100,
         availableBalance: wallet ? Number(wallet.availableBalance) : 0,
         totalRedeemed: wallet ? Number(wallet.totalRedeemed) : 0,
         billsApprovedCount: approvedBills.length,
@@ -65,12 +77,10 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
 });
 
 router.get('/pool', async (req, res) => {
-  try {
-    const analytics = await RewardService.getPoolAnalytics();
-    res.json({ success: true, pool: analytics });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
+  res.json({
+    success: true,
+    message: 'Monthly reward pool limit is retired. Approved rewards are credited in full to user wallets without pool capping.',
+  });
 });
 
 export default router;

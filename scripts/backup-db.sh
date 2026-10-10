@@ -46,8 +46,13 @@ echo "[$(date -u)] [1/4] Starting database backup dump for '${DB_NAME}'..."
 # 2. Dump and compress directly from PostgreSQL container
 docker exec "${DB_CONTAINER}" pg_dump -U "${DB_USER}" -d "${DB_NAME}" --clean --if-exists | gzip -9 > "${RAW_BACKUP}"
 
-# 3. Encrypt with AES-256-CBC using PBKDF2 (salted)
-openssl enc -aes-256-cbc -pbkdf2 -salt -in "${RAW_BACKUP}" -out "${ENC_BACKUP}" -pass pass:"${BACKUP_ENCRYPTION_PASSPHRASE}"
+# 3. Encrypt with Authenticated AES-256-GCM using PBKDF2 (falls back to OpenSSL CBC if node unavailable)
+CRYPTO_SCRIPT="$(dirname "$0")/crypto-backup.js"
+if [ -f "${CRYPTO_SCRIPT}" ] && command -v node >/dev/null 2>&1; then
+  node "${CRYPTO_SCRIPT}" encrypt "${RAW_BACKUP}" "${ENC_BACKUP}"
+else
+  openssl enc -aes-256-cbc -pbkdf2 -salt -in "${RAW_BACKUP}" -out "${ENC_BACKUP}" -pass pass:"${BACKUP_ENCRYPTION_PASSPHRASE}"
+fi
 rm -f "${RAW_BACKUP}"
 
 BACKUP_SIZE=$(ls -lh "${ENC_BACKUP}" | awk '{print $5}')

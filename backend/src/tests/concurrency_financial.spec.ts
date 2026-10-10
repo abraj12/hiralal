@@ -83,7 +83,7 @@ describe('Concurrency & Financial Integrity Tests', () => {
     await prisma.user.deleteMany({ where: { id: craftsmanUser.id } });
   });
 
-  test('1. Monthly Pool Ceiling Race Condition: approvals never exceed ₹50,000 cap under parallel load', async () => {
+  test('1. Parallel Bill Approvals: All concurrent valid bill approvals are credited reliably without pool restriction', async () => {
     const { year, month } = getIstYearAndMonth();
 
     // Ensure active rule for PLUMBER is 0.50%
@@ -103,24 +103,6 @@ describe('Concurrency & Financial Integrity Tests', () => {
       },
     });
 
-    // Set pool to exactly ₹49,800 used out of ₹50,000 (headroom = ₹200)
-    await prisma.rewardPool.upsert({
-      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
-      update: {
-        totalPoolCap: 50000.0,
-        usedAmount: 49800.0,
-        isCapped: false,
-      },
-      create: {
-        profession: 'PLUMBER',
-        year,
-        month,
-        totalPoolCap: 50000.0,
-        usedAmount: 49800.0,
-        isCapped: false,
-      },
-    });
-
     // Create 6 bills, each with calculatedReward = ₹100
     const bills = [];
     for (let i = 0; i < 6; i++) {
@@ -137,7 +119,7 @@ describe('Concurrency & Financial Integrity Tests', () => {
       bills.push(bill);
     }
 
-    // Fire all 6 approvals concurrently!
+    // Fire all 6 approvals concurrently: all should succeed without monthly pool block
     const results = await Promise.allSettled(
       bills.map((b) => BillService.approveBill(b.id, adminUser.id))
     );
@@ -145,19 +127,12 @@ describe('Concurrency & Financial Integrity Tests', () => {
     const succeeded = results.filter((r) => r.status === 'fulfilled');
     const failed = results.filter((r) => r.status === 'rejected');
 
-    // Headroom was ₹200. Each bill was ₹100. Exactly 2 should succeed, 4 should fail!
-    expect(succeeded.length).toBe(2);
-    expect(failed.length).toBe(4);
-
-    // Verify final pool state
-    const pool = await prisma.rewardPool.findUnique({
-      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
-    });
-    expect(Number(pool?.usedAmount)).toBe(50000.0);
-    expect(pool?.isCapped).toBe(true);
+    expect(succeeded.length).toBe(6);
+    expect(failed.length).toBe(0);
   });
 
   test('2. Double Spend Prevention: Concurrent redemptions cannot over-debit wallet or cause negative balance', async () => {
+    await prisma.payout.deleteMany({ where: { userId: craftsmanUser.id } });
     // Reset wallet to exactly ₹1,000
     await prisma.wallet.update({
       where: { userId: craftsmanUser.id },
@@ -167,16 +142,16 @@ describe('Concurrency & Financial Integrity Tests', () => {
       },
     });
 
-    // Fire 5 parallel redemption requests of ₹1,000 each with distinct idempotency keys
+    // Fire 5 parallel redemption requests of full balance with distinct idempotency keys
     const requests = [1, 2, 3, 4, 5].map((i) =>
-      PayoutService.requestRedemption(craftsmanUser.id, `idem-race-${i}-${Date.now()}`, 1000)
+      PayoutService.requestRedemption(craftsmanUser.id, `idem-race-${i}-${Date.now()}`)
     );
 
     const results = await Promise.allSettled(requests);
     const succeeded = results.filter((r) => r.status === 'fulfilled');
     const rejected = results.filter((r) => r.status === 'rejected');
 
-    // Exactly 1 must succeed, exactly 4 must be rejected with insufficient balance!
+    // Exactly 1 must succeed, exactly 4 must be rejected with in-flight/insufficient balance!
     expect(succeeded.length).toBe(1);
     expect(rejected.length).toBe(4);
 
@@ -189,6 +164,7 @@ describe('Concurrency & Financial Integrity Tests', () => {
   });
 
   test('3. Scoped Idempotency: Re-submitting same idempotencyKey returns existing payout without debiting again', async () => {
+    await prisma.payout.deleteMany({ where: { userId: craftsmanUser.id } });
     // Top up wallet
     await prisma.wallet.update({
       where: { userId: craftsmanUser.id },
@@ -200,22 +176,24 @@ describe('Concurrency & Financial Integrity Tests', () => {
 
     const staticKey = `static-idem-${Date.now()}`;
 
-    // Request 1
-    const res1 = await PayoutService.requestRedemption(craftsmanUser.id, staticKey, 500);
+    // Request 1: full balance 1500 is debited
+    const res1 = await PayoutService.requestRedemption(craftsmanUser.id, staticKey);
     expect(res1.payout.id).toBeDefined();
-    expect(res1.amountDebited).toBe(500);
+    expect(res1.amountDebited).toBe(1500);
 
     // Request 2 with exact same idempotencyKey
-    const res2 = await PayoutService.requestRedemption(craftsmanUser.id, staticKey, 500);
+    const res2 = await PayoutService.requestRedemption(craftsmanUser.id, staticKey);
     expect(res2.payout.id).toBe(res1.payout.id);
     expect(res2.message).toContain('existing redemption');
 
-    // Wallet was only debited once (1500 - 500 = 1000)
+    // Wallet was only debited once (1500 - 1500 = 0 available, 1500 processing)
     const wallet = await prisma.wallet.findUnique({
       where: { userId: craftsmanUser.id },
     });
-    expect(Number(wallet?.availableBalance)).toBe(1000.0);
-    expect(Number(wallet?.processingAmount)).toBe(500.0);
+    expect(Number(wallet?.availableBalance)).toBe(0.0);
+    expect(Number(wallet?.processingAmount)).toBe(1500.0);
+
+    await prisma.payout.deleteMany({ where: { userId: craftsmanUser.id } });
   });
 
   test('4. Duplicate Bill Approval Race: Firing 2 concurrent approvals on same bill produces exactly 1 approval and 1 credit', async () => {
@@ -296,6 +274,7 @@ describe('Concurrency & Financial Integrity Tests', () => {
   });
 
   test('6. Double-Refund Prevention: Concurrently reversing the same payout refunds wallet exactly once', async () => {
+    await prisma.payout.deleteMany({ where: { userId: craftsmanUser.id } });
     // Top up wallet
     await prisma.wallet.update({
       where: { userId: craftsmanUser.id },
@@ -303,7 +282,7 @@ describe('Concurrency & Financial Integrity Tests', () => {
     });
 
     const key = `idem-dbl-rev-${Date.now()}`;
-    const redemption = await PayoutService.requestRedemption(craftsmanUser.id, key, 500);
+    const redemption = await PayoutService.requestRedemption(craftsmanUser.id, key);
     const payoutId = redemption.payout.id;
 
     // Concurrent reversePayout calls
@@ -315,7 +294,7 @@ describe('Concurrency & Financial Integrity Tests', () => {
     const successes = [rev1, rev2].filter((r) => r.status === 'fulfilled');
     expect(successes.length).toBe(2);
 
-    // Verify wallet: exactly 500 refunded (1000 - 500 + 500 = 1000)
+    // Verify wallet: exactly 1000 refunded
     const wallet = await prisma.wallet.findUnique({ where: { userId: craftsmanUser.id } });
     expect(Number(wallet?.availableBalance)).toBe(1000.0);
     expect(Number(wallet?.processingAmount)).toBe(0.0);

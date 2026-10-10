@@ -356,27 +356,6 @@ export default function AdminSettingsPage() {
                       Internal calculation rate applied to verified eligible bill amount
                     </span>
                   </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Monthly Pool Limit (₹)
-                    </label>
-                    <input
-                      type="number"
-                      step="1000"
-                      min="1000"
-                      value={activeTab === 'PLUMBER' ? plumberForm.monthlyPoolLimit : tileForm.monthlyPoolLimit}
-                      onChange={(e) =>
-                        activeTab === 'PLUMBER'
-                          ? setPlumberForm({ ...plumberForm, monthlyPoolLimit: e.target.value })
-                          : setTileForm({ ...tileForm, monthlyPoolLimit: e.target.value })
-                      }
-                      className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
-                    />
-                    <span className="text-[10px] text-slate-400 mt-1 block">
-                      Dedicated monthly pool budget strictly for {activeTab === 'PLUMBER' ? 'Plumbers' : 'Tile Installers'}
-                    </span>
-                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -458,7 +437,6 @@ export default function AdminSettingsPage() {
                     <tr>
                       <th className="py-2.5 px-4">Version</th>
                       <th className="py-2.5 px-4">Reward Rate</th>
-                      <th className="py-2.5 px-4">Monthly Cap</th>
                       <th className="py-2.5 px-4">Min Payout</th>
                       <th className="py-2.5 px-4">Effective Date</th>
                       <th className="py-2.5 px-4">Status</th>
@@ -469,7 +447,6 @@ export default function AdminSettingsPage() {
                       <tr key={r.id}>
                         <td className="py-3 px-4 font-bold text-slate-900">v{r.version}</td>
                         <td className="py-3 px-4 font-bold text-emerald-600">{r.rewardPercentage || r.percentage}%</td>
-                        <td className="py-3 px-4 font-semibold text-slate-800">₹{r.monthlyPoolLimit?.toLocaleString('en-IN')}</td>
                         <td className="py-3 px-4 text-slate-600">₹{r.minRedemptionAmount?.toLocaleString('en-IN')}</td>
                         <td className="py-3 px-4 text-slate-500">
                           {r.effectiveFrom ? new Date(r.effectiveFrom).toLocaleDateString('en-IN') : 'Creation'}

@@ -7,6 +7,7 @@ import { GstService } from '../services/gst.service';
 import { BillService } from '../services/bill.service';
 import { StorageService } from '../services/storage.service';
 import { PayoutService } from '../services/payout.service';
+import { AuthService } from '../services/auth.service';
 import { BillStatus, Profession, UserStatus } from '@prisma/client';
 
 const router = Router();
@@ -267,6 +268,36 @@ router.get('/users/:id', async (req: AuthenticatedRequest, res: Response) => {
 });
 
 /**
+ * 3b. Admin Privileged Name Correction for Users (Audited)
+ */
+router.put('/users/:id/name', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const admin = req.user!;
+    const { firstName, middleName, lastName, fullName, reason } = req.body;
+    const ipAddress = req.ip || req.socket.remoteAddress;
+
+    const updatedUser = await AuthService.adminUpdateUserName({
+      userId: req.params.id,
+      adminId: admin.id,
+      firstName,
+      middleName,
+      lastName,
+      fullName,
+      reason,
+      ipAddress,
+    });
+
+    res.json({
+      success: true,
+      message: 'User name corrected successfully. Re-verification policy has been enforced.',
+      user: updatedUser,
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+/**
  * 4. Bills Management with Strict Server-Side Profession & Status Filtering
  */
 router.get('/bills', async (req: AuthenticatedRequest, res: Response) => {
@@ -370,6 +401,9 @@ router.get('/payouts', async (req: AuthenticatedRequest, res: Response) => {
         bankName: p.paymentAccount.bankName,
         razorpayPayoutId: p.razorpayPayoutId,
         failureReason: p.failureReason,
+        adminRejectionReason: p.adminRejectionReason,
+        approvedByAdminId: p.approvedByAdminId,
+        approvedAt: p.approvedAt,
         createdAt: p.createdAt,
         completedAt: p.completedAt,
       })),
@@ -381,18 +415,40 @@ router.get('/payouts', async (req: AuthenticatedRequest, res: Response) => {
 
 router.post('/payouts/:id/action', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { action, reason } = req.body;
+    const { action, reason, gatewayReference } = req.body;
     const { id } = req.params;
+    const admin = req.user!;
 
-    if (action === 'COMPLETE') {
-      const payout = await PayoutService.finalizeSuccess(id);
-      return res.json({ success: true, message: 'Payout marked as complete.', payout });
-    } else if (action === 'FAIL') {
-      const payout = await PayoutService.reversePayout(id, reason || 'Admin manual rejection');
-      return res.json({ success: true, message: 'Payout marked as failed and reversed.', payout });
+    if (action === 'APPROVE') {
+      const payout = await PayoutService.approveRedemption(id, admin.id);
+      return res.json({ success: true, message: 'Payout approved and queued for disbursement.', payout });
+    } else if (action === 'REJECT' || action === 'FAIL') {
+      if (!reason || !reason.trim()) {
+        return res.status(400).json({ success: false, message: 'A rejection reason is required.' });
+      }
+      const payout = await PayoutService.rejectRedemption(id, admin.id, reason.trim());
+      return res.json({ success: true, message: 'Payout rejected and refunded to user.', payout });
+    } else if (action === 'COMPLETE') {
+      if (!gatewayReference || !gatewayReference.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Manual completion requires a valid gateway/provider reconciliation reference (UTR or Payout ID).',
+        });
+      }
+      const payout = await PayoutService.finalizeSuccess(id, gatewayReference.trim());
+      await prisma.auditLog.create({
+        data: {
+          adminId: admin.id,
+          action: 'PAYOUT_MANUAL_COMPLETE',
+          entityType: 'Payout',
+          entityId: id,
+          newValue: JSON.stringify({ gatewayReference: gatewayReference.trim() }),
+        },
+      });
+      return res.json({ success: true, message: 'Payout marked as complete with reconciliation reference.', payout });
     }
 
-    return res.status(400).json({ success: false, message: 'Invalid action. Must be COMPLETE or FAIL.' });
+    return res.status(400).json({ success: false, message: 'Invalid action. Must be APPROVE, REJECT, or COMPLETE.' });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }
