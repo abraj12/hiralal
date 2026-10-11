@@ -443,10 +443,16 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
       expect(allRules[0].version).toBe(1);
       expect(allRules[1].version).toBe(2);
 
-      // Verify continuous interval stitching without gaps or overlaps regardless of which task acquired lock first
+      // Historical immutability: underlying rows are NOT mutated in place
       const ruleEarlier = allRules.find((r) => Number(r.rewardPercentage) === 0.50);
       const ruleLater = allRules.find((r) => Number(r.rewardPercentage) === 0.75);
-      expect(ruleEarlier?.effectiveUntil?.toISOString()).toBe(ruleLater?.effectiveFrom.toISOString());
+      expect(ruleEarlier?.effectiveUntil).toBeNull();
+      expect(ruleLater?.effectiveUntil).toBeNull();
+
+      // Derived interval coverage via listRules timeline:
+      const listed = await RewardRuleService.listRules('PLUMBER');
+      const listedEarlier = listed.find((r: any) => Number(r.rewardPercentage) === 0.50);
+      expect(listedEarlier?.effectiveUntil?.toISOString()).toBe(ruleLater?.effectiveFrom.toISOString());
     });
 
     test('lock or query failure causes complete rollback instead of fail-open behavior', async () => {
@@ -513,6 +519,281 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
       const approved = await BillService.approveBill(bill.id, billAdmin.id);
       expect(Number(approved.bill.calculatedReward)).toBe(80.0); // 10000 * 0.80%
       expect(Number(approved.bill.rewardRateSnapshot)).toBe(0.80);
+    });
+  });
+
+  // -------------------------------------------------------------
+  // 5. Append-Only Rule Timeline & Historical Immutability (Task 1)
+  // -------------------------------------------------------------
+  describe('5. Append-Only Rule Timeline & Historical Row Immutability', () => {
+    test('creating subsequent rule versions does NOT mutate any prior row attributes in database', async () => {
+      await prisma.rewardRule.deleteMany({ where: { profession: 'TILE_INSTALLER' } });
+
+      // Create v1
+      const v1 = await RewardRuleService.createRule(opsAdmin.id, {
+        profession: 'TILE_INSTALLER',
+        rewardPercentage: 0.50,
+        effectiveFrom: '2026-01-01',
+      });
+
+      const initialV1Row = await prisma.rewardRule.findUnique({ where: { id: v1.id } });
+      expect(initialV1Row).toBeDefined();
+      expect(initialV1Row?.effectiveUntil).toBeNull();
+      expect(initialV1Row?.isActive).toBe(true);
+      expect(initialV1Row?.updatedByAdminId).toBe(opsAdmin.id);
+      const initialUpdatedAt = initialV1Row?.updatedAt.getTime();
+
+      // Create v2 (chronologically after v1)
+      const v2 = await RewardRuleService.createRule(opsAdmin.id, {
+        profession: 'TILE_INSTALLER',
+        rewardPercentage: 0.75,
+        effectiveFrom: '2026-08-01',
+      });
+
+      // Re-fetch v1 row directly from database
+      const reloadedV1Row = await prisma.rewardRule.findUnique({ where: { id: v1.id } });
+      expect(reloadedV1Row?.effectiveUntil).toBeNull(); // NEVER MUTATED IN PLACE
+      expect(reloadedV1Row?.isActive).toBe(true); // NEVER DEACTIVATED
+      expect(reloadedV1Row?.updatedByAdminId).toBe(opsAdmin.id); // NEVER OVERWRITTEN
+      expect(reloadedV1Row?.updatedAt.getTime()).toBe(initialUpdatedAt); // TIMESTAMP UNTOUCHED
+      expect(Number(reloadedV1Row?.rewardPercentage)).toBe(0.50);
+
+      // Verify timeline intervals are derived cleanly via listRules
+      const listed = await RewardRuleService.listRules('TILE_INSTALLER');
+      const listedV1 = listed.find((r: any) => r.version === 1);
+      const listedV2 = listed.find((r: any) => r.version === 2);
+      expect(listedV1?.effectiveUntil?.toISOString()).toBe(v2.effectiveFrom.toISOString());
+      expect(listedV2?.effectiveUntil).toBeNull();
+    });
+
+    test('out-of-order scheduled rule insertions resolve correct rates without mutating older/newer records', async () => {
+      await prisma.rewardRule.deleteMany({ where: { profession: 'PLUMBER' } });
+
+      // 1. Insert Rule A: effective 2026-01-01 (0.50%)
+      const ruleA = await RewardRuleService.createRule(opsAdmin.id, {
+        profession: 'PLUMBER',
+        rewardPercentage: 0.50,
+        effectiveFrom: '2026-01-01',
+      });
+
+      // 2. Insert Rule C: effective 2026-11-01 (0.90%)
+      const ruleC = await RewardRuleService.createRule(opsAdmin.id, {
+        profession: 'PLUMBER',
+        rewardPercentage: 0.90,
+        effectiveFrom: '2026-11-01',
+      });
+
+      // 3. Out-of-order: Insert Rule B in-between: effective 2026-06-01 (0.70%)
+      const ruleB = await RewardRuleService.createRule(opsAdmin.id, {
+        profession: 'PLUMBER',
+        rewardPercentage: 0.70,
+        effectiveFrom: '2026-06-01',
+      });
+
+      // Verify DB records for Rule A and Rule C were never mutated
+      const rowA = await prisma.rewardRule.findUnique({ where: { id: ruleA.id } });
+      const rowC = await prisma.rewardRule.findUnique({ where: { id: ruleC.id } });
+      expect(rowA?.effectiveUntil).toBeNull();
+      expect(rowC?.effectiveUntil).toBeNull();
+
+      // Test rate resolution across intervals:
+      // Interval 1: before Rule B -> 0.50%
+      const resEarly = await RewardRuleService.getApplicableRule('PLUMBER', '2026-03-15');
+      expect(Number(resEarly.rewardPercentage)).toBe(0.50);
+
+      // Interval 2: during Rule B -> 0.70%
+      const resMid = await RewardRuleService.getApplicableRule('PLUMBER', '2026-08-15');
+      expect(Number(resMid.rewardPercentage)).toBe(0.70);
+
+      // Interval 3: during Rule C -> 0.90%
+      const resLate = await RewardRuleService.getApplicableRule('PLUMBER', '2026-12-01');
+      expect(Number(resLate.rewardPercentage)).toBe(0.90);
+    });
+
+    test('rejects ambiguous configurations when attempting to create duplicate active rules on exact same date', async () => {
+      await prisma.rewardRule.deleteMany({ where: { profession: 'TILE_INSTALLER' } });
+
+      await RewardRuleService.createRule(opsAdmin.id, {
+        profession: 'TILE_INSTALLER',
+        rewardPercentage: 0.60,
+        effectiveFrom: '2026-05-01',
+      });
+
+      // Attempting to create another active rule on exact same date 2026-05-01 must reject
+      await expect(
+        RewardRuleService.createRule(opsAdmin.id, {
+          profession: 'TILE_INSTALLER',
+          rewardPercentage: 0.80,
+          effectiveFrom: '2026-05-01',
+        })
+      ).rejects.toThrow('Ambiguous duplicate configurations are rejected');
+    });
+  });
+
+  // -------------------------------------------------------------
+  // 6. Strict India Business Calendar Date Validation (Task 2)
+  // -------------------------------------------------------------
+  describe('6. Strict India Business Calendar Date Validation', () => {
+    test('POST /api/admin/settings/reward-rules strictly validates calendar dates and rejects impossible dates', async () => {
+      // 1. Impossible date: February 31
+      const resFeb31 = await request(app)
+        .post('/api/admin/settings/reward-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({
+          profession: 'PLUMBER',
+          rewardPercentage: 0.60,
+          effectiveFrom: '2026-02-31',
+        });
+      expect(resFeb31.status).toBe(400);
+      expect(resFeb31.body.message).toContain('Invalid calendar date: "2026-02-31"');
+
+      // 2. Impossible leap-year date: February 29 in non-leap year (2025)
+      const resFeb29NonLeap = await request(app)
+        .post('/api/admin/settings/reward-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({
+          profession: 'PLUMBER',
+          rewardPercentage: 0.60,
+          effectiveFrom: '2025-02-29',
+        });
+      expect(resFeb29NonLeap.status).toBe(400);
+      expect(resFeb29NonLeap.body.message).toContain('Month 2 in year 2025 has only 28 days');
+
+      // 3. Valid leap-year date: February 29 in leap year (2024)
+      const resFeb29Leap = await request(app)
+        .post('/api/admin/settings/reward-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({
+          profession: 'PLUMBER',
+          rewardPercentage: 0.60,
+          effectiveFrom: '2024-02-29',
+        });
+      expect(resFeb29Leap.status).toBe(201);
+      expect(resFeb29Leap.body.success).toBe(true);
+
+      // 4. Impossible date: April 31
+      const resApr31 = await request(app)
+        .post('/api/admin/settings/reward-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({
+          profession: 'PLUMBER',
+          rewardPercentage: 0.60,
+          effectiveFrom: '2026-04-31',
+        });
+      expect(resApr31.status).toBe(400);
+      expect(resApr31.body.message).toContain('Month 4 in year 2026 has only 30 days');
+
+      // 5. Invalid month: Month 13
+      const resMonth13 = await request(app)
+        .post('/api/admin/settings/reward-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({
+          profession: 'PLUMBER',
+          rewardPercentage: 0.60,
+          effectiveFrom: '2026-13-01',
+        });
+      expect(resMonth13.status).toBe(400);
+      expect(resMonth13.body.message).toContain('Expected exact YYYY-MM-DD');
+
+      // 6. Trailing garbage in date string
+      const resGarbage = await request(app)
+        .post('/api/admin/settings/reward-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({
+          profession: 'PLUMBER',
+          rewardPercentage: 0.60,
+          effectiveFrom: '2026-10-15-extra',
+        });
+      expect(resGarbage.status).toBe(400);
+
+      // 7. Empty date string
+      const resEmpty = await request(app)
+        .post('/api/admin/settings/reward-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({
+          profession: 'PLUMBER',
+          rewardPercentage: 0.60,
+          effectiveFrom: '',
+        });
+      expect([201, 400]).toContain(resEmpty.status);
+    });
+
+    test('invoice date submission rejects impossible calendar dates', async () => {
+      const workerToken = jwt.sign(
+        { userId: testPlumber.id, mobile: testPlumber.mobile, role: 'USER' },
+        config.jwt.accessSecret,
+        { expiresIn: '1h' }
+      );
+      const res = await request(app)
+        .post('/api/bills')
+        .set('Authorization', `Bearer ${workerToken}`)
+        .field('invoiceNumber', `INV-INVALID-DATE-${Date.now()}`)
+        .field('invoiceDate', '2026-02-31')
+        .field('billAmount', '5000')
+        .attach('invoiceFile', createDummyPdf(), 'inv.pdf');
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain('Invalid calendar date: "2026-02-31"');
+    });
+  });
+
+  // -------------------------------------------------------------
+  // 7. Future-Rule Fallback Removal from Invoice Resolution (Task 3)
+  // -------------------------------------------------------------
+  describe('7. Future-Rule Fallback Removal from Invoice Resolution', () => {
+    test('past invoice fails closed and NEVER receives future-scheduled rule rate', async () => {
+      await prisma.rewardRule.deleteMany({ where: { profession: 'TILE_INSTALLER' } });
+
+      // Table has ONLY a future-scheduled rule: 0.95% effective in 2099
+      await RewardRuleService.createRule(opsAdmin.id, {
+        profession: 'TILE_INSTALLER',
+        rewardPercentage: 0.95,
+        effectiveFrom: '2099-01-01',
+      });
+
+      // Attempting to resolve rate for an invoice dated 2026-10-11 MUST fail closed
+      await expect(
+        RewardRuleService.getApplicableRule('TILE_INSTALLER', '2026-10-11')
+      ).rejects.toThrow('[REWARD-RULE] No active reward rule found for profession TILE_INSTALLER');
+    });
+
+    test('test fixture baseline bootstrap ONLY triggers when zero total rules exist in database', async () => {
+      await prisma.rewardRule.deleteMany({ where: { profession: 'TILE_INSTALLER' } });
+      const initialCount = await prisma.rewardRule.count({ where: { profession: 'TILE_INSTALLER' } });
+      expect(initialCount).toBe(0);
+
+      // In development/test with zero rows, baseline bootstrap creates 0.50% starting 2020-01-01
+      const bootstrapped = await RewardRuleService.getApplicableRule('TILE_INSTALLER', '2026-10-11');
+      expect(bootstrapped).toBeDefined();
+      expect(Number(bootstrapped.rewardPercentage)).toBe(0.50);
+      expect(bootstrapped.effectiveFrom.toISOString()).toBe(new Date('2020-01-01T00:00:00+05:30').toISOString());
+    });
+  });
+
+  // -------------------------------------------------------------
+  // 8. IST Redemption-Window Date and Time Formatting Helpers (Task 4)
+  // -------------------------------------------------------------
+  describe('8. IST Redemption-Window Date & Time Formatting Helpers', () => {
+    test('round-trips date and time accurately in Asia/Kolkata regardless of execution timezone', () => {
+      const { formatIndiaTimeOnly, parseIndiaIsoDateTime, parseIndiaBusinessDate, formatIstDate } = require('../utils/timezone.utils');
+
+      // Test IST time formatting: 10:00 IST is 04:30 UTC
+      const utcIso = '2026-10-15T04:30:00.000Z';
+      const timeStr = formatIndiaTimeOnly(utcIso);
+      expect(timeStr).toBe('10:00');
+
+      // Test IST evening formatting: 23:59 IST is 18:29 UTC
+      const nightUtcIso = '2026-10-15T18:29:00.000Z';
+      const nightTimeStr = formatIndiaTimeOnly(nightUtcIso);
+      expect(nightTimeStr).toBe('23:59');
+
+      // Test parsing back to ISO with explicit +05:30 offset
+      const parsedIso = parseIndiaIsoDateTime('2026-10-15', '10:00');
+      expect(new Date(parsedIso).toISOString()).toBe('2026-10-15T04:30:00.000Z');
+
+      // Verify business date formatting
+      const bDate = parseIndiaBusinessDate('2026-10-15');
+      expect(formatIstDate(bDate, 'yyyy-MM-dd')).toBe('2026-10-15');
     });
   });
 });

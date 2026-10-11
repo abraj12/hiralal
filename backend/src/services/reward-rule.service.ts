@@ -1,12 +1,13 @@
 import { prisma } from '../db';
 import { Profession, RewardRule } from '@prisma/client';
 import { config } from '../config';
-import { parseIndiaBusinessDate } from '../utils/timezone.utils';
+import { parseIndiaBusinessDate, formatIstDate } from '../utils/timezone.utils';
 
 export class RewardRuleService {
   /**
    * Retrieves the authoritative active reward rule for a given profession at a specific business timestamp.
-   * Throws if no rule exists or if overlapping rules are detected.
+   * Derives applicability from the chronological timeline without mutating historical records.
+   * Throws if no rule exists, if only future-scheduled rules exist, or if overlapping rules are detected.
    */
   static async getApplicableRule(
     profession: Profession,
@@ -24,38 +25,43 @@ export class RewardRuleService {
           { effectiveUntil: { gt: effectiveAt } },
         ],
       },
-      orderBy: { effectiveFrom: 'desc' },
+      orderBy: [
+        { effectiveFrom: 'desc' },
+        { version: 'desc' },
+        { createdAt: 'desc' },
+      ],
     });
 
     if (rules.length === 0) {
-      if (config.isProduction) {
-        throw new Error(
-          `[REWARD-RULE] No active reward rule found for profession ${profession} at effective date ${effectiveAt.toISOString()}. Operation halted (fail closed).`
-        );
+      if (!config.isProduction) {
+        // Documented test fixture bootstrap: only when the database contains zero rule history for this profession
+        const totalRules = await tx.rewardRule.count({
+          where: { profession },
+        });
+
+        if (totalRules === 0) {
+          return await tx.rewardRule.create({
+            data: {
+              profession,
+              rewardPercentage: 0.50,
+              effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+              isActive: true,
+              version: 1,
+            },
+          });
+        }
       }
 
-      // In development or test environments, fallback to latest active rule
-      const devRule = await tx.rewardRule.findFirst({
-        where: { profession, isActive: true },
-        orderBy: { version: 'desc' },
-      });
-
-      if (devRule) return devRule;
-
-      return await tx.rewardRule.create({
-        data: {
-          profession,
-          rewardPercentage: 0.50,
-          effectiveFrom: new Date('2020-01-01'),
-          isActive: true,
-          version: 1,
-        },
-      });
+      // Fail closed: past invoice must never receive a future-scheduled rate or fabricate missing rules
+      throw new Error(
+        `[REWARD-RULE] No active reward rule found for profession ${profession} at effective date ${effectiveAt.toISOString()}. Operation halted (fail closed).`
+      );
     }
 
-    if (rules.length > 1) {
+    // Deterministic tie-breaking and ambiguous collision detection
+    if (rules.length > 1 && rules[0].effectiveFrom.getTime() === rules[1].effectiveFrom.getTime()) {
       throw new Error(
-        `[OVERLAPPING_REWARD_RULES] Multiple overlapping active rules found for ${profession} at ${effectiveAt.toISOString()}. Operation halted (fail closed).`
+        `[OVERLAPPING_REWARD_RULES] Multiple conflicting active rules found for ${profession} with identical effective date ${rules[0].effectiveFrom.toISOString()}. Operation halted (fail closed).`
       );
     }
 
@@ -64,8 +70,9 @@ export class RewardRuleService {
 
   /**
    * Creates a new versioned reward rule for a profession atomically.
-   * Enforces business percentage limits (0.01% - 10.00%), continuous interval coverage,
-   * safe concurrency serialization, and atomic audit logging within a database transaction.
+   * Append-only: historical rule rows are preserved completely immutable.
+   * Enforces business percentage limits (0.01% - 10.00%), strict date validation,
+   * safe advisory lock concurrency serialization, and atomic audit logging.
    */
   static async createRule(
     adminId: string,
@@ -98,17 +105,19 @@ export class RewardRuleService {
     let effectiveFrom: Date;
     try {
       effectiveFrom = parseIndiaBusinessDate(params.effectiveFrom);
-    } catch {
-      throw new Error('Effective from date must be a valid date.');
+    } catch (err: any) {
+      throw new Error(err.message || 'Effective from date must be a valid date.');
     }
 
     // 4. Validation: Effective Until / Bounded Interval
+    let effectiveUntil: Date | null = null;
     if (params.effectiveUntil !== undefined && params.effectiveUntil !== null) {
-      const d = params.effectiveUntil instanceof Date ? params.effectiveUntil : new Date(params.effectiveUntil);
-      if (isNaN(d.getTime())) {
-        throw new Error('Effective until must be a valid date.');
+      try {
+        effectiveUntil = parseIndiaBusinessDate(params.effectiveUntil);
+      } catch (err: any) {
+        throw new Error(err.message || 'Effective until must be a valid date.');
       }
-      if (d <= effectiveFrom) {
+      if (effectiveUntil <= effectiveFrom) {
         throw new Error('Effective until timestamp must be after effective from timestamp.');
       }
       // Temporary bounded rules leaving open-ended gaps are rejected to ensure continuous invoice coverage
@@ -119,8 +128,25 @@ export class RewardRuleService {
 
     const runAtomic = async (trx: any) => {
       // Concurrency lock: acquire transaction-scoped PostgreSQL advisory lock per profession.
-      // Operates independently of pre-existing table rows. Any lock or query failure aborts and rolls back immediately (fail closed).
+      // Any lock failure aborts immediately (fail closed).
       await trx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'reward_rule_' + profession})::bigint)`;
+
+      // Check for ambiguous duplicate: an active rule with the exact same effective date
+      if (params.isActive !== false) {
+        const exactCollision = await trx.rewardRule.findFirst({
+          where: {
+            profession,
+            isActive: true,
+            effectiveFrom: effectiveFrom,
+          },
+        });
+
+        if (exactCollision) {
+          throw new Error(
+            `An active reward rule (v${exactCollision.version}) already exists for ${profession} with effective date ${formatIstDate(effectiveFrom, 'yyyy-MM-dd')}. Ambiguous duplicate configurations are rejected to preserve deterministic history.`
+          );
+        }
+      }
 
       // Determine next version number for this profession
       const latestRule = await trx.rewardRule.findFirst({
@@ -129,95 +155,13 @@ export class RewardRuleService {
       });
       const nextVersion = latestRule ? latestRule.version + 1 : 1;
 
-      let determinedEffectiveUntil: Date | null = null;
-      const modifiedPriorRules: Array<{
-        id: string;
-        version: number;
-        action: string;
-        previousEffectiveUntil: Date | null;
-        newEffectiveUntil: Date | null;
-      }> = [];
-
-      if (params.isActive !== false) {
-        // 1. Check if there is an active rule scheduled to start AFTER this effectiveFrom
-        const nextRule = await trx.rewardRule.findFirst({
-          where: {
-            profession,
-            isActive: true,
-            effectiveFrom: { gt: effectiveFrom },
-          },
-          orderBy: { effectiveFrom: 'asc' },
-        });
-
-        if (nextRule) {
-          determinedEffectiveUntil = nextRule.effectiveFrom;
-        }
-
-        // 2. Find any active rule that started AT this exact effectiveFrom (exact collision -> superseded)
-        const exactCollisions = await trx.rewardRule.findMany({
-          where: {
-            profession,
-            isActive: true,
-            effectiveFrom: effectiveFrom,
-          },
-        });
-
-        for (const col of exactCollisions) {
-          await trx.rewardRule.update({
-            where: { id: col.id },
-            data: {
-              isActive: false,
-              effectiveUntil: effectiveFrom,
-              updatedByAdminId: adminId,
-            },
-          });
-          modifiedPriorRules.push({
-            id: col.id,
-            version: col.version,
-            action: 'DEACTIVATED_EXACT_COLLISION',
-            previousEffectiveUntil: col.effectiveUntil,
-            newEffectiveUntil: effectiveFrom,
-          });
-        }
-
-        // 3. Find prior active rules starting BEFORE effectiveFrom that overlap into or past effectiveFrom
-        const priorOverlapping = await trx.rewardRule.findMany({
-          where: {
-            profession,
-            isActive: true,
-            effectiveFrom: { lt: effectiveFrom },
-            OR: [
-              { effectiveUntil: null },
-              { effectiveUntil: { gt: effectiveFrom } },
-            ],
-          },
-        });
-
-        for (const prev of priorOverlapping) {
-          await trx.rewardRule.update({
-            where: { id: prev.id },
-            data: {
-              effectiveUntil: effectiveFrom,
-              updatedByAdminId: adminId,
-            },
-          });
-          modifiedPriorRules.push({
-            id: prev.id,
-            version: prev.version,
-            action: 'CLOSED_AT_NEW_START',
-            previousEffectiveUntil: prev.effectiveUntil,
-            newEffectiveUntil: effectiveFrom,
-          });
-        }
-      }
-
-      // Create new versioned rule
+      // Append-only rule creation: historical rows are NEVER modified in place
       const newRule = await trx.rewardRule.create({
         data: {
           profession,
           rewardPercentage,
           effectiveFrom,
-          effectiveUntil: determinedEffectiveUntil,
+          effectiveUntil: null,
           isActive: params.isActive !== undefined ? params.isActive : true,
           version: nextVersion,
           createdByAdminId: adminId,
@@ -239,7 +183,7 @@ export class RewardRuleService {
             version: newRule.version,
             effectiveFrom: newRule.effectiveFrom,
             effectiveUntil: newRule.effectiveUntil,
-            modifiedPriorRules,
+            appendOnly: true,
           }),
         },
       });
@@ -313,13 +257,30 @@ export class RewardRuleService {
 
   /**
    * Lists all rules for a given profession or all professions.
+   * Derives effectiveUntil dynamically from the chronological timeline without mutating database records.
    */
   static async listRules(profession?: Profession, tx: any = prisma) {
-    return await tx.rewardRule.findMany({
+    const rules = await tx.rewardRule.findMany({
       where: {
         ...(profession && { profession }),
       },
-      orderBy: [{ profession: 'asc' }, { version: 'desc' }],
+      orderBy: [{ profession: 'asc' }, { effectiveFrom: 'asc' }, { version: 'asc' }],
+    });
+
+    // Derive effectiveUntil for each rule based on chronological sequence
+    const enriched = rules.map((r: any, idx: number, arr: any[]) => {
+      const nextRule = arr.slice(idx + 1).find((other: any) => other.profession === r.profession && other.isActive);
+      const derivedUntil = r.effectiveUntil || (nextRule ? nextRule.effectiveFrom : null);
+      return {
+        ...r,
+        derivedEffectiveUntil: derivedUntil,
+        effectiveUntil: r.effectiveUntil || derivedUntil,
+      };
+    });
+
+    return enriched.sort((a: any, b: any) => {
+      if (a.profession !== b.profession) return a.profession.localeCompare(b.profession);
+      return b.version - a.version;
     });
   }
 }

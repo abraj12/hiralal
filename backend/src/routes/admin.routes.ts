@@ -836,8 +836,8 @@ router.post('/settings/reward-rules', requireOperationsAdmin, async (req: Authen
     const created = await RewardRuleService.createRule(admin.id, {
       profession: profession as Profession,
       rewardPercentage: pct,
-      effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : undefined,
-      effectiveUntil: effectiveUntil ? new Date(effectiveUntil) : null,
+      effectiveFrom: effectiveFrom !== undefined && effectiveFrom !== null && effectiveFrom !== '' ? effectiveFrom : undefined,
+      effectiveUntil: effectiveUntil !== undefined && effectiveUntil !== null && effectiveUntil !== '' ? effectiveUntil : null,
     });
 
     res.status(201).json({

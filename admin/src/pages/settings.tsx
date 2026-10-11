@@ -19,28 +19,14 @@ import {
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import { AdminApiClient } from '../lib/api';
+import {
+  getIndiaCalendarToday,
+  formatIndiaDateOnly,
+  formatIndiaTimeOnly,
+  parseIndiaIsoDateTime,
+} from '../lib/date-utils';
 
 type TabType = 'PLUMBER' | 'TILE_INSTALLER' | 'GST' | 'REDEMPTION';
-
-function getIndiaCalendarToday(): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Kolkata',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
-}
-
-function formatIndiaDateOnly(date: Date | string): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  if (isNaN(d.getTime())) return '';
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Kolkata',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(d);
-}
 
 export default function AdminSettingsPage() {
   const [activeTab, setActiveTab] = useState<TabType>('PLUMBER');
@@ -120,12 +106,12 @@ export default function AdminSettingsPage() {
         if (s.startAt) {
           const d = new Date(s.startAt);
           setStartDate(formatIndiaDateOnly(d));
-          setStartTime(d.toTimeString().substring(0, 5));
+          setStartTime(formatIndiaTimeOnly(d));
         }
         if (s.endAt) {
           const d = new Date(s.endAt);
           setEndDate(formatIndiaDateOnly(d));
-          setEndTime(d.toTimeString().substring(0, 5));
+          setEndTime(formatIndiaTimeOnly(d));
         }
       }
     } catch (err: any) {
@@ -205,10 +191,10 @@ export default function AdminSettingsPage() {
       let endAt: string | null = null;
 
       if (startDate) {
-        startAt = new Date(`${startDate}T${startTime}:00+05:30`).toISOString();
+        startAt = parseIndiaIsoDateTime(startDate, startTime);
       }
       if (endDate) {
-        endAt = new Date(`${endDate}T${endTime}:00+05:30`).toISOString();
+        endAt = parseIndiaIsoDateTime(endDate, endTime);
       }
 
       if (startAt && endAt && new Date(endAt) <= new Date(startAt)) {
@@ -417,10 +403,20 @@ export default function AdminSettingsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {(activeTab === 'PLUMBER' ? plumberRules : tileRules).map((r: any) => {
+                    {(activeTab === 'PLUMBER' ? plumberRules : tileRules).map((r: any, idx: number, arr: any[]) => {
                       const now = new Date();
                       const fromDate = r.effectiveFrom ? new Date(r.effectiveFrom) : null;
-                      const untilDate = r.effectiveUntil ? new Date(r.effectiveUntil) : null;
+                      let untilDate = r.effectiveUntil ? new Date(r.effectiveUntil) : null;
+
+                      // Derive validity until date dynamically from chronological timeline if open-ended
+                      if (!untilDate && fromDate) {
+                        const chronologicallyLater = arr
+                          .filter((other: any) => other.isActive && new Date(other.effectiveFrom) > fromDate)
+                          .sort((a: any, b: any) => new Date(a.effectiveFrom).getTime() - new Date(b.effectiveFrom).getTime())[0];
+                        if (chronologicallyLater) {
+                          untilDate = new Date(chronologicallyLater.effectiveFrom);
+                        }
+                      }
 
                       let statusBadge = { label: 'CURRENT', badgeClass: 'bg-emerald-100 text-emerald-700' };
                       if (!r.isActive) {
@@ -436,10 +432,10 @@ export default function AdminSettingsPage() {
                           <td className="py-3 px-4 font-bold text-slate-900">v{r.version}</td>
                           <td className="py-3 px-4 font-bold text-emerald-600">{r.rewardPercentage || r.percentage}%</td>
                           <td className="py-3 px-4 text-slate-600 font-medium">
-                            {fromDate ? fromDate.toLocaleDateString('en-IN') : 'Beginning'}
+                            {fromDate ? fromDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Beginning'}
                           </td>
                           <td className="py-3 px-4 text-slate-500">
-                            {untilDate ? untilDate.toLocaleDateString('en-IN') : 'Present (Open-ended)'}
+                            {untilDate ? untilDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Present (Open-ended)'}
                           </td>
                           <td className="py-3 px-4">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${statusBadge.badgeClass}`}>

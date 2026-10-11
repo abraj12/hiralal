@@ -54,10 +54,10 @@ router.post('/', authenticate, requireUser, upload.single('invoiceFile'), async 
     let parsedDate: Date;
     try {
       parsedDate = parseIndiaBusinessDate(invoiceDate.trim());
-    } catch {
+    } catch (err: any) {
       return res.status(400).json({
         success: false,
-        message: 'Invoice date is invalid. Please supply a valid date (YYYY-MM-DD).',
+        message: err.message || 'Invoice date is invalid. Please supply a valid date (YYYY-MM-DD).',
       });
     }
 
