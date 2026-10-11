@@ -16,6 +16,7 @@ import {
   parseStrictIndiaTimestamp,
   parseIndiaIsoDateTime,
 } from '../utils/timezone.utils';
+import { provisionRewardRules } from '../prisma/seed';
 
 describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', () => {
   let opsAdmin: any;
@@ -159,77 +160,132 @@ describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', (
   // ---------------------------------------------------------------
   // Task 2 — Seed provisioning is strictly non-mutating
   // ---------------------------------------------------------------
-  describe('Task 2 — Seed provisioning: no mutation of existing rows', () => {
-    test('seeding with an existing active rule (including legacy rule_ prefix) DOES NOT mutate any field', async () => {
-      // Simulate a legacy rule_-prefixed row (as inserted by the original migration with CURRENT_TIMESTAMP)
-      await prisma.rewardRule.deleteMany({ where: { profession: 'PLUMBER' } });
-      const legacyEffectiveFrom = new Date('2025-06-15T10:30:00Z'); // NOT 2020-01-01, simulating CURRENT_TIMESTAMP
-      const legacyRule = await prisma.rewardRule.create({
-        data: {
-          id: `rule_plumber_v1_seed_test_${Date.now()}`,
-          profession: 'PLUMBER',
-          rewardPercentage: 0.50,
-          effectiveFrom: legacyEffectiveFrom,
-          isActive: true,
-          version: 1,
-        },
-      });
-
-      // Snapshot before simulated seed run
-      const snapshotBefore = await prisma.rewardRule.findUnique({ where: { id: legacyRule.id } });
-      expect(snapshotBefore).not.toBeNull();
-
-      // Simulate what seed.ts does: find existing active rule, skip mutation
-      const activeRule = await prisma.rewardRule.findFirst({
-        where: { profession: 'PLUMBER', isActive: true },
-        orderBy: { version: 'desc' },
-      });
-      expect(activeRule).not.toBeNull();
-      // Seed must not mutate when rule exists — just preserve it
-      if (!activeRule) {
-        throw new Error('Test invariant failure: activeRule should exist');
-      }
-
-      // Confirm: seed does NOT create a new rule (rule already exists)
-      const countAfter = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
-      expect(countAfter).toBe(1); // Exactly one rule, no duplicates
-
-      // Confirm the row is completely unchanged
-      const snapshotAfter = await prisma.rewardRule.findUnique({ where: { id: legacyRule.id } });
-      expect(snapshotAfter!.effectiveFrom.getTime()).toBe(legacyEffectiveFrom.getTime()); // NOT back-dated
-      expect(snapshotAfter!.updatedAt.getTime()).toBe(snapshotBefore!.updatedAt.getTime()); // NOT touched
-      expect(Number(snapshotAfter!.rewardPercentage)).toBe(0.50);
-      expect(snapshotAfter!.isActive).toBe(true);
-    });
-
-    test('seeding an empty profession creates the baseline rule at 2020-01-01 IST', async () => {
-      // Remove all PLUMBER rules to simulate a fresh database
+  describe('Task 2 — Safe Baseline Seeding for All Historical States (Actual Implementation)', () => {
+    test('1. Completely empty profession: one initial baseline is created', async () => {
+      // Remove all PLUMBER rules to simulate a fresh database with 0 historical rows
       await prisma.rewardRule.deleteMany({ where: { profession: 'PLUMBER' } });
       const countBefore = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
       expect(countBefore).toBe(0);
 
-      // Simulate seed logic
-      const activeRule = await prisma.rewardRule.findFirst({
-        where: { profession: 'PLUMBER', isActive: true },
-        orderBy: { version: 'desc' },
-      });
-      if (!activeRule) {
-        await prisma.rewardRule.create({
-          data: {
-            profession: 'PLUMBER',
-            rewardPercentage: 0.50,
-            effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
-            version: 1,
-            isActive: true,
-          },
-        });
-      }
+      // Execute actual provisioning function
+      const result = await provisionRewardRules(prisma);
+      expect(result.provisioned).toContain('PLUMBER');
+
+      // Verify exactly one baseline row was created
+      const countAfter = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
+      expect(countAfter).toBe(1);
 
       const created = await prisma.rewardRule.findFirst({ where: { profession: 'PLUMBER', isActive: true } });
       expect(created).not.toBeNull();
       expect(created!.effectiveFrom.toISOString()).toBe(new Date('2020-01-01T00:00:00+05:30').toISOString());
       expect(Number(created!.rewardPercentage)).toBe(0.50);
       expect(created!.version).toBe(1);
+      expect(created!.isActive).toBe(true);
+    });
+
+    test('2. Existing active rule: all rows remain unchanged', async () => {
+      // Ensure PLUMBER has an existing active rule
+      const activeBefore = await prisma.rewardRule.findFirst({
+        where: { profession: 'PLUMBER', isActive: true },
+        orderBy: { version: 'desc' },
+      });
+      expect(activeBefore).not.toBeNull();
+      const initialUpdatedAt = activeBefore!.updatedAt.getTime();
+      const initialEffectiveFrom = activeBefore!.effectiveFrom.getTime();
+
+      // Execute actual provisioning function
+      const result = await provisionRewardRules(prisma);
+      expect(result.preserved).toContain('PLUMBER');
+
+      // Verify no new rows created and existing row completely untouched
+      const count = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
+      expect(count).toBe(1);
+
+      const reloaded = await prisma.rewardRule.findUnique({ where: { id: activeBefore!.id } });
+      expect(reloaded!.updatedAt.getTime()).toBe(initialUpdatedAt);
+      expect(reloaded!.effectiveFrom.getTime()).toBe(initialEffectiveFrom);
+      expect(Number(reloaded!.rewardPercentage)).toBe(Number(activeBefore!.rewardPercentage));
+      expect(reloaded!.isActive).toBe(true);
+      expect(reloaded!.version).toBe(activeBefore!.version);
+    });
+
+    test('3. Existing inactive history with no active rule: no baseline created and no historical fields change', async () => {
+      // Clear TILE_INSTALLER rules, then insert an INACTIVE historical rule
+      await prisma.rewardRule.deleteMany({ where: { profession: 'TILE_INSTALLER' } });
+      const inactiveHistory = await prisma.rewardRule.create({
+        data: {
+          profession: 'TILE_INSTALLER',
+          rewardPercentage: 0.65,
+          effectiveFrom: new Date('2024-01-01T00:00:00+05:30'),
+          isActive: false,
+          version: 2,
+        },
+      });
+
+      const countBefore = await prisma.rewardRule.count({ where: { profession: 'TILE_INSTALLER' } });
+      expect(countBefore).toBe(1);
+
+      // Execute actual provisioning function
+      const result = await provisionRewardRules(prisma);
+
+      // Must be preserved without provisioning a new baseline
+      expect(result.preserved).toContain('TILE_INSTALLER');
+      expect(result.provisioned).not.toContain('TILE_INSTALLER');
+      expect(result.warnings.some((w) => w.includes('TILE_INSTALLER') && w.includes('none is currently active'))).toBe(true);
+
+      // Row count must NOT increase (no baseline created!)
+      const countAfter = await prisma.rewardRule.count({ where: { profession: 'TILE_INSTALLER' } });
+      expect(countAfter).toBe(1);
+
+      // The historical inactive row must be completely unchanged (no reactivation, no field changes)
+      const reloaded = await prisma.rewardRule.findUnique({ where: { id: inactiveHistory.id } });
+      expect(reloaded!.isActive).toBe(false); // NEVER implicitly resurrected
+      expect(reloaded!.version).toBe(2); // NEVER rewritten to 1
+      expect(Number(reloaded!.rewardPercentage)).toBe(0.65);
+      expect(reloaded!.effectiveFrom.getTime()).toBe(inactiveHistory.effectiveFrom.getTime());
+      expect(reloaded!.updatedAt.getTime()).toBe(inactiveHistory.updatedAt.getTime());
+    });
+
+    test('4. Multiple existing versions: seed neither creates duplicate versions nor modifies prior records', async () => {
+      // Setup TILE_INSTALLER with two versions: v1 (inactive) and v2 (active)
+      await prisma.rewardRule.deleteMany({ where: { profession: 'TILE_INSTALLER' } });
+      const v1 = await prisma.rewardRule.create({
+        data: {
+          profession: 'TILE_INSTALLER',
+          rewardPercentage: 0.50,
+          effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+          isActive: false,
+          version: 1,
+        },
+      });
+      const v2 = await prisma.rewardRule.create({
+        data: {
+          profession: 'TILE_INSTALLER',
+          rewardPercentage: 0.75,
+          effectiveFrom: new Date('2024-06-01T00:00:00+05:30'),
+          isActive: true,
+          version: 2,
+        },
+      });
+
+      const countBefore = await prisma.rewardRule.count({ where: { profession: 'TILE_INSTALLER' } });
+      expect(countBefore).toBe(2);
+
+      // Execute actual provisioning function
+      const result = await provisionRewardRules(prisma);
+      expect(result.preserved).toContain('TILE_INSTALLER');
+
+      // Count remains 2: no duplicate v1, no duplicate v3 created
+      const countAfter = await prisma.rewardRule.count({ where: { profession: 'TILE_INSTALLER' } });
+      expect(countAfter).toBe(2);
+
+      // Verify neither v1 nor v2 was mutated
+      const reloadedV1 = await prisma.rewardRule.findUnique({ where: { id: v1.id } });
+      const reloadedV2 = await prisma.rewardRule.findUnique({ where: { id: v2.id } });
+      expect(reloadedV1!.updatedAt.getTime()).toBe(v1.updatedAt.getTime());
+      expect(reloadedV1!.isActive).toBe(false);
+      expect(reloadedV2!.updatedAt.getTime()).toBe(v2.updatedAt.getTime());
+      expect(reloadedV2!.isActive).toBe(true);
     });
   });
 
@@ -387,4 +443,51 @@ describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', (
       expect(res.body.message).toContain('Invalid start time');
     });
   });
+
+  // ---------------------------------------------------------------
+  // Task 2 (Part 2A.5) — Admin Helper Calendar Date & Time Validation
+  // ---------------------------------------------------------------
+  describe('Task 2 — Actual Admin Helper Calendar Date & Time Validation (admin/src/lib/date-utils.ts)', () => {
+    const path = require('path');
+    const adminDateUtilsPath = path.resolve(__dirname, '../../../admin/src/lib/date-utils.ts');
+    const { parseIndiaIsoDateTime: adminParseIso } = require(adminDateUtilsPath);
+
+    test('2026-02-31 rejected', () => {
+      expect(() => adminParseIso('2026-02-31', '10:00')).toThrow(/Invalid calendar date: "2026-02-31"/);
+    });
+
+    test('2025-02-29 rejected (non-leap year)', () => {
+      expect(() => adminParseIso('2025-02-29', '10:00')).toThrow(/Month 2 in year 2025 has only 28 days/);
+    });
+
+    test('2024-02-29 accepted (leap year)', () => {
+      const result = adminParseIso('2024-02-29', '10:00');
+      expect(result).toBe(new Date('2024-02-29T10:00:00+05:30').toISOString());
+    });
+
+    test('2026-04-31 rejected (30-day month)', () => {
+      expect(() => adminParseIso('2026-04-31', '10:00')).toThrow(/Month 4 in year 2026 has only 30 days/);
+    });
+
+    test('2026-10-15 23:59 accepted', () => {
+      const result = adminParseIso('2026-10-15', '23:59');
+      expect(result).toBe(new Date('2026-10-15T23:59:00+05:30').toISOString());
+    });
+
+    test('invalid times such as 25:00 and 10:60 rejected', () => {
+      expect(() => adminParseIso('2026-10-15', '25:00')).toThrow(/Invalid hour 25/);
+      expect(() => adminParseIso('2026-10-15', '10:60')).toThrow(/Invalid minute 60/);
+    });
+
+    test('verify that invalid admin input cannot be transformed into an apparently valid different date before API submission', () => {
+      // Native JS Date parsing silently shifts Feb 31 -> March 3.
+      // The admin helper must throw and prevent any shifted ISO string from being submitted to the backend.
+      expect(() => adminParseIso('2026-02-31', '12:00')).toThrow();
+      expect(() => adminParseIso('2026-04-31', '12:00')).toThrow();
+      expect(() => adminParseIso('2026-06-31', '12:00')).toThrow();
+      expect(() => adminParseIso('2026-09-31', '12:00')).toThrow();
+      expect(() => adminParseIso('2026-11-31', '12:00')).toThrow();
+    });
+  });
 });
+

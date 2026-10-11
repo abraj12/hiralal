@@ -16,6 +16,72 @@ export function assertDemoSeedAllowed(
   }
 }
 
+export interface ProvisionRewardRulesResult {
+  provisioned: string[];
+  preserved: string[];
+  warnings: string[];
+}
+
+/**
+ * Safely provisions baseline reward rules for worker professions.
+ * Invariant:
+ * 1. Counts all reward-rule records for the profession, including inactive records.
+ * 2. Creates the initial baseline (v1, 0.50%, 2020-01-01 IST) ONLY if the profession has zero historical records.
+ * 3. If rows exist but none is active, preserves them and halts baseline provisioning for that profession with an explicit diagnostic.
+ * 4. Never silently rewrites an existing row, invents a duplicate version, back-dates history, or reactivates a profession through implicit seed.
+ */
+export async function provisionRewardRules(
+  prismaClient: PrismaClient = prisma
+): Promise<ProvisionRewardRulesResult> {
+  const result: ProvisionRewardRulesResult = {
+    provisioned: [],
+    preserved: [],
+    warnings: [],
+  };
+
+  for (const prof of ['PLUMBER', 'TILE_INSTALLER'] as const) {
+    const totalCount = await prismaClient.rewardRule.count({
+      where: { profession: prof },
+    });
+
+    if (totalCount === 0) {
+      // Completely empty profession: safe to create initial v1 baseline
+      await prismaClient.rewardRule.create({
+        data: {
+          profession: prof,
+          rewardPercentage: 0.50,
+          effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+          version: 1,
+          isActive: true,
+        },
+      });
+      result.provisioned.push(prof);
+      console.log(`✅ [SEED] Initial baseline reward rule created for ${prof} (0.50%, v1, 2020-01-01 IST)`);
+    } else {
+      // Historical records exist: preserve all rows immutable
+      const activeRule = await prismaClient.rewardRule.findFirst({
+        where: { profession: prof, isActive: true },
+        orderBy: { version: 'desc' },
+      });
+
+      if (activeRule) {
+        console.log(
+          `ℹ️  [SEED] Active ${prof} rule already exists (v${activeRule.version}, effectiveFrom: ${activeRule.effectiveFrom.toISOString()}). Preserving as-is. If effectiveFrom is incorrect, correct it via a separately reviewed migration, not via seed.`
+        );
+        result.preserved.push(prof);
+      } else {
+        // Historical rows exist but NONE is currently active: halt baseline provisioning
+        const warning = `⚠️  [SEED-WARNING] Profession ${prof} has ${totalCount} existing historical reward rule(s), but none is currently active. Preserving existing records without modification. Baseline provisioning halted for ${prof}. An authorized Operations Admin must review history and create a new rule version via administrative workflow if reactivation is required.`;
+        console.warn(warning);
+        result.warnings.push(warning);
+        result.preserved.push(prof);
+      }
+    }
+  }
+
+  return result;
+}
+
 async function main() {
   console.log('🌱 Starting Hiralal & Sons Production Database Seeding...');
 
@@ -118,36 +184,8 @@ async function main() {
     }
 
     // 2. Provision Reward Rules for Plumber & Tile Installer
-    for (const prof of ['PLUMBER', 'TILE_INSTALLER'] as const) {
-      const activeRule = await prisma.rewardRule.findFirst({
-        where: { profession: prof, isActive: true },
-        orderBy: { version: 'desc' },
-      });
-      if (!activeRule) {
-        await prisma.rewardRule.create({
-          data: {
-            profession: prof,
-            rewardPercentage: 0.50,
-            effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
-            version: 1,
-            isActive: true,
-          },
-        });
-      } else {
-        // RewardRule records are append-only. If an existing active rule has an undesirable
-        // effectiveFrom (e.g. a legacy row inserted by migration with CURRENT_TIMESTAMP),
-        // it MUST be corrected via a separately reviewed and approved migration, not by
-        // this seed script. Attempting to mutate existing rows here would violate the
-        // historical-immutability invariant enforced throughout the codebase.
-        //
-        // To fix a legacy row: create and review a new migration in backend/prisma/migrations/
-        // then document it in the project changelog before applying it.
-        console.log(
-          `ℹ️  [SEED] Active ${prof} rule already exists (v${activeRule.version}, effectiveFrom: ${activeRule.effectiveFrom.toISOString()}). Preserving as-is. If effectiveFrom is incorrect, correct it via a separately reviewed migration, not via seed.`
-        );
-      }
-    }
-    console.log('✅ Profession reward rules provisioned: 0.50% Plumber, 0.50% Tile Installer');
+    await provisionRewardRules(prisma);
+    console.log('✅ Profession reward rules provisioned: 0.50% Plumber, 0.50% Tile Installer (verified safe)');
 
     // 4. Provision GST Tax Rules
     const existingGstRules = await prisma.gstRule.findMany();

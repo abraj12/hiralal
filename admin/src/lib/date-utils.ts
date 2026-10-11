@@ -34,6 +34,20 @@ export function formatIndiaTimeOnly(date: Date | string): string {
   }).format(d);
 }
 
+export function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+}
+
+export function getDaysInMonth(year: number, month: number): number {
+  if (month < 1 || month > 12) return 0;
+  if ([1, 3, 5, 7, 8, 10, 12].includes(month)) return 31;
+  if ([4, 6, 9, 11].includes(month)) return 30;
+  if (month === 2) {
+    return isLeapYear(year) ? 29 : 28;
+  }
+  return 0;
+}
+
 export function parseIndiaIsoDateTime(dateStr: string, timeStr: string): string {
   if (!dateStr || !timeStr) {
     throw new Error('Both date and time strings are required.');
@@ -45,6 +59,18 @@ export function parseIndiaIsoDateTime(dateStr: string, timeStr: string): string 
   if (!dateMatch) {
     throw new Error(`Invalid date format: "${cleanDate}". Expected YYYY-MM-DD.`);
   }
+
+  const year = parseInt(dateMatch[1], 10);
+  const month = parseInt(dateMatch[2], 10);
+  const day = parseInt(dateMatch[3], 10);
+
+  const maxDays = getDaysInMonth(year, month);
+  if (day > maxDays) {
+    throw new Error(
+      `Invalid calendar date: "${cleanDate}". Month ${month} in year ${year} has only ${maxDays} days.`
+    );
+  }
+
   // Validate time: must be exact HH:mm with valid ranges
   const timeMatch = cleanTime.match(/^(\d{2}):(\d{2})$/);
   if (!timeMatch) {
@@ -64,4 +90,5 @@ export function parseIndiaIsoDateTime(dateStr: string, timeStr: string): string 
   }
   return dateObj.toISOString();
 }
+
 
