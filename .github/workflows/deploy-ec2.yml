@@ -26,7 +26,7 @@ jobs:
     environment: production
     if: >-
       (github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_deploy == 'DEPLOY' && (github.ref == 'refs/heads/main' || github.ref_name == 'main')) ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
 
     steps:
       - name: Checkout Repository
@@ -128,14 +128,39 @@ jobs:
             sleep 10
             docker compose ps
             
-            # Smoke test health & readiness probes
+            # Smoke test health & readiness probes via authoritative JSON validation
             HEALTH_URL="http://localhost/health"
             READY_URL="http://localhost/health/ready"
-            if curl -f -s "${HEALTH_URL}" | grep -qi "ok" && curl -f -s "${READY_URL}" | grep -qi "ok"; then
-              echo "==> Deployment SUCCESS: Release ${DEPLOYED_SHA} healthy and verified!"
-            else
-              echo "==> Health or readiness probe failed. Inspecting logs:"
-              docker compose logs --tail=50
-              exit 1
-            fi
+
+            echo "Checking API liveness..."
+            HEALTH_JSON="$(curl --fail --silent --show-error "${HEALTH_URL}")"
+
+            echo "Checking dependency readiness..."
+            READY_JSON="$(curl --fail --silent --show-error "${READY_URL}")"
+
+            python3 - "${HEALTH_JSON}" "${READY_JSON}" << 'PY'
+import json
+import sys
+
+health = json.loads(sys.argv[1])
+ready = json.loads(sys.argv[2])
+
+if health.get("status") != "ok":
+    raise SystemExit("Liveness check failed")
+
+if ready.get("status") != "ready":
+    raise SystemExit("Readiness check failed")
+
+checks = ready.get("checks", {})
+required = ("database", "redis")
+failed = [key for key in required if checks.get(key) != "healthy"]
+
+if failed:
+    raise SystemExit(
+        "Unhealthy dependencies: " + ", ".join(failed)
+    )
+
+print("Liveness and dependency readiness verified.")
+PY
+            echo "==> Deployment SUCCESS: Release ${DEPLOYED_SHA} healthy and verified!"
           EOF

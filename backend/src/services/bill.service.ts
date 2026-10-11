@@ -339,22 +339,26 @@ export class BillService {
 
       if (options?.gstRuleId) {
         const gstRule = await tx.gstRule.findUnique({ where: { id: options.gstRuleId } });
-        if (!gstRule || !gstRule.isActive) {
-          throw new Error('The selected GST rule is invalid or not applicable to this bill');
-        }
         const invoiceDateTime = new Date(bill.invoiceDate);
-        if (gstRule.effectiveUntil && invoiceDateTime > gstRule.effectiveUntil) {
-          throw new Error('The selected GST rule is invalid or not applicable to this bill');
-        }
-        if (gstRule.effectiveFrom && gstRule.effectiveFrom > gstRule.createdAt && invoiceDateTime < gstRule.effectiveFrom) {
+        if (
+          !gstRule ||
+          !gstRule.isActive ||
+          invoiceDateTime < gstRule.effectiveFrom ||
+          (gstRule.effectiveUntil !== null && invoiceDateTime >= gstRule.effectiveUntil)
+        ) {
           throw new Error('The selected GST rule is invalid or not applicable to this bill');
         }
         selectedGstRuleId = gstRule.id;
         if (isGstIncluded) {
           effectiveGstRate = Number(gstRule.ratePercentage);
+          if (typeof options?.gstRate === 'number' && Number.isFinite(options.gstRate)) {
+            if (Math.abs(options.gstRate - effectiveGstRate) > 0.001) {
+              throw new Error(`Submitted GST rate ${options.gstRate}% conflicts with configured rule rate ${effectiveGstRate}%.`);
+            }
+          }
         }
       } else if (isGstIncluded) {
-        if (typeof options?.gstRate === 'number' && options.gstRate >= 0) {
+        if (typeof options?.gstRate === 'number' && options.gstRate >= 0 && options?.gstOverrideReason) {
           effectiveGstRate = options.gstRate;
         } else {
           const defaultGst = await GstService.getDefaultGstRule(tx);

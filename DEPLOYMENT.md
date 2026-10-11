@@ -177,11 +177,15 @@
 
 3. Disaster Recovery / Database Restoration:
    ```bash
-   # Safe test restore into non-production database:
-   ./scripts/restore-db.sh /var/backups/hiralal/hiralal_backup_20261010_020000.sql.gz.enc hiralal_test_restore
+   # Safe test restore into disposable non-production container:
+   export BACKUP_ENCRYPTION_PASSPHRASE="<SECURE_CRYPTO_PASSPHRASE>"
+   export DB_CONTAINER="hiralal_test_restore"
+   export POSTGRES_USER="postgres"
+   ./scripts/restore-db.sh /var/backups/hiralal/hiralal_backup_TEST_TIMESTAMP.sql.gz.enc hiralal_test
 
    # Authoritative production restore (requires explicit override flag):
-   ./scripts/restore-db.sh /var/backups/hiralal/hiralal_backup_20261010_020000.sql.gz.enc hiralal_rewards --allow-production-overwrite
+   export BACKUP_ENCRYPTION_PASSPHRASE="<SECURE_CRYPTO_PASSPHRASE>"
+   ./scripts/restore-db.sh /var/backups/hiralal/hiralal_backup_PRODUCTION_TIMESTAMP.sql.gz.enc hiralal_rewards --allow-production-overwrite
    ```
 
 ---

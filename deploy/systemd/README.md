@@ -103,12 +103,15 @@ To verify backup restore integrity without touching production data, use `script
 
 ```bash
 export BACKUP_ENCRYPTION_PASSPHRASE="<SECURE_CRYPTO_PASSPHRASE>"
+export DB_CONTAINER="hiralal_test_restore"
+export POSTGRES_USER="postgres"
+export POSTGRES_DB="hiralal_test"
 
 # 1. Spin up a temporary disposable PostgreSQL test container
 docker run -d --name hiralal_test_restore -e POSTGRES_PASSWORD=restoretest -e POSTGRES_DB=hiralal_test postgres:16-alpine
 
 # 2. Restore the latest backup into the disposable container
-./scripts/restore-db.sh /var/backups/hiralal/hiralal_backup_<TIMESTAMP>.sql.gz.enc hiralal_test_restore hiralal_test postgres
+./scripts/restore-db.sh /var/backups/hiralal/hiralal_backup_<TIMESTAMP>.sql.gz.enc hiralal_test
 
 # 3. Verify row counts and integrity
 docker exec -i hiralal_test_restore psql -U postgres -d hiralal_test -c "SELECT count(*) FROM \"User\";"

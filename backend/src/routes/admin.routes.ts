@@ -451,6 +451,103 @@ router.get('/bills/:id/document-url', requireBillAdmin, async (req: Authenticate
 });
 
 /**
+ * 4.2 Read-only, bill-specific rules for invoice review.
+ * Bill Admin may read the applicable rules but cannot change settings.
+ */
+router.get(
+  '/bills/:id/review-config',
+  requireBillAdmin,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const bill = await prisma.bill.findUnique({
+        where: { id: req.params.id },
+        select: {
+          id: true,
+          invoiceDate: true,
+          status: true,
+          user: {
+            select: {
+              profession: true,
+            },
+          },
+        },
+      });
+
+      if (!bill) {
+        return res.status(404).json({
+          success: false,
+          code: 'BILL_NOT_FOUND',
+          message: 'Bill not found.',
+        });
+      }
+
+      if (!bill.user || !bill.user.profession) {
+        return res.status(409).json({
+          success: false,
+          code: 'PROFESSION_NOT_CONFIGURED',
+          message: 'The worker profession is unavailable.',
+        });
+      }
+
+      // Approval uses the rule applicable to the invoice date.
+      const rewardRule = await RewardRuleService.getApplicableRule(
+        bill.user.profession,
+        bill.invoiceDate
+      );
+
+      const gstRules = await prisma.gstRule.findMany({
+        where: {
+          isActive: true,
+          effectiveFrom: { lte: bill.invoiceDate },
+          OR: [
+            { effectiveUntil: null },
+            { effectiveUntil: { gt: bill.invoiceDate } },
+          ],
+        },
+        orderBy: { ratePercentage: 'asc' },
+        select: {
+          id: true,
+          ratePercentage: true,
+          description: true,
+          isDefault: true,
+          isActive: true,
+          effectiveFrom: true,
+          effectiveUntil: true,
+        },
+      });
+
+      return res.json({
+        success: true,
+        billId: bill.id,
+        invoiceDate: bill.invoiceDate,
+        profession: bill.user.profession,
+        rewardRule: {
+          id: rewardRule.id,
+          profession: rewardRule.profession,
+          version: rewardRule.version,
+          rewardPercentage: Number(rewardRule.rewardPercentage),
+          effectiveFrom: rewardRule.effectiveFrom,
+          effectiveUntil: rewardRule.effectiveUntil,
+        },
+        gstRules: gstRules.map((rule) => ({
+          ...rule,
+          ratePercentage: Number(rule.ratePercentage),
+        })),
+      });
+    } catch (error: any) {
+      // Log a sanitized error internally; never expose DB internals.
+      console.error(`[ADMIN-BILL-REVIEW-CONFIG] Failed to load review configuration for bill ${req.params.id}: ${error.message}`);
+
+      return res.status(503).json({
+        success: false,
+        code: 'REVIEW_CONFIG_UNAVAILABLE',
+        message: 'Bill review configuration is temporarily unavailable.',
+      });
+    }
+  }
+);
+
+/**
  * 5. Bill Verification (Approve / Reject with GST and Financial Snapshot)
  */
 router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequest, res: Response) => {
@@ -470,16 +567,22 @@ router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequ
     }
 
     if (action === 'APPROVE') {
-      if (gstIncluded !== undefined && typeof gstIncluded !== 'boolean') {
+      if (typeof gstIncluded !== 'boolean') {
         return res.status(400).json({
           success: false,
-          message: 'GST selection must be a boolean.',
+          code: 'GST_SELECTION_REQUIRED',
+          message: 'Select whether GST is included in this bill. GST selection must be a boolean.',
         });
       }
 
-      const isGstIncluded = Boolean(gstIncluded);
+      if (gstIncluded) {
+        if (!gstRuleId && !gstOverrideReason) {
+          return res.status(400).json({
+            success: false,
+            message: 'A reason is required for a manual GST rate override.',
+          });
+        }
 
-      if (isGstIncluded) {
         if (gstRuleId !== undefined && (typeof gstRuleId !== 'string' || !gstRuleId.trim())) {
           return res.status(400).json({
             success: false,
@@ -517,10 +620,10 @@ router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequ
       }
 
       const result = await BillService.approveBill(req.params.id, admin.id, {
-        gstIncluded: isGstIncluded,
-        gstRate: isGstIncluded ? (typeof gstRate === 'number' ? gstRate : undefined) : 0,
-        gstRuleId: isGstIncluded ? (typeof gstRuleId === 'string' && gstRuleId.trim() ? gstRuleId.trim() : undefined) : undefined,
-        gstOverrideReason: isGstIncluded && typeof gstOverrideReason === 'string' ? gstOverrideReason.trim() : undefined,
+        gstIncluded,
+        gstRate: gstIncluded ? (typeof gstRate === 'number' ? gstRate : undefined) : 0,
+        gstRuleId: gstIncluded ? (typeof gstRuleId === 'string' && gstRuleId.trim() ? gstRuleId.trim() : undefined) : undefined,
+        gstOverrideReason: gstIncluded && typeof gstOverrideReason === 'string' ? gstOverrideReason.trim() : undefined,
       });
 
       res.json({

@@ -101,6 +101,7 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       ratePercentage: 18.0,
       description: 'Standard 18% GST for hardware & tiles',
       isDefault: true,
+      effectiveFrom: new Date('2026-01-01'),
     });
     defaultGstRuleId = gst18.id;
 
@@ -108,6 +109,7 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       ratePercentage: 12.0,
       description: 'Concessional 12% GST',
       isDefault: false,
+      effectiveFrom: new Date('2026-01-01'),
     });
     gst12RuleId = gst12.id;
 
@@ -115,6 +117,7 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       ratePercentage: 0.0,
       description: 'Tax exempt goods',
       isDefault: false,
+      effectiveFrom: new Date('2026-01-01'),
     });
     gst0RuleId = gst0.id;
 

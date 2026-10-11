@@ -29,6 +29,28 @@ import {
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
 
+interface GstRuleOption {
+  id: string;
+  ratePercentage: number;
+  description?: string;
+  isDefault?: boolean;
+}
+
+interface BillReviewConfig {
+  billId: string;
+  invoiceDate: string;
+  profession: string;
+  rewardRule: {
+    id: string;
+    profession: string;
+    version: number;
+    rewardPercentage: number;
+    effectiveFrom: string;
+    effectiveUntil: string | null;
+  };
+  gstRules: GstRuleOption[];
+}
+
 export default function BillReviewScreen() {
   const { user, logout } = useApp();
   const [bills, setBills] = useState<any[]>([]);
@@ -47,11 +69,13 @@ export default function BillReviewScreen() {
 
   // Per-bill Approval Review Modal state
   const [reviewBill, setReviewBill] = useState<any | null>(null);
+  const [reviewConfig, setReviewConfig] = useState<BillReviewConfig | null>(null);
+  const [reviewConfigLoading, setReviewConfigLoading] = useState(false);
+  const [reviewConfigError, setReviewConfigError] = useState<string | null>(null);
   const [reviewGstIncluded, setReviewGstIncluded] = useState<boolean>(false);
-  const [reviewGstRate, setReviewGstRate] = useState<number>(18.0);
+  const [reviewGstRate, setReviewGstRate] = useState<number | undefined>(undefined);
   const [reviewGstRuleId, setReviewGstRuleId] = useState<string | undefined>(undefined);
   const [reviewGstOverrideReason, setReviewGstOverrideReason] = useState<string>('');
-  const [gstRules, setGstRules] = useState<any[]>([]);
 
   const fetchBills = async () => {
     setLoading(true);
@@ -67,42 +91,52 @@ export default function BillReviewScreen() {
     }
   };
 
-  const fetchGstRules = async () => {
-    try {
-      const res = await MobileApiClient.getGstRules();
-      if (res && res.rules && res.rules.length > 0) {
-        setGstRules(res.rules);
-        const defaultRule = res.rules.find((r: any) => r.isDefault) || res.rules[0];
-        if (defaultRule) {
-          setReviewGstRate(Number(defaultRule.ratePercentage));
-          setReviewGstRuleId(defaultRule.id);
-        }
-      }
-    } catch (e: any) {
-      console.warn('Failed to fetch GST rules:', e?.message);
-    }
-  };
-
   useEffect(() => {
     fetchBills();
-    fetchGstRules();
   }, []);
 
-  const openReviewModal = (bill: any) => {
+  const openReviewModal = async (bill: any) => {
     setReviewBill(bill);
     setDocUrl(bill.fileUrl || null);
     setDocError(null);
     setDocLoading(false);
     setReviewGstIncluded(false);
-    const defaultRule = gstRules.find((r: any) => r.isDefault) || gstRules[0];
-    if (defaultRule) {
-      setReviewGstRate(Number(defaultRule.ratePercentage));
-      setReviewGstRuleId(defaultRule.id);
-    } else {
-      setReviewGstRate(18.0);
-      setReviewGstRuleId(undefined);
-    }
     setReviewGstOverrideReason('');
+    setReviewConfig(null);
+    setReviewConfigError(null);
+    setReviewConfigLoading(true);
+
+    try {
+      const res = await MobileApiClient.getAdminBillReviewConfig(bill.id);
+      setReviewConfig(res);
+      if (res && res.gstRules && res.gstRules.length > 0) {
+        const defaultRule = res.gstRules.find((r: GstRuleOption) => r.isDefault) || res.gstRules[0];
+        setReviewGstRuleId(defaultRule.id);
+        setReviewGstRate(Number(defaultRule.ratePercentage));
+      } else {
+        setReviewGstRuleId(undefined);
+        setReviewGstRate(undefined);
+      }
+    } catch (err: any) {
+      setReviewConfigError(err?.message || 'Failed to load bill review rules.');
+    } finally {
+      setReviewConfigLoading(false);
+    }
+  };
+
+  const handleSelectGstRule = (ruleId: string) => {
+    const selectedRule = reviewConfig?.gstRules.find(
+      (rule: GstRuleOption) => rule.id === ruleId
+    );
+
+    if (!selectedRule) {
+      setReviewGstRuleId(undefined);
+      setReviewGstRate(undefined);
+      return;
+    }
+
+    setReviewGstRuleId(selectedRule.id);
+    setReviewGstRate(Number(selectedRule.ratePercentage));
   };
 
   const handleRefreshDocumentUrl = async () => {
@@ -139,12 +173,22 @@ export default function BillReviewScreen() {
   const handleConfirmApprove = async () => {
     if (!reviewBill) return;
 
+    if (reviewConfigLoading || !reviewConfig || rewardRate === undefined) {
+      Alert.alert('Configuration Missing', 'Cannot approve bill: applicable rules are unavailable.');
+      return;
+    }
+
+    if (reviewGstIncluded && !reviewGstRuleId) {
+      Alert.alert('GST Rule Required', 'Please select an applicable GST rule.');
+      return;
+    }
+
     setActionLoading(reviewBill.id);
     try {
       await MobileApiClient.verifyAdminBill(reviewBill.id, {
         action: 'APPROVE',
         gstIncluded: reviewGstIncluded,
-        gstRate: reviewGstIncluded ? reviewGstRate : 0,
+        gstRate: reviewGstIncluded ? (reviewGstRate ?? 0) : 0,
         gstRuleId: reviewGstIncluded ? reviewGstRuleId : undefined,
         gstOverrideReason: reviewGstOverrideReason.trim() || undefined,
       });
@@ -179,13 +223,15 @@ export default function BillReviewScreen() {
 
   // Live calculation for review modal
   const grossAmount = reviewBill ? Number(reviewBill.grossBillAmount || reviewBill.billAmount || 0) : 0;
-  const calculatedGst = reviewBill && reviewGstIncluded && reviewGstRate > 0
-    ? Math.round(((grossAmount * reviewGstRate) / (100 + reviewGstRate)) * 100) / 100
+  const currentGstRate = reviewGstRate ?? 0;
+  const calculatedGst = reviewBill && reviewGstIncluded && currentGstRate > 0
+    ? Math.round(((grossAmount * currentGstRate) / (100 + currentGstRate)) * 100) / 100
     : 0.0;
   const eligibleAmount = Math.max(0, Math.round((grossAmount - calculatedGst) * 100) / 100);
-  const workerProfession = reviewBill?.user?.profession || 'PLUMBER';
-  const rewardRate = workerProfession === 'PLUMBER' ? 0.50 : 0.75;
-  const calculatedReward = Math.round(eligibleAmount * (rewardRate / 100) * 100) / 100;
+  const rewardRate = reviewConfig?.rewardRule?.rewardPercentage;
+  const calculatedReward = rewardRate !== undefined
+    ? Math.round(eligibleAmount * (rewardRate / 100) * 100) / 100
+    : 0.0;
 
   const renderBill = ({ item }: { item: any }) => {
     const isPending = item.status === 'PENDING' || item.status === 'UNDER_REVIEW';
@@ -428,36 +474,50 @@ export default function BillReviewScreen() {
                     </Text>
                     <Text style={styles.checkboxSub}>
                       {reviewGstIncluded
-                        ? `Deducting embedded ${reviewGstRate}% GST via reverse formula.`
+                        ? `Deducting embedded ${reviewGstRate ?? 0}% GST via reverse formula.`
                         : 'GST deducted = ₹0. Full bill amount eligible for reward.'}
                     </Text>
                   </View>
                 </TouchableOpacity>
 
+                {reviewConfigLoading && (
+                  <View style={{ padding: 12, alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color="#2563EB" />
+                    <Text style={{ fontSize: 12, color: '#64748B', marginTop: 4 }}>Loading applicable rules for invoice date...</Text>
+                  </View>
+                )}
+
+                {reviewConfigError && (
+                  <View style={[styles.docErrorBox, { marginBottom: 12 }]}>
+                    <AlertCircle size={16} color="#DC2626" />
+                    <Text style={styles.docErrorText}>{reviewConfigError}</Text>
+                  </View>
+                )}
+
                 {/* GST Rate Selector & Override Reason if GST is included */}
                 {reviewGstIncluded && (
                   <View style={styles.gstConfigSection}>
                     <Text style={styles.rateLabel}>Applicable GST Rate:</Text>
-                    <View style={styles.rateChipsRow}>
-                      {[5, 12, 18, 28].map((rate) => {
-                        const isSelected = reviewGstRate === rate;
-                        return (
-                          <TouchableOpacity
-                            key={rate}
-                            style={[styles.rateChip, isSelected && styles.rateChipActive]}
-                            onPress={() => {
-                              setReviewGstRate(rate);
-                              const matched = gstRules.find((r: any) => Number(r.ratePercentage) === rate);
-                              if (matched) setReviewGstRuleId(matched.id);
-                            }}
-                          >
-                            <Text style={[styles.rateChipText, isSelected && styles.rateChipTextActive]}>
-                              {rate}%
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
+                    {reviewConfig?.gstRules && reviewConfig.gstRules.length > 0 ? (
+                      <View style={styles.rateChipsRow}>
+                        {reviewConfig.gstRules.map((rule) => {
+                          const isSelected = reviewGstRuleId === rule.id;
+                          return (
+                            <TouchableOpacity
+                              key={rule.id}
+                              style={[styles.rateChip, isSelected && styles.rateChipActive]}
+                              onPress={() => handleSelectGstRule(rule.id)}
+                            >
+                              <Text style={[styles.rateChipText, isSelected && styles.rateChipTextActive]}>
+                                {rule.ratePercentage}%
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ) : (
+                      <Text style={{ fontSize: 12, color: '#DC2626' }}>No GST rules available for this invoice date.</Text>
+                    )}
 
                     <Text style={[styles.rateLabel, { marginTop: 10 }]}>Override Reason (Optional):</Text>
                     <TextInput
@@ -476,7 +536,7 @@ export default function BillReviewScreen() {
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownRowLabel}>GST Deducted:</Text>
                     <Text style={styles.breakdownRowValue}>
-                      {reviewGstIncluded ? `₹${calculatedGst.toFixed(2)} (${reviewGstRate}%)` : '₹0.00'}
+                      {reviewGstIncluded ? `₹${calculatedGst.toFixed(2)} (${reviewGstRate ?? 0}%)` : '₹0.00'}
                     </Text>
                   </View>
                   <View style={styles.breakdownRow}>
@@ -487,7 +547,7 @@ export default function BillReviewScreen() {
                   </View>
                   <View style={[styles.breakdownRow, { borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 6 }]}>
                     <Text style={[styles.breakdownRowLabel, { fontWeight: '700' }]}>
-                      Estimated Reward ({rewardRate}%):
+                      Estimated Reward ({rewardRate !== undefined ? `${rewardRate}%` : 'Unavailable'}):
                     </Text>
                     <Text style={[styles.breakdownRowValue, { color: '#059669', fontWeight: '800' }]}>
                       ₹{calculatedReward.toFixed(2)}
@@ -506,9 +566,27 @@ export default function BillReviewScreen() {
                   <Text style={{ color: '#475569', fontWeight: '700' }}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalBtn, { backgroundColor: '#059669', flex: 1 }]}
+                  style={[
+                    styles.modalBtn,
+                    {
+                      backgroundColor: (
+                        actionLoading === reviewBill.id ||
+                        reviewConfigLoading ||
+                        !reviewConfig ||
+                        rewardRate === undefined ||
+                        (reviewGstIncluded && !reviewGstRuleId)
+                      ) ? '#94A3B8' : '#059669',
+                      flex: 1,
+                    },
+                  ]}
                   onPress={handleConfirmApprove}
-                  disabled={actionLoading === reviewBill.id}
+                  disabled={
+                    actionLoading === reviewBill.id ||
+                    reviewConfigLoading ||
+                    !reviewConfig ||
+                    rewardRate === undefined ||
+                    (reviewGstIncluded && !reviewGstRuleId)
+                  }
                 >
                   {actionLoading === reviewBill.id ? (
                     <ActivityIndicator color="#ffffff" size="small" />

@@ -114,6 +114,11 @@ export class AdminApiClient {
     return this.request(`/admin/bills/${id}/document-url`);
   }
 
+  // Bill Review Configuration (Read-only, Bill Admin Authorized)
+  static getBillReviewConfig(id: string) {
+    return this.request(`/admin/bills/${encodeURIComponent(id)}/review-config`);
+  }
+
   // Dashboard Overview with Profession Filtering
   static getDashboard(profession = 'ALL') {
     const params = new URLSearchParams({ profession });

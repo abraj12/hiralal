@@ -61,38 +61,38 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   const isPlumber = (bill.profession || bill.userProfession) === 'PLUMBER';
   const grossAmount = Number(bill.grossBillAmount || bill.billAmount || 0);
 
-  // Load configured GST rules and reward rules on mount
+  // Load bill-specific review config (Bill Admin authorized, invoice-date validated)
   useEffect(() => {
-    async function loadRules() {
+    async function loadReviewConfig() {
       try {
-        const profession = bill.profession || bill.userProfession || (bill.user && bill.user.profession);
-        const [gstRes, rewardRes] = await Promise.all([
-          AdminApiClient.getGstRules(),
-          AdminApiClient.getRewardRules(profession || 'ALL'),
-        ]);
+        setError(null);
+        setRulesUnavailable(false);
+        const res = await AdminApiClient.getBillReviewConfig(bill.id);
 
-        if (gstRes.rules && gstRes.rules.length > 0) {
-          setGstRules(gstRes.rules);
-          const defaultRule = gstRes.rules.find((r: any) => r.isDefault) || gstRes.rules[0];
+        if (res && res.gstRules && res.gstRules.length > 0) {
+          setGstRules(res.gstRules);
+          const defaultRule = res.gstRules.find((r: any) => r.isDefault) || res.gstRules[0];
           setSelectedGstRate(Number(defaultRule.ratePercentage));
           setSelectedGstRuleId(defaultRule.id);
         } else {
+          setGstRules([]);
+          setSelectedGstRuleId('');
           setRulesUnavailable(true);
         }
 
-        const activeRewardRule = rewardRes.rules?.find((r: any) => r.isActive && (!profession || r.profession === profession));
-        if (activeRewardRule) {
-          setRewardPercentage(Number(activeRewardRule.rewardPercentage));
+        if (res && res.rewardRule && typeof res.rewardRule.rewardPercentage === 'number') {
+          setRewardPercentage(Number(res.rewardRule.rewardPercentage));
         } else {
+          setRewardPercentage(null);
           setRulesUnavailable(true);
         }
       } catch (e: any) {
         setRulesUnavailable(true);
-        setError('Real GST or reward rules could not be loaded from database. Approval is disabled to preserve financial integrity.');
+        setError(e.message || 'Bill review configuration could not be loaded. Approval is disabled to preserve financial integrity.');
       }
     }
-    loadRules();
-  }, [bill]);
+    loadReviewConfig();
+  }, [bill.id]);
 
   // Live Reverse GST Calculation (paise-rounded)
   const gstAmount = gstIncluded && selectedGstRate > 0
@@ -101,9 +101,10 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
 
   const eligibleRewardAmount = Math.max(0, Math.round((grossAmount - gstAmount) * 100) / 100);
 
-  // Profession-specific reward rate preview (internal admin display from authoritative database rule)
-  const configuredRewardPercentage = rewardPercentage ?? (isPlumber ? 0.50 : 0.75);
-  const calculatedReward = Math.round(eligibleRewardAmount * (configuredRewardPercentage / 100) * 100) / 100;
+  // Exact reward rate from authoritative database rule - no fallback guessing
+  const calculatedReward = rewardPercentage !== null
+    ? Math.round(eligibleRewardAmount * (rewardPercentage / 100) * 100) / 100
+    : 0.0;
 
   const handleApprove = async () => {
     setIsSubmitting(true);
@@ -297,7 +298,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   ₹{calculatedReward.toFixed(2)}
                 </span>
                 <span className="text-[10px] text-emerald-700 font-medium block mt-0.5">
-                  Internal: {configuredRewardPercentage}%
+                  Internal Rule: {rewardPercentage !== null ? `${rewardPercentage}%` : 'Unavailable'}
                 </span>
               </div>
             </div>
@@ -471,9 +472,9 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
             </button>
             <button
               onClick={handleApprove}
-              disabled={isSubmitting || rulesUnavailable}
+              disabled={isSubmitting || rulesUnavailable || rewardPercentage === null || (gstIncluded && !selectedGstRuleId)}
               className={`px-5 py-2 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center space-x-1.5 ${
-                rulesUnavailable
+                rulesUnavailable || rewardPercentage === null || (gstIncluded && !selectedGstRuleId)
                   ? 'bg-slate-400 opacity-50 cursor-not-allowed shadow-none'
                   : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
               }`}

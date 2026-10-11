@@ -38,6 +38,9 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
         'sample_dev_only_key_12345678901234567890',
         'dev_access_secret_12345678901234567890',
         'dev_refresh_secret_12345678901234567890',
+        'CLOUDFLARE_R2_ACCOUNT_ID_PLACEHOLDER',
+        'REPLACE_WITH_ACCOUNT_ID',
+        'change_this_value',
       ];
       for (const val of placeholders) {
         expect(isUnsafeProductionValue('TEST_KEY', val)).toBe(true);
@@ -68,6 +71,8 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       R2_ACCESS_KEY_ID: 'cf_r2_prod_access_key_987654321',
       R2_SECRET_ACCESS_KEY: 'cf_r2_prod_secret_key_abcdef12345678901234567890',
       R2_BUCKET_NAME: 'hiralal-invoices-private',
+      R2_ACCOUNT_ID: 'cf_prod_account_id_0123456789abcdef',
+      R2_ENDPOINT: 'https://cf_prod_account_id_0123456789abcdef.r2.cloudflarestorage.com',
       SIGNCARE_API_KEY: 'sc_live_api_key_1234567890abcdef',
       SIGNCARE_APP_ID: 'sc_live_app_id_9876543210fedcba',
       RAZORPAYX_KEY_ID: 'rzp_live_key_id_1234567890abcdef',
@@ -175,6 +180,72 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       } catch (err: any) {
         expect(err.message).not.toContain(secretValue);
       }
+    });
+
+    describe('R2 endpoint and account configuration safety', () => {
+      it('rejects when both R2_ENDPOINT and R2_ACCOUNT_ID are missing', () => {
+        const env = { ...validBaseEnv };
+        delete env.R2_ENDPOINT;
+        delete env.R2_ACCOUNT_ID;
+        expect(() => validateProductionConfig('api', env)).toThrow(
+          /Missing required R2 configuration: either R2_ENDPOINT or R2_ACCOUNT_ID must be provided/
+        );
+      });
+
+      it('rejects placeholder in R2_ENDPOINT', () => {
+        const env = {
+          ...validBaseEnv,
+          R2_ENDPOINT: 'https://CLOUDFLARE_R2_ACCOUNT_ID_PLACEHOLDER.r2.cloudflarestorage.com',
+        };
+        expect(() => validateProductionConfig('api', env)).toThrow(
+          /Environment variable "R2_ENDPOINT" contains an insecure placeholder or example value/
+        );
+      });
+
+      it('rejects placeholder in R2_ACCOUNT_ID', () => {
+        const env = {
+          ...validBaseEnv,
+          R2_ENDPOINT: '',
+          R2_ACCOUNT_ID: 'CLOUDFLARE_R2_ACCOUNT_ID_PLACEHOLDER',
+        };
+        expect(() => validateProductionConfig('api', env)).toThrow(
+          /Environment variable "R2_ACCOUNT_ID" contains an insecure placeholder or example value/
+        );
+      });
+
+      it('rejects non-https R2_ENDPOINT', () => {
+        const env = {
+          ...validBaseEnv,
+          R2_ENDPOINT: 'http://my-storage.r2.cloudflarestorage.com',
+        };
+        expect(() => validateProductionConfig('api', env)).toThrow(
+          /R2_ENDPOINT must use https: protocol/
+        );
+      });
+
+      it('rejects invalid URL in R2_ENDPOINT', () => {
+        const env = {
+          ...validBaseEnv,
+          R2_ENDPOINT: 'invalid-endpoint-format',
+        };
+        expect(() => validateProductionConfig('api', env)).toThrow(
+          /R2_ENDPOINT is not a valid URL/
+        );
+      });
+
+      it('accepts valid R2_ACCOUNT_ID alone without R2_ENDPOINT', () => {
+        const env = { ...validBaseEnv };
+        delete env.R2_ENDPOINT;
+        env.R2_ACCOUNT_ID = 'cf_prod_account_id_0123456789abcdef';
+        expect(() => validateProductionConfig('api', env)).not.toThrow();
+      });
+
+      it('accepts valid R2_ENDPOINT alone without R2_ACCOUNT_ID', () => {
+        const env = { ...validBaseEnv };
+        delete env.R2_ACCOUNT_ID;
+        env.R2_ENDPOINT = 'https://custom-r2.cloudflarestorage.com';
+        expect(() => validateProductionConfig('api', env)).not.toThrow();
+      });
     });
   });
 });

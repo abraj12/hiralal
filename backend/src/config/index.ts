@@ -112,6 +112,20 @@ export function isUnsafeProductionValue(name: string, value: string | undefined)
     return true;
   }
 
+  const forbiddenTokens = [
+    'placeholder',
+    'replace_with_',
+    'your_secret_here',
+    'sample_dev_only',
+    'dev_access_secret',
+    'dev_refresh_secret',
+    'change_this',
+  ];
+
+  if (forbiddenTokens.some((token) => normalized.includes(token))) {
+    return true;
+  }
+
   const placeholderPatterns = [
     /^your[-_ ]/,
     /^replace[-_ ]/,
@@ -120,11 +134,6 @@ export function isUnsafeProductionValue(name: string, value: string | undefined)
     /^placeholder(?:[-_ ]|$)/,
     /^generate(?:[-_ ]|$)/,
     /<[^>]+>/,
-    /sample_dev_only/,
-    /dev_access_secret/,
-    /dev_refresh_secret/,
-    /change_this/,
-    /replace_with_/,
   ];
 
   return placeholderPatterns.some((pattern) => pattern.test(normalized));
@@ -201,6 +210,41 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
   }
 
   if (role === 'api') {
+    // Cloudflare R2 endpoint and account validation
+    if (!env.R2_ENDPOINT && !env.R2_ACCOUNT_ID) {
+      throw new Error(
+        '[FATAL] Production startup halted for role "api". Missing required R2 configuration: either R2_ENDPOINT or R2_ACCOUNT_ID must be provided.'
+      );
+    }
+
+    if (env.R2_ACCOUNT_ID && isUnsafeProductionValue('R2_ACCOUNT_ID', env.R2_ACCOUNT_ID)) {
+      throw new Error(
+        '[FATAL] Production startup halted for role "api". Environment variable "R2_ACCOUNT_ID" contains an insecure placeholder or example value.'
+      );
+    }
+
+    if (env.R2_ENDPOINT && isUnsafeProductionValue('R2_ENDPOINT', env.R2_ENDPOINT)) {
+      throw new Error(
+        '[FATAL] Production startup halted for role "api". Environment variable "R2_ENDPOINT" contains an insecure placeholder or example value.'
+      );
+    }
+
+    const r2EndpointToValidate =
+      env.R2_ENDPOINT ||
+      (env.R2_ACCOUNT_ID ? `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : '');
+
+    try {
+      const parsedR2Endpoint = new URL(r2EndpointToValidate);
+      if (parsedR2Endpoint.protocol !== 'https:') {
+        throw new Error('[FATAL] R2_ENDPOINT must use https: protocol.');
+      }
+    } catch (err: any) {
+      if (err.message?.startsWith('[FATAL]')) {
+        throw err;
+      }
+      throw new Error(`[FATAL] R2_ENDPOINT is not a valid URL: ${err.message}`);
+    }
+
     if (env.JWT_ACCESS_SECRET && env.JWT_ACCESS_SECRET.length < 32) {
       throw new Error('[FATAL] JWT_ACCESS_SECRET must be at least 32 characters for secure signing.');
     }

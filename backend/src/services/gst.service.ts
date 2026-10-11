@@ -1,8 +1,12 @@
 import { prisma } from '../db';
 import { GstRule } from '@prisma/client';
 
-const roundMoney = (value: number): number =>
-  Math.round((value + Number.EPSILON) * 100) / 100;
+const roundMoney = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    throw new Error('Money value must be finite.');
+  }
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+};
 
 export class GstService {
   /**

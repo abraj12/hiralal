@@ -104,6 +104,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
       ratePercentage: 18.0,
       description: 'Active 18% GST',
       isDefault: false,
+      effectiveFrom: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
     });
 
     // Expired GST rule
@@ -131,7 +132,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
   });
 
   afterAll(async () => {
-    const mobiles = [adminMobile, plumberMobile];
+    const mobiles = [adminMobile, plumberMobile, billAdminMobile, '9876549904'];
     await prisma.bill.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
     await prisma.payout.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
     await prisma.paymentAccount.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
@@ -472,6 +473,190 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
       expect(res.body.status).toBeDefined();
       expect(res.body.checks).toBeDefined();
       expect(res.body.checks.database).toBeDefined();
+    });
+  });
+
+  describe('7. Bill Review Configuration & Server-Side Approval Contract Verification', () => {
+    let reviewTestBill: any;
+
+    beforeAll(async () => {
+      reviewTestBill = await BillService.submitBill({
+        userId: plumberUser.id,
+        invoiceNumber: `INV-REV-${Date.now()}`,
+        invoiceDate: '2026-10-10',
+        billAmount: 1180.0,
+        fileBuffer: Buffer.from('%PDF-1.4 Review test bill content'),
+        fileName: 'review_bill.pdf',
+        mimeType: 'application/pdf',
+      });
+    });
+
+    test('7.1 Authorized Bill Admin can fetch bill review configuration with applicable reward and GST rules', async () => {
+      const res = await request(app)
+        .get(`/api/admin/bills/${reviewTestBill.id}/review-config`)
+        .set('Authorization', `Bearer ${billAdminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.billId).toBe(reviewTestBill.id);
+      expect(res.body.profession).toBe('PLUMBER');
+      expect(res.body.rewardRule).toBeDefined();
+      expect(res.body.rewardRule.rewardPercentage).toBe(0.50);
+      expect(Array.isArray(res.body.gstRules)).toBe(true);
+      expect(res.body.gstRules.some((r: any) => r.id === activeGstRule.id)).toBe(true);
+      // Expired GST rule must NOT be returned for this invoice date
+      expect(res.body.gstRules.some((r: any) => r.id === expiredGstRule.id)).toBe(false);
+    });
+
+    test('7.2 Craftsman user cannot access GET /bills/:id/review-config (403 Forbidden)', async () => {
+      const res = await request(app)
+        .get(`/api/admin/bills/${reviewTestBill.id}/review-config`)
+        .set('Authorization', `Bearer ${plumberToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+    });
+
+    test('7.3 Non-existent bill ID returns 404 BILL_NOT_FOUND', async () => {
+      const res = await request(app)
+        .get('/api/admin/bills/00000000-0000-0000-0000-000000000000/review-config')
+        .set('Authorization', `Bearer ${billAdminToken}`);
+
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('BILL_NOT_FOUND');
+    });
+
+    test('7.4 Bill for user with no profession returns 409 USER_PROFESSION_REQUIRED', async () => {
+      const noProfUser = await prisma.user.create({
+        data: {
+          mobile: '9876549904',
+          fullName: 'No Profession Worker',
+          passwordHash: 'hash',
+          role: 'USER',
+          profession: null,
+          status: 'ACTIVE',
+          isVerified: true,
+        },
+      });
+
+      const noProfBill = await BillService.submitBill({
+        userId: noProfUser.id,
+        invoiceNumber: `INV-NOPROF-${Date.now()}`,
+        invoiceDate: '2026-10-10',
+        billAmount: 2000.0,
+        fileBuffer: Buffer.from('%PDF-1.4 No profession test bill'),
+        fileName: 'noprof_bill.pdf',
+        mimeType: 'application/pdf',
+      });
+
+      const res = await request(app)
+        .get(`/api/admin/bills/${noProfBill.id}/review-config`)
+        .set('Authorization', `Bearer ${billAdminToken}`);
+
+      expect(res.status).toBe(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('PROFESSION_NOT_CONFIGURED');
+    });
+
+    test('7.5 POST /bills/:id/verify fails if gstIncluded is missing or non-boolean', async () => {
+      const unverifiedBill = await BillService.submitBill({
+        userId: plumberUser.id,
+        invoiceNumber: `INV-NOGST-${Date.now()}`,
+        invoiceDate: '2026-10-10',
+        billAmount: 1180.0,
+        fileBuffer: Buffer.from('%PDF-1.4 unverified bill'),
+        fileName: 'unverified.pdf',
+        mimeType: 'application/pdf',
+      });
+
+      const res = await request(app)
+        .post(`/api/admin/bills/${unverifiedBill.id}/verify`)
+        .set('Authorization', `Bearer ${billAdminToken}`)
+        .send({
+          action: 'APPROVE',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('GST_SELECTION_REQUIRED');
+    });
+
+    test('7.6 POST /bills/:id/verify fails when client gstRate conflicts with selected rule ratePercentage', async () => {
+      const conflictBill = await BillService.submitBill({
+        userId: plumberUser.id,
+        invoiceNumber: `INV-CONF-${Date.now()}`,
+        invoiceDate: '2026-10-10',
+        billAmount: 1180.0,
+        fileBuffer: Buffer.from('%PDF-1.4 conflict bill'),
+        fileName: 'conflict.pdf',
+        mimeType: 'application/pdf',
+      });
+
+      const res = await request(app)
+        .post(`/api/admin/bills/${conflictBill.id}/verify`)
+        .set('Authorization', `Bearer ${billAdminToken}`)
+        .send({
+          action: 'APPROVE',
+          gstIncluded: true,
+          gstRuleId: activeGstRule.id,
+          gstRate: 5.0, // active rule is 18.0!
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/conflict/i);
+    });
+
+    test('7.7 Approves bill with gstIncluded=true and computes exact base and reward paise', async () => {
+      // 1180 gross, 18% GST -> 1000 base, 180 GST. Plumber rate = 0.5% -> 5.00 reward.
+      const res = await request(app)
+        .post(`/api/admin/bills/${reviewTestBill.id}/verify`)
+        .set('Authorization', `Bearer ${billAdminToken}`)
+        .send({
+          action: 'APPROVE',
+          gstIncluded: true,
+          gstRuleId: activeGstRule.id,
+          gstRate: 18.0,
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.bill.status).toBe('APPROVED');
+      expect(Number(res.body.bill.grossBillAmount)).toBe(1180.0);
+      expect(Number(res.body.bill.eligibleRewardAmount)).toBe(1000.0);
+      expect(Number(res.body.bill.gstAmount)).toBe(180.0);
+      expect(Number(res.body.bill.gstRate)).toBe(18.0);
+      expect(Number(res.body.bill.calculatedReward)).toBe(5.0);
+    });
+
+    test('7.8 Approves bill with gstIncluded=false and computes full amount as eligible reward', async () => {
+      const noGstBill = await BillService.submitBill({
+        userId: plumberUser.id,
+        invoiceNumber: `INV-NO-GST-OK-${Date.now()}`,
+        invoiceDate: '2026-10-10',
+        billAmount: 1000.0,
+        fileBuffer: Buffer.from('%PDF-1.4 bill without GST'),
+        fileName: 'no_gst_bill.pdf',
+        mimeType: 'application/pdf',
+      });
+
+      const res = await request(app)
+        .post(`/api/admin/bills/${noGstBill.id}/verify`)
+        .set('Authorization', `Bearer ${billAdminToken}`)
+        .send({
+          action: 'APPROVE',
+          gstIncluded: false,
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.bill.status).toBe('APPROVED');
+      expect(Number(res.body.bill.grossBillAmount)).toBe(1000.0);
+      expect(Number(res.body.bill.eligibleRewardAmount)).toBe(1000.0);
+      expect(Number(res.body.bill.gstAmount)).toBe(0.0);
+      expect(Number(res.body.bill.gstRate)).toBe(0.0);
+      expect(Number(res.body.bill.calculatedReward)).toBe(5.0);
     });
   });
 });
