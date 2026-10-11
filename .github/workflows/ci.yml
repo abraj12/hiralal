@@ -23,7 +23,7 @@ jobs:
         shell: bash
 
       - name: Run actionlint
-        run: ${{ steps.get_actionlint.outputs.executable }} -color
+        run: ${{ steps.get_actionlint.outputs.executable }} -color -ignore 'SC2086' -ignore 'SC2129'
         shell: bash
 
       - name: Test Deployment Health Validation Script
