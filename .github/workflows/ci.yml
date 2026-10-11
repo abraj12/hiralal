@@ -10,6 +10,22 @@ permissions:
   contents: read
 
 jobs:
+  workflow-lint:
+    name: GitHub Actions Workflow Lint (actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download actionlint
+        id: get_actionlint
+        run: bash <(curl -sSf https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+        shell: bash
+
+      - name: Run actionlint
+        run: ${{ steps.get_actionlint.outputs.executable }} -color
+        shell: bash
+
   backend-test:
     name: Backend Lint, Typecheck, Migrations & Test Suite
     runs-on: ubuntu-latest
