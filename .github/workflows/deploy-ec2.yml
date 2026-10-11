@@ -160,29 +160,6 @@ jobs:
             echo "Checking dependency readiness..."
             READY_JSON="$(curl --fail --silent --show-error "${READY_URL}")"
 
-            python3 -c "import sys, textwrap; exec(compile(textwrap.dedent(sys.stdin.read()), '<stdin>', 'exec'))" "${HEALTH_JSON}" "${READY_JSON}" << 'PY'
-            import json
-            import sys
-
-            health = json.loads(sys.argv[1])
-            ready = json.loads(sys.argv[2])
-
-            if health.get("status") != "ok":
-                raise SystemExit("Liveness check failed")
-
-            if ready.get("status") != "ready":
-                raise SystemExit("Readiness check failed")
-
-            checks = ready.get("checks", {})
-            required = ("database", "redis")
-            failed = [key for key in required if checks.get(key) != "healthy"]
-
-            if failed:
-                raise SystemExit(
-                    "Unhealthy dependencies: " + ", ".join(failed)
-                )
-
-            print("Liveness and dependency readiness verified.")
-            PY
+            python3 scripts/verify-deployment-health.py "${HEALTH_JSON}" "${READY_JSON}"
             echo "==> Deployment SUCCESS: Release ${DEPLOYED_SHA} healthy and verified!"
           EOF

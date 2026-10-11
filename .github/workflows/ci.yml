@@ -2,7 +2,7 @@ name: Production CI Pipeline - Hiralal & Sons Rewards Platform
 
 on:
   push:
-    branches: [ main, 'feat/**', 'fix/**' ]
+    branches: [ main, 'feat/**', 'fix/**', 'audit/**' ]
   pull_request:
     branches: [ main ]
 
@@ -25,6 +25,9 @@ jobs:
       - name: Run actionlint
         run: ${{ steps.get_actionlint.outputs.executable }} -color
         shell: bash
+
+      - name: Test Deployment Health Validation Script
+        run: python3 scripts/test_verify_deployment_health.py
 
   backend-test:
     name: Backend Lint, Typecheck, Migrations & Test Suite
