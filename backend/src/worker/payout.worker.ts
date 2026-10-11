@@ -117,13 +117,30 @@ export class PayoutWorker {
     if (!beneficiaryCheck.isValid) {
       const reason = beneficiaryCheck.reason || 'Authoritative beneficiary identity verification failed prior to dispatch.';
       console.error(`[PAYOUT-WORKER] Payout ${payout.id} dispatch aborted: ${reason}`);
-      await prisma.payout.update({
-        where: { id: payout.id },
-        data: {
-          status: 'PROCESSING',
-          failureReason: reason,
-        },
-      });
+      await PayoutService.failBeforeDispatch(payout.id, reason);
+      return;
+    }
+
+    if (payout.user.status !== 'ACTIVE') {
+      const reason = `User account status is ${payout.user.status.toLowerCase()}. Disbursement aborted.`;
+      console.error(`[PAYOUT-WORKER] Payout ${payout.id} dispatch aborted: ${reason}`);
+      await PayoutService.failBeforeDispatch(payout.id, reason);
+      return;
+    }
+
+    // Pre-validate and resolve bank account / UPI details prior to provider dispatch
+    let upiAddress: string | undefined;
+    let bankAccountNumber: string | undefined;
+    try {
+      if (payout.paymentAccount.accountType === 'UPI') {
+        upiAddress = resolveUpiAddress(payout.paymentAccount);
+      } else {
+        bankAccountNumber = resolveBankAccountNumber(payout.paymentAccount);
+      }
+    } catch (err: any) {
+      const reason = err.message || 'Payment account details invalid prior to dispatch.';
+      console.error(`[PAYOUT-WORKER] Payout ${payout.id} pre-dispatch account validation failed: ${reason}`);
+      await PayoutService.failBeforeDispatch(payout.id, reason);
       return;
     }
 
@@ -192,21 +209,19 @@ export class PayoutWorker {
       // 2. Resolve Fund Account on RazorpayX using authoritative beneficiary name
       let fundAccountBody: any;
       if (paymentAccount.accountType === 'UPI') {
-        const upiAddress = resolveUpiAddress(paymentAccount);
         fundAccountBody = {
           contact_id: contactId,
           account_type: 'vpa',
           vpa: { address: upiAddress },
         };
       } else {
-        const accountNumber = resolveBankAccountNumber(paymentAccount);
         fundAccountBody = {
           contact_id: contactId,
           account_type: 'bank_account',
           bank_account: {
             name: verifiedBeneficiaryName,
             ifsc: paymentAccount.ifscCode,
-            account_number: accountNumber,
+            account_number: bankAccountNumber,
           },
         };
       }

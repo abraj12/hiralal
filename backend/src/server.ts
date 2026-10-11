@@ -146,7 +146,23 @@ app.use((req: any, res: Response) => {
 // Global Error Handler
 app.use((err: any, req: any, res: Response, _next: NextFunction) => {
   console.error(`[UNHANDLED ERROR] [${req.requestId}]`, err);
-  const status = err.status || 500;
+
+  const isMulterError = err.name === 'MulterError';
+  const status = isMulterError ? 400 : (err.status || 500);
+
+  let message = err.message || 'Internal Server Error';
+  if (isMulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      message = 'Uploaded file exceeds the maximum allowed size limit of 10MB.';
+    } else if (err.code === 'LIMIT_FILE_COUNT') {
+      message = 'Too many files uploaded. Only 1 invoice document per bill submission is allowed.';
+    } else {
+      message = `File upload rejected: ${err.message}`;
+    }
+  } else if (config.isProduction && status >= 500) {
+    message = `Internal server error. Reference ID: ${req.requestId}`;
+  }
+
   const code =
     err.code ||
     (status === 400
@@ -156,11 +172,6 @@ app.use((err: any, req: any, res: Response, _next: NextFunction) => {
       : status === 403
       ? 'FORBIDDEN'
       : 'INTERNAL_SERVER_ERROR');
-
-  const message =
-    config.isProduction && status >= 500
-      ? `Internal server error. Reference ID: ${req.requestId}`
-      : err.message || 'Internal Server Error';
 
   res.status(status).json({
     success: false,

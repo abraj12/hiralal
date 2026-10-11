@@ -90,6 +90,19 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       });
       return;
     }
+
+    const cookies = (req as any).cookies || parseCookies(req.headers.cookie);
+    if (cookies && cookies.csrf_token) {
+      const headerCsrf = req.headers['x-csrf-token'] as string;
+      if (!headerCsrf || headerCsrf !== cookies.csrf_token) {
+        res.status(403).json({
+          success: false,
+          code: 'CSRF_TOKEN_MISMATCH',
+          message: 'Anti-CSRF token missing or mismatch for cookie-authenticated request.',
+        });
+        return;
+      }
+    }
   }
   try {
     let decoded: any;

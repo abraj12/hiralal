@@ -146,6 +146,77 @@ export class ReconciliationWorker {
   }
 
   /**
+   * Retries unprocessed or previously unmatched webhook events.
+   */
+  static async retryUnprocessedWebhooks(): Promise<number> {
+    const candidateEvents = await prisma.webhookEvent.findMany({
+      where: {
+        isProcessed: false,
+        provider: 'RAZORPAYX',
+        attempts: { lt: 5 },
+      },
+      take: 20,
+      orderBy: { createdAt: 'asc' },
+    });
+
+    let processedCount = 0;
+    for (const event of candidateEvents) {
+      try {
+        const payload = event.payload as any;
+        const payoutEntity = payload?.payload?.payout?.entity;
+        if (!payoutEntity) {
+          await prisma.webhookEvent.update({
+            where: { id: event.id },
+            data: { isProcessed: true, processedAt: new Date() },
+          });
+          continue;
+        }
+
+        const razorpayPayoutId = payoutEntity.id;
+        const payoutRecord = await prisma.payout.findFirst({
+          where: {
+            OR: [
+              { razorpayPayoutId },
+              { id: payoutEntity.reference_id },
+            ],
+          },
+        });
+
+        if (!payoutRecord) {
+          await prisma.webhookEvent.update({
+            where: { id: event.id },
+            data: { attempts: { increment: 1 } },
+          });
+          continue;
+        }
+
+        const eventType = event.eventType;
+        if (eventType === 'payout.processed') {
+          await PayoutService.finalizeSuccess(payoutRecord.id, razorpayPayoutId);
+        } else if (eventType === 'payout.reversed') {
+          const reason = payoutEntity.failure_reason || 'Disbursement reversed by banking partner';
+          await PayoutService.handleReversedPayout(payoutRecord.id, reason);
+        } else if (eventType === 'payout.failed' || eventType === 'payout.rejected') {
+          const reason = payoutEntity.failure_reason || 'Disbursement rejected by banking partner';
+          await PayoutService.reversePayout(payoutRecord.id, reason);
+        }
+
+        await prisma.webhookEvent.update({
+          where: { id: event.id },
+          data: { isProcessed: true, processedAt: new Date(), lastError: null },
+        });
+        processedCount++;
+      } catch (err: any) {
+        await prisma.webhookEvent.update({
+          where: { id: event.id },
+          data: { attempts: { increment: 1 }, lastError: err.message },
+        });
+      }
+    }
+    return processedCount;
+  }
+
+  /**
    * Starts periodic reconciliation loop (runs every 3 minutes).
    */
   static startReconciliation(intervalMs = 180000): void {
@@ -155,6 +226,7 @@ export class ReconciliationWorker {
     const run = async () => {
       try {
         await this.reconcileStuckPayouts();
+        await this.retryUnprocessedWebhooks();
       } catch (err: any) {
         console.error('[RECONCILIATION-LOOP-ERROR]', err.message);
       } finally {

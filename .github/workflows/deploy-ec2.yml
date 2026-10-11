@@ -106,15 +106,17 @@ jobs:
               sleep 1
             done
             
-            # Pre-deployment database backup gate before applying migrations
+            # Pre-deployment database backup gate before applying migrations (fail closed)
             echo "Executing pre-deployment database backup gate..."
-            if [ -f scripts/backup-db.sh ]; then
-              chmod +x scripts/*.sh
-              ./scripts/backup-db.sh || {
-                echo "[FATAL ERROR] Pre-deployment database backup gate failed. Halting deployment before migrations." >&2
-                exit 1
-              }
+            if [ ! -f scripts/backup-db.sh ]; then
+              echo "[FATAL ERROR] Mandatory backup script scripts/backup-db.sh is missing. Halting deployment before migrations." >&2
+              exit 1
             fi
+            chmod +x scripts/*.sh
+            ./scripts/backup-db.sh || {
+              echo "[FATAL ERROR] Pre-deployment database backup gate failed. Halting deployment before migrations." >&2
+              exit 1
+            }
 
             # Run database migrations in an isolated container
             echo "Applying Prisma database migrations..."

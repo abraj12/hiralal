@@ -19,6 +19,8 @@
 
 set -euo pipefail
 
+umask 077
+
 # 1. Mandatory Encryption Passphrase (Zero Fallback)
 if [ -z "${BACKUP_ENCRYPTION_PASSPHRASE:-}" ]; then
   echo "[FATAL ERROR] BACKUP_ENCRYPTION_PASSPHRASE environment variable is missing." >&2
@@ -37,9 +39,17 @@ DB_USER="${POSTGRES_USER:-postgres}"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
 
 mkdir -p "${BACKUP_DIR}"
+chmod 700 "${BACKUP_DIR}"
 
 RAW_BACKUP="${BACKUP_DIR}/backup_${TIMESTAMP}.sql.gz"
 ENC_BACKUP="${BACKUP_DIR}/hiralal_backup_${TIMESTAMP}.sql.gz.enc"
+
+cleanup() {
+  if [ -f "${RAW_BACKUP}" ]; then
+    rm -f "${RAW_BACKUP}"
+  fi
+}
+trap cleanup EXIT INT TERM
 
 echo "[$(date -u)] [1/4] Starting database backup dump for '${DB_NAME}'..."
 

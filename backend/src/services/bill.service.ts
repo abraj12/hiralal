@@ -332,14 +332,24 @@ export class BillService {
       let effectiveGstRate = 0.0;
       let selectedGstRuleId: string | null = null;
 
-      if (isGstIncluded) {
-        if (options?.gstRuleId) {
-          const gstRule = await tx.gstRule.findUnique({ where: { id: options.gstRuleId } });
-          if (gstRule) {
-            effectiveGstRate = Number(gstRule.ratePercentage);
-            selectedGstRuleId = gstRule.id;
-          }
-        } else if (typeof options?.gstRate === 'number' && options.gstRate >= 0) {
+      if (options?.gstRuleId) {
+        const gstRule = await tx.gstRule.findUnique({ where: { id: options.gstRuleId } });
+        if (!gstRule || !gstRule.isActive) {
+          throw new Error('The selected GST rule is invalid or not applicable to this bill');
+        }
+        const invoiceDateTime = new Date(bill.invoiceDate);
+        if (gstRule.effectiveUntil && invoiceDateTime > gstRule.effectiveUntil) {
+          throw new Error('The selected GST rule is invalid or not applicable to this bill');
+        }
+        if (gstRule.effectiveFrom && gstRule.effectiveFrom > gstRule.createdAt && invoiceDateTime < gstRule.effectiveFrom) {
+          throw new Error('The selected GST rule is invalid or not applicable to this bill');
+        }
+        selectedGstRuleId = gstRule.id;
+        if (isGstIncluded) {
+          effectiveGstRate = Number(gstRule.ratePercentage);
+        }
+      } else if (isGstIncluded) {
+        if (typeof options?.gstRate === 'number' && options.gstRate >= 0) {
           effectiveGstRate = options.gstRate;
         } else {
           const defaultGst = await GstService.getDefaultGstRule(tx);

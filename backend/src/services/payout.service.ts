@@ -560,6 +560,16 @@ export class PayoutService {
     });
   }
   /**
+   * Fails a payout before external provider dispatch has occurred.
+   * Atomically reverts processingAmount back to availableBalance,
+   * creates PAYOUT_REVERSAL transaction, transitions status to FAILED,
+   * and notifies the user.
+   */
+  static async failBeforeDispatch(payoutId: string, reason: string) {
+    return await this.reversePayout(payoutId, reason);
+  }
+
+  /**
    * Reverses a failed payout: refunds funds from processingAmount back to availableBalance,
    * creates an immutable PAYOUT_REVERSAL transaction, updates payout status to FAILED,
    * and notifies the user.

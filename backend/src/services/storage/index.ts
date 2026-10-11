@@ -104,14 +104,28 @@ export class StorageService {
 
     // Deep magic-byte inspection
     const magic = this.validateMagicBytes(params.buffer);
-    if (!magic.isValid) {
+    if (!magic.isValid || !magic.detectedMime) {
       throw new Error('File contents do not match genuine JPEG, PNG, WEBP, or PDF file signatures.');
+    }
+
+    const extensionMimeMap: Record<string, string[]> = {
+      '.jpg': ['image/jpeg'],
+      '.jpeg': ['image/jpeg'],
+      '.png': ['image/png'],
+      '.webp': ['image/webp'],
+      '.pdf': ['application/pdf'],
+    };
+
+    if (!extensionMimeMap[ext]?.includes(magic.detectedMime)) {
+      throw new Error(
+        `File extension '${ext}' does not match detected file content type '${magic.detectedMime}'.`
+      );
     }
 
     const fileHash = sha256Hash(params.buffer);
     return {
       fileHash,
-      normalizedMime: magic.detectedMime || params.mimeType,
+      normalizedMime: magic.detectedMime,
       extension: ext,
     };
   }

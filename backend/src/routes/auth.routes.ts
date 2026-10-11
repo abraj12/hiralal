@@ -30,6 +30,14 @@ function setAdminCookie(res: Response, token?: string) {
     maxAge: 24 * 3600 * 1000,
     path: '/',
   });
+  const csrfToken = generateSecureToken(32);
+  res.cookie('csrf_token', csrfToken, {
+    httpOnly: false,
+    secure: config.isProduction,
+    sameSite: config.isProduction ? 'strict' : 'lax',
+    maxAge: 24 * 3600 * 1000,
+    path: '/',
+  });
 }
 
 // ==========================================
@@ -250,6 +258,7 @@ router.post('/logout', async (req: Request, res: Response) => {
 
     await AuthService.logout(refreshToken, userId);
     res.clearCookie('admin_access_token', { path: '/' });
+    res.clearCookie('csrf_token', { path: '/' });
     res.json({ success: true, message: 'Logged out successfully.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });

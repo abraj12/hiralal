@@ -3,23 +3,25 @@ export { getAdminApiBase };
 
 const API_BASE = getAdminApiBase();
 
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export class AdminApiClient {
+  // Sensitive admin tokens are stored exclusively in HttpOnly cookies to prevent XSS exfiltration.
   private static getToken(): string | null {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('hiralal_admin_token');
-    }
     return null;
   }
 
-  static setToken(token: string) {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('hiralal_admin_token', token);
-    }
+  static setToken(_token: string) {
+    // No-op: Authentication token is stored in HttpOnly cookie set by server
   }
 
   static clearToken() {
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('hiralal_admin_token');
+      localStorage.removeItem('hiralal_admin_token'); // Cleanup legacy token if present
       localStorage.removeItem('hiralal_admin_user');
     }
   }
@@ -45,14 +47,15 @@ export class AdminApiClient {
   }
 
   static async request<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const token = this.getToken();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options.headers as Record<string, string>),
     };
 
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    const method = (options.method || 'GET').toUpperCase();
+    const csrfToken = getCsrfToken();
+    if (csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+      headers['X-CSRF-Token'] = csrfToken;
     }
 
     const controller = new AbortController();
@@ -62,6 +65,7 @@ export class AdminApiClient {
       const res = await fetch(`${API_BASE}${endpoint}`, {
         ...options,
         headers,
+        credentials: 'include', // Always send HttpOnly authentication and CSRF cookies
         signal: controller.signal,
       });
       clearTimeout(timer);

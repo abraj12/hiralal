@@ -1,0 +1,343 @@
+import request from 'supertest';
+import { app } from '../server';
+import { prisma } from '../db';
+import { PayoutService } from '../services/payout.service';
+import { PayoutWorker } from '../worker/payout.worker';
+import { BillService } from '../services/bill.service';
+import { GstService } from '../services/gst.service';
+import { StorageService } from '../services/storage.service';
+import { KycService } from '../services/kyc.service';
+import { PaymentService } from '../services/payment.service';
+import { AuthService } from '../services/auth.service';
+import { config } from '../config';
+import jwt from 'jsonwebtoken';
+
+describe('Production Hardening & Financial Integrity Release Candidate Tests', () => {
+  const adminMobile = '9876549901';
+  const plumberMobile = '9876549902';
+  let adminUser: any;
+  let plumberUser: any;
+  let adminToken: string;
+  let plumberToken: string;
+  let activeGstRule: any;
+  let expiredGstRule: any;
+
+  beforeAll(async () => {
+    // Clean up test data
+    const mobiles = [adminMobile, plumberMobile];
+    await prisma.bill.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.payout.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.paymentAccount.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.kycRecord.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.walletTransaction.deleteMany({ where: { wallet: { user: { mobile: { in: mobiles } } } } });
+    await prisma.wallet.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.authSession.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.user.deleteMany({ where: { mobile: { in: mobiles } } });
+
+    await prisma.rewardRule.deleteMany({ where: { profession: 'PLUMBER' } });
+
+    adminUser = await prisma.user.create({
+      data: {
+        mobile: adminMobile,
+        fullName: 'Hardening Admin Lead',
+        passwordHash: 'hash',
+        role: 'OPERATIONS_ADMIN',
+        status: 'ACTIVE',
+        isVerified: true,
+      },
+    });
+
+    plumberUser = await prisma.user.create({
+      data: {
+        mobile: plumberMobile,
+        fullName: 'Verified Hardened Plumber',
+        passwordHash: 'hash',
+        role: 'USER',
+        profession: 'PLUMBER',
+        status: 'ACTIVE',
+        isVerified: true,
+        wallet: {
+          create: {
+            availableBalance: 2000.0,
+            processingAmount: 0.0,
+            totalRedeemed: 0.0,
+          },
+        },
+      },
+      include: { wallet: true },
+    });
+
+    adminToken = jwt.sign(
+      { userId: adminUser.id, role: adminUser.role },
+      config.admin.accessSecret || config.jwt.accessSecret,
+      { expiresIn: '1h' }
+    );
+
+    plumberToken = jwt.sign(
+      { userId: plumberUser.id, role: plumberUser.role },
+      config.jwt.accessSecret,
+      { expiresIn: '1h' }
+    );
+
+    // Active GST rule
+    activeGstRule = await GstService.createGstRule(adminUser.id, {
+      ratePercentage: 18.0,
+      description: 'Active 18% GST',
+      isDefault: false,
+    });
+
+    // Expired GST rule
+    const expiredPastDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    expiredGstRule = await prisma.gstRule.create({
+      data: {
+        ratePercentage: 12.0,
+        description: 'Expired GST Rule',
+        isActive: true,
+        effectiveFrom: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000),
+        effectiveUntil: expiredPastDate,
+        createdByAdminId: adminUser.id,
+      },
+    });
+
+    // Ensure single active reward rule exists for Plumber
+    await prisma.rewardRule.create({
+      data: {
+        profession: 'PLUMBER',
+        rewardPercentage: 0.50,
+        isActive: true,
+        effectiveFrom: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000),
+      },
+    });
+  });
+
+  afterAll(async () => {
+    const mobiles = [adminMobile, plumberMobile];
+    await prisma.bill.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.payout.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.paymentAccount.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.kycRecord.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.walletTransaction.deleteMany({ where: { wallet: { user: { mobile: { in: mobiles } } } } });
+    await prisma.wallet.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.authSession.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.user.deleteMany({ where: { mobile: { in: mobiles } } });
+    if (activeGstRule) await prisma.gstRule.delete({ where: { id: activeGstRule.id } }).catch(() => {});
+    if (expiredGstRule) await prisma.gstRule.delete({ where: { id: expiredGstRule.id } }).catch(() => {});
+  });
+
+  describe('1. File Upload & Magic-Byte Validation', () => {
+    test('1.1 StorageService rejects genuine PDF bytes with mismatched .jpg extension', () => {
+      const pdfBytes = Buffer.from('%PDF-1.4 Fake PDF Content');
+      expect(() => {
+        StorageService.validateAndHashFile({
+          buffer: pdfBytes,
+          originalFilename: 'spoofed_document.jpg',
+          mimeType: 'image/jpeg',
+        });
+      }).toThrow(/does not match detected file content type/i);
+    });
+
+    test('1.2 StorageService rejects genuine JPEG bytes with mismatched .pdf extension', () => {
+      const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+      expect(() => {
+        StorageService.validateAndHashFile({
+          buffer: jpegBytes,
+          originalFilename: 'fake_invoice.pdf',
+          mimeType: 'application/pdf',
+        });
+      }).toThrow(/does not match detected file content type/i);
+    });
+
+    test('1.3 StorageService accepts valid PDF bytes with matching .pdf extension', () => {
+      const pdfBytes = Buffer.from('%PDF-1.4 Genuine PDF invoice');
+      const result = StorageService.validateAndHashFile({
+        buffer: pdfBytes,
+        originalFilename: 'genuine_invoice.pdf',
+        mimeType: 'application/pdf',
+      });
+      expect(result.extension).toBe('.pdf');
+      expect(result.normalizedMime).toBe('application/pdf');
+      expect(result.fileHash).toBeDefined();
+    });
+  });
+
+  describe('2. Payout Pre-Dispatch Failure (failBeforeDispatch)', () => {
+    test('2.1 Pre-dispatch identity mismatch fails immediately, restores wallet balance, and creates PAYOUT_REVERSAL', async () => {
+      // Setup payout in APPROVED state
+      const initialWallet = await prisma.wallet.findUnique({ where: { userId: plumberUser.id } });
+      expect(Number(initialWallet?.availableBalance)).toBe(2000.0);
+
+      // Create a payment account where provider name does NOT match PAN
+      const paymentAcc = await prisma.paymentAccount.create({
+        data: {
+          userId: plumberUser.id,
+          accountType: 'UPI',
+          upiId: 'plumber@okhdfcbank',
+          maskedInfo: 'plumber@okhdfcbank',
+          isVerified: true,
+          providerNameVerified: true,
+          providerRegisteredName: 'Completely Different Name',
+        },
+      });
+
+      // Submit PAN with verifiedName 'Hardened Plumber'
+      await prisma.kycRecord.create({
+        data: {
+          userId: plumberUser.id,
+          panNumberEncrypted: 'enc',
+          maskedPan: 'ABCDE1234F',
+          panName: 'Verified Hardened Plumber',
+          verifiedName: 'Verified Hardened Plumber',
+          panStatus: 'VERIFIED',
+          nameMatched: true,
+        },
+      });
+
+      // Create requested payout and approve it
+      const payout = await prisma.payout.create({
+        data: {
+          userId: plumberUser.id,
+          walletId: plumberUser.wallet.id,
+          paymentAccountId: paymentAcc.id,
+          paymentType: 'UPI',
+          amount: 1000.0,
+          status: 'APPROVED',
+          idempotencyKey: `rc-predispatch-${Date.now()}`,
+        },
+      });
+
+      // Debit wallet to simulate requested state
+      await prisma.wallet.update({
+        where: { id: plumberUser.wallet.id },
+        data: {
+          availableBalance: 1000.0,
+          processingAmount: 1000.0,
+        },
+      });
+
+      // Trigger PayoutWorker processPayout
+      await PayoutWorker.processPayout(payout.id);
+
+      // Check payout status: MUST be FAILED, NOT stuck in PROCESSING!
+      const updatedPayout = await prisma.payout.findUnique({ where: { id: payout.id } });
+      expect(updatedPayout?.status).toBe('FAILED');
+      expect(updatedPayout?.failureReason).toMatch(/does not match verified PAN name/i);
+
+      // Check wallet: funds restored to availableBalance!
+      const updatedWallet = await prisma.wallet.findUnique({ where: { userId: plumberUser.id } });
+      expect(Number(updatedWallet?.availableBalance)).toBe(2000.0);
+      expect(Number(updatedWallet?.processingAmount)).toBe(0.0);
+
+      // Check ledger: PAYOUT_REVERSAL transaction created!
+      const reversalTx = await prisma.walletTransaction.findFirst({
+        where: { referenceId: payout.id, type: 'PAYOUT_REVERSAL' },
+      });
+      expect(reversalTx).not.toBeNull();
+      expect(Number(reversalTx?.amount)).toBe(1000.0);
+    });
+  });
+
+  describe('3. GST Rule Fail-Closed Validation', () => {
+    test('3.1 Rejects approval with non-existent gstRuleId', async () => {
+      const bill = await BillService.submitBill({
+        userId: plumberUser.id,
+        invoiceNumber: `INV-GST-ERR-${Date.now()}`,
+        invoiceDate: '2026-10-10',
+        billAmount: 5000.0,
+        fileBuffer: Buffer.from(`%PDF-1.4 dummy bill content 1 ${Date.now()}`),
+        fileName: 'bill1.pdf',
+        mimeType: 'application/pdf',
+      });
+
+      await expect(
+        BillService.approveBill({
+          billId: bill.id,
+          adminId: adminUser.id,
+          gstIncluded: true,
+          gstRuleId: '00000000-0000-0000-0000-000000000000',
+        })
+      ).rejects.toThrow('The selected GST rule is invalid or not applicable to this bill');
+    });
+
+    test('3.2 Rejects approval with expired gstRuleId', async () => {
+      const bill = await BillService.submitBill({
+        userId: plumberUser.id,
+        invoiceNumber: `INV-GST-EXP-${Date.now()}`,
+        invoiceDate: '2026-10-10',
+        billAmount: 5000.0,
+        fileBuffer: Buffer.from(`%PDF-1.4 dummy bill content 2 ${Date.now()}`),
+        fileName: 'bill2.pdf',
+        mimeType: 'application/pdf',
+      });
+
+      await expect(
+        BillService.approveBill({
+          billId: bill.id,
+          adminId: adminUser.id,
+          gstIncluded: true,
+          gstRuleId: expiredGstRule.id,
+        })
+      ).rejects.toThrow('The selected GST rule is invalid or not applicable to this bill');
+    });
+
+    test('3.3 Accepts approval with valid active gstRuleId', async () => {
+      const bill = await BillService.submitBill({
+        userId: plumberUser.id,
+        invoiceNumber: `INV-GST-OK-${Date.now()}`,
+        invoiceDate: '2026-10-10',
+        billAmount: 5000.0,
+        fileBuffer: Buffer.from(`%PDF-1.4 dummy bill content 3 ${Date.now()}`),
+        fileName: 'bill3.pdf',
+        mimeType: 'application/pdf',
+      });
+
+      const result = await BillService.approveBill({
+        billId: bill.id,
+        adminId: adminUser.id,
+        gstIncluded: true,
+        gstRuleId: activeGstRule.id,
+      });
+
+      expect(result.bill.status).toBe('APPROVED');
+      expect(result.bill.gstRuleId).toBe(activeGstRule.id);
+      expect(Number(result.bill.gstAmount)).toBeGreaterThan(0);
+    });
+  });
+
+  describe('4. Cookie Authentication & Anti-CSRF Protection', () => {
+    test('4.1 Cookie auth on mutating route fails if X-CSRF-Token is missing or mismatched', async () => {
+      const res = await request(app)
+        .post('/api/admin/settings/redemption')
+        .set('Cookie', `admin_access_token=${adminToken}; csrf_token=valid_secret_csrf_token_12345`)
+        .set('Origin', 'http://localhost:3000')
+        .set('X-CSRF-Token', 'wrong_csrf_token')
+        .send({ isEnabled: true, minimumAmount: 500, maximumAmount: 10000 });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('CSRF_TOKEN_MISMATCH');
+    });
+
+    test('4.2 Cookie auth on mutating route fails if Origin is untrusted', async () => {
+      const res = await request(app)
+        .post('/api/admin/settings/redemption')
+        .set('Cookie', `admin_access_token=${adminToken}; csrf_token=valid_secret_csrf_token_12345`)
+        .set('Origin', 'https://malicious-attacker-site.com')
+        .set('X-CSRF-Token', 'valid_secret_csrf_token_12345')
+        .send({ isEnabled: true, minimumAmount: 500, maximumAmount: 10000 });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('CSRF_VALIDATION_FAILED');
+    });
+
+    test('4.3 Cookie auth on mutating route succeeds when valid origin and matching CSRF token are provided', async () => {
+      const res = await request(app)
+        .put('/api/admin/settings/redemption')
+        .set('Cookie', `admin_access_token=${adminToken}; csrf_token=valid_secret_csrf_token_12345`)
+        .set('Origin', 'http://localhost:3000')
+        .set('X-CSRF-Token', 'valid_secret_csrf_token_12345')
+        .send({ isEnabled: true, minimumAmount: 500, maximumAmount: 10000 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+  });
+});
