@@ -6,6 +6,7 @@ import { BillService } from '../services/bill.service';
 import { StorageService } from '../services/storage.service';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { BillStatus } from '@prisma/client';
+import { parseIndiaBusinessDate } from '../utils/timezone.utils';
 
 const router = Router();
 const upload = multer({
@@ -50,18 +51,21 @@ router.post('/', authenticate, requireUser, upload.single('invoiceFile'), async 
       });
     }
 
-    const parsedDate = new Date(invoiceDate.trim());
-    if (isNaN(parsedDate.getTime())) {
+    let parsedDate: Date;
+    try {
+      parsedDate = parseIndiaBusinessDate(invoiceDate.trim());
+    } catch {
       return res.status(400).json({
         success: false,
         message: 'Invoice date is invalid. Please supply a valid date (YYYY-MM-DD).',
       });
     }
 
-    // Invoice date should not be more than 1 day in the future or older than 5 years
-    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    const fiveYearsAgo = new Date(Date.now() - 5 * 365 * 24 * 60 * 60 * 1000);
-    if (parsedDate > tomorrow) {
+    // Invoice date should not be more than 1 day in the future (India calendar) or older than 5 years
+    const todayIndia = parseIndiaBusinessDate();
+    const tomorrowIndia = new Date(todayIndia.getTime() + 24 * 60 * 60 * 1000);
+    const fiveYearsAgo = new Date(todayIndia.getTime() - 5 * 365 * 24 * 60 * 60 * 1000);
+    if (parsedDate > tomorrowIndia) {
       return res.status(400).json({
         success: false,
         message: 'Invoice date cannot be in the future.',

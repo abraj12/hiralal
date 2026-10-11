@@ -22,11 +22,31 @@ import { AdminApiClient } from '../lib/api';
 
 type TabType = 'PLUMBER' | 'TILE_INSTALLER' | 'GST' | 'REDEMPTION';
 
+function getIndiaCalendarToday(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+function formatIndiaDateOnly(date: Date | string): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
 export default function AdminSettingsPage() {
   const [activeTab, setActiveTab] = useState<TabType>('PLUMBER');
 
   // Profession Rules State
-  const todayDateStr = new Date().toISOString().split('T')[0];
+  const todayDateStr = getIndiaCalendarToday();
   const [plumberRules, setPlumberRules] = useState<any[]>([]);
   const [tileRules, setTileRules] = useState<any[]>([]);
   const [plumberForm, setPlumberForm] = useState({
@@ -99,12 +119,12 @@ export default function AdminSettingsPage() {
 
         if (s.startAt) {
           const d = new Date(s.startAt);
-          setStartDate(d.toISOString().split('T')[0]);
+          setStartDate(formatIndiaDateOnly(d));
           setStartTime(d.toTimeString().substring(0, 5));
         }
         if (s.endAt) {
           const d = new Date(s.endAt);
-          setEndDate(d.toISOString().split('T')[0]);
+          setEndDate(formatIndiaDateOnly(d));
           setEndTime(d.toTimeString().substring(0, 5));
         }
       }
@@ -185,10 +205,10 @@ export default function AdminSettingsPage() {
       let endAt: string | null = null;
 
       if (startDate) {
-        startAt = new Date(`${startDate}T${startTime}:00`).toISOString();
+        startAt = new Date(`${startDate}T${startTime}:00+05:30`).toISOString();
       }
       if (endDate) {
-        endAt = new Date(`${endDate}T${endTime}:00`).toISOString();
+        endAt = new Date(`${endDate}T${endTime}:00+05:30`).toISOString();
       }
 
       if (startAt && endAt && new Date(endAt) <= new Date(startAt)) {

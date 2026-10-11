@@ -409,5 +409,110 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
       expect(resolved).toBeDefined();
       expect(Number(resolved.rewardPercentage)).toBe(0.80);
     });
+
+    test('concurrent first-time rule creation with no pre-existing row serializes via PostgreSQL advisory lock', async () => {
+      // Clean up PLUMBER rules completely so 0 rows exist initially
+      await prisma.rewardRule.deleteMany({ where: { profession: 'PLUMBER' } });
+      const initialCount = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
+      expect(initialCount).toBe(0);
+
+      // Launch 2 concurrent first-time rule creation operations for PLUMBER
+      const [res1, res2] = await Promise.all([
+        RewardRuleService.createRule(opsAdmin.id, {
+          profession: 'PLUMBER',
+          rewardPercentage: 0.50,
+          effectiveFrom: '2026-01-01',
+        }),
+        RewardRuleService.createRule(opsAdmin.id, {
+          profession: 'PLUMBER',
+          rewardPercentage: 0.75,
+          effectiveFrom: '2026-07-01',
+        }),
+      ]);
+
+      expect(res1).toBeDefined();
+      expect(res2).toBeDefined();
+
+      // Check versions: exactly 1 and 2
+      const allRules = await prisma.rewardRule.findMany({
+        where: { profession: 'PLUMBER' },
+        orderBy: { version: 'asc' },
+      });
+
+      expect(allRules.length).toBe(2);
+      expect(allRules[0].version).toBe(1);
+      expect(allRules[1].version).toBe(2);
+
+      // Verify continuous interval stitching without gaps or overlaps regardless of which task acquired lock first
+      const ruleEarlier = allRules.find((r) => Number(r.rewardPercentage) === 0.50);
+      const ruleLater = allRules.find((r) => Number(r.rewardPercentage) === 0.75);
+      expect(ruleEarlier?.effectiveUntil?.toISOString()).toBe(ruleLater?.effectiveFrom.toISOString());
+    });
+
+    test('lock or query failure causes complete rollback instead of fail-open behavior', async () => {
+      const countBefore = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
+
+      await expect(
+        prisma.$transaction(async (trx) => {
+          // Force failure at lock acquisition step
+          jest.spyOn(trx, '$executeRaw').mockRejectedValueOnce(
+            new Error('PostgreSQL deadlock / lock acquisition failed')
+          );
+          await RewardRuleService.createRule(opsAdmin.id, {
+            profession: 'PLUMBER',
+            rewardPercentage: 0.90,
+            effectiveFrom: '2026-09-01',
+          }, trx);
+        })
+      ).rejects.toThrow('PostgreSQL deadlock / lock acquisition failed');
+
+      const countAfter = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
+      expect(countAfter).toBe(countBefore); // Fail closed: zero partial updates!
+    });
+
+    test('Asia/Kolkata calendar normalization aligns bill verification and rule configuration across day boundaries', async () => {
+      await prisma.rewardRule.deleteMany({ where: { profession: 'PLUMBER' } });
+
+      // Baseline: 0.50% from 2026-01-01
+      await RewardRuleService.createRule(opsAdmin.id, {
+        profession: 'PLUMBER',
+        rewardPercentage: 0.50,
+        effectiveFrom: '2026-01-01',
+      });
+
+      // New rule: 0.80% starting 2026-10-15
+      await RewardRuleService.createRule(opsAdmin.id, {
+        profession: 'PLUMBER',
+        rewardPercentage: 0.80,
+        effectiveFrom: '2026-10-15',
+      });
+
+      // 1. Day before: 2026-10-14 -> MUST resolve to 0.50%
+      const ruleDayBefore = await RewardRuleService.getApplicableRule('PLUMBER', '2026-10-14');
+      expect(Number(ruleDayBefore.rewardPercentage)).toBe(0.50);
+
+      // 2. Day of effective date: 2026-10-15 -> MUST resolve to 0.80%
+      const ruleDayOf = await RewardRuleService.getApplicableRule('PLUMBER', '2026-10-15');
+      expect(Number(ruleDayOf.rewardPercentage)).toBe(0.80);
+
+      // 3. Day after: 2026-10-16 -> MUST resolve to 0.80%
+      const ruleDayAfter = await RewardRuleService.getApplicableRule('PLUMBER', '2026-10-16');
+      expect(Number(ruleDayAfter.rewardPercentage)).toBe(0.80);
+
+      // 4. Submit and approve bill dated 2026-10-15 -> MUST earn 0.80% reward
+      const bill = await BillService.submitBill({
+        userId: testPlumber.id,
+        invoiceNumber: `INV-IST-CALENDAR-${Date.now()}`,
+        invoiceDate: '2026-10-15',
+        billAmount: 10000,
+        fileBuffer: createDummyPdf(),
+        fileName: 'calendar.pdf',
+        mimeType: 'application/pdf',
+      });
+
+      const approved = await BillService.approveBill(bill.id, billAdmin.id);
+      expect(Number(approved.bill.calculatedReward)).toBe(80.0); // 10000 * 0.80%
+      expect(Number(approved.bill.rewardRateSnapshot)).toBe(0.80);
+    });
   });
 });

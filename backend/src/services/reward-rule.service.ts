@@ -1,6 +1,7 @@
 import { prisma } from '../db';
 import { Profession, RewardRule } from '@prisma/client';
 import { config } from '../config';
+import { parseIndiaBusinessDate } from '../utils/timezone.utils';
 
 export class RewardRuleService {
   /**
@@ -9,9 +10,10 @@ export class RewardRuleService {
    */
   static async getApplicableRule(
     profession: Profession,
-    effectiveAt: Date = new Date(),
+    effectiveAtInput: Date | string = new Date(),
     tx: any = prisma
   ): Promise<RewardRule> {
+    const effectiveAt = parseIndiaBusinessDate(effectiveAtInput);
     const rules = await tx.rewardRule.findMany({
       where: {
         profession,
@@ -92,17 +94,11 @@ export class RewardRuleService {
       throw new Error('Reward percentage must be between 0.01% and 10.00%.');
     }
 
-    // 3. Validation: Effective Date
+    // 3. Validation: Effective Date (Asia/Kolkata Business Calendar)
     let effectiveFrom: Date;
-    if (params.effectiveFrom instanceof Date) {
-      effectiveFrom = params.effectiveFrom;
-    } else if (typeof params.effectiveFrom === 'string' && params.effectiveFrom.trim()) {
-      effectiveFrom = new Date(params.effectiveFrom);
-    } else {
-      effectiveFrom = new Date();
-    }
-
-    if (isNaN(effectiveFrom.getTime())) {
+    try {
+      effectiveFrom = parseIndiaBusinessDate(params.effectiveFrom);
+    } catch {
       throw new Error('Effective from date must be a valid date.');
     }
 
@@ -122,16 +118,9 @@ export class RewardRuleService {
     }
 
     const runAtomic = async (trx: any) => {
-      // Concurrency lock: serialize concurrent rule operations for this profession
-      try {
-        await trx.$queryRaw`
-          SELECT "id" FROM "RewardRule"
-          WHERE "profession" = ${profession}::"Profession"
-          FOR UPDATE
-        `;
-      } catch {
-        // Fallback if database or mock does not support FOR UPDATE query
-      }
+      // Concurrency lock: acquire transaction-scoped PostgreSQL advisory lock per profession.
+      // Operates independently of pre-existing table rows. Any lock or query failure aborts and rolls back immediately (fail closed).
+      await trx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'reward_rule_' + profession})::bigint)`;
 
       // Determine next version number for this profession
       const latestRule = await trx.rewardRule.findFirst({

@@ -5,6 +5,7 @@ import { RewardRuleService } from './reward-rule.service';
 import { GstService } from './gst.service';
 import { StorageService } from './storage';
 import { BillStatus, Profession } from '@prisma/client';
+import { parseIndiaBusinessDate } from '../utils/timezone.utils';
 
 export class BillService {
   /**
@@ -94,7 +95,7 @@ export class BillService {
           id: billId,
           userId: data.userId,
           invoiceNumber: cleanInvoiceNumber,
-          invoiceDate: new Date(data.invoiceDate),
+          invoiceDate: parseIndiaBusinessDate(data.invoiceDate),
           billAmount: data.billAmount,
           grossBillAmount: data.billAmount,
           gstIncluded: false,
@@ -339,7 +340,7 @@ export class BillService {
 
       if (options?.gstRuleId) {
         const gstRule = await tx.gstRule.findUnique({ where: { id: options.gstRuleId } });
-        const invoiceDateTime = new Date(bill.invoiceDate);
+        const invoiceDateTime = parseIndiaBusinessDate(bill.invoiceDate);
         if (
           !gstRule ||
           !gstRule.isActive ||

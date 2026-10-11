@@ -367,8 +367,12 @@ Requests 100% full available balance redemption. Has no minimum or maximum thres
 | `/admin/settings/reward-rules` | `POST` | `OPERATIONS_ADMIN` | Deploy new versioned reward rule with effective date |
 | `/admin/settings/gst-rules` | `GET` | `OPERATIONS_ADMIN` | List active GST tax treatment rules |
 | `/admin/settings/gst-rules` | `POST` | `OPERATIONS_ADMIN` | Create new standard or concessional GST rule |
-| `/admin/settings/redemption` | `GET`, `POST` | `OPERATIONS_ADMIN` | Configure scheduled redemption calendar windows |
-| `/admin/payouts` | `GET`, `POST` | `OPERATIONS_ADMIN` | Review and approve/reject craftsman redemptions |
+| `/admin/settings/gst-rules/:id` | `PATCH` | `OPERATIONS_ADMIN` | Update GST rule activation status or defaults |
+| `/admin/settings/redemption` | `GET` | `OPERATIONS_ADMIN` | Read redemption calendar window settings |
+| `/admin/settings/redemption` | `PUT` | `OPERATIONS_ADMIN` | Configure scheduled redemption calendar windows |
+| `/admin/payouts` | `GET` | `OPERATIONS_ADMIN` | List and filter craftsman redemptions |
+| `/admin/payouts/:id/action` | `POST` | `OPERATIONS_ADMIN` | Approve or reject craftsman redemption payout |
+| `/admin/notifications/broadcast` | `POST` | `OPERATIONS_ADMIN` | Dispatch audience-wide push and in-app notifications |
 
 *Note: Accessing any `OPERATIONS_ADMIN` endpoint with a `BILL_ADMIN` token strictly returns `403 Forbidden` (`code: "FORBIDDEN"`). Hiding UI links is supplemented by strict server-side middleware enforcement.*
 
@@ -399,7 +403,7 @@ Requests 100% full available balance redemption. Has no minimum or maximum thres
       "profession": "PLUMBER",
       "version": 2,
       "rewardPercentage": 0.50,
-      "effectiveFrom": "2026-10-15T00:00:00.000Z",
+      "effectiveFrom": "2026-10-14T18:30:00.000Z",
       "effectiveUntil": null,
       "isActive": true
     }
@@ -431,5 +435,89 @@ Requests 100% full available balance redemption. Has no minimum or maximum thres
         "description": "Standard 18% GST"
       }
     ]
+  }
+  ```
+
+#### 5.4 Configure Redemption Calendar Windows (Operations Admin Only)
+- **Method**: `PUT`
+- **Path**: `/admin/settings/redemption`
+- **Headers**: `Authorization: Bearer <OPERATIONS_ADMIN_TOKEN>`
+- **Body**:
+  ```json
+  {
+    "isEnabled": true,
+    "profession": "PLUMBER", // Optional: "PLUMBER", "TILE_INSTALLER", or omit for ALL
+    "startAt": "2026-10-15T04:30:00.000Z",
+    "endAt": "2026-10-31T18:29:59.000Z",
+    "message": "Diwali Special Redemption Window is Open!"
+  }
+  ```
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "message": "Redemption window settings for PLUMBER updated successfully.",
+    "settings": {
+      "id": "setting_PLUMBER",
+      "isEnabled": true,
+      "profession": "PLUMBER",
+      "startAt": "2026-10-15T04:30:00.000Z",
+      "endAt": "2026-10-31T18:29:59.000Z",
+      "message": "Diwali Special Redemption Window is Open!"
+    }
+  }
+  ```
+
+#### 5.5 Review Craftsman Redemptions (Operations Admin Only)
+- **Method**: `GET`
+- **Path**: `/admin/payouts?status=PENDING&profession=PLUMBER`
+- **Headers**: `Authorization: Bearer <OPERATIONS_ADMIN_TOKEN>`
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "payouts": [
+      {
+        "id": "payout-uuid",
+        "userName": "Ramesh Plumber",
+        "userMobile": "9876543210",
+        "profession": "PLUMBER",
+        "amount": 5000.00,
+        "status": "PENDING",
+        "paymentType": "BANK_ACCOUNT",
+        "maskedAccount": "******1234",
+        "bankName": "State Bank of India",
+        "createdAt": "2026-10-15T06:00:00.000Z"
+      }
+    ]
+  }
+  ```
+
+#### 5.6 Approve or Reject Redemption Payout (Operations Admin Only)
+- **Method**: `POST`
+- **Path**: `/admin/payouts/:id/action`
+- **Headers**: `Authorization: Bearer <OPERATIONS_ADMIN_TOKEN>`
+- **Body (Approve)**:
+  ```json
+  {
+    "action": "APPROVE"
+  }
+  ```
+- **Body (Reject)**:
+  ```json
+  {
+    "action": "REJECT",
+    "reason": "Bank account IFSC code mismatch. Please update payment account details."
+  }
+  ```
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "message": "Payout approved and queued for disbursement.",
+    "payout": {
+      "id": "payout-uuid",
+      "status": "APPROVED"
+    }
   }
   ```

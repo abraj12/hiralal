@@ -23,11 +23,24 @@ interface SelectedFileInfo {
   file?: any;
 }
 
+function getIndiaCalendarToday(): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().split('T')[0];
+  }
+}
+
 export default function UploadBillScreen() {
   const { theme, setCurrentScreen, setActiveTab, refreshData } = useApp();
 
   const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [invoiceDate, setInvoiceDate] = useState(getIndiaCalendarToday());
   const [billAmount, setBillAmount] = useState('');
   const [remarks, setRemarks] = useState('');
   const [selectedFile, setSelectedFile] = useState<SelectedFileInfo | null>(null);

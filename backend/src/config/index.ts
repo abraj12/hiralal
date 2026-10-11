@@ -90,12 +90,15 @@ const serviceRole = rawRole as ServiceRole;
  * Helper to identify unsafe example, placeholder, or low-entropy default values.
  * Never prints secret values in errors or logs.
  */
-export function isUnsafeProductionValue(name: string, value: string | undefined): boolean {
-  if (!value || !value.trim()) {
-    return true;
-  }
-
-  const normalized = value.trim().toLowerCase();
+/**
+ * Shared validator to detect placeholder, example, or unset credential strings.
+ * Used for production config validation as well as third-party provider provisioning checks.
+ */
+export function isPlaceholderCredential(val?: string | null): boolean {
+  if (!val || typeof val !== 'string') return true;
+  const trimmed = val.trim();
+  if (!trimmed) return true;
+  const normalized = trimmed.toLowerCase();
 
   const forbiddenExactValues = new Set([
     'changeme',
@@ -140,6 +143,13 @@ export function isUnsafeProductionValue(name: string, value: string | undefined)
   ];
 
   return placeholderPatterns.some((pattern) => pattern.test(normalized));
+}
+
+export function isUnsafeProductionValue(name: string, value: string | undefined): boolean {
+  if (!value || !value.trim()) {
+    return true;
+  }
+  return isPlaceholderCredential(value);
 }
 
 export function validateProductionConfig(role: ServiceRole = serviceRole, env: Record<string, string | undefined> = process.env): void {

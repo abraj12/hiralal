@@ -1,4 +1,4 @@
-import { FcmProvider } from '../services/push/fcm.provider';
+import { FcmProvider, parseRetryAfterHeader, isInvalidRegistrationTokenError } from '../services/push/fcm.provider';
 import { NotificationService } from '../services/notification.service';
 import { prisma } from '../db';
 import crypto from 'crypto';
@@ -66,42 +66,84 @@ describe('Firebase Cloud Messaging (FCM HTTP v1) Provider Hardened Tests', () =>
     expect(FcmProvider.maskToken('short')).toBe('***');
   });
 
-  // 2. Missing or Partial Credentials Without Fabricated Success
-  test('sendPush with unconfigured or partial FCM credentials skips cleanly without fabricating message ID', async () => {
-    // Unconfigured
+  // 2. Rejection of Placeholder, Example, and Incomplete Credentials
+  test('sendPush with unconfigured, partial, or placeholder FCM credentials skips cleanly without calling OAuth or FCM', async () => {
+    let networkCallMade = false;
+    const mockFailingFetch = async (): Promise<Response> => {
+      networkCallMade = true;
+      throw new Error('Network should never be invoked when credentials are placeholders!');
+    };
+    FcmProvider.setFetchClient(mockFailingFetch as any);
+
+    // 2a: Empty credentials
     FcmProvider.overrideConfig({
       projectId: '',
       clientEmail: '',
       privateKey: '',
     });
+    expect(FcmProvider.isConfigured()).toBe(false);
 
-    const res1 = await FcmProvider.sendPush({
+    const resEmpty = await FcmProvider.sendPush({
       token: 'sample_token_123',
-      title: 'Test Notification',
-      body: 'Hello Craftsman',
+      title: 'Empty Test',
+      body: 'Should skip cleanly',
     });
+    expect(resEmpty.success).toBe(false);
+    expect(resEmpty.skipped).toBe(true);
+    expect(resEmpty.messageId).toBeUndefined();
+    expect(networkCallMade).toBe(false);
 
-    expect(res1.success).toBe(false);
-    expect(res1.skipped).toBe(true);
-    expect(res1.messageId).toBeUndefined();
-    expect(res1.error).toContain('not configured');
-
-    // Partial credentials (missing privateKey)
+    // 2b: Literal placeholder strings (from .env.example / .env.production.example)
     FcmProvider.overrideConfig({
-      projectId: 'some-project',
-      clientEmail: 'some-email@project.iam.gserviceaccount.com',
+      projectId: 'REPLACE_WITH_FIREBASE_PROJECT_ID',
+      clientEmail: 'REPLACE_WITH_FIREBASE_CLIENT_EMAIL',
+      privateKey: 'REPLACE_WITH_FIREBASE_PRIVATE_KEY',
+    });
+    expect(FcmProvider.isConfigured()).toBe(false);
+
+    const resPlaceholder = await FcmProvider.sendPush({
+      token: 'sample_token_123',
+      title: 'Placeholder Test',
+      body: 'Should skip cleanly',
+    });
+    expect(resPlaceholder.success).toBe(false);
+    expect(resPlaceholder.skipped).toBe(true);
+    expect(resPlaceholder.messageId).toBeUndefined();
+    expect(networkCallMade).toBe(false);
+
+    // 2c: Angle bracket placeholders e.g. <project_id>
+    FcmProvider.overrideConfig({
+      projectId: '<your-firebase-project-id>',
+      clientEmail: '<your-client-email@project.iam.gserviceaccount.com>',
+      privateKey: testPrivateKey,
+    });
+    expect(FcmProvider.isConfigured()).toBe(false);
+
+    const resAngle = await FcmProvider.sendPush({
+      token: 'sample_token_123',
+      title: 'Angle Bracket Test',
+      body: 'Should skip cleanly',
+    });
+    expect(resAngle.success).toBe(false);
+    expect(resAngle.skipped).toBe(true);
+    expect(networkCallMade).toBe(false);
+
+    // 2d: Partial credentials (missing privateKey)
+    FcmProvider.overrideConfig({
+      projectId: 'hiralal-valid-project',
+      clientEmail: 'service@hiralal-valid-project.iam.gserviceaccount.com',
       privateKey: '',
     });
+    expect(FcmProvider.isConfigured()).toBe(false);
 
-    const res2 = await FcmProvider.sendPush({
+    const resPartial = await FcmProvider.sendPush({
       token: 'sample_token_123',
       title: 'Partial Creds Test',
-      body: 'Should also skip safely',
+      body: 'Should skip cleanly',
     });
-
-    expect(res2.success).toBe(false);
-    expect(res2.skipped).toBe(true);
-    expect(res2.messageId).toBeUndefined();
+    expect(resPartial.success).toBe(false);
+    expect(resPartial.skipped).toBe(true);
+    expect(networkCallMade).toBe(false);
   });
 
   // 3. JWT Claims: Proper claims, audience, scope, and omission of 'sub'
@@ -318,6 +360,16 @@ describe('Firebase Cloud Messaging (FCM HTTP v1) Provider Hardened Tests', () =>
       privateKey: testPrivateKey,
     });
 
+    // 7a: Unit test parseRetryAfterHeader helper directly
+    expect(parseRetryAfterHeader('2')).toBe(2000);
+    expect(parseRetryAfterHeader('120')).toBe(5000); // Bounded at 5000ms maximum
+    expect(parseRetryAfterHeader(null)).toBeNull();
+    expect(parseRetryAfterHeader('')).toBeNull();
+    const futureHttpDate = new Date(Date.now() + 3000).toUTCString();
+    const parsedHttpDateMs = parseRetryAfterHeader(futureHttpDate);
+    expect(typeof parsedHttpDateMs).toBe('number');
+    expect(parsedHttpDateMs).toBeLessThanOrEqual(5000);
+
     let fcmAttempt = 0;
 
     const mockFetch = async (url: string | URL | Request): Promise<Response> => {
@@ -384,30 +436,29 @@ describe('Firebase Cloud Messaging (FCM HTTP v1) Provider Hardened Tests', () =>
     expect(result.messageId).toBe('projects/hiralal-test-project/messages/retry_final_success_789');
   });
 
-  // 8. Device Token Deactivation ONLY for Genuine Unregistered Token, NOT on 404 Project Not Found
-  test('does NOT deactivate device token when 404 is a project error, but DOES deactivate when token is UNREGISTERED', async () => {
+  // 8. Device Token Deactivation ONLY for Genuine Invalid/Unregistered Token, NOT on Payload, Project 404, or Auth Errors
+  test('strictly discriminates genuine unregistered/invalid tokens from generic payload, project, and auth errors', async () => {
     FcmProvider.overrideConfig({
       projectId: 'hiralal-test-project',
       clientEmail: 'fcm-service-account@hiralal-test-project.iam.gserviceaccount.com',
       privateKey: testPrivateKey,
     });
 
-    const safeToken = 'valid_token_should_not_deactivate';
-    const deadToken = 'actual_dead_unregistered_token';
+    const safeToken = 'valid_token_should_never_deactivate';
+    const badPayloadToken = 'valid_token_with_malformed_payload';
+    const invalidFormatToken = 'genuinely_invalid_fcm_token_format';
+    const unregisteredToken = 'actual_dead_unregistered_token';
 
-    // Seed both active tokens in DB
-    await prisma.pushDeviceToken.upsert({
-      where: { token: safeToken },
-      update: { isActive: true },
-      create: { userId: testUserId, token: safeToken, platform: 'ANDROID', isActive: true },
-    });
-    await prisma.pushDeviceToken.upsert({
-      where: { token: deadToken },
-      update: { isActive: true },
-      create: { userId: testUserId, token: deadToken, platform: 'ANDROID', isActive: true },
-    });
+    // Seed all tokens as active in DB
+    for (const t of [safeToken, badPayloadToken, invalidFormatToken, unregisteredToken]) {
+      await prisma.pushDeviceToken.upsert({
+        where: { token: t },
+        update: { isActive: true },
+        create: { userId: testUserId, token: t, platform: 'ANDROID', isActive: true },
+      });
+    }
 
-    // 8a: Simulate 404 Project Error ("Project not found" / "NOT_FOUND" without unregistered token error)
+    // 8a: Simulate 404 Project Error ("Project not found" / "NOT_FOUND")
     const mockFetchProjectError = async (url: string | URL | Request): Promise<Response> => {
       const urlStr = url.toString();
       if (urlStr.includes('oauth2.googleapis.com')) {
@@ -427,21 +478,99 @@ describe('Firebase Cloud Messaging (FCM HTTP v1) Provider Hardened Tests', () =>
     };
 
     FcmProvider.setFetchClient(mockFetchProjectError as any);
-
     const resProjectErr = await FcmProvider.sendPush({
       token: safeToken,
       title: 'Test',
       body: 'Should not deactivate token on project 404',
     });
-
     expect(resProjectErr.success).toBe(false);
     expect(resProjectErr.errorCode).not.toBe('UNREGISTERED');
 
-    // VERIFY: The token in the database remains ACTIVE!
-    const tokenRecordAfterProject404 = await prisma.pushDeviceToken.findUnique({ where: { token: safeToken } });
-    expect(tokenRecordAfterProject404?.isActive).toBe(true);
+    // DB Check: Token remains ACTIVE!
+    const safeRecordAfter404 = await prisma.pushDeviceToken.findUnique({ where: { token: safeToken } });
+    expect(safeRecordAfter404?.isActive).toBe(true);
 
-    // 8b: Now simulate genuine UNREGISTERED token response
+    // 8b: Generic Malformed Request / Payload error (INVALID_ARGUMENT for payload field, not token)
+    const mockFetchPayloadError = async (url: string | URL | Request): Promise<Response> => {
+      const urlStr = url.toString();
+      if (urlStr.includes('oauth2.googleapis.com')) {
+        return { ok: true, status: 200, json: async () => ({ access_token: 'test_token', expires_in: 3600 }) } as any;
+      }
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({
+          error: {
+            code: 400,
+            message: 'Invalid JSON payload received. Unknown field: message.data.invalid_field',
+            status: 'INVALID_ARGUMENT',
+            details: [
+              {
+                '@type': 'type.googleapis.com/google.rpc.BadRequest',
+                fieldViolations: [{ field: 'message.data.invalid_field', description: 'Invalid key' }],
+              },
+            ],
+          },
+        }),
+      } as any;
+    };
+
+    FcmProvider.setFetchClient(mockFetchPayloadError as any);
+    const resPayloadErr = await FcmProvider.sendPush({
+      token: badPayloadToken,
+      title: 'Bad Payload Test',
+      body: 'Payload is invalid, but device token itself is valid',
+    });
+    expect(resPayloadErr.success).toBe(false);
+    expect(resPayloadErr.errorCode).toBe('INVALID_ARGUMENT');
+
+    // DB Check: Token MUST NOT be deactivated for payload mistakes!
+    const badPayloadRecord = await prisma.pushDeviceToken.findUnique({ where: { token: badPayloadToken } });
+    expect(badPayloadRecord?.isActive).toBe(true);
+
+    // 8c: Invalid Registration Token with INVALID_ARGUMENT (specifically identifying message.token)
+    const mockFetchInvalidToken = async (url: string | URL | Request): Promise<Response> => {
+      const urlStr = url.toString();
+      if (urlStr.includes('oauth2.googleapis.com')) {
+        return { ok: true, status: 200, json: async () => ({ access_token: 'test_token', expires_in: 3600 }) } as any;
+      }
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({
+          error: {
+            code: 400,
+            message: 'The registration token is not a valid FCM registration token',
+            status: 'INVALID_ARGUMENT',
+            details: [
+              {
+                '@type': 'type.googleapis.com/google.firebase.fcm.v1.FcmError',
+                errorCode: 'INVALID_ARGUMENT',
+              },
+              {
+                '@type': 'type.googleapis.com/google.rpc.BadRequest',
+                fieldViolations: [{ field: 'message.token', description: 'Invalid registration token' }],
+              },
+            ],
+          },
+        }),
+      } as any;
+    };
+
+    FcmProvider.setFetchClient(mockFetchInvalidToken as any);
+    const resInvalidToken = await FcmProvider.sendPush({
+      token: invalidFormatToken,
+      title: 'Invalid Token Test',
+      body: 'Token is malformed',
+    });
+    expect(resInvalidToken.success).toBe(false);
+    expect(resInvalidToken.errorCode).toBe('UNREGISTERED');
+
+    // DB Check: Genuinely invalid registration token MUST be deactivated!
+    const invalidFormatRecord = await prisma.pushDeviceToken.findUnique({ where: { token: invalidFormatToken } });
+    expect(invalidFormatRecord?.isActive).toBe(false);
+
+    // 8d: Genuine UNREGISTERED response (device uninstalled / expired token)
     const mockFetchUnregistered = async (url: string | URL | Request): Promise<Response> => {
       const urlStr = url.toString();
       if (urlStr.includes('oauth2.googleapis.com')) {
@@ -467,35 +596,34 @@ describe('Firebase Cloud Messaging (FCM HTTP v1) Provider Hardened Tests', () =>
     };
 
     FcmProvider.setFetchClient(mockFetchUnregistered as any);
-
     const resUnregistered = await FcmProvider.sendPush({
-      token: deadToken,
+      token: unregisteredToken,
       title: 'Alert',
       body: 'Token is truly dead',
     });
-
     expect(resUnregistered.success).toBe(false);
     expect(resUnregistered.errorCode).toBe('UNREGISTERED');
 
-    // VERIFY: Dead token is deactivated in database
-    const tokenRecordAfterUnregistered = await prisma.pushDeviceToken.findUnique({ where: { token: deadToken } });
+    // DB Check: Dead token is deactivated in database
+    const tokenRecordAfterUnregistered = await prisma.pushDeviceToken.findUnique({ where: { token: unregisteredToken } });
     expect(tokenRecordAfterUnregistered?.isActive).toBe(false);
   });
 
-  // 9. Timeout and Authentication Failures
-  test('sendPush handles request timeout and auth 401 error', async () => {
+  // 9. Timeout Aborts Immediately Without Retrying (Preventing Duplicate Notifications)
+  test('sendPush aborts immediately on request timeout without retrying to prevent duplicate delivery', async () => {
     FcmProvider.overrideConfig({
       projectId: 'hiralal-test-project',
       clientEmail: 'fcm-service-account@hiralal-test-project.iam.gserviceaccount.com',
       privateKey: testPrivateKey,
     });
 
-    // 9a: Timeout
+    let timeoutFetchCallCount = 0;
     const mockFetchTimeout = async (url: string | URL | Request): Promise<Response> => {
       const urlStr = url.toString();
       if (urlStr.includes('oauth2.googleapis.com')) {
         return { ok: true, status: 200, json: async () => ({ access_token: 'test_token', expires_in: 3600 }) } as any;
       }
+      timeoutFetchCallCount++;
       const abortErr = new Error('The operation was aborted');
       abortErr.name = 'AbortError';
       throw abortErr;
@@ -506,12 +634,13 @@ describe('Firebase Cloud Messaging (FCM HTTP v1) Provider Hardened Tests', () =>
     const timeoutRes = await FcmProvider.sendPush({
       token: 'timeout_token_test',
       title: 'Timeout',
-      body: 'Should abort cleanly',
+      body: 'Should abort cleanly without retry',
     });
 
     expect(timeoutRes.success).toBe(false);
     expect(timeoutRes.errorCode).toBe('TIMEOUT');
     expect(timeoutRes.error).toContain('timed out');
+    expect(timeoutFetchCallCount).toBe(1); // EXACTLY ONE CALL: No blind retries!
 
     // 9b: Auth 401 failure
     const mockFetch401 = async (url: string | URL | Request): Promise<Response> => {

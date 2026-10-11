@@ -1,4 +1,4 @@
-import { config } from '../../config';
+import { config, isPlaceholderCredential } from '../../config';
 import { prisma } from '../../db';
 import jwt from 'jsonwebtoken';
 
@@ -26,6 +26,79 @@ interface FcmConfigOverride {
 interface TokenCache {
   accessToken: string;
   expiresAt: number;
+}
+
+/**
+ * Parses HTTP Retry-After header supporting both integer seconds and HTTP-date strings.
+ * Bounded by maxDelayMs (default 5000ms) to ensure background workers do not sleep indefinitely.
+ */
+export function parseRetryAfterHeader(header?: string | null, maxDelayMs = 5000): number | null {
+  if (!header || typeof header !== 'string') return null;
+  const trimmed = header.trim();
+  if (!trimmed) return null;
+
+  // 1. Integer seconds (e.g. "5", "120")
+  const numericSec = parseInt(trimmed, 10);
+  if (!isNaN(numericSec) && numericSec >= 0) {
+    return Math.min(numericSec * 1000, maxDelayMs);
+  }
+
+  // 2. HTTP-date format (e.g. RFC 7231 IMF-fixdate)
+  const parsedDate = Date.parse(trimmed);
+  if (!isNaN(parsedDate)) {
+    const diffMs = parsedDate - Date.now();
+    if (diffMs > 0) {
+      return Math.min(diffMs, maxDelayMs);
+    }
+    return 0;
+  }
+
+  return null;
+}
+
+/**
+ * Discriminates genuine invalid/unregistered device token responses from generic payload or server errors.
+ * Never deactivates a device token for bad request payloads, permission errors, or 404 project errors.
+ */
+export function isInvalidRegistrationTokenError(errObj: any, statusCode: number): boolean {
+  if (statusCode === 401 || statusCode === 403 || statusCode >= 500) {
+    return false;
+  }
+
+  const errStatus = typeof errObj?.status === 'string' ? errObj.status : '';
+  const errMsg = typeof errObj?.message === 'string' ? errObj.message.toLowerCase() : '';
+  const details = Array.isArray(errObj?.details) ? errObj.details : [];
+
+  // 1. Explicit UNREGISTERED status or error code
+  const hasUnregisteredCode = details.some((d: any) => d?.errorCode === 'UNREGISTERED');
+  if (errStatus === 'UNREGISTERED' || hasUnregisteredCode) {
+    return true;
+  }
+  if (errMsg.includes('registration-token-not-registered') || errMsg.includes('not registered')) {
+    return true;
+  }
+
+  // 2. INVALID_ARGUMENT: only deactivates if specifically referencing the registration token
+  const hasInvalidArgumentCode = details.some((d: any) => d?.errorCode === 'INVALID_ARGUMENT');
+  const hasTokenFieldViolation = details.some((d: any) => {
+    if (Array.isArray(d?.fieldViolations)) {
+      return d.fieldViolations.some((fv: any) =>
+        typeof fv?.field === 'string' && (fv.field === 'message.token' || fv.field.includes('token'))
+      );
+    }
+    return false;
+  });
+
+  const mentionsSpecificInvalidToken =
+    errMsg.includes('the registration token is not a valid fcm registration token') ||
+    errMsg.includes('invalid registration token') ||
+    errMsg.includes('invalid argument: message.token');
+
+  if (errStatus === 'INVALID_ARGUMENT' || hasInvalidArgumentCode) {
+    return hasTokenFieldViolation || mentionsSpecificInvalidToken;
+  }
+
+  return false;
 }
 
 export class FcmProvider {
@@ -81,10 +154,21 @@ export class FcmProvider {
 
   /**
    * Determine if FCM credentials have been fully provisioned in environment.
+   * Rejects empty strings, partial configurations, and placeholder/example values.
    */
   static isConfigured(): boolean {
     const { projectId, clientEmail, privateKey } = this.getEffectiveConfig();
-    return Boolean(projectId && clientEmail && privateKey);
+    if (!projectId || !clientEmail || !privateKey) return false;
+    if (
+      isPlaceholderCredential(projectId) ||
+      isPlaceholderCredential(clientEmail) ||
+      isPlaceholderCredential(privateKey)
+    ) {
+      return false;
+    }
+    if (!clientEmail.includes('@')) return false;
+    if (!privateKey.includes('PRIVATE KEY')) return false;
+    return true;
   }
 
   /**
@@ -268,28 +352,19 @@ export class FcmProvider {
         const errStatus = errObj.status || '';
         const errMsg = errObj.message || `FCM HTTP Error ${statusCode}`;
 
-        // Deactivate token ONLY when the response specifically identifies an unregistered or invalid token.
-        // DO NOT deactivate solely because statusCode is 404 (which could be an invalid project or URL).
-        const isUnregistered =
-          (Array.isArray(errObj.details) &&
-            errObj.details.some(
-              (d: any) => d.errorCode === 'UNREGISTERED' || d.errorCode === 'INVALID_ARGUMENT'
-            )) ||
-          errStatus === 'UNREGISTERED' ||
-          (typeof errMsg === 'string' &&
-            (errMsg.includes('registration-token-not-registered') ||
-              errMsg.toLowerCase().includes('not registered') ||
-              errMsg.toLowerCase().includes('invalid registration token')));
+        // Deactivate token ONLY when the response reliably identifies an unregistered or invalid registration token.
+        // DO NOT deactivate for general payload defects, project errors (404), or auth failures (401/403).
+        const isInvalidToken = isInvalidRegistrationTokenError(errObj, statusCode);
 
-        if (isUnregistered) {
-          // Deactivate token in database to prevent future failed deliveries
+        if (isInvalidToken) {
+          // Deactivate token in database (PushDeviceToken.isActive = false) to prevent future failed deliveries
           try {
             await prisma.pushDeviceToken.updateMany({
               where: { token: cleanToken },
               data: { isActive: false },
             });
           } catch (dbErr: any) {
-            console.warn(`[FCM-PROVIDER] Failed to deactivate unregistered token: ${dbErr?.message}`);
+            console.warn(`[FCM-PROVIDER] Failed to deactivate invalid registration token: ${dbErr?.message}`);
           }
 
           return {
@@ -310,11 +385,9 @@ export class FcmProvider {
         if ((statusCode === 429 || statusCode >= 500) && attempt < maxAttempts) {
           let delayMs = Math.min(500 * Math.pow(2, attempt - 1), 3000);
           const retryAfterHeader = response.headers?.get?.('retry-after') || response.headers?.get?.('Retry-After');
-          if (retryAfterHeader) {
-            const parsedSec = parseInt(retryAfterHeader, 10);
-            if (!isNaN(parsedSec) && parsedSec > 0) {
-              delayMs = Math.min(parsedSec * 1000, 5000);
-            }
+          const parsedDelay = parseRetryAfterHeader(retryAfterHeader, 5000);
+          if (parsedDelay !== null) {
+            delayMs = parsedDelay;
           }
           await new Promise((r) => setTimeout(r, delayMs));
           continue;
@@ -330,7 +403,7 @@ export class FcmProvider {
         if (err.name === 'AbortError') {
           return {
             success: false,
-            error: 'FCM push request timed out after 10000ms.',
+            error: 'FCM push request timed out after 10000ms. Aborted immediately without retry to prevent duplicate notification delivery.',
             errorCode: 'TIMEOUT',
             skipped: false,
           };
