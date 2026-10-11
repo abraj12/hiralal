@@ -30,6 +30,14 @@ export class BillService {
       throw new Error('User not found.');
     }
 
+    if (user.role !== 'USER') {
+      throw new Error('Only registered users can submit bills for rewards.');
+    }
+
+    if (user.status !== 'ACTIVE') {
+      throw new Error('User account is suspended or inactive.');
+    }
+
     if (data.billAmount <= 0) {
       throw new Error('Bill amount must be greater than zero.');
     }
@@ -292,6 +300,9 @@ export class BillService {
       });
 
       if (!bill) throw new Error('Bill not found.');
+      if (bill.userId === adminId) {
+        throw new Error('Administrators cannot approve bills submitted under their own account.');
+      }
       if (bill.status === 'APPROVED') {
         throw new Error('This bill has already been approved.');
       }
@@ -343,6 +354,9 @@ export class BillService {
 
       // 4. Final reward calculation strictly rule-based
       const finalReward = RewardService.calculateReward(gstCalc.eligibleRewardAmount, rulePercentage);
+
+      // 4b. Atomically claim from global monthly combined reward pool (₹50,000 hard ceiling)
+      await RewardService.claimGlobalMonthlyPoolAmount(tx, finalReward);
 
       // 5. Ensure wallet exists and credit atomically
       let wallet = await tx.wallet.findUnique({

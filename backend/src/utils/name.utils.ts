@@ -204,3 +204,5 @@ export function compareNames(accountName: string, panVerifiedName: string): bool
 
   return false;
 }
+
+export const areNamesMatching = compareNames;

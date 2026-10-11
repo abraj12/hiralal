@@ -29,6 +29,11 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
       update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
       create: { profession: 'PLUMBER', year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
     });
+    await prisma.globalRewardPool.upsert({
+      where: { global_pool_year_month_unique: { year, month } },
+      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+    });
 
     // Provision admin user for audit log foreign keys
     const admin = await prisma.user.upsert({
@@ -289,5 +294,15 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
       expect(reversalTx).not.toBeNull();
       expect(Number(reversalTx?.amount)).toBe(initialAvailable);
     });
+  });
+
+  afterAll(async () => {
+    const { year, month } = getIstYearAndMonth();
+    await prisma.globalRewardPool.upsert({
+      where: { global_pool_year_month_unique: { year, month } },
+      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+    });
+    await prisma.$disconnect();
   });
 });

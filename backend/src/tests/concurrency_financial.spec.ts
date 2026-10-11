@@ -16,8 +16,14 @@ describe('Concurrency & Financial Integrity Tests', () => {
     await prisma.bill.deleteMany({ where: { user: { mobile: '9777777777' } } });
     await prisma.kycRecord.deleteMany({ where: { user: { mobile: '9777777777' } } });
     await prisma.paymentAccount.deleteMany({ where: { user: { mobile: '9777777777' } } });
-    await prisma.wallet.deleteMany({ where: { user: { mobile: '9777777777' } } });
     await prisma.user.deleteMany({ where: { mobile: '9777777777' } });
+
+    const { year, month } = getIstYearAndMonth();
+    await prisma.globalRewardPool.upsert({
+      where: { global_pool_year_month_unique: { year, month } },
+      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+    });
 
     // Create Craftsman
     craftsmanUser = await prisma.user.create({
@@ -84,6 +90,13 @@ describe('Concurrency & Financial Integrity Tests', () => {
     await prisma.walletTransaction.deleteMany({ where: { userId: craftsmanUser.id } });
     await prisma.wallet.deleteMany({ where: { userId: craftsmanUser.id } });
     await prisma.user.deleteMany({ where: { id: craftsmanUser.id } });
+
+    const { year, month } = getIstYearAndMonth();
+    await prisma.globalRewardPool.upsert({
+      where: { global_pool_year_month_unique: { year, month } },
+      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+    });
   });
 
   test('1. Parallel Bill Approvals: All concurrent valid bill approvals are credited reliably without pool restriction', async () => {

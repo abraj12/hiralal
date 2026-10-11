@@ -21,6 +21,18 @@ async function main() {
 
   try {
     // 1. Provision Bill Review Administrator (BILL_ADMIN)
+    if (process.env.NODE_ENV === 'production') {
+      if (!process.env.BILL_ADMIN_MOBILE) {
+        throw new Error('BILL_ADMIN_MOBILE is required in production.');
+      }
+      if (process.env.BILL_ADMIN_MOBILE.replace(/\D/g, '').slice(-10) === '9999999991') {
+        throw new Error('Default mobile 9999999991 is not permitted for BILL_ADMIN in production.');
+      }
+      if (!process.env.BILL_ADMIN_INITIAL_PASSWORD && !process.env.ADMIN_INITIAL_PASSWORD) {
+        throw new Error('BILL_ADMIN_INITIAL_PASSWORD is required to provision Bill Admin in production.');
+      }
+    }
+
     const billAdminMobile = process.env.BILL_ADMIN_MOBILE || '9999999991';
     const billAdminPassword =
       process.env.BILL_ADMIN_INITIAL_PASSWORD ||
@@ -54,6 +66,18 @@ async function main() {
     }
 
     // 2. Provision Operations Administrator (OPERATIONS_ADMIN)
+    if (process.env.NODE_ENV === 'production') {
+      if (!process.env.OPERATIONS_ADMIN_MOBILE) {
+        throw new Error('OPERATIONS_ADMIN_MOBILE is required in production.');
+      }
+      if (process.env.OPERATIONS_ADMIN_MOBILE.replace(/\D/g, '').slice(-10) === '9999999992') {
+        throw new Error('Default mobile 9999999992 is not permitted for OPERATIONS_ADMIN in production.');
+      }
+      if (!process.env.OPERATIONS_ADMIN_INITIAL_PASSWORD && !process.env.ADMIN_INITIAL_PASSWORD) {
+        throw new Error('OPERATIONS_ADMIN_INITIAL_PASSWORD is required to provision Operations Admin in production.');
+      }
+    }
+
     const opsAdminMobile = process.env.OPERATIONS_ADMIN_MOBILE || '9999999992';
     const opsAdminPassword =
       process.env.OPERATIONS_ADMIN_INITIAL_PASSWORD ||
@@ -129,6 +153,25 @@ async function main() {
       },
     });
     console.log('✅ Monthly reward pools provisioned: ₹50,000 Plumbers, ₹50,000 Tile Installers');
+
+    // 2b. Provision Global Combined Reward Pool (₹50,000 combined ceiling)
+    await prisma.globalRewardPool.upsert({
+      where: {
+        global_pool_year_month_unique: {
+          year,
+          month,
+        },
+      },
+      update: {},
+      create: {
+        year,
+        month,
+        totalPoolCap: 50000.0,
+        usedAmount: 0.0,
+        isCapped: false,
+      },
+    });
+    console.log('✅ Global monthly reward pool provisioned: ₹50,000 combined ceiling');
 
     // 3. Provision Reward Rules for Plumber & Tile Installer
     const existingRules = await prisma.rewardRule.findMany();

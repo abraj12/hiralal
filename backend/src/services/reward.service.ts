@@ -111,6 +111,106 @@ export class RewardService {
   }
 
   /**
+   * Retrieves or atomically initializes current month's GlobalRewardPool record in PostgreSQL
+   * enforcing the ₹50,000 monthly combined ceiling across plumbers and tile workers combined in Asia/Kolkata.
+   */
+  static async getCurrentMonthGlobalPool(tx: any = prisma) {
+    const { year, month } = getIstYearAndMonth();
+
+    const existing = await tx.globalRewardPool.findUnique({
+      where: {
+        global_pool_year_month_unique: { year, month },
+      },
+    });
+
+    if (existing) return existing;
+
+    return await tx.globalRewardPool.upsert({
+      where: {
+        global_pool_year_month_unique: { year, month },
+      },
+      update: {},
+      create: {
+        year,
+        month,
+        totalPoolCap: 50000.0,
+        usedAmount: 0.0,
+        isCapped: false,
+      },
+    });
+  }
+
+  /**
+   * Atomically checks global pool headroom against the configured monthly combined ceiling.
+   */
+  static async checkGlobalPoolAvailability(rewardAmount: number = 0): Promise<{ available: boolean; remaining: number }> {
+    const pool = await this.getCurrentMonthGlobalPool();
+    const used = Number(pool.usedAmount);
+    const cap = Number(pool.totalPoolCap);
+    const remaining = Math.max(0, cap - used);
+
+    if (pool.isCapped || used + rewardAmount > cap) {
+      return { available: false, remaining };
+    }
+
+    return { available: true, remaining };
+  }
+
+  /**
+   * Atomically claims amount from the global monthly combined reward pool within a database transaction.
+   * Both plumbers and tile workers draw down this single budget.
+   * Uses atomic conditional SQL update to ensure strict concurrency protection.
+   */
+  static async claimGlobalMonthlyPoolAmount(tx: any, rewardAmount: number) {
+    const pool = await this.getCurrentMonthGlobalPool(tx);
+    const cap = Number(pool.totalPoolCap);
+
+    // Atomic conditional SQL update: only succeeds if usedAmount + rewardAmount <= totalPoolCap
+    const result: any[] = await tx.$queryRaw`
+      UPDATE "GlobalRewardPool"
+      SET "usedAmount" = "usedAmount" + ${rewardAmount}::decimal,
+          "isCapped" = ("usedAmount" + ${rewardAmount}::decimal >= "totalPoolCap"),
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${pool.id}
+        AND ("usedAmount" + ${rewardAmount}::decimal) <= "totalPoolCap"
+      RETURNING *;
+    `;
+
+    if (!result || result.length === 0) {
+      const current = await tx.globalRewardPool.findUnique({ where: { id: pool.id } });
+      const currentUsed = current ? Number(current.usedAmount) : cap;
+      const remaining = Math.max(0, cap - currentUsed);
+
+      throw new Error(
+        `Monthly combined rewards pool ceiling of ₹${cap.toLocaleString('en-IN')} reached. Available headroom: ₹${remaining.toFixed(2)}. Approval rejected.`
+      );
+    }
+
+    return result[0];
+  }
+
+  /**
+   * Retrieves global pool analytics for current month.
+   */
+  static async getGlobalPoolAnalytics() {
+    const pool = await this.getCurrentMonthGlobalPool();
+    const totalCap = Number(pool.totalPoolCap);
+    const used = Number(pool.usedAmount);
+    const remaining = Math.max(0, totalCap - used);
+    const percentageUsed = totalCap > 0 ? (used / totalCap) * 100 : 0;
+
+    return {
+      year: pool.year,
+      month: pool.month,
+      totalPoolCap: totalCap,
+      usedAmount: used,
+      remainingAmount: remaining,
+      percentageUsed: Math.round(percentageUsed * 100) / 100,
+      isCapped: pool.isCapped,
+    };
+  }
+
+  /**
    * Retrieves active reward rule for a given profession from database configuration.
    */
   static async getRewardRule(profession: Profession = 'PLUMBER', tx: any = prisma) {

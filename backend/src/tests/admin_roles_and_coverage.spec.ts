@@ -752,7 +752,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       // Set nameMatched = true
       await prisma.kycRecord.updateMany({
         where: { userId: regularUserId },
-        data: { nameMatched: true },
+        data: { nameMatched: true, panName: 'Ramesh Craftsman' },
       });
 
       // 4. When balance is below minimum
@@ -775,7 +775,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       await prisma.payout.deleteMany({ where: { userId: regularUserId } });
       await prisma.kycRecord.updateMany({
         where: { userId: regularUserId },
-        data: { nameMatched: true, panStatus: 'VERIFIED' },
+        data: { nameMatched: true, panStatus: 'VERIFIED', panName: 'Ramesh Craftsman' },
       });
 
       // Wallet available balance below minimum

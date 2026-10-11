@@ -104,6 +104,12 @@ export class KycService {
     if (!user) {
       throw new Error('User not found.');
     }
+    if (user.role !== 'USER') {
+      throw new Error('Only registered users can complete KYC verification.');
+    }
+    if (user.status !== 'ACTIVE') {
+      throw new Error('User account is suspended or inactive.');
+    }
 
     // 3. Check cross-user uniqueness using keyed blind index
     const panBlindIndex = generateBlindIndex(cleanPan);

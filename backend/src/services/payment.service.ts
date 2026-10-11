@@ -40,6 +40,12 @@ export class PaymentService {
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new Error('User not found.');
+    if (user.role !== 'USER') {
+      throw new Error('Only registered users can link payment accounts.');
+    }
+    if (user.status !== 'ACTIVE') {
+      throw new Error('User account is suspended or inactive.');
+    }
 
     // Prevent cross-user account takeover: ensure UPI is not already verified to another user
     const existingOther = await prisma.paymentAccount.findFirst({
@@ -110,6 +116,7 @@ export class PaymentService {
       }
     }
 
+    const providerRegisteredName = registeredName;
     const maskedInfo = this.maskPaymentInfo('UPI', cleanUpi);
 
     // Save or update account
@@ -126,6 +133,7 @@ export class PaymentService {
           accountType: 'UPI',
           upiId: cleanUpi,
           accountHolderName: registeredName,
+          providerRegisteredName,
           maskedInfo,
           isVerified: isValid,
           verifiedAt: new Date(),
@@ -160,6 +168,12 @@ export class PaymentService {
 
     const user = await prisma.user.findUnique({ where: { id: params.userId } });
     if (!user) throw new Error('User not found.');
+    if (user.role !== 'USER') {
+      throw new Error('Only registered users can link payment accounts.');
+    }
+    if (user.status !== 'ACTIVE') {
+      throw new Error('User account is suspended or inactive.');
+    }
 
     const maskedInfo = this.maskPaymentInfo('BANK_ACCOUNT', cleanAccount, params.bankName);
 
@@ -237,6 +251,7 @@ export class PaymentService {
       }
     }
 
+    const providerRegisteredName = registeredName;
     const encryptedAccount = encryptSensitive(cleanAccount);
 
     return await prisma.$transaction(async (tx) => {
@@ -250,6 +265,7 @@ export class PaymentService {
           userId: params.userId,
           accountType: 'BANK_ACCOUNT',
           accountHolderName: registeredName,
+          providerRegisteredName,
           accountNumber: maskedInfo,
           accountNumberEncrypted: encryptedAccount,
           ifscCode: cleanIfsc,
@@ -275,6 +291,7 @@ export class PaymentService {
       maskedInfo: a.maskedInfo,
       bankName: a.bankName,
       accountHolderName: a.accountHolderName,
+      providerRegisteredName: a.providerRegisteredName,
       isVerified: a.isVerified,
       isDefault: a.isDefault,
       verifiedAt: a.verifiedAt,

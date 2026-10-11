@@ -3,6 +3,7 @@ import { config } from '../config';
 import { PayoutStatus, Profession } from '@prisma/client';
 import { getIstDate } from '../utils/timezone.utils';
 import { toPaise, fromPaise } from '../utils/money.utils';
+import { areNamesMatching } from '../utils/name.utils';
 
 export class PayoutService {
   /**
@@ -74,6 +75,12 @@ export class PayoutService {
     });
 
     if (!user) throw new Error('User not found.');
+    if (user.role !== 'USER') {
+      throw new Error('Only registered users can participate in rewards payouts.');
+    }
+    if (user.status !== 'ACTIVE') {
+      throw new Error('User account is suspended or inactive.');
+    }
 
     const { settings, isWindowOpen } = await this.getRedemptionSettings(user.profession || undefined);
 
@@ -82,6 +89,12 @@ export class PayoutService {
     const verifiedKycRecord = hasVerifiedKyc ? user.kycRecords[0] : null;
     const isNameMatched = Boolean(verifiedKycRecord?.nameMatched || user.isNameLocked);
     const verifiedAccount = user.paymentAccounts[0] || null;
+
+    const panHolderName = verifiedKycRecord?.verifiedName || verifiedKycRecord?.panName || user.fullName || '';
+    const beneficiaryName = verifiedAccount?.providerRegisteredName || verifiedAccount?.accountHolderName || '';
+    const isBeneficiaryMatched = Boolean(
+      verifiedAccount && panHolderName && beneficiaryName && areNamesMatching(beneficiaryName, panHolderName)
+    );
 
     let canRedeem = true;
     let reason = '';
@@ -115,6 +128,9 @@ export class PayoutService {
     } else if (availableBalance < settings.minimumAmount) {
       canRedeem = false;
       reason = `Minimum redemption amount is ₹${settings.minimumAmount}. Your current balance is ₹${availableBalance.toFixed(2)}.`;
+    } else if (!isBeneficiaryMatched) {
+      canRedeem = false;
+      reason = 'Registered payment account beneficiary name does not match verified PAN name.';
     }
 
     return {
@@ -196,6 +212,12 @@ export class PayoutService {
         });
 
         if (!user) throw new Error('User not found.');
+        if (user.role !== 'USER') {
+          throw new Error('Only registered users can request reward payouts.');
+        }
+        if (user.status !== 'ACTIVE') {
+          throw new Error('User account is suspended or inactive.');
+        }
 
         const { settings, isWindowOpen } = await this.getRedemptionSettings(user.profession || undefined, tx);
         if (!isWindowOpen) {
@@ -222,6 +244,12 @@ export class PayoutService {
         }
         if (currentAvailable < settings.minimumAmount) {
           throw new Error(`Minimum redemption amount is ₹${settings.minimumAmount}. Your current balance is ₹${currentAvailable.toFixed(2)}.`);
+        }
+
+        const panHolderName = verifiedKycRecord?.verifiedName || verifiedKycRecord?.panName || user.fullName || '';
+        const beneficiaryName = verifiedAccount.providerRegisteredName || verifiedAccount.accountHolderName || '';
+        if (!beneficiaryName || !areNamesMatching(beneficiaryName, panHolderName)) {
+          throw new Error('Registered payment account beneficiary name does not match verified PAN name.');
         }
 
         // 100% full balance redemption

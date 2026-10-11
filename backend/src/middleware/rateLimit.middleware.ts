@@ -157,7 +157,7 @@ export const loginLimiter = createRateLimiter({
   keyPrefix: 'auth:login',
   limit: config.isProduction ? 15 : 60,
   windowSeconds: config.isProduction ? 900 : 180,
-  getIdentifier: (req) => normalizeIdentifier(req.body?.mobile) || req.ip || 'anon',
+  getIdentifier: (req) => normalizeIdentifier(req.body?.identifier || req.body?.mobile) || req.ip || 'anon',
   message: 'Too many failed login attempts. Please wait a moment before trying again.',
 });
 
@@ -201,6 +201,6 @@ export const adminAccountLoginLimiter = createRateLimiter({
   keyPrefix: 'auth:admin_login_user',
   limit: 5,
   windowSeconds: 900, // 5 attempts per 15 minutes by username/identifier
-  getIdentifier: (req) => req.body?.identifier || req.body?.username || 'anon',
+  getIdentifier: (req) => normalizeIdentifier(req.body?.identifier || req.body?.username) || 'anon',
   message: 'Too many admin login attempts for this account. Please wait 15 minutes.',
 });

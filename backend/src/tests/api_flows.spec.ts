@@ -22,6 +22,11 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
       update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
       create: { profession: 'PLUMBER', year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
     });
+    await prisma.globalRewardPool.upsert({
+      where: { global_pool_year_month_unique: { year, month } },
+      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+    });
 
     await prisma.rewardRule.updateMany({
       where: { profession: 'PLUMBER', isActive: true },

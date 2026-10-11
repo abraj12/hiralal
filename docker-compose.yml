@@ -51,13 +51,20 @@ services:
     image: redis:7-alpine
     container_name: hiralal_redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy noeviction
+    command: >-
+      sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then
+        redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"
+      else
+        redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy noeviction
+      fi'
     deploy:
       resources:
         limits:
           memory: 256M
         reservations:
           memory: 64M
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     expose:
       - '6379'
     volumes:
@@ -65,7 +72,12 @@ services:
     networks:
       - hiralal_net
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test: >-
+        sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then
+          redis-cli -a "$$REDIS_PASSWORD" ping
+        else
+          redis-cli ping
+        fi'
       interval: 5s
       timeout: 3s
       retries: 5
@@ -101,11 +113,16 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
       JWT_ADMIN_ACCESS_SECRET: ${JWT_ADMIN_ACCESS_SECRET:?JWT_ADMIN_ACCESS_SECRET is required}
       BILL_ADMIN_PREFIX: ${BILL_ADMIN_PREFIX:?BILL_ADMIN_PREFIX is required}
       OPERATIONS_ADMIN_PREFIX: ${OPERATIONS_ADMIN_PREFIX:?OPERATIONS_ADMIN_PREFIX is required}
+      BILL_ADMIN_MOBILE: ${BILL_ADMIN_MOBILE:-}
+      OPERATIONS_ADMIN_MOBILE: ${OPERATIONS_ADMIN_MOBILE:-}
+      BILL_ADMIN_INITIAL_PASSWORD: ${BILL_ADMIN_INITIAL_PASSWORD:-}
+      OPERATIONS_ADMIN_INITIAL_PASSWORD: ${OPERATIONS_ADMIN_INITIAL_PASSWORD:-}
       SIGNCARE_BASE_URL: ${SIGNCARE_BASE_URL:-https://api.signcare.in}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
       FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required}
@@ -169,6 +186,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
       FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required}
       RAZORPAYX_KEY_ID: ${RAZORPAYX_KEY_ID:?RAZORPAYX_KEY_ID is required}

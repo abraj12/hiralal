@@ -51,7 +51,7 @@ jobs:
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER || 'ubuntu' }}
-          TARGET_SHA: ${{ github.sha }}
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           echo "Target deployment commit: ${TARGET_SHA}"
 
@@ -67,17 +67,21 @@ jobs:
             cd "${APP_DIR}"
             echo "Working directory: $(pwd)"
             
-            # Fetch and fast-forward latest release on main
-            git fetch origin main
-            git reset --hard origin/main
+            # Fetch origin and checkout the exact verified release commit
+            git fetch origin
+            git checkout "${TARGET_SHA}"
             
             DEPLOYED_SHA=$(git rev-parse HEAD)
             echo "Successfully checked out release commit: ${DEPLOYED_SHA}"
+            if [ "${DEPLOYED_SHA}" != "${TARGET_SHA}" ]; then
+              echo "[FATAL ERROR] Release drift detected: Deployed SHA ${DEPLOYED_SHA} != Target SHA ${TARGET_SHA}" >&2
+              exit 1
+            fi
             
-            # Verify origin SSL certificates
+            # Verify origin SSL certificates (strict TLS verification - fail closed)
             if [ -f scripts/verify-nginx-ssl.sh ]; then
               chmod +x scripts/*.sh
-              ./scripts/verify-nginx-ssl.sh ./nginx/ssl || true
+              ./scripts/verify-nginx-ssl.sh ./nginx/ssl
             fi
             
             # Build and deploy multi-container stack

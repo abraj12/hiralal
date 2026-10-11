@@ -5,15 +5,17 @@ import path from 'path';
 import { prisma } from '../db';
 // @ts-ignore
 const { uploadAndVerifyBackup } = require('../../../scripts/upload-backup');
+// @ts-ignore
+const { encryptBackupGcm, decryptBackup, GCM_MAGIC, OPENSSL_MAGIC } = require('../../../scripts/crypto-backup');
 
 describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Financial Integrity', () => {
   const PASSPHRASE = 'HiralalTestBackupSecretKey2026!#$';
   const WRONG_PASSPHRASE = 'WrongSecretKeyInvalid123';
 
   /**
-   * Helper: Encrypt buffer with AES-256-CBC using PBKDF2 (identical to OpenSSL enc -aes-256-cbc -pbkdf2 -salt)
+   * Helper: Encrypt buffer with legacy OpenSSL AES-256-CBC using PBKDF2 for backward compatibility testing
    */
-  function encryptBackup(data: Buffer, pass: string): Buffer {
+  function encryptLegacyCbcBackup(data: Buffer, pass: string): Buffer {
     const salt = crypto.randomBytes(8);
     const keyAndIv = crypto.pbkdf2Sync(pass, salt, 10000, 48, 'sha256');
     const key = keyAndIv.subarray(0, 32);
@@ -22,32 +24,11 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
     const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
     const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
 
-    // OpenSSL header format: "Salted__" (8 bytes) + salt (8 bytes) + ciphertext
     return Buffer.concat([Buffer.from('Salted__', 'utf8'), salt, encrypted]);
   }
 
-  /**
-   * Helper: Decrypt buffer with AES-256-CBC using PBKDF2 (identical to OpenSSL enc -d -aes-256-cbc -pbkdf2)
-   */
-  function decryptBackup(encryptedPackage: Buffer, pass: string): Buffer {
-    const magic = encryptedPackage.subarray(0, 8).toString('utf8');
-    if (magic !== 'Salted__') {
-      throw new Error('Invalid OpenSSL encrypted header');
-    }
-
-    const salt = encryptedPackage.subarray(8, 16);
-    const ciphertext = encryptedPackage.subarray(16);
-
-    const keyAndIv = crypto.pbkdf2Sync(pass, salt, 10000, 48, 'sha256');
-    const key = keyAndIv.subarray(0, 32);
-    const iv = keyAndIv.subarray(32, 48);
-
-    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-    return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  }
-
   describe('1. Backup Cryptographic Pipeline', () => {
-    it('verifies SQL dump compression, encryption, decryption, and decompression pipeline', async () => {
+    it('verifies SQL dump compression, authenticated AES-256-GCM encryption, decryption, and decompression pipeline', async () => {
       const sampleSqlDump = `
         -- Hiralal & Sons Production Database Dump
         CREATE TABLE IF NOT EXISTS "User" (id TEXT PRIMARY KEY, mobile TEXT UNIQUE, "fullName" TEXT);
@@ -58,12 +39,21 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
       `;
 
       const compressedDump = zlib.gzipSync(Buffer.from(sampleSqlDump, 'utf8'));
-      const encryptedBackup = encryptBackup(compressedDump, PASSPHRASE);
-      expect(encryptedBackup.subarray(0, 8).toString('utf8')).toBe('Salted__');
+
+      // Encrypt with real AES-256-GCM authenticated utility
+      const encryptedBackup = encryptBackupGcm(compressedDump, PASSPHRASE);
+      expect(encryptedBackup.subarray(0, 7).equals(GCM_MAGIC)).toBe(true);
 
       // Decrypting with wrong passphrase MUST fail
       expect(() => {
         decryptBackup(encryptedBackup, WRONG_PASSPHRASE);
+      }).toThrow();
+
+      // Tampering with ciphertext MUST fail due to GCM authentication tag mismatch
+      const tamperedBackup = Buffer.from(encryptedBackup);
+      tamperedBackup[tamperedBackup.length - 1] ^= 0xff;
+      expect(() => {
+        decryptBackup(tamperedBackup, PASSPHRASE);
       }).toThrow();
 
       // Decrypt with correct passphrase
@@ -73,6 +63,18 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
       expect(restoredSql).toBe(sampleSqlDump);
       expect(restoredSql).toContain('Hiralal Master Plumber');
       expect(restoredSql).toContain('5420.50');
+    });
+
+    it('verifies backward compatibility with legacy OpenSSL AES-256-CBC encrypted backups', async () => {
+      const testContent = 'Legacy SQL Dump content from earlier backup 2026';
+      const legacyCompressed = zlib.gzipSync(Buffer.from(testContent, 'utf8'));
+      const legacyEncrypted = encryptLegacyCbcBackup(legacyCompressed, PASSPHRASE);
+
+      expect(legacyEncrypted.subarray(0, 8).equals(OPENSSL_MAGIC)).toBe(true);
+
+      const decrypted = decryptBackup(legacyEncrypted, PASSPHRASE);
+      const decompressed = zlib.gunzipSync(decrypted).toString('utf8');
+      expect(decompressed).toBe(testContent);
     });
   });
 

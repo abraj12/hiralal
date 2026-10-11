@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
+import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { PayoutService } from '../services/payout.service';
 import { payoutRedeemLimiter } from '../middleware/rateLimit.middleware';
 import { prisma } from '../db';
@@ -9,7 +9,7 @@ const router = Router();
 /**
  * Check user redemption eligibility and active window status
  */
-router.get('/eligibility', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/eligibility', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const eligibility = await PayoutService.checkUserEligibility(user.id);
@@ -24,7 +24,7 @@ router.get('/eligibility', authenticate, async (req: AuthenticatedRequest, res: 
  * Enforces 100% full-balance redemption computed from database available balance.
  * Awaiting admin approval before dispatch.
  */
-router.post('/redeem', authenticate, payoutRedeemLimiter, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/redeem', authenticate, requireUser, payoutRedeemLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const idempotencyRaw: unknown = req.body?.idempotencyKey;
@@ -58,7 +58,7 @@ router.post('/redeem', authenticate, payoutRedeemLimiter, async (req: Authentica
 /**
  * Get user payout disbursement history
  */
-router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const payouts = await prisma.payout.findMany({

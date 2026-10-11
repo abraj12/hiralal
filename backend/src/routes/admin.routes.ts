@@ -74,6 +74,7 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
     const totalRedeemed = Number(redeemedBills._sum.amount || 0);
 
     const pool = await RewardService.getPoolAnalytics(filterProfession);
+    const globalPool = await RewardService.getGlobalPoolAnalytics();
 
     // 10 most recent bills
     const recentBills = await prisma.bill.findMany({
@@ -100,6 +101,7 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
         successfulPayouts,
         totalRedeemed,
         pool,
+        globalPool,
       },
       recentBills: recentBills.map((b) => ({
         ...b,

@@ -1,10 +1,10 @@
 import { Router, Response } from 'express';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
+import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { PaymentService } from '../services/payment.service';
 
 const router = Router();
 
-router.post('/upi/verify', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/upi/verify', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const { upiId, accountHolderName } = req.body;
@@ -31,7 +31,7 @@ router.post('/upi/verify', authenticate, async (req: AuthenticatedRequest, res: 
   }
 });
 
-router.post('/bank/verify', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/bank/verify', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const { accountHolderName, accountNumber, ifscCode, bankName } = req.body;
@@ -68,7 +68,7 @@ router.post('/bank/verify', authenticate, async (req: AuthenticatedRequest, res:
   }
 });
 
-router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const accounts = await PaymentService.getUserAccounts(user.id);

@@ -143,6 +143,12 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
 
     // Reset current month pools for both professions
     const { year, month } = getIstYearAndMonth();
+    await prisma.globalRewardPool.upsert({
+      where: { global_pool_year_month_unique: { year, month } },
+      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+    });
+
     await prisma.rewardPool.upsert({
       where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
       update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
@@ -185,6 +191,13 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
         effectiveFrom: new Date('2020-01-01'),
         isActive: true,
       },
+    });
+
+    const { year, month } = getIstYearAndMonth();
+    await prisma.globalRewardPool.upsert({
+      where: { global_pool_year_month_unique: { year, month } },
+      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
     });
 
     await prisma.$disconnect();

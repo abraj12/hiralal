@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { AuthService, normalizeStrictIndianMobile } from '../services/auth.service';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
+import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import {
   otpRequestLimiter,
   otpVerifyLimiter,
@@ -415,7 +415,7 @@ router.post(
 // 6. CURRENT USER PROFILE (/me) & NAME EDIT
 // ==========================================
 
-router.put('/profile/name', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/profile/name', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const { firstName, middleName, lastName, fullName } = req.body;
@@ -427,7 +427,7 @@ router.put('/profile/name', authenticate, async (req: AuthenticatedRequest, res:
   }
 });
 
-router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/me', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const freshUser = await prisma.user.findUnique({
@@ -473,7 +473,7 @@ router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response)
   }
 });
 
-router.patch('/me', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+router.patch('/me', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const { fullName, profession } = req.body;

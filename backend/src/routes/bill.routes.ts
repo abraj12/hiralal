@@ -3,7 +3,7 @@ import multer from 'multer';
 import fs from 'fs';
 import { BillService } from '../services/bill.service';
 import { StorageService } from '../services/storage.service';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
+import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { BillStatus } from '@prisma/client';
 
 const router = Router();
@@ -21,7 +21,7 @@ const upload = multer({
 /**
  * Upload Bill Invoice
  */
-router.post('/', authenticate, upload.single('invoiceFile'), async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', authenticate, requireUser, upload.single('invoiceFile'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const { invoiceNumber, invoiceDate, billAmount, remarks } = req.body;
@@ -172,7 +172,7 @@ router.post('/', authenticate, upload.single('invoiceFile'), async (req: Authent
 /**
  * Get User's bills
  */
-router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const statusQuery = req.query.status as string;

@@ -224,6 +224,20 @@ model RewardPool {
   @@index([profession, year, month])
 }
 
+model GlobalRewardPool {
+  id           String   @id @default(uuid())
+  year         Int
+  month        Int
+  totalPoolCap Decimal  @default(50000.00) @db.Decimal(12, 2)
+  usedAmount   Decimal  @default(0.00) @db.Decimal(12, 2)
+  isCapped     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([year, month], name: "global_pool_year_month_unique")
+  @@index([year, month])
+}
+
 model RewardRule {
   id                  String      @id @default(uuid())
   profession          Profession  @default(PLUMBER)
@@ -310,6 +324,7 @@ model PaymentAccount {
   accountType            PaymentType
   upiId                  String?
   accountHolderName      String?
+  providerRegisteredName String?
   accountNumber          String?
   accountNumberEncrypted String?
   ifscCode               String?
