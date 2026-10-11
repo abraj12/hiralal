@@ -146,4 +146,66 @@ describe('Storage Magic-Byte Security & KYC Provider Validation Tests', () => {
       ).rejects.toThrow(/already verified with another user/i);
     });
   });
+
+  describe('Storage Signed URL HMAC Integrity & Fail-Closed Security', () => {
+    test('1. Generates and verifies valid HMAC signed URL', () => {
+      const fileKey = 'invoices/user1/test-invoice-1234.pdf';
+      const signedUrl = StorageService.generateSignedUrl(fileKey, 30);
+      expect(signedUrl).toContain('key=');
+      expect(signedUrl).toContain('expires=');
+      expect(signedUrl).toContain('sig=');
+
+      const params = new URLSearchParams(signedUrl.split('?')[1]);
+      const key = params.get('key')!;
+      const expires = parseInt(params.get('expires')!, 10);
+      const sig = params.get('sig')!;
+
+      expect(StorageService.verifySignedUrl(key, expires, sig)).toBe(true);
+    });
+
+    test('2. Rejects tampered file key or signature', () => {
+      const fileKey = 'invoices/user1/test-invoice-1234.pdf';
+      const signedUrl = StorageService.generateSignedUrl(fileKey, 30);
+      const params = new URLSearchParams(signedUrl.split('?')[1]);
+      const key = params.get('key')!;
+      const expires = parseInt(params.get('expires')!, 10);
+      const sig = params.get('sig')!;
+
+      // Tampered signature
+      expect(StorageService.verifySignedUrl(key, expires, 'deadbeef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab')).toBe(false);
+
+      // Tampered file key
+      expect(StorageService.verifySignedUrl('invoices/user2/other-invoice.pdf', expires, sig)).toBe(false);
+
+      // Path traversal attack rejected
+      expect(StorageService.verifySignedUrl('../../../etc/passwd', expires, sig)).toBe(false);
+      expect(StorageService.verifySignedUrl('/etc/passwd', expires, sig)).toBe(false);
+    });
+
+    test('3. Rejects expired signed URLs', () => {
+      const fileKey = 'invoices/user1/test-invoice-1234.pdf';
+      // -10 minutes expired
+      const expiredUrl = StorageService.generateSignedUrl(fileKey, -10);
+      const params = new URLSearchParams(expiredUrl.split('?')[1]);
+      const key = params.get('key')!;
+      const expires = parseInt(params.get('expires')!, 10);
+      const sig = params.get('sig')!;
+
+      expect(StorageService.verifySignedUrl(key, expires, sig)).toBe(false);
+    });
+
+    test('4. Fails closed if secret is missing or shorter than 32 chars', () => {
+      const origMethod = (StorageService as any).getStorageHmacSecret;
+      try {
+        const fileKey = 'invoices/user1/test-invoice-1234.pdf';
+        (StorageService as any).getStorageHmacSecret = () => {
+          throw new Error('STORAGE_HMAC_SECRET is unconfigured or shorter than 32 characters');
+        };
+        expect(() => StorageService.generateSignedUrl(fileKey, 30)).toThrow(/STORAGE_HMAC_SECRET/);
+        expect(StorageService.verifySignedUrl(fileKey, Math.floor(Date.now() / 1000) + 300, 'sig')).toBe(false);
+      } finally {
+        (StorageService as any).getStorageHmacSecret = origMethod;
+      }
+    });
+  });
 });

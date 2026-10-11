@@ -240,7 +240,7 @@ export class BillService {
    * 2. Resolves applicable active RewardRule for that profession and invoice date.
    * 3. Calculates GST and tax-exclusive eligible reward amount.
    * 4. Calculates final reward.
-   * 5. Atomically claims from profession-specific monthly pool.
+   * 5. Pool-free direct cashback reward model (no monthly or global pool caps).
    * 6. Atomically credits wallet with double-entry ledger entry.
    * 7. Stores complete immutable financial calculation snapshot on the Bill.
    * 8. Records comprehensive audit log.
@@ -358,14 +358,39 @@ export class BillService {
           }
         }
       } else if (isGstIncluded) {
-        if (typeof options?.gstRate === 'number' && options.gstRate >= 0 && options?.gstOverrideReason) {
-          effectiveGstRate = options.gstRate;
+        const hasManualOverrideRate =
+          typeof options?.gstRate === 'number' &&
+          Number.isFinite(options.gstRate) &&
+          options.gstRate >= 0 &&
+          options.gstRate <= 100;
+        const trimmedReason =
+          typeof options?.gstOverrideReason === 'string'
+            ? options.gstOverrideReason.trim()
+            : '';
+
+        if (hasManualOverrideRate && trimmedReason.length > 0) {
+          effectiveGstRate = options!.gstRate!;
+          selectedGstRuleId = null;
+
+          await tx.auditLog.create({
+            data: {
+              adminId,
+              action: 'BILL_GST_MANUAL_OVERRIDE',
+              entityType: 'Bill',
+              entityId: bill.id,
+              newValue: JSON.stringify({
+                billId: bill.id,
+                invoiceDate: bill.invoiceDate,
+                manualGstRate: effectiveGstRate,
+                gstOverrideReason: trimmedReason,
+                grossAmount: gross,
+              }),
+            },
+          });
         } else {
-          const defaultGst = await GstService.getDefaultGstRule(tx);
-          if (defaultGst) {
-            effectiveGstRate = Number(defaultGst.ratePercentage);
-            selectedGstRuleId = defaultGst.id;
-          }
+          throw new Error(
+            'A valid applicable GST rule or deliberate manual override with reason is required for GST-included bills.'
+          );
         }
       }
 

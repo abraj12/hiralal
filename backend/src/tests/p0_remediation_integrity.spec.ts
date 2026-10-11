@@ -210,6 +210,96 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
     });
   });
 
+  describe('1b. GstService.getApplicableGstRules Invoice Date Boundary Integrity', () => {
+    let exactBoundaryRule: any;
+    let expiredBoundaryRule: any;
+    let futureRule: any;
+    let inactiveRule: any;
+
+    beforeAll(async () => {
+      exactBoundaryRule = await prisma.gstRule.create({
+        data: {
+          description: 'TEST_EXACT_BOUNDARY_RULE',
+          ratePercentage: 18.0,
+          effectiveFrom: new Date('2026-06-01T00:00:00.000Z'),
+          effectiveUntil: new Date('2026-07-01T00:00:00.000Z'),
+          isActive: true,
+          createdByAdminId: adminUser.id,
+        },
+      });
+
+      expiredBoundaryRule = await prisma.gstRule.create({
+        data: {
+          description: 'TEST_EXPIRED_BOUNDARY_RULE',
+          ratePercentage: 12.0,
+          effectiveFrom: new Date('2026-05-01T00:00:00.000Z'),
+          effectiveUntil: new Date('2026-06-01T00:00:00.000Z'),
+          isActive: true,
+          createdByAdminId: adminUser.id,
+        },
+      });
+
+      futureRule = await prisma.gstRule.create({
+        data: {
+          description: 'TEST_FUTURE_RULE',
+          ratePercentage: 5.0,
+          effectiveFrom: new Date('2026-07-01T00:00:00.000Z'),
+          isActive: true,
+          createdByAdminId: adminUser.id,
+        },
+      });
+
+      inactiveRule = await prisma.gstRule.create({
+        data: {
+          description: 'TEST_INACTIVE_RULE',
+          ratePercentage: 28.0,
+          effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+          isActive: false,
+          createdByAdminId: adminUser.id,
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await prisma.gstRule.deleteMany({
+        where: {
+          id: {
+            in: [
+              exactBoundaryRule.id,
+              expiredBoundaryRule.id,
+              futureRule.id,
+              inactiveRule.id,
+            ],
+          },
+        },
+      });
+    });
+
+    test('includes rule when invoiceDate matches effectiveFrom exactly', async () => {
+      const applicable = await GstService.getApplicableGstRules(new Date('2026-06-01T00:00:00.000Z'));
+      const ids = applicable.map((r) => r.id);
+      expect(ids).toContain(exactBoundaryRule.id);
+    });
+
+    test('excludes rule when invoiceDate matches effectiveUntil exactly (exclusive bound)', async () => {
+      const applicable = await GstService.getApplicableGstRules(new Date('2026-06-01T00:00:00.000Z'));
+      const ids = applicable.map((r) => r.id);
+      expect(ids).not.toContain(expiredBoundaryRule.id);
+    });
+
+    test('excludes future rules whose effectiveFrom is after invoiceDate', async () => {
+      const applicable = await GstService.getApplicableGstRules(new Date('2026-06-15T00:00:00.000Z'));
+      const ids = applicable.map((r) => r.id);
+      expect(ids).not.toContain(futureRule.id);
+    });
+
+    test('excludes rules where isActive is false', async () => {
+      const applicable = await GstService.getApplicableGstRules(new Date('2026-06-15T00:00:00.000Z'));
+      const ids = applicable.map((r) => r.id);
+      expect(ids).not.toContain(inactiveRule.id);
+    });
+  });
+
   describe('2. BillService Fail-Closed on Missing Profession', () => {
     test('2.1 Throws error when approving bill for worker with missing profession', async () => {
       const bill = await BillService.submitBill({
@@ -286,6 +376,73 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.message).toMatch(/A reason is required for a manual GST rate override/i);
+    });
+
+    test('3.3b Manual GST override with valid rate and non-empty reason succeeds and creates BILL_GST_MANUAL_OVERRIDE audit log', async () => {
+      const res = await request(app)
+        .post(`/api/admin/bills/${testBill.id}/verify`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          action: 'APPROVE',
+          gstIncluded: true,
+          gstRate: 12.0,
+          gstOverrideReason: 'Special composite tax scheme applied on invoice',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(Number(res.body.bill.gstRate)).toBe(12.0);
+
+      const auditLog = await prisma.auditLog.findFirst({
+        where: {
+          action: 'BILL_GST_MANUAL_OVERRIDE',
+          entityId: testBill.id,
+        },
+      });
+      expect(auditLog).toBeDefined();
+      expect(auditLog?.adminId).toBe(adminUser.id);
+      const parsedAudit = JSON.parse(auditLog?.newValue || '{}');
+      expect(parsedAudit.gstOverrideReason).toBe('Special composite tax scheme applied on invoice');
+      expect(Number(parsedAudit.manualGstRate)).toBe(12.0);
+    });
+
+    test('3.3c Rejects manual GST override with whitespace-only override reason with 400', async () => {
+      const res = await request(app)
+        .post(`/api/admin/bills/${testBill.id}/verify`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          action: 'APPROVE',
+          gstIncluded: true,
+          gstRate: 12.0,
+          gstOverrideReason: '    ',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/A reason is required for a manual GST rate override/i);
+    });
+
+    test('3.3d Rejects manual GST override with negative or >100 rate with 400', async () => {
+      const resNegative = await request(app)
+        .post(`/api/admin/bills/${testBill.id}/verify`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          action: 'APPROVE',
+          gstIncluded: true,
+          gstRate: -5.0,
+          gstOverrideReason: 'Negative rate test',
+        });
+      expect(resNegative.status).toBe(400);
+
+      const resOver100 = await request(app)
+        .post(`/api/admin/bills/${testBill.id}/verify`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          action: 'APPROVE',
+          gstIncluded: true,
+          gstRate: 120.0,
+          gstOverrideReason: 'Over 100 rate test',
+        });
+      expect(resOver100.status).toBe(400);
     });
 
     test('3.4 Approves with gstIncluded: false and credits reward on full bill amount', async () => {

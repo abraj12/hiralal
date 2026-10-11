@@ -81,14 +81,14 @@
 
 ## 3. SSL / TLS Certificate Setup (Cloudflare Origin CA)
 
-1. In Cloudflare Dashboard, generate an Origin Certificate for `hiralal.co.in` and `*.hiralal.co.in`.
+1. In Cloudflare Dashboard, generate an Origin Certificate for `hiralalandsons.com` and `*.hiralalandsons.com`.
 2. Save certificate files into `nginx/ssl/`:
    ```bash
    mkdir -p nginx/ssl
-   nano nginx/ssl/origin.crt
-   nano nginx/ssl/origin.key
-   chmod 600 nginx/ssl/origin.key
-   chmod 644 nginx/ssl/origin.crt
+   nano nginx/ssl/fullchain.pem
+   nano nginx/ssl/privkey.pem
+   chmod 600 nginx/ssl/privkey.pem
+   chmod 644 nginx/ssl/fullchain.pem
    ```
 3. Run verification script:
    ```bash
@@ -160,30 +160,38 @@
 
 ## 5. Automated Backup & Disaster Recovery Schedule
 
-1. Add daily cron job for encrypted offsite backups at 02:00 IST (20:30 UTC):
+1. Add daily cron job (or systemd timer) for encrypted offsite backups at 02:30 IST (21:00 UTC):
    ```bash
    sudo crontab -e
    ```
-   Add the following entry:
+   Add the following entry (`0 21 * * *`):
    ```cron
-   30 20 * * * /opt/hiralal/scripts/backup-db.sh >> /var/log/hiralal-backup.log 2>&1
+   0 21 * * * /opt/hiralal/scripts/backup-db.sh >> /var/log/hiralal-backup.log 2>&1
+   ```
+   Alternatively, via systemd timer unit (`hiralal-backup.timer`):
+   ```ini
+   [Timer]
+   OnCalendar=*-*-* 21:00:00 UTC
+   Persistent=true
    ```
 
 2. Backup Verification Procedure:
-   - Dumps database cleanly.
-   - Encrypts via Authenticated AES-256-GCM.
-   - Uploads to Cloudflare R2 bucket.
+   - Dumps database cleanly via `pg_dump`.
+   - Encrypts via Authenticated AES-256-GCM (`crypto-backup.js`).
+   - Uploads to Cloudflare R2 bucket (`upload-backup.js`).
    - Reads back remote byte stream and verifies SHA-256 digest against local file before pruning local copies.
 
 3. Disaster Recovery / Database Restoration:
+   Usage: `./scripts/restore-db.sh <path_to_backup.sql.gz.enc> [TARGET_DB_NAME] [--allow-production-overwrite]`
+
    ```bash
-   # Safe test restore into disposable non-production container:
+   # Safe test restore into disposable non-production container (no overwrite flag required):
    export BACKUP_ENCRYPTION_PASSPHRASE="<SECURE_CRYPTO_PASSPHRASE>"
    export DB_CONTAINER="hiralal_test_restore"
    export POSTGRES_USER="postgres"
    ./scripts/restore-db.sh /var/backups/hiralal/hiralal_backup_TEST_TIMESTAMP.sql.gz.enc hiralal_test
 
-   # Authoritative production restore (requires explicit override flag):
+   # Authoritative production restore (targets production db 'hiralal_rewards' and requires explicit overwrite flag):
    export BACKUP_ENCRYPTION_PASSPHRASE="<SECURE_CRYPTO_PASSPHRASE>"
    ./scripts/restore-db.sh /var/backups/hiralal/hiralal_backup_PRODUCTION_TIMESTAMP.sql.gz.enc hiralal_rewards --allow-production-overwrite
    ```

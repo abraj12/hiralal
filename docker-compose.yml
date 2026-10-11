@@ -52,11 +52,7 @@ services:
     container_name: hiralal_redis
     restart: unless-stopped
     command: >-
-      sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then
-        redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"
-      else
-        redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy noeviction
-      fi'
+      sh -c 'redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"'
     deploy:
       resources:
         limits:
@@ -64,7 +60,7 @@ services:
         reservations:
           memory: 64M
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     expose:
       - '6379'
     volumes:
@@ -72,12 +68,9 @@ services:
     networks:
       - hiralal_net
     healthcheck:
-      test: >-
-        sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then
-          redis-cli -a "$$REDIS_PASSWORD" ping
-        else
-          redis-cli ping
-        fi'
+      test:
+        - CMD-SHELL
+        - redis-cli -a "$$REDIS_PASSWORD" ping
       interval: 5s
       timeout: 3s
       retries: 5
@@ -113,7 +106,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
       JWT_ADMIN_ACCESS_SECRET: ${JWT_ADMIN_ACCESS_SECRET:?JWT_ADMIN_ACCESS_SECRET is required}
@@ -186,7 +179,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
       FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required}
       RAZORPAYX_KEY_ID: ${RAZORPAYX_KEY_ID:?RAZORPAYX_KEY_ID is required}

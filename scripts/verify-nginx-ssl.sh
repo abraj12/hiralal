@@ -85,9 +85,19 @@ if command -v stat >/dev/null 2>&1; then
     fi
   fi
 fi
-echo "✅ [CHECK 2/5] Private key permissions validated."
+echo "✅ [CHECK 2/6] Private key permissions validated."
 
-# 4. Verify Certificate is not expired (and valid for at least 24 hours / 86400s)
+# 4. Verify Private Key cryptographic integrity
+if command -v openssl >/dev/null 2>&1; then
+  if ! openssl rsa -in "${KEY_FILE}" -check -noout >/dev/null 2>&1 && ! openssl pkey -in "${KEY_FILE}" -noout >/dev/null 2>&1; then
+    echo "❌ [ERROR] SSL Private Key is invalid or corrupted: ${KEY_FILE}" >&2
+    print_cloudflare_instructions
+    exit 1
+  fi
+  echo "✅ [CHECK 3/6] Private key cryptographic integrity verified."
+fi
+
+# 5. Verify Certificate is not expired (and valid for at least 24 hours / 86400s)
 if command -v openssl >/dev/null 2>&1; then
   if ! openssl x509 -checkend 86400 -noout -in "${CERT_FILE}" >/dev/null 2>&1; then
     echo "❌ [ERROR] SSL Certificate has expired or expires within 24 hours!" >&2
@@ -96,34 +106,53 @@ if command -v openssl >/dev/null 2>&1; then
     exit 1
   fi
   EXP_DATE=$(openssl x509 -enddate -noout -in "${CERT_FILE}" | cut -d= -f2)
-  echo "✅ [CHECK 3/5] Certificate validity verified. Expiration date: ${EXP_DATE}"
-else
-  echo "⚠️ [WARN] openssl binary not found in PATH; skipping cryptographic expiration verification."
+  echo "✅ [CHECK 4/6] Certificate validity verified. Expiration date: ${EXP_DATE}"
 fi
 
-# 5. Verify Domain Match (CN or SAN matches hiralalandsons.com or *.hiralalandsons.com)
+# 6. Verify Certificate and Private Key match
+if command -v openssl >/dev/null 2>&1; then
+  CERT_MOD=$(openssl x509 -noout -modulus -in "${CERT_FILE}" 2>/dev/null | openssl md5 2>/dev/null || true)
+  KEY_MOD=$(openssl rsa -noout -modulus -in "${KEY_FILE}" 2>/dev/null | openssl md5 2>/dev/null || openssl pkey -noout -modulus -in "${KEY_FILE}" 2>/dev/null | openssl md5 2>/dev/null || true)
+  
+  if [ -n "${CERT_MOD}" ] && [ -n "${KEY_MOD}" ] && [ "${CERT_MOD}" != "${KEY_MOD}" ]; then
+    echo "❌ [ERROR] SSL Certificate and Private Key do NOT match!" >&2
+    print_cloudflare_instructions
+    exit 1
+  fi
+  echo "✅ [CHECK 5/6] Certificate and Private Key pair match verified."
+fi
+
+# 7. Verify Domain Match (CN or SAN matches hiralalandsons.com or *.hiralalandsons.com)
+STRICT_DOMAIN_CHECK="${STRICT_DOMAIN_CHECK:-true}"
 if command -v openssl >/dev/null 2>&1; then
   CERT_TEXT=$(openssl x509 -in "${CERT_FILE}" -text -noout)
   if echo "${CERT_TEXT}" | grep -qE "(CN\s*=\s*\*?\.?hiralalandsons\.com|DNS:\*?\.?hiralalandsons\.com)"; then
-    echo "✅ [CHECK 4/5] Certificate matches target domain: ${REQUIRED_DOMAIN}"
+    echo "✅ [CHECK 6/6] Certificate matches target domain: ${REQUIRED_DOMAIN}"
   else
-    echo "⚠️ [WARN] Certificate subject does not explicitly match '${REQUIRED_DOMAIN}'."
-    echo "Subject: $(openssl x509 -subject -noout -in "${CERT_FILE}")"
+    if [ "${STRICT_DOMAIN_CHECK}" = "false" ]; then
+      echo "⚠️ [WARN] Certificate subject does not explicitly match '${REQUIRED_DOMAIN}' (ignored because STRICT_DOMAIN_CHECK=false)."
+      echo "Subject: $(openssl x509 -subject -noout -in "${CERT_FILE}")"
+    else
+      echo "❌ [ERROR] Certificate subject/SAN does not match '${REQUIRED_DOMAIN}'! Failing closed." >&2
+      echo "Subject: $(openssl x509 -subject -noout -in "${CERT_FILE}")" >&2
+      print_cloudflare_instructions
+      exit 1
+    fi
   fi
 else
-  echo "⚠️ [WARN] openssl binary not found in PATH; skipping domain match check."
+  echo "⚠️ [WARN] openssl binary not found in PATH; skipping cryptographic domain checks."
 fi
 
-# 6. Test Nginx configuration syntax if nginx command is available
+# 8. Test Nginx configuration syntax if nginx command is available
 if [ -f "/etc/nginx/nginx.conf" ] && [ -w "/var/log/nginx" ] && [ "$(id -u)" -eq 0 ]; then
   echo "[INFO] Testing Nginx configuration syntax (nginx -t)..."
   if ! nginx -t 2>/dev/null; then
     echo "⚠️ [WARN] Host Nginx configuration check skipped."
   else
-    echo "✅ [CHECK 5/5] Nginx configuration syntax is valid."
+    echo "✅ [CHECK 7/7] Nginx configuration syntax is valid."
   fi
 else
-  echo "ℹ️ [INFO] Step 5/5: Host Nginx testing skipped (Nginx runs in isolated Alpine container)."
+  echo "ℹ️ [INFO] Step 7/7: Host Nginx testing skipped (Nginx runs in isolated Alpine container)."
 fi
 
 echo "================================================================================"

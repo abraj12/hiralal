@@ -93,15 +93,37 @@ jobs:
             echo "Starting postgres and redis data tier..."
             docker compose up -d postgres redis
 
-            # Wait up to 30 seconds for postgres healthy status
+            # Wait up to 30 seconds for postgres healthy status (fail closed)
             echo "Waiting for postgres to become healthy..."
-            for i in {1..30}; do
+            POSTGRES_HEALTHY=false
+            for i in $(seq 1 30); do
               if docker compose ps postgres | grep -qi "healthy"; then
                 echo "Postgres is healthy."
+                POSTGRES_HEALTHY=true
                 break
               fi
               sleep 1
             done
+            if [ "${POSTGRES_HEALTHY}" != "true" ]; then
+              echo "[FATAL ERROR] Postgres failed to reach healthy state within 30 seconds. Halting deployment." >&2
+              exit 1
+            fi
+
+            # Wait up to 30 seconds for redis healthy status (fail closed)
+            echo "Waiting for redis to become healthy..."
+            REDIS_HEALTHY=false
+            for i in $(seq 1 30); do
+              if docker compose ps redis | grep -qi "healthy"; then
+                echo "Redis is healthy."
+                REDIS_HEALTHY=true
+                break
+              fi
+              sleep 1
+            done
+            if [ "${REDIS_HEALTHY}" != "true" ]; then
+              echo "[FATAL ERROR] Redis failed to reach healthy state within 30 seconds. Halting deployment." >&2
+              exit 1
+            fi
             
             # Pre-deployment database backup gate before applying migrations (fail closed)
             echo "Executing pre-deployment database backup gate..."

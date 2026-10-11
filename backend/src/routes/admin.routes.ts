@@ -495,26 +495,7 @@ router.get(
         bill.invoiceDate
       );
 
-      const gstRules = await prisma.gstRule.findMany({
-        where: {
-          isActive: true,
-          effectiveFrom: { lte: bill.invoiceDate },
-          OR: [
-            { effectiveUntil: null },
-            { effectiveUntil: { gt: bill.invoiceDate } },
-          ],
-        },
-        orderBy: { ratePercentage: 'asc' },
-        select: {
-          id: true,
-          ratePercentage: true,
-          description: true,
-          isDefault: true,
-          isActive: true,
-          effectiveFrom: true,
-          effectiveUntil: true,
-        },
-      });
+      const gstRules = await GstService.getApplicableGstRules(bill.invoiceDate, prisma);
 
       return res.json({
         success: true,
@@ -576,46 +557,48 @@ router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequ
       }
 
       if (gstIncluded) {
-        if (!gstRuleId && !gstOverrideReason) {
-          return res.status(400).json({
-            success: false,
-            message: 'A reason is required for a manual GST rate override.',
-          });
-        }
-
-        if (gstRuleId !== undefined && (typeof gstRuleId !== 'string' || !gstRuleId.trim())) {
-          return res.status(400).json({
-            success: false,
-            message: 'Invalid GST rule selection.',
-          });
-        }
-
-        if (
-          gstRate !== undefined &&
-          (
+        if (!gstRuleId) {
+          if (
             typeof gstRate !== 'number' ||
             !Number.isFinite(gstRate) ||
             gstRate < 0 ||
             gstRate > 100
-          )
-        ) {
-          return res.status(400).json({
-            success: false,
-            message: 'GST rate must be between 0% and 100%.',
-          });
-        }
-
-        if (
-          !gstRuleId &&
-          (
+          ) {
+            return res.status(400).json({
+              success: false,
+              message: 'A valid GST rate between 0% and 100% is required for a manual GST rate override.',
+            });
+          }
+          if (
             typeof gstOverrideReason !== 'string' ||
             !gstOverrideReason.trim()
-          )
-        ) {
-          return res.status(400).json({
-            success: false,
-            message: 'A reason is required for a manual GST rate override.',
-          });
+          ) {
+            return res.status(400).json({
+              success: false,
+              message: 'A reason is required for a manual GST rate override.',
+            });
+          }
+        } else {
+          if (typeof gstRuleId !== 'string' || !gstRuleId.trim()) {
+            return res.status(400).json({
+              success: false,
+              message: 'Invalid GST rule selection.',
+            });
+          }
+          if (
+            gstRate !== undefined &&
+            (
+              typeof gstRate !== 'number' ||
+              !Number.isFinite(gstRate) ||
+              gstRate < 0 ||
+              gstRate > 100
+            )
+          ) {
+            return res.status(400).json({
+              success: false,
+              message: 'GST rate must be between 0% and 100%.',
+            });
+          }
         }
       }
 

@@ -63,7 +63,31 @@ export class GstService {
   }
 
   /**
-   * Returns all active GST rules from PostgreSQL.
+   * Returns all active GST rules applicable at a specific effective business date.
+   * Boundaries:
+   *   isActive: true
+   *   effectiveFrom <= effectiveAt
+   *   effectiveUntil IS NULL OR effectiveUntil > effectiveAt (exclusive end-boundary)
+   */
+  static async getApplicableGstRules(
+    effectiveAt: Date = new Date(),
+    tx: any = prisma
+  ): Promise<GstRule[]> {
+    return await tx.gstRule.findMany({
+      where: {
+        isActive: true,
+        effectiveFrom: { lte: effectiveAt },
+        OR: [
+          { effectiveUntil: null },
+          { effectiveUntil: { gt: effectiveAt } },
+        ],
+      },
+      orderBy: { ratePercentage: 'asc' },
+    });
+  }
+
+  /**
+   * Returns all active GST rules from PostgreSQL regardless of date (for configuration views).
    */
   static async getActiveGstRules(tx: any = prisma): Promise<GstRule[]> {
     return await tx.gstRule.findMany({
@@ -73,17 +97,32 @@ export class GstService {
   }
 
   /**
-   * Returns the default GST rule (or 18% standard fallback).
+   * Returns the default GST rule applicable at a specific effective business date.
    */
-  static async getDefaultGstRule(tx: any = prisma): Promise<GstRule | null> {
+  static async getDefaultGstRule(
+    effectiveAt: Date = new Date(),
+    tx: any = prisma
+  ): Promise<GstRule | null> {
+    const applicableWhere = {
+      isActive: true,
+      effectiveFrom: { lte: effectiveAt },
+      OR: [
+        { effectiveUntil: null },
+        { effectiveUntil: { gt: effectiveAt } },
+      ],
+    };
+
     const defaultRule = await tx.gstRule.findFirst({
-      where: { isDefault: true, isActive: true },
+      where: {
+        ...applicableWhere,
+        isDefault: true,
+      },
     });
 
     if (defaultRule) return defaultRule;
 
     return await tx.gstRule.findFirst({
-      where: { isActive: true },
+      where: applicableWhere,
       orderBy: { ratePercentage: 'desc' },
     });
   }

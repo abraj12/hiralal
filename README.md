@@ -6,7 +6,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org/)
 [![Prisma](https://img.shields.io/badge/Prisma-6.4-teal.svg)](https://www.prisma.io/)
 [![Redis](https://img.shields.io/badge/Redis-7-red.svg)](https://redis.io/)
-[![Tests](https://img.shields.io/badge/Tests-196%20Passing%20(100%25)-brightgreen.svg)]()
+[![CI](https://github.com/abraj12/hiralal/actions/workflows/ci.yml/badge.svg)](https://github.com/abraj12/hiralal/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/Architecture-AWS%20Graviton2%20ARM64-orange.svg)]()
 
 Production rewards and loyalty management platform engineered specifically for **HIRALAL AND SONS SALES PVT. LTD.** (CIN: U51909BR2020PTC046116) by **ALGIONS AI LABS PRIVATE LIMITED** (CIN: U62011BR2026PTC088473).
@@ -152,7 +152,7 @@ npm run seed
 ```bash
 npm test -- --runInBand --forceExit
 ```
-All **193 tests across 18 test suites** run in-band and maintain 100% pass rate:
+All unit, integration, and security test suites run in-band and maintain a 100% pass rate in CI (see latest CI workflow run for authoritative real-time test counts):
 - `global_reward_cap.spec.ts` (Pool-free reward credit integrity, volume scaling, concurrent race condition approval, providerNameVerified checks)
 - `config_safety.spec.ts` (Strict environment validation, admin credential segregation, demo number rejection)
 - `migration_scenarios.spec.ts` (Fresh deployment, idempotent migrations, fail-closed legacy admin migration)
@@ -223,8 +223,8 @@ The script decrypts, decompresses, restores the SQL dump via `psql`, and execute
 
 | Port | Protocol | Source | Purpose |
 |:---|:---|:---|:---|
-| **443** | TCP | `0.0.0.0/0` (Cloudflare Proxy Only) | Production HTTPS ingress |
-| **80** | TCP | `0.0.0.0/0` | HTTP redirect to HTTPS / ACME challenges |
+| **443** | TCP | Cloudflare IPv4 & IPv6 CIDRs (Restricted Ingress) | Production HTTPS ingress strictly via Cloudflare Proxy (direct public ingress blocked) |
+| **80** | TCP | Cloudflare IPv4 & IPv6 CIDRs | HTTP redirect to HTTPS / ACME challenges |
 | **22** | TCP | `ADMIN_OFFICE_IP/32` or AWS SSM | SSH administration (prefer AWS Session Manager) |
 | **5432** | TCP | *None (Strictly Closed)* | Internal PostgreSQL container communication |
 | **6379** | TCP | *None (Strictly Closed)* | Internal Redis container communication |

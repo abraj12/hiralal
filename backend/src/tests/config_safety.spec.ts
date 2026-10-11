@@ -89,6 +89,7 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       JWT_ADMIN_ACCESS_SECRET: 'admin_access_secret_high_entropy_32_characters_long_prod_key_3',
       BILL_ADMIN_PREFIX: 'BADM',
       OPERATIONS_ADMIN_PREFIX: 'OADM',
+      REDIS_PASSWORD: 'redis_prod_strong_secret_key_min_24_chars_2026',
     };
 
     it('passes when all production secrets are valid and high-entropy', () => {
@@ -154,6 +155,53 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       };
       expect(() => validateProductionConfig('api', shortKey)).toThrow(
         /ENCRYPTION_KEY must be at least 32 characters/
+      );
+    });
+
+    it('rejects short STORAGE_HMAC_SECRET (< 32 characters)', () => {
+      const shortHmac = {
+        ...validBaseEnv,
+        STORAGE_HMAC_SECRET: 'short_hmac_secret_20_ch',
+      };
+      expect(() => validateProductionConfig('api', shortHmac)).toThrow(
+        /STORAGE_HMAC_SECRET must be at least 32 characters/
+      );
+    });
+
+    it('rejects missing or short REDIS_PASSWORD (< 24 characters)', () => {
+      const missingRedis = { ...validBaseEnv };
+      delete missingRedis.REDIS_PASSWORD;
+      expect(() => validateProductionConfig('api', missingRedis)).toThrow(
+        /Missing required environment variables: REDIS_PASSWORD/
+      );
+      expect(() => validateProductionConfig('worker', missingRedis)).toThrow(
+        /Missing required environment variables: REDIS_PASSWORD/
+      );
+
+      const shortRedis = {
+        ...validBaseEnv,
+        REDIS_PASSWORD: 'short_redis_pass_123',
+      };
+      expect(() => validateProductionConfig('api', shortRedis)).toThrow(
+        /REDIS_PASSWORD must be at least 24 characters/
+      );
+    });
+
+    it('rejects invalid or non-postgres DATABASE_URL', () => {
+      const invalidUrl = {
+        ...validBaseEnv,
+        DATABASE_URL: 'mysql://usr:pass@db:3306/db',
+      };
+      expect(() => validateProductionConfig('api', invalidUrl)).toThrow(
+        /DATABASE_URL must use postgresql: or postgres: protocol/
+      );
+
+      const malformedUrl = {
+        ...validBaseEnv,
+        DATABASE_URL: 'not-a-valid-uri',
+      };
+      expect(() => validateProductionConfig('api', malformedUrl)).toThrow(
+        /DATABASE_URL is not a valid parseable database connection URL/
       );
     });
 

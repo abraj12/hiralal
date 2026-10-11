@@ -173,13 +173,25 @@ export class StorageService {
   }
 
   /**
+   * Secure HMAC secret accessor.
+   * Throws if secret is absent or shorter than 32 characters (no development fallback).
+   */
+  private static getStorageHmacSecret(): string {
+    const secret = config.storageHmacSecret;
+    if (typeof secret !== 'string' || secret.trim().length < 32) {
+      throw new Error('STORAGE_HMAC_SECRET is not configured securely.');
+    }
+    return secret;
+  }
+
+  /**
    * Generates time-limited HMAC-signed URL for document access.
    */
   static generateSignedUrl(fileKey?: string | null, expiresInMinutes: number = 30): string {
     if (!fileKey) return '';
+    const secret = this.getStorageHmacSecret();
     const expiresAt = Math.floor(Date.now() / 1000) + expiresInMinutes * 60;
     const dataToSign = `${fileKey}:${expiresAt}`;
-    const secret = config.storageHmacSecret || 'hiralal_dev_storage_hmac_secret_2026';
     const signature = crypto
       .createHmac('sha256', secret)
       .update(dataToSign)
@@ -202,15 +214,27 @@ export class StorageService {
       return false; // Expired
     }
 
+    let secret: string;
+    try {
+      secret = this.getStorageHmacSecret();
+    } catch {
+      return false; // Fail closed if secret missing or insecure
+    }
+
     const dataToSign = `${fileKey}:${expires}`;
-    const secret = config.storageHmacSecret || 'hiralal_dev_storage_hmac_secret_2026';
     const expectedSignature = crypto
       .createHmac('sha256', secret)
       .update(dataToSign)
       .digest('hex');
 
-    if (signature.length !== expectedSignature.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
+    const sigBuf = Buffer.from(signature, 'hex');
+    const expectedBuf = Buffer.from(expectedSignature, 'hex');
+
+    if (sigBuf.length !== expectedBuf.length || sigBuf.length === 0) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(sigBuf, expectedBuf);
   }
 
   static getLocalFilePath(fileKey: string): string {

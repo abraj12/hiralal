@@ -145,6 +145,7 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
   ];
 
   const apiOnlyVars = [
+    'REDIS_PASSWORD',
     'JWT_ACCESS_SECRET',
     'JWT_REFRESH_SECRET',
     'JWT_ADMIN_ACCESS_SECRET',
@@ -170,6 +171,7 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
   ];
 
   const workerOnlyVars = [
+    'REDIS_PASSWORD',
     'RAZORPAYX_KEY_ID',
     'RAZORPAYX_KEY_SECRET',
     'RAZORPAYX_ACCOUNT_NUMBER',
@@ -198,6 +200,19 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     }
   }
 
+  // Ensure database URL parses cleanly
+  if (env.DATABASE_URL) {
+    try {
+      const parsedDbUrl = new URL(env.DATABASE_URL);
+      if (!['postgresql:', 'postgres:'].includes(parsedDbUrl.protocol)) {
+        throw new Error('[FATAL] DATABASE_URL must use postgresql: or postgres: protocol.');
+      }
+    } catch (dbErr: any) {
+      if (dbErr.message?.startsWith('[FATAL]')) throw dbErr;
+      throw new Error('[FATAL] DATABASE_URL is not a valid parseable database connection URL.');
+    }
+  }
+
   // Ensure cryptographic keys are at least 32 characters
   if (env.ENCRYPTION_KEY && env.ENCRYPTION_KEY.length < 32) {
     throw new Error('[FATAL] ENCRYPTION_KEY must be at least 32 characters for AES-256 encryption.');
@@ -205,6 +220,20 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
 
   if (env.FIELD_ENCRYPTION_KEY && env.FIELD_ENCRYPTION_KEY.length < 32) {
     throw new Error('[FATAL] FIELD_ENCRYPTION_KEY must be at least 32 characters for AES-256 encryption.');
+  }
+
+  // Ensure Redis password in production is at least 24 characters
+  if ((role === 'api' || role === 'worker') && env.REDIS_PASSWORD) {
+    if (env.REDIS_PASSWORD.length < 24) {
+      throw new Error('[FATAL] REDIS_PASSWORD must be at least 24 characters.');
+    }
+  }
+
+  // Ensure STORAGE_HMAC_SECRET in production is at least 32 characters
+  if (role === 'api' && env.STORAGE_HMAC_SECRET) {
+    if (env.STORAGE_HMAC_SECRET.length < 32) {
+      throw new Error('[FATAL] STORAGE_HMAC_SECRET must be at least 32 characters for HMAC signing.');
+    }
   }
 
   if (role === 'api') {
@@ -370,7 +399,7 @@ export const config: AppConfig = {
   databaseUrl: process.env.DATABASE_URL || 'postgresql://postgres:1234@localhost:5432/hiralal_rewards?schema=public',
   encryptionKey: process.env.ENCRYPTION_KEY || 'hiralal_aes256_secret_key_32bytes_sample_dev_only!',
   fieldEncryptionKey: process.env.FIELD_ENCRYPTION_KEY || 'hiralal_field_aes256_32bytes_key_dev_only!',
-  storageHmacSecret: process.env.STORAGE_HMAC_SECRET || 'hiralal_dev_storage_hmac_secret_2026',
+  storageHmacSecret: process.env.STORAGE_HMAC_SECRET || '',
 
   jwt: {
     accessSecret: process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'dev_access_secret_key_hiralal_2026',
