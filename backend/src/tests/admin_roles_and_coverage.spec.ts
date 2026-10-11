@@ -617,20 +617,31 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
   describe('6. RewardService - Calculations & Dynamic Rule Versioning', () => {
     beforeAll(async () => {
       for (const prof of ['PLUMBER', 'TILE_INSTALLER'] as const) {
-        const count = await prisma.rewardRule.count({
-          where: { profession: prof, isActive: true, effectiveFrom: { lte: new Date() } },
+        await prisma.rewardRule.deleteMany({ where: { profession: prof } });
+        await prisma.rewardRule.create({
+          data: {
+            profession: prof,
+            rewardPercentage: 0.50,
+            effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+            isActive: true,
+            version: 1,
+          },
         });
-        if (count === 0) {
-          await prisma.rewardRule.create({
-            data: {
-              profession: prof,
-              rewardPercentage: 0.50,
-              effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
-              isActive: true,
-              version: 1,
-            },
-          });
-        }
+      }
+    });
+
+    afterAll(async () => {
+      for (const prof of ['PLUMBER', 'TILE_INSTALLER'] as const) {
+        await prisma.rewardRule.deleteMany({ where: { profession: prof } });
+        await prisma.rewardRule.create({
+          data: {
+            profession: prof,
+            rewardPercentage: 0.50,
+            effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+            isActive: true,
+            version: 1,
+          },
+        });
       }
     });
 

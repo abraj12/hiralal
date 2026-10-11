@@ -118,28 +118,29 @@ async function main() {
     }
 
     // 2. Provision Reward Rules for Plumber & Tile Installer
-    const existingRules = await prisma.rewardRule.findMany();
-    if (existingRules.length === 0) {
-      await prisma.rewardRule.createMany({
-        data: [
-          {
-            profession: 'PLUMBER',
-            rewardPercentage: 0.50,
-            effectiveFrom: new Date('2020-01-01'),
-            version: 1,
-            isActive: true,
-          },
-          {
-            profession: 'TILE_INSTALLER',
-            rewardPercentage: 0.50,
-            effectiveFrom: new Date('2020-01-01'),
-            version: 1,
-            isActive: true,
-          },
-        ],
+    for (const prof of ['PLUMBER', 'TILE_INSTALLER'] as const) {
+      const activeRule = await prisma.rewardRule.findFirst({
+        where: { profession: prof, isActive: true },
+        orderBy: { version: 'desc' },
       });
-      console.log('✅ Profession reward rules provisioned: 0.50% Plumber, 0.50% Tile Installer');
+      if (!activeRule) {
+        await prisma.rewardRule.create({
+          data: {
+            profession: prof,
+            rewardPercentage: 0.50,
+            effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+            version: 1,
+            isActive: true,
+          },
+        });
+      } else if (activeRule.effectiveFrom > new Date('2020-01-01T00:00:00+05:30') && activeRule.id.startsWith('rule_')) {
+        await prisma.rewardRule.update({
+          where: { id: activeRule.id },
+          data: { effectiveFrom: new Date('2020-01-01T00:00:00+05:30') },
+        });
+      }
     }
+    console.log('✅ Profession reward rules provisioned: 0.50% Plumber, 0.50% Tile Installer');
 
     // 4. Provision GST Tax Rules
     const existingGstRules = await prisma.gstRule.findMany();

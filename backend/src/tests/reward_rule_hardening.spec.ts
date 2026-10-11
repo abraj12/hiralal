@@ -814,4 +814,20 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
       expect(formatIstDate(bDate, 'yyyy-MM-dd')).toBe('2026-10-15');
     });
   });
+
+  afterAll(async () => {
+    // Restore clean baseline rules for both professions
+    for (const prof of ['PLUMBER', 'TILE_INSTALLER'] as const) {
+      await prisma.rewardRule.deleteMany({ where: { profession: prof } });
+      await prisma.rewardRule.create({
+        data: {
+          profession: prof,
+          rewardPercentage: 0.50,
+          effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+          isActive: true,
+          version: 1,
+        },
+      });
+    }
+  });
 });

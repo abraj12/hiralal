@@ -14,7 +14,10 @@ export class RewardRuleService {
     effectiveAtInput: Date | string = new Date(),
     tx: any = prisma
   ): Promise<RewardRule> {
-    const effectiveAt = parseIndiaBusinessDate(effectiveAtInput);
+    const effectiveAt =
+      effectiveAtInput instanceof Date && !isNaN(effectiveAtInput.getTime())
+        ? effectiveAtInput
+        : parseIndiaBusinessDate(effectiveAtInput);
     const rules = await tx.rewardRule.findMany({
       where: {
         profession,
