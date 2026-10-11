@@ -56,12 +56,10 @@ describe('Concurrency & Financial Integrity Tests', () => {
     // Enable redemption window
     await prisma.redemptionSettings.upsert({
       where: { id: 'default' },
-      update: { isEnabled: true, minimumAmount: 500, maximumAmount: 10000, startAt: null, endAt: null },
+      update: { isEnabled: true, startAt: null, endAt: null },
       create: {
         id: 'default',
         isEnabled: true,
-        minimumAmount: 500,
-        maximumAmount: 10000,
         startAt: null,
         endAt: null,
       },
@@ -95,8 +93,6 @@ describe('Concurrency & Financial Integrity Tests', () => {
       data: {
         profession: 'PLUMBER',
         rewardPercentage: 0.50,
-        minRedemptionAmount: 500.0,
-        maxRedemptionAmount: 10000.0,
         effectiveFrom: new Date('2020-01-01'),
         isActive: true,
       },

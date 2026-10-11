@@ -30,11 +30,9 @@ export default function AdminSettingsPage() {
   const [tileRules, setTileRules] = useState<any[]>([]);
   const [plumberForm, setPlumberForm] = useState({
     rewardPercentage: '0.5',
-    minRedemptionAmount: '500',
   });
   const [tileForm, setTileForm] = useState({
     rewardPercentage: '0.75',
-    minRedemptionAmount: '500',
   });
 
   // GST State
@@ -50,8 +48,6 @@ export default function AdminSettingsPage() {
   const [startTime, setStartTime] = useState('10:00');
   const [endDate, setEndDate] = useState('');
   const [endTime, setEndTime] = useState('23:59');
-  const [redemptionMin, setRedemptionMin] = useState('500');
-  const [redemptionMax, setRedemptionMax] = useState('10000');
   const [userMessage, setUserMessage] = useState('Rewards redemption is currently open for verified craftsmen.');
 
   const [loading, setLoading] = useState(true);
@@ -70,7 +66,6 @@ export default function AdminSettingsPage() {
         const active = pRes.rules.find((r: any) => r.isActive) || pRes.rules[0];
         setPlumberForm({
           rewardPercentage: (active.rewardPercentage || active.percentage || 0.5).toString(),
-          minRedemptionAmount: active.minRedemptionAmount.toString(),
         });
       }
 
@@ -81,7 +76,6 @@ export default function AdminSettingsPage() {
         const active = tRes.rules.find((r: any) => r.isActive) || tRes.rules[0];
         setTileForm({
           rewardPercentage: (active.rewardPercentage || active.percentage || 0.75).toString(),
-          minRedemptionAmount: active.minRedemptionAmount.toString(),
         });
       }
 
@@ -96,8 +90,6 @@ export default function AdminSettingsPage() {
       if (redRes.settings) {
         const s = redRes.settings;
         setIsRedemptionEnabled(Boolean(s.isEnabled));
-        setRedemptionMin(s.minimumAmount.toString());
-        setRedemptionMax(s.maximumAmount.toString());
         if (s.message) setUserMessage(s.message);
 
         if (s.startAt) {
@@ -139,7 +131,6 @@ export default function AdminSettingsPage() {
       await AdminApiClient.createRewardRule({
         profession: prof,
         rewardPercentage: parseFloat(form.rewardPercentage),
-        minRedemptionAmount: parseFloat(form.minRedemptionAmount),
       });
 
       setSuccessMsg(`New versioned reward rule deployed for ${prof === 'PLUMBER' ? 'Plumbers' : 'Tile Installers'}! Historical approved bills remain financially immutable.`);
@@ -198,18 +189,10 @@ export default function AdminSettingsPage() {
         throw new Error('End date and time must be after the start date and time.');
       }
 
-      const minVal = parseFloat(redemptionMin);
-      const maxVal = parseFloat(redemptionMax);
-      if (minVal <= 0 || maxVal < minVal) {
-        throw new Error('Maximum redemption must be greater than or equal to minimum redemption amount.');
-      }
-
       await AdminApiClient.updateRedemptionSettings({
         isEnabled: isRedemptionEnabled,
         startAt,
         endAt,
-        minimumAmount: minVal,
-        maximumAmount: maxVal,
         message: userMessage,
       });
 
@@ -348,29 +331,6 @@ export default function AdminSettingsPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Minimum Redemption Threshold (₹)
-                    </label>
-                    <input
-                      type="number"
-                      step="50"
-                      min="50"
-                      value={activeTab === 'PLUMBER' ? plumberForm.minRedemptionAmount : tileForm.minRedemptionAmount}
-                      onChange={(e) =>
-                        activeTab === 'PLUMBER'
-                          ? setPlumberForm({ ...plumberForm, minRedemptionAmount: e.target.value })
-                          : setTileForm({ ...tileForm, minRedemptionAmount: e.target.value })
-                      }
-                      className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
-                    />
-                    <span className="text-[10px] text-slate-400 mt-1 block">
-                      Worker cannot request payout below this balance (100% full balance redeemed)
-                    </span>
-                  </div>
-                </div>
-
                 <div className="flex justify-end pt-2">
                   <button
                     type="submit"
@@ -406,7 +366,6 @@ export default function AdminSettingsPage() {
                     <tr>
                       <th className="py-2.5 px-4">Version</th>
                       <th className="py-2.5 px-4">Reward Rate</th>
-                      <th className="py-2.5 px-4">Min Payout</th>
                       <th className="py-2.5 px-4">Effective Date</th>
                       <th className="py-2.5 px-4">Status</th>
                     </tr>
@@ -416,7 +375,6 @@ export default function AdminSettingsPage() {
                       <tr key={r.id}>
                         <td className="py-3 px-4 font-bold text-slate-900">v{r.version}</td>
                         <td className="py-3 px-4 font-bold text-emerald-600">{r.rewardPercentage || r.percentage}%</td>
-                        <td className="py-3 px-4 text-slate-600">₹{r.minRedemptionAmount?.toLocaleString('en-IN')}</td>
                         <td className="py-3 px-4 text-slate-500">
                           {r.effectiveFrom ? new Date(r.effectiveFrom).toLocaleDateString('en-IN') : 'Creation'}
                         </td>
@@ -663,36 +621,13 @@ export default function AdminSettingsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Minimum Redemption Limit (₹)
-                  </label>
-                  <input
-                    type="number"
-                    min="100"
-                    step="50"
-                    value={redemptionMin}
-                    onChange={(e) => setRedemptionMin(e.target.value)}
-                    className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
-                  />
-                  <span className="text-[10px] text-slate-400 mt-1 block">Default minimum: ₹500</span>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Maximum Redemption Limit Per Request (₹)
-                  </label>
-                  <input
-                    type="number"
-                    min="500"
-                    step="500"
-                    value={redemptionMax}
-                    onChange={(e) => setRedemptionMax(e.target.value)}
-                    className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
-                  />
-                  <span className="text-[10px] text-slate-400 mt-1 block">Maximum ceiling per transfer: ₹10,000</span>
-                </div>
+              <div className="p-4 bg-amber-50/60 border border-amber-200/80 rounded-2xl">
+                <p className="text-xs font-bold text-amber-900 mb-1">
+                  100% Full-Balance Redemption Policy Enforced
+                </p>
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  Mobile workers automatically redeem their entire wallet available balance in full when the window is open. No minimum payout threshold or maximum transaction ceiling is imposed.
+                </p>
               </div>
 
               <div>

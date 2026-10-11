@@ -652,8 +652,6 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
         where: { id: 'default' },
         update: {
           isEnabled: true,
-          minimumAmount: 500.0,
-          maximumAmount: 10000.0,
           startAt: null,
           endAt: null,
           message: 'Rewards redemption window is now open.',
@@ -661,8 +659,6 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
         create: {
           id: 'default',
           isEnabled: true,
-          minimumAmount: 500.0,
-          maximumAmount: 10000.0,
           startAt: null,
           endAt: null,
           message: 'Rewards redemption window is now open.',

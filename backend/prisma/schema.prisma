@@ -210,21 +210,19 @@ model Bill {
 }
 
 model RewardRule {
-  id                  String      @id @default(uuid())
-  profession          Profession  @default(PLUMBER)
-  rewardPercentage    Decimal     @default(0.50) @db.Decimal(5, 2)
-  minRedemptionAmount Decimal     @default(500.00) @db.Decimal(12, 2)
-  maxRedemptionAmount Decimal     @default(10000.00) @db.Decimal(12, 2)
-  effectiveFrom       DateTime    @default(now())
-  effectiveUntil      DateTime?
-  isActive            Boolean     @default(true)
-  version             Int         @default(1)
-  createdByAdminId    String?
-  updatedByAdminId    String?
-  createdAt           DateTime    @default(now())
-  updatedAt           DateTime    @updatedAt
+  id               String      @id @default(uuid())
+  profession       Profession  @default(PLUMBER)
+  rewardPercentage Decimal     @default(0.50) @db.Decimal(5, 2)
+  effectiveFrom    DateTime    @default(now())
+  effectiveUntil   DateTime?
+  isActive         Boolean     @default(true)
+  version          Int         @default(1)
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
-  bills               Bill[]
+  bills            Bill[]
 
   @@index([profession, isActive])
   @@index([effectiveFrom, effectiveUntil])
@@ -254,8 +252,6 @@ model RedemptionSettings {
   isEnabled        Boolean     @default(false)
   startAt          DateTime?
   endAt            DateTime?
-  minimumAmount    Decimal     @default(500.00) @db.Decimal(12, 2)
-  maximumAmount    Decimal     @default(10000.00) @db.Decimal(12, 2)
   message          String      @default("Rewards redemption is currently unavailable.")
   updatedByAdminId String?
   updatedAt        DateTime    @updatedAt

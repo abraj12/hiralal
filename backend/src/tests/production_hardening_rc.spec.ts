@@ -331,7 +331,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
         .set('Cookie', `admin_access_token=${adminToken}; csrf_token=valid_secret_csrf_token_12345`)
         .set('Origin', 'http://localhost:3000')
         .set('X-CSRF-Token', 'wrong_csrf_token')
-        .send({ isEnabled: true, minimumAmount: 500, maximumAmount: 10000 });
+        .send({ isEnabled: true });
 
       expect(res.status).toBe(403);
       expect(res.body.code).toBe('CSRF_TOKEN_MISMATCH');
@@ -343,7 +343,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
         .set('Cookie', `admin_access_token=${adminToken}; csrf_token=valid_secret_csrf_token_12345`)
         .set('Origin', 'https://malicious-attacker-site.com')
         .set('X-CSRF-Token', 'valid_secret_csrf_token_12345')
-        .send({ isEnabled: true, minimumAmount: 500, maximumAmount: 10000 });
+        .send({ isEnabled: true });
 
       expect(res.status).toBe(403);
       expect(res.body.code).toBe('CSRF_VALIDATION_FAILED');
@@ -355,7 +355,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
         .set('Cookie', `admin_access_token=${adminToken}; csrf_token=valid_secret_csrf_token_12345`)
         .set('Origin', 'http://localhost:3000')
         .set('X-CSRF-Token', 'valid_secret_csrf_token_12345')
-        .send({ isEnabled: true, minimumAmount: 500, maximumAmount: 10000 });
+        .send({ isEnabled: true });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -367,7 +367,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
         .set('Cookie', `admin_access_token=${adminToken}`)
         .set('Origin', 'http://localhost:3000')
         .set('X-CSRF-Token', 'some_token_without_cookie')
-        .send({ isEnabled: true, minimumAmount: 500, maximumAmount: 10000 });
+        .send({ isEnabled: true });
 
       expect(res.status).toBe(403);
       expect(res.body.code).toBe('CSRF_TOKEN_MISMATCH');
@@ -378,7 +378,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
         .post('/api/admin/settings/redemption')
         .set('Cookie', `admin_access_token=${adminToken}`)
         .set('Origin', 'http://localhost:3000')
-        .send({ isEnabled: true, minimumAmount: 500, maximumAmount: 10000 });
+        .send({ isEnabled: true });
 
       expect(res.status).toBe(403);
       expect(res.body.code).toBe('CSRF_TOKEN_MISMATCH');

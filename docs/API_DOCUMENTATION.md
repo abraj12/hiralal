@@ -161,8 +161,7 @@ Base URL: `http://localhost:5000/api`
   ```json
   {
     "profession": "PLUMBER",
-    "percentage": 0.5,
-    "minRedemptionAmount": 500
+    "percentage": 0.5
   }
   ```
 

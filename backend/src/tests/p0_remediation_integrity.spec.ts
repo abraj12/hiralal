@@ -307,8 +307,8 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
     });
   });
 
-  describe('4. Full-Balance Redemption & Elimination of Minimum Threshold', () => {
-    test('4.1 Worker with ₹100 eligible balance can request redemption of ₹100 without being blocked', async () => {
+  describe('4. Full-Balance Redemption & Complete Elimination of Min/Max Caps', () => {
+    test('4.1 Worker with ₹100 eligible balance can request redemption of ₹100 without being blocked (below former ₹500 min)', async () => {
       // Ensure wallet balance is ₹100
       await prisma.wallet.update({
         where: { userId: plumberUser.id },
@@ -322,9 +322,11 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
       const eligibility = await PayoutService.checkUserEligibility(plumberUser.id);
       expect(eligibility.canRedeem).toBe(true);
       expect(eligibility.availableBalance).toBe(100.0);
+      expect(eligibility).not.toHaveProperty('minimumAmount');
+      expect(eligibility).not.toHaveProperty('maximumAmount');
 
       // Request redemption
-      const result = await PayoutService.requestRedemption(plumberUser.id, `p0-idemp-${Date.now()}`);
+      const result = await PayoutService.requestRedemption(plumberUser.id, `p0-idemp-100-${Date.now()}`);
       expect(result.amountDebited).toBe(100.0);
       expect(result.payout.status).toBe('PENDING');
       expect(Number(result.payout.amount)).toBe(100.0);
@@ -335,7 +337,49 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
       expect(Number(wallet?.processingAmount)).toBe(100.0);
     });
 
-    test('4.2 Worker with ₹0 balance cannot request redemption', async () => {
+    test('4.2 Worker with ₹25,000 eligible balance can request redemption of ₹25,000 (above former ₹10,000 max)', async () => {
+      // Clear pending payouts and set wallet balance to ₹25,000
+      await prisma.payout.deleteMany({ where: { userId: plumberUser.id } });
+      await prisma.wallet.update({
+        where: { userId: plumberUser.id },
+        data: { availableBalance: 25000.0, processingAmount: 0.0 },
+      });
+
+      const eligibility = await PayoutService.checkUserEligibility(plumberUser.id);
+      expect(eligibility.canRedeem).toBe(true);
+      expect(eligibility.availableBalance).toBe(25000.0);
+
+      const result = await PayoutService.requestRedemption(plumberUser.id, `p0-idemp-25k-${Date.now()}`);
+      expect(result.amountDebited).toBe(25000.0);
+      expect(Number(result.payout.amount)).toBe(25000.0);
+
+      const wallet = await prisma.wallet.findUnique({ where: { userId: plumberUser.id } });
+      expect(Number(wallet?.availableBalance)).toBe(0.0);
+      expect(Number(wallet?.processingAmount)).toBe(25000.0);
+    });
+
+    test('4.3 Worker with ₹0.01 eligible balance can request redemption of ₹0.01 (exact fractional balance)', async () => {
+      // Clear pending payouts and set wallet balance to ₹0.01
+      await prisma.payout.deleteMany({ where: { userId: plumberUser.id } });
+      await prisma.wallet.update({
+        where: { userId: plumberUser.id },
+        data: { availableBalance: 0.01, processingAmount: 0.0 },
+      });
+
+      const eligibility = await PayoutService.checkUserEligibility(plumberUser.id);
+      expect(eligibility.canRedeem).toBe(true);
+      expect(eligibility.availableBalance).toBe(0.01);
+
+      const result = await PayoutService.requestRedemption(plumberUser.id, `p0-idemp-1paise-${Date.now()}`);
+      expect(result.amountDebited).toBe(0.01);
+      expect(Number(result.payout.amount)).toBe(0.01);
+
+      const wallet = await prisma.wallet.findUnique({ where: { userId: plumberUser.id } });
+      expect(Number(wallet?.availableBalance)).toBe(0.0);
+      expect(Number(wallet?.processingAmount)).toBe(0.01);
+    });
+
+    test('4.4 Worker with ₹0 balance cannot request redemption', async () => {
       // Clear any pending payouts
       await prisma.payout.deleteMany({ where: { userId: plumberUser.id } });
 
@@ -351,6 +395,20 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
       await expect(
         PayoutService.requestRedemption(plumberUser.id, `p0-zero-${Date.now()}`)
       ).rejects.toThrow(/No balance available for redemption/i);
+    });
+
+    test('4.5 Database and service contract: RedemptionSettings and RewardRule have no obsolete amount limits', async () => {
+      const redemptionSettings = await PayoutService.getRedemptionSettings();
+      expect(redemptionSettings).toBeDefined();
+      expect(redemptionSettings).not.toHaveProperty('minimumAmount');
+      expect(redemptionSettings).not.toHaveProperty('maximumAmount');
+
+      const rules = await RewardRuleService.listRules('PLUMBER');
+      expect(rules.length).toBeGreaterThan(0);
+      for (const rule of rules) {
+        expect(rule).not.toHaveProperty('minRedemptionAmount');
+        expect(rule).not.toHaveProperty('maxRedemptionAmount');
+      }
     });
   });
 });

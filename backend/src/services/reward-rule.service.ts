@@ -44,8 +44,6 @@ export class RewardRuleService {
         data: {
           profession,
           rewardPercentage: profession === 'PLUMBER' ? 0.50 : 0.75,
-          minRedemptionAmount: 500.0,
-          maxRedemptionAmount: 10000.0,
           effectiveFrom: new Date('2020-01-01'),
           isActive: true,
           version: 1,
@@ -71,8 +69,6 @@ export class RewardRuleService {
     params: {
       profession: Profession;
       rewardPercentage: number;
-      minRedemptionAmount?: number;
-      maxRedemptionAmount?: number;
       effectiveFrom?: Date;
       effectiveUntil?: Date | null;
       isActive?: boolean;
@@ -83,17 +79,6 @@ export class RewardRuleService {
 
     if (rewardPercentage <= 0 || rewardPercentage > 50) {
       throw new Error('Reward percentage must be between 0.01% and 50.00%.');
-    }
-
-    const minRedemption = params.minRedemptionAmount !== undefined ? params.minRedemptionAmount : 500;
-    const maxRedemption = params.maxRedemptionAmount !== undefined ? params.maxRedemptionAmount : 0.0;
-
-    if (minRedemption <= 0) {
-      throw new Error('Minimum redemption amount must be greater than zero.');
-    }
-
-    if (maxRedemption > 0 && maxRedemption < minRedemption) {
-      throw new Error('Maximum redemption amount must be greater than or equal to minimum redemption amount.');
     }
 
     const effectiveFrom = params.effectiveFrom || new Date();
@@ -148,8 +133,6 @@ export class RewardRuleService {
       data: {
         profession,
         rewardPercentage,
-        minRedemptionAmount: minRedemption,
-        maxRedemptionAmount: maxRedemption,
         effectiveFrom,
         effectiveUntil,
         isActive: params.isActive !== undefined ? params.isActive : true,
@@ -187,8 +170,6 @@ export class RewardRuleService {
     ruleId: string,
     params: {
       rewardPercentage?: number;
-      minRedemptionAmount?: number;
-      maxRedemptionAmount?: number;
       effectiveUntil?: Date | null;
       isActive?: boolean;
     },
@@ -204,7 +185,7 @@ export class RewardRuleService {
     }
 
     // Financial immutability invariant:
-    // If approved bills have used this rule, do not mutate percentage or limits in-place!
+    // If approved bills have used this rule, do not mutate percentage in-place!
     if (existing._count.bills > 0 && params.rewardPercentage !== undefined && Number(existing.rewardPercentage) !== params.rewardPercentage) {
       throw new Error(
         `Reward rule v${existing.version} is already bound to ${existing._count.bills} approved invoice(s). Create a new rule version to alter percentages without violating financial immutability.`
@@ -215,8 +196,6 @@ export class RewardRuleService {
       where: { id: ruleId },
       data: {
         ...(params.rewardPercentage !== undefined && { rewardPercentage: params.rewardPercentage }),
-        ...(params.minRedemptionAmount !== undefined && { minRedemptionAmount: params.minRedemptionAmount }),
-        ...(params.maxRedemptionAmount !== undefined && { maxRedemptionAmount: params.maxRedemptionAmount }),
         ...(params.effectiveUntil !== undefined && { effectiveUntil: params.effectiveUntil }),
         ...(params.isActive !== undefined && { isActive: params.isActive }),
         updatedByAdminId: adminId,

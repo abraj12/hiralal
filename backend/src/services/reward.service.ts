@@ -24,8 +24,6 @@ export class RewardService {
       version: rule.version,
       rewardPercentage: pct,
       percentage: pct, // backward compatibility
-      minRedemptionAmount: Number(rule.minRedemptionAmount),
-      maxRedemptionAmount: Number(rule.maxRedemptionAmount),
       effectiveFrom: rule.effectiveFrom,
       effectiveUntil: rule.effectiveUntil,
     };
@@ -38,8 +36,6 @@ export class RewardService {
     adminId: string,
     params: {
       percentage?: number;
-      minRedemptionAmount?: number;
-      maxRedemptionAmount?: number;
       profession?: Profession;
     }
   ) {
@@ -49,8 +45,6 @@ export class RewardService {
     return await RewardRuleService.createRule(adminId, {
       profession: prof,
       rewardPercentage: params.percentage !== undefined ? params.percentage : Number(activeRule.rewardPercentage),
-      minRedemptionAmount: params.minRedemptionAmount !== undefined ? params.minRedemptionAmount : Number(activeRule.minRedemptionAmount),
-      maxRedemptionAmount: params.maxRedemptionAmount !== undefined ? params.maxRedemptionAmount : Number(activeRule.maxRedemptionAmount),
     });
   }
 }

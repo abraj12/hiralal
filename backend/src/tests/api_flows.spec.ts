@@ -23,8 +23,6 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
       data: {
         profession: 'PLUMBER',
         rewardPercentage: 0.50,
-        minRedemptionAmount: 500.0,
-        maxRedemptionAmount: 10000.0,
         effectiveFrom: new Date('2020-01-01'),
         isActive: true,
       },
@@ -268,14 +266,11 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
         isEnabled: true,
         startAt,
         endAt,
-        minimumAmount: 500,
-        maximumAmount: 10000,
         message: 'Rewards redemption window is now open for verified craftsmen.',
       });
 
     expect(res.status).toBe(200);
     expect(res.body.settings.isEnabled).toBe(true);
-    expect(res.body.settings.minimumAmount).toBe(500);
 
     // User eligibility check
     const eligRes = await request(app)

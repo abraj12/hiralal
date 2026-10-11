@@ -129,16 +129,12 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     await RewardRuleService.createRule(adminUserId, {
       profession: 'PLUMBER',
       rewardPercentage: 0.50,
-      minRedemptionAmount: 500.0,
-      maxRedemptionAmount: 10000.0,
       effectiveFrom: new Date('2026-10-01'),
     });
 
     await RewardRuleService.createRule(adminUserId, {
       profession: 'TILE_INSTALLER',
       rewardPercentage: 0.75,
-      minRedemptionAmount: 500.0,
-      maxRedemptionAmount: 10000.0,
       effectiveFrom: new Date('2026-10-01'),
     });
   });
@@ -166,8 +162,6 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       data: {
         profession: 'PLUMBER',
         rewardPercentage: 0.50,
-        minRedemptionAmount: 500.0,
-        maxRedemptionAmount: 10000.0,
         effectiveFrom: new Date('2020-01-01'),
         isActive: true,
       },
@@ -522,8 +516,6 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       data: {
         profession: 'PLUMBER',
         rewardPercentage: 0.80,
-        minRedemptionAmount: 500.0,
-        maxRedemptionAmount: 10000.0,
         effectiveFrom: overlapFrom,
         effectiveUntil: overlapUntil,
         isActive: true,
@@ -535,8 +527,6 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       data: {
         profession: 'PLUMBER',
         rewardPercentage: 0.90,
-        minRedemptionAmount: 500.0,
-        maxRedemptionAmount: 10000.0,
         effectiveFrom: overlapFrom,
         effectiveUntil: overlapUntil,
         isActive: true,

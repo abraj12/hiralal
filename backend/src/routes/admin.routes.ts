@@ -749,20 +749,13 @@ router.get('/settings/redemption', requireOperationsAdmin, async (req: Authentic
 router.put('/settings/redemption', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const admin = req.user!;
-    const { isEnabled, startAt, endAt, minimumAmount, maximumAmount, message, profession } = req.body;
+    const { isEnabled, startAt, endAt, message, profession } = req.body;
 
     const startDate = startAt ? new Date(startAt) : null;
     const endDate = endAt ? new Date(endAt) : null;
 
     if (startDate && endDate && endDate <= startDate) {
       return res.status(400).json({ success: false, message: 'End date and time must be after the start date.' });
-    }
-
-    const minAmt = minimumAmount !== undefined ? parseFloat(minimumAmount) : 500;
-    const maxAmt = maximumAmount !== undefined ? parseFloat(maximumAmount) : 10000;
-
-    if (minAmt <= 0 || maxAmt < minAmt) {
-      return res.status(400).json({ success: false, message: 'Maximum redemption must be greater than or equal to minimum amount.' });
     }
 
     const prof: Profession | null = profession && profession !== 'ALL' ? (profession as Profession) : null;
@@ -778,8 +771,6 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
         isEnabled: Boolean(isEnabled),
         startAt: startDate,
         endAt: endDate,
-        minimumAmount: minAmt,
-        maximumAmount: maxAmt,
         message: message || 'Rewards redemption window is open for verified craftsmen.',
         updatedByAdminId: admin.id,
       },
@@ -789,8 +780,6 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
         isEnabled: Boolean(isEnabled),
         startAt: startDate,
         endAt: endDate,
-        minimumAmount: minAmt,
-        maximumAmount: maxAmt,
         message: message || 'Rewards redemption window is open for verified craftsmen.',
         updatedByAdminId: admin.id,
       },
@@ -811,11 +800,7 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
     res.json({
       success: true,
       message: `Redemption window settings for ${prof || 'ALL'} updated successfully.`,
-      settings: {
-        ...updated,
-        minimumAmount: Number(updated.minimumAmount),
-        maximumAmount: Number(updated.maximumAmount),
-      },
+      settings: updated,
     });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
@@ -840,8 +825,6 @@ router.get('/settings/reward-rules', requireOperationsAdmin, async (req: Authent
         version: r.version,
         rewardPercentage: Number(r.rewardPercentage),
         percentage: Number(r.rewardPercentage),
-        minRedemptionAmount: Number(r.minRedemptionAmount),
-        maxRedemptionAmount: Number(r.maxRedemptionAmount),
         effectiveFrom: r.effectiveFrom,
         effectiveUntil: r.effectiveUntil,
         isActive: r.isActive,
@@ -855,7 +838,7 @@ router.get('/settings/reward-rules', requireOperationsAdmin, async (req: Authent
 router.post('/settings/reward-rules', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const admin = req.user!;
-    const { profession, rewardPercentage, minRedemptionAmount, maxRedemptionAmount, effectiveFrom, effectiveUntil } = req.body;
+    const { profession, rewardPercentage, effectiveFrom, effectiveUntil } = req.body;
 
     if (!profession || !['PLUMBER', 'TILE_INSTALLER'].includes(profession)) {
       return res.status(400).json({ success: false, message: 'Valid profession (PLUMBER or TILE_INSTALLER) is required.' });
@@ -864,8 +847,6 @@ router.post('/settings/reward-rules', requireOperationsAdmin, async (req: Authen
     const created = await RewardRuleService.createRule(admin.id, {
       profession: profession as Profession,
       rewardPercentage: parseFloat(rewardPercentage),
-      minRedemptionAmount: minRedemptionAmount ? parseFloat(minRedemptionAmount) : undefined,
-      maxRedemptionAmount: maxRedemptionAmount ? parseFloat(maxRedemptionAmount) : undefined,
       effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : undefined,
       effectiveUntil: effectiveUntil ? new Date(effectiveUntil) : null,
     });
@@ -882,13 +863,12 @@ router.post('/settings/reward-rules', requireOperationsAdmin, async (req: Authen
 
 router.put('/settings/reward-rules', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { percentage, minRedemptionAmount, profession } = req.body;
+    const { percentage, profession } = req.body;
     const admin = req.user!;
 
     const prof = profession as Profession || 'PLUMBER';
     const updated = await RewardService.updateRewardRules(admin.id, {
       percentage: percentage ? parseFloat(percentage) : undefined,
-      minRedemptionAmount: minRedemptionAmount ? parseFloat(minRedemptionAmount) : undefined,
       profession: prof,
     });
 

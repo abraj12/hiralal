@@ -224,14 +224,10 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
           isEnabled: true,
           startAt: new Date(Date.now() - 3600 * 1000),
           endAt: new Date(Date.now() + 3600 * 1000),
-          minimumAmount: 500,
-          maximumAmount: 10000,
         },
         create: {
           id: 'default',
           isEnabled: true,
-          minimumAmount: 500,
-          maximumAmount: 10000,
         },
       });
 

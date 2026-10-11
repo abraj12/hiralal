@@ -32,7 +32,6 @@ export default function WalletScreen() {
   };
 
   const isWindowOpen = eligibility?.isWindowOpen ?? false;
-  const minAmount = eligibility?.minimumAmount ?? 500;
   const canRedeem = eligibility?.canRedeem ?? false;
 
   return (
@@ -91,7 +90,7 @@ export default function WalletScreen() {
             <Text style={styles.windowBannerMessage}>
               {eligibility?.windowSettings?.message ||
                 (isWindowOpen
-                  ? `Min payout: ₹${minAmount} • Direct transfer to verified account`
+                  ? '100% full balance transfer to verified account'
                   : 'Payout requests are currently disabled by administration.')}
             </Text>
           </View>
@@ -119,7 +118,7 @@ export default function WalletScreen() {
                   ? 'Redemption is currently closed by administration'
                   : wallet.availableBalance <= 0
                     ? 'No balance available for redemption'
-                    : `Minimum balance of ₹${minAmount} required for payout`)}
+                    : 'Redemption unavailable')}
             </Text>
           )}
         </View>

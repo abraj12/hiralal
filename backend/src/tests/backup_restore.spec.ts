@@ -231,7 +231,7 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
       await prisma.redemptionSettings.upsert({
         where: { id: 'default' },
         update: { isEnabled: true },
-        create: { id: 'default', isEnabled: true, minimumAmount: 500.0, maximumAmount: 10000.0 },
+        create: { id: 'default', isEnabled: true },
       });
 
       testBill = await prisma.bill.create({

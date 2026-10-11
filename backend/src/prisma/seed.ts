@@ -125,8 +125,6 @@ async function main() {
           {
             profession: 'PLUMBER',
             rewardPercentage: 0.50,
-            minRedemptionAmount: 500.0,
-            maxRedemptionAmount: 10000.0,
             effectiveFrom: new Date('2020-01-01'),
             version: 1,
             isActive: true,
@@ -134,8 +132,6 @@ async function main() {
           {
             profession: 'TILE_INSTALLER',
             rewardPercentage: 0.75,
-            minRedemptionAmount: 500.0,
-            maxRedemptionAmount: 10000.0,
             effectiveFrom: new Date('2020-01-01'),
             version: 1,
             isActive: true,
@@ -185,8 +181,6 @@ async function main() {
         isEnabled: false, // Default CLOSED until administration explicitly opens the window
         startAt: null,
         endAt: null,
-        minimumAmount: 500.0,
-        maximumAmount: 10000.0,
         message: 'Rewards redemption is currently unavailable.',
         updatedByAdminId: opsAdmin.id,
       },

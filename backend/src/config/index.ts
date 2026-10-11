@@ -53,8 +53,6 @@ export interface AppConfig {
   };
   rewards: {
     defaultPercentage: number;
-    minRedemptionAmount: number;
-    maxRedemptionAmount: number;
   };
   admin: {
     billAdminPrefix: string;
@@ -428,8 +426,6 @@ export const config: AppConfig = {
 
   rewards: {
     defaultPercentage: parseFloat(process.env.DEFAULT_REWARD_PERCENTAGE || '0.5'),
-    minRedemptionAmount: parseFloat(process.env.MIN_REDEMPTION_AMOUNT || '500'),
-    maxRedemptionAmount: parseFloat(process.env.MAX_REDEMPTION_AMOUNT || '10000'),
   },
 
   admin: {

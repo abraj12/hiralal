@@ -32,8 +32,6 @@ export class PayoutService {
           isEnabled: false, // Default CLOSED until explicitly opened
           startAt: null,
           endAt: null,
-          minimumAmount: config.rewards.minRedemptionAmount,
-          maximumAmount: config.rewards.maxRedemptionAmount,
           message: 'Rewards redemption is currently unavailable.',
         },
       });
@@ -50,11 +48,7 @@ export class PayoutService {
     }
 
     return {
-      settings: {
-        ...settings,
-        minimumAmount: Number(settings.minimumAmount),
-        maximumAmount: Number(settings.maximumAmount),
-      },
+      settings,
       isWindowOpen,
       serverTime: now.toISOString(),
       businessTimeIst: getIstDate(now).toISOString(),
@@ -161,8 +155,6 @@ export class PayoutService {
       canRedeem,
       reason,
       availableBalance,
-      minimumAmount: settings.minimumAmount,
-      maximumAmount: settings.maximumAmount,
       verifiedKyc: verifiedKycRecord,
       verifiedAccount,
       windowSettings: settings,

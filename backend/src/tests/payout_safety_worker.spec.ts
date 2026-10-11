@@ -64,8 +64,8 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
 
     await prisma.redemptionSettings.upsert({
       where: { id: 'default' },
-      update: { isEnabled: true, minimumAmount: 500, maximumAmount: 10000, startAt: null, endAt: null },
-      create: { id: 'default', isEnabled: true, minimumAmount: 500, maximumAmount: 10000, startAt: null, endAt: null },
+      update: { isEnabled: true, startAt: null, endAt: null },
+      create: { id: 'default', isEnabled: true, startAt: null, endAt: null },
     });
   });
 
