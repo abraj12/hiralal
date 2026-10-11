@@ -152,9 +152,6 @@ export class PayoutService {
     } else if (availableBalance <= 0) {
       canRedeem = false;
       reason = 'No balance available for redemption.';
-    } else if (availableBalance < settings.minimumAmount) {
-      canRedeem = false;
-      reason = `Minimum redemption amount is ₹${settings.minimumAmount}. Your current balance is ₹${availableBalance.toFixed(2)}.`;
     } else if (!beneficiaryCheck.isValid) {
       canRedeem = false;
       reason = beneficiaryCheck.reason || 'Beneficiary verification failed.';
@@ -258,9 +255,6 @@ export class PayoutService {
 
         if (currentAvailable <= 0) {
           throw new Error('No balance available for redemption.');
-        }
-        if (currentAvailable < settings.minimumAmount) {
-          throw new Error(`Minimum redemption amount is ₹${settings.minimumAmount}. Your current balance is ₹${currentAvailable.toFixed(2)}.`);
         }
 
         const beneficiaryCheck = PayoutService.validateBeneficiaryMatch(verifiedKycRecord, verifiedAccount);

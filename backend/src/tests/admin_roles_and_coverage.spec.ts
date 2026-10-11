@@ -747,14 +747,22 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
         data: { nameMatched: true, panName: 'Ramesh Craftsman' },
       });
 
-      // 4. When balance is below minimum
+      // 4. When balance is zero / no balance
+      await prisma.wallet.update({
+        where: { id: regularWalletId },
+        data: { availableBalance: 0.0 },
+      });
+      const checkZeroBalance = await PayoutService.checkUserEligibility(regularUserId);
+      expect(checkZeroBalance.canRedeem).toBe(false);
+      expect(checkZeroBalance.reason).toContain('No balance available');
+
+      // When balance is positive (even ₹100), user is eligible to redeem
       await prisma.wallet.update({
         where: { id: regularWalletId },
         data: { availableBalance: 100.0 },
       });
-      const checkLowBalance = await PayoutService.checkUserEligibility(regularUserId);
-      expect(checkLowBalance.canRedeem).toBe(false);
-      expect(checkLowBalance.reason).toContain('Minimum redemption amount');
+      const checkEligible = await PayoutService.checkUserEligibility(regularUserId);
+      expect(checkEligible.canRedeem).toBe(true);
 
       // Restore balance
       await prisma.wallet.update({
@@ -763,22 +771,35 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       });
     });
 
-    test('requestRedemption enforces minimum bounds and 100% balance', async () => {
+    test('requestRedemption enforces positive balance and 100% full-balance redemption', async () => {
       await prisma.payout.deleteMany({ where: { userId: regularUserId } });
       await prisma.kycRecord.updateMany({
         where: { userId: regularUserId },
         data: { nameMatched: true, panStatus: 'VERIFIED', panName: 'Ramesh Craftsman' },
       });
 
-      // Wallet available balance below minimum
+      // Wallet available balance is 0 -> rejects
+      await prisma.wallet.update({
+        where: { id: regularWalletId },
+        data: { availableBalance: 0.0 },
+      });
+
+      await expect(
+        PayoutService.requestRedemption(regularUserId, 'key-zero')
+      ).rejects.toThrow(/No balance available for redemption/i);
+
+      // Wallet available balance is ₹100 -> succeeds and redeems full ₹100 balance
       await prisma.wallet.update({
         where: { id: regularWalletId },
         data: { availableBalance: 100.0 },
       });
 
-      await expect(
-        PayoutService.requestRedemption(regularUserId, 'key-min')
-      ).rejects.toThrow(/Minimum redemption amount/i);
+      const res100 = await PayoutService.requestRedemption(regularUserId, 'key-min');
+      expect(res100.amountDebited).toBe(100.0);
+      expect(res100.payout.status).toBe('PENDING');
+
+      // Clear payouts for next redemption check
+      await prisma.payout.deleteMany({ where: { userId: regularUserId } });
 
       // Wallet available balance valid -> 100% full balance redeemed
       await prisma.wallet.update({

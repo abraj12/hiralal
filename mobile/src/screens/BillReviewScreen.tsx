@@ -9,8 +9,20 @@ import {
   Alert,
   TextInput,
   Modal,
+  ScrollView,
+  Image,
 } from 'react-native';
-import { CheckCircle2, XCircle, LogOut, FileText, AlertCircle, RefreshCw } from 'lucide-react-native';
+import {
+  CheckCircle2,
+  XCircle,
+  LogOut,
+  FileText,
+  AlertCircle,
+  RefreshCw,
+  CheckSquare,
+  Square,
+  X,
+} from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
 
@@ -20,9 +32,17 @@ export default function BillReviewScreen() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  // Reject modal
+  // Rejection modal state
   const [rejectId, setRejectId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+
+  // Per-bill Approval Review Modal state
+  const [reviewBill, setReviewBill] = useState<any | null>(null);
+  const [reviewGstIncluded, setReviewGstIncluded] = useState<boolean>(false);
+  const [reviewGstRate, setReviewGstRate] = useState<number>(18.0);
+  const [reviewGstRuleId, setReviewGstRuleId] = useState<string | undefined>(undefined);
+  const [reviewGstOverrideReason, setReviewGstOverrideReason] = useState<string>('');
+  const [gstRules, setGstRules] = useState<any[]>([]);
 
   const fetchBills = async () => {
     setLoading(true);
@@ -38,15 +58,56 @@ export default function BillReviewScreen() {
     }
   };
 
+  const fetchGstRules = async () => {
+    try {
+      const res = await MobileApiClient.getGstRules();
+      if (res && res.rules && res.rules.length > 0) {
+        setGstRules(res.rules);
+        const defaultRule = res.rules.find((r: any) => r.isDefault) || res.rules[0];
+        if (defaultRule) {
+          setReviewGstRate(Number(defaultRule.ratePercentage));
+          setReviewGstRuleId(defaultRule.id);
+        }
+      }
+    } catch (e: any) {
+      console.warn('Failed to fetch GST rules:', e?.message);
+    }
+  };
+
   useEffect(() => {
     fetchBills();
+    fetchGstRules();
   }, []);
 
-  const handleApprove = async (id: string) => {
-    setActionLoading(id);
+  const openReviewModal = (bill: any) => {
+    setReviewBill(bill);
+    setReviewGstIncluded(false);
+    const defaultRule = gstRules.find((r: any) => r.isDefault) || gstRules[0];
+    if (defaultRule) {
+      setReviewGstRate(Number(defaultRule.ratePercentage));
+      setReviewGstRuleId(defaultRule.id);
+    } else {
+      setReviewGstRate(18.0);
+      setReviewGstRuleId(undefined);
+    }
+    setReviewGstOverrideReason('');
+  };
+
+  const handleConfirmApprove = async () => {
+    if (!reviewBill) return;
+
+    setActionLoading(reviewBill.id);
     try {
-      await MobileApiClient.verifyAdminBill(id, 'APPROVE');
+      await MobileApiClient.verifyAdminBill(reviewBill.id, {
+        action: 'APPROVE',
+        gstIncluded: reviewGstIncluded,
+        gstRate: reviewGstIncluded ? reviewGstRate : 0,
+        gstRuleId: reviewGstIncluded ? reviewGstRuleId : undefined,
+        gstOverrideReason: reviewGstOverrideReason.trim() || undefined,
+      });
+      setReviewBill(null);
       await fetchBills();
+      Alert.alert('Bill Approved', 'The bill has been verified and reward credited.');
     } catch (e: any) {
       Alert.alert('Approval Failed', e.message || 'Could not approve bill.');
     } finally {
@@ -72,6 +133,16 @@ export default function BillReviewScreen() {
       setActionLoading(null);
     }
   };
+
+  // Live calculation for review modal
+  const grossAmount = reviewBill ? Number(reviewBill.grossBillAmount || reviewBill.billAmount || 0) : 0;
+  const calculatedGst = reviewBill && reviewGstIncluded && reviewGstRate > 0
+    ? Math.round(((grossAmount * reviewGstRate) / (100 + reviewGstRate)) * 100) / 100
+    : 0.0;
+  const eligibleAmount = Math.max(0, Math.round((grossAmount - calculatedGst) * 100) / 100);
+  const workerProfession = reviewBill?.user?.profession || 'PLUMBER';
+  const rewardRate = workerProfession === 'PLUMBER' ? 0.50 : 0.75;
+  const calculatedReward = Math.round(eligibleAmount * (rewardRate / 100) * 100) / 100;
 
   const renderBill = ({ item }: { item: any }) => {
     const isPending = item.status === 'PENDING' || item.status === 'UNDER_REVIEW';
@@ -107,7 +178,7 @@ export default function BillReviewScreen() {
           <View style={styles.actionsRow}>
             <TouchableOpacity
               style={[styles.btnAction, styles.btnApprove]}
-              onPress={() => handleApprove(item.id)}
+              onPress={() => openReviewModal(item)}
               disabled={actionLoading === item.id}
             >
               {actionLoading === item.id ? (
@@ -115,7 +186,7 @@ export default function BillReviewScreen() {
               ) : (
                 <>
                   <CheckCircle2 size={16} color="#ffffff" />
-                  <Text style={styles.btnActionText}>Approve</Text>
+                  <Text style={styles.btnActionText}>Review & Approve</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -171,6 +242,170 @@ export default function BillReviewScreen() {
             </View>
           }
         />
+      )}
+
+      {/* Per-Bill Review & Approval Modal */}
+      {reviewBill && (
+        <Modal visible={true} transparent={true} animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+              <View style={styles.modalHeaderRow}>
+                <View>
+                  <Text style={styles.modalTitle}>Review & Verify Bill</Text>
+                  <Text style={styles.modalDesc}>
+                    Invoice #{reviewBill.invoiceNumber || reviewBill.id?.slice(0, 8)}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setReviewBill(null)}
+                  style={styles.closeIconBtn}
+                >
+                  <X size={18} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 10 }}>
+                {/* Craftsman summary */}
+                <View style={styles.reviewWorkerCard}>
+                  <Text style={styles.reviewWorkerName}>
+                    {reviewBill.user?.fullName || 'N/A'}
+                  </Text>
+                  <Text style={styles.reviewWorkerSub}>
+                    {reviewBill.user?.profession || 'PLUMBER'} • {reviewBill.user?.mobile || ''}
+                  </Text>
+                  <Text style={styles.reviewGrossText}>
+                    Gross Bill Total: ₹{grossAmount.toLocaleString('en-IN')}
+                  </Text>
+                </View>
+
+                {/* Invoice image preview if available */}
+                {reviewBill.fileUrl && (
+                  <View style={styles.imagePreviewWrapper}>
+                    <Image
+                      source={{ uri: reviewBill.fileUrl }}
+                      style={styles.invoiceImagePreview}
+                      resizeMode="contain"
+                    />
+                  </View>
+                )}
+
+                {/* Worker remarks if present */}
+                {reviewBill.remarks && (
+                  <View style={styles.remarksBox}>
+                    <Text style={styles.remarksLabel}>Worker Remarks:</Text>
+                    <Text style={styles.remarksContent}>{reviewBill.remarks}</Text>
+                  </View>
+                )}
+
+                {/* Accessible GST Checkbox */}
+                <TouchableOpacity
+                  style={styles.checkboxContainer}
+                  onPress={() => setReviewGstIncluded(!reviewGstIncluded)}
+                  activeOpacity={0.7}
+                >
+                  {reviewGstIncluded ? (
+                    <CheckSquare size={20} color="#2563EB" />
+                  ) : (
+                    <Square size={20} color="#94A3B8" />
+                  )}
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.checkboxLabel}>
+                      GST is included in this bill total — deduct GST before calculating the reward.
+                    </Text>
+                    <Text style={styles.checkboxSub}>
+                      {reviewGstIncluded
+                        ? `Deducting embedded ${reviewGstRate}% GST via reverse formula.`
+                        : 'GST deducted = ₹0. Full bill amount eligible for reward.'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                {/* GST Rate Selector & Override Reason if GST is included */}
+                {reviewGstIncluded && (
+                  <View style={styles.gstConfigSection}>
+                    <Text style={styles.rateLabel}>Applicable GST Rate:</Text>
+                    <View style={styles.rateChipsRow}>
+                      {[5, 12, 18, 28].map((rate) => {
+                        const isSelected = reviewGstRate === rate;
+                        return (
+                          <TouchableOpacity
+                            key={rate}
+                            style={[styles.rateChip, isSelected && styles.rateChipActive]}
+                            onPress={() => {
+                              setReviewGstRate(rate);
+                              const matched = gstRules.find((r: any) => Number(r.ratePercentage) === rate);
+                              if (matched) setReviewGstRuleId(matched.id);
+                            }}
+                          >
+                            <Text style={[styles.rateChipText, isSelected && styles.rateChipTextActive]}>
+                              {rate}%
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    <Text style={[styles.rateLabel, { marginTop: 10 }]}>Override Reason (Optional):</Text>
+                    <TextInput
+                      style={styles.overrideInput}
+                      value={reviewGstOverrideReason}
+                      onChangeText={setReviewGstOverrideReason}
+                      placeholder="e.g. Verified tax breakdown on invoice"
+                      placeholderTextColor="#94A3B8"
+                    />
+                  </View>
+                )}
+
+                {/* Financial Calculation Breakdown Table */}
+                <View style={styles.breakdownCard}>
+                  <Text style={styles.breakdownHeader}>Calculation Breakdown</Text>
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownRowLabel}>GST Deducted:</Text>
+                    <Text style={styles.breakdownRowValue}>
+                      {reviewGstIncluded ? `₹${calculatedGst.toFixed(2)} (${reviewGstRate}%)` : '₹0.00'}
+                    </Text>
+                  </View>
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownRowLabel}>Eligible Reward Amount:</Text>
+                    <Text style={[styles.breakdownRowValue, { color: '#2563EB' }]}>
+                      ₹{eligibleAmount.toFixed(2)}
+                    </Text>
+                  </View>
+                  <View style={[styles.breakdownRow, { borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 6 }]}>
+                    <Text style={[styles.breakdownRowLabel, { fontWeight: '700' }]}>
+                      Estimated Reward ({rewardRate}%):
+                    </Text>
+                    <Text style={[styles.breakdownRowValue, { color: '#059669', fontWeight: '800' }]}>
+                      ₹{calculatedReward.toFixed(2)}
+                    </Text>
+                  </View>
+                </View>
+              </ScrollView>
+
+              {/* Action Buttons */}
+              <View style={styles.reviewModalActions}>
+                <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: '#F1F5F9' }]}
+                  onPress={() => setReviewBill(null)}
+                  disabled={actionLoading === reviewBill.id}
+                >
+                  <Text style={{ color: '#475569', fontWeight: '700' }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: '#059669', flex: 1 }]}
+                  onPress={handleConfirmApprove}
+                  disabled={actionLoading === reviewBill.id}
+                >
+                  {actionLoading === reviewBill.id ? (
+                    <ActivityIndicator color="#ffffff" size="small" />
+                  ) : (
+                    <Text style={{ color: '#ffffff', fontWeight: '700' }}>Confirm & Approve</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       )}
 
       {/* Rejection Modal */}
@@ -395,21 +630,183 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     width: '100%',
-    maxWidth: 360,
+    maxWidth: 400,
     backgroundColor: '#ffffff',
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 20,
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 10,
+  },
+  closeIconBtn: {
+    padding: 4,
   },
   modalTitle: {
     fontSize: 16,
     fontWeight: '800',
     color: '#0F172A',
-    marginBottom: 6,
   },
   modalDesc: {
     fontSize: 12,
     color: '#64748B',
+    marginTop: 2,
+  },
+  reviewWorkerCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 12,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  reviewWorkerName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  reviewWorkerSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  reviewGrossText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#2563EB',
+    marginTop: 6,
+  },
+  imagePreviewWrapper: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#0F172A',
+    marginBottom: 12,
+    height: 140,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  invoiceImagePreview: {
+    width: '100%',
+    height: '100%',
+  },
+  remarksBox: {
+    backgroundColor: '#FEF3C7',
+    padding: 10,
+    borderRadius: 10,
+    marginBottom: 12,
+  },
+  remarksLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#92400E',
+  },
+  remarksContent: {
+    fontSize: 12,
+    color: '#78350F',
+    marginTop: 2,
+  },
+  checkboxContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F1F5F9',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  checkboxLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+    lineHeight: 17,
+  },
+  checkboxSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 3,
+  },
+  gstConfigSection: {
+    backgroundColor: '#F8FAFC',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
+  },
+  rateLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  rateChipsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  rateChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#E2E8F0',
+  },
+  rateChipActive: {
+    backgroundColor: '#2563EB',
+  },
+  rateChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  rateChipTextActive: {
+    color: '#ffffff',
+  },
+  overrideInput: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 12,
+    color: '#0F172A',
+  },
+  breakdownCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
+  },
+  breakdownHeader: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  breakdownRowLabel: {
+    fontSize: 12,
+    color: '#475569',
+  },
+  breakdownRowValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0F172A',
+  },
+  reviewModalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
   },
   modalInput: {
     borderWidth: 1,

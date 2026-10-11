@@ -319,7 +319,10 @@ export class BillService {
         throw new Error(`Bills with status ${bill.status} cannot be approved.`);
       }
 
-      const profession: Profession = bill.user.profession || 'PLUMBER';
+      if (!bill.user.profession) {
+        throw new Error('User has no registered profession. Cannot resolve reward rule.');
+      }
+      const profession: Profession = bill.user.profession;
       const invoiceDate = bill.invoiceDate || new Date();
 
       // 2. Resolve applicable active reward rule for this profession and date

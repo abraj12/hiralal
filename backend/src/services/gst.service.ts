@@ -1,6 +1,9 @@
 import { prisma } from '../db';
 import { GstRule } from '@prisma/client';
 
+const roundMoney = (value: number): number =>
+  Math.round((value + Number.EPSILON) * 100) / 100;
+
 export class GstService {
   /**
    * Calculates GST amount and tax-exclusive eligible reward amount deterministically.
@@ -11,8 +14,8 @@ export class GstService {
    *    eligibleAmount = grossBillAmount
    *
    * 2. GST-inclusive invoice:
-   *    gstAmount = round(grossBillAmount * (gstRate / (100 + gstRate)), 2)
-   *    eligibleAmount = round(grossBillAmount - gstAmount, 2)
+   *    gstAmount = roundMoney(grossBillAmount * rate / (100 + rate))
+   *    eligibleAmount = roundMoney(grossBillAmount - gstAmount)
    */
   static calculateGstAndEligibleAmount(
     grossBillAmount: number,
@@ -25,28 +28,30 @@ export class GstService {
     gstAmount: number;
     eligibleRewardAmount: number;
   } {
-    const gross = Math.max(0, grossBillAmount);
-
-    if (!gstIncluded || gstRatePercentage <= 0) {
-      return {
-        grossBillAmount: Math.round(gross * 100) / 100,
-        gstIncluded: false,
-        gstRate: 0.0,
-        gstAmount: 0.0,
-        eligibleRewardAmount: Math.round(gross * 100) / 100,
-      };
+    if (!Number.isFinite(grossBillAmount) || grossBillAmount <= 0) {
+      throw new Error('Gross bill amount must be a finite positive number.');
     }
 
-    // Exact GST-inclusive reverse tax component calculation:
-    // e.g. for ₹10,000 at 18%: 10000 * 18 / 118 = 1525.4237... -> ₹1,525.42
-    const rate = Math.max(0, gstRatePercentage);
-    const rawGstAmount = (gross * rate) / (100 + rate);
-    const gstAmount = Math.round(rawGstAmount * 100) / 100;
-    const eligibleRewardAmount = Math.round((gross - gstAmount) * 100) / 100;
+    if (typeof gstIncluded !== 'boolean') {
+      throw new Error('GST selection must be a boolean.');
+    }
+
+    const rate = gstIncluded ? gstRatePercentage : 0;
+
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+      throw new Error('GST rate must be between 0% and 100%.');
+    }
+
+    const gross = roundMoney(grossBillAmount);
+    const gstAmount = gstIncluded && rate > 0
+      ? roundMoney((gross * rate) / (100 + rate))
+      : 0;
+
+    const eligibleRewardAmount = roundMoney(gross - gstAmount);
 
     return {
-      grossBillAmount: Math.round(gross * 100) / 100,
-      gstIncluded: true,
+      grossBillAmount: gross,
+      gstIncluded,
       gstRate: rate,
       gstAmount,
       eligibleRewardAmount,

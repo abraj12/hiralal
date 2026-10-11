@@ -431,11 +431,57 @@ router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequ
     }
 
     if (action === 'APPROVE') {
+      if (gstIncluded !== undefined && typeof gstIncluded !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          message: 'GST selection must be a boolean.',
+        });
+      }
+
+      const isGstIncluded = Boolean(gstIncluded);
+
+      if (isGstIncluded) {
+        if (gstRuleId !== undefined && (typeof gstRuleId !== 'string' || !gstRuleId.trim())) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid GST rule selection.',
+          });
+        }
+
+        if (
+          gstRate !== undefined &&
+          (
+            typeof gstRate !== 'number' ||
+            !Number.isFinite(gstRate) ||
+            gstRate < 0 ||
+            gstRate > 100
+          )
+        ) {
+          return res.status(400).json({
+            success: false,
+            message: 'GST rate must be between 0% and 100%.',
+          });
+        }
+
+        if (
+          !gstRuleId &&
+          (
+            typeof gstOverrideReason !== 'string' ||
+            !gstOverrideReason.trim()
+          )
+        ) {
+          return res.status(400).json({
+            success: false,
+            message: 'A reason is required for a manual GST rate override.',
+          });
+        }
+      }
+
       const result = await BillService.approveBill(req.params.id, admin.id, {
-        gstIncluded: Boolean(gstIncluded),
-        gstRate: typeof gstRate === 'number' ? gstRate : undefined,
-        gstRuleId: typeof gstRuleId === 'string' ? gstRuleId : undefined,
-        gstOverrideReason: typeof gstOverrideReason === 'string' ? gstOverrideReason : undefined,
+        gstIncluded: isGstIncluded,
+        gstRate: isGstIncluded ? (typeof gstRate === 'number' ? gstRate : undefined) : 0,
+        gstRuleId: isGstIncluded ? (typeof gstRuleId === 'string' && gstRuleId.trim() ? gstRuleId.trim() : undefined) : undefined,
+        gstOverrideReason: isGstIncluded && typeof gstOverrideReason === 'string' ? gstOverrideReason.trim() : undefined,
       });
 
       res.json({
@@ -446,7 +492,13 @@ router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequ
         walletBalance: result.walletBalance,
       });
     } else {
-      const updatedBill = await BillService.rejectBill(req.params.id, admin.id, rejectionReason);
+      if (!rejectionReason || typeof rejectionReason !== 'string' || !rejectionReason.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: 'A rejection reason is required.',
+        });
+      }
+      const updatedBill = await BillService.rejectBill(req.params.id, admin.id, rejectionReason.trim());
       res.json({
         success: true,
         message: 'Bill rejected.',

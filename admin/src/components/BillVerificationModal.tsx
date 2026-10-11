@@ -178,33 +178,24 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
 
           {/* Dynamic GST Audit Section (Admin Control) */}
           <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <Calculator className="w-4 h-4 text-blue-600" />
-                <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                  Tax / GST Treatment (Admin Decision)
-                </span>
-              </div>
-              <div className="flex items-center space-x-1.5 bg-slate-200/80 p-0.5 rounded-lg">
-                <button
-                  type="button"
-                  onClick={() => setGstIncluded(false)}
-                  className={`px-3 py-1 text-xs font-bold rounded-md transition ${
-                    !gstIncluded ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  GST Excluded (NO)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setGstIncluded(true)}
-                  className={`px-3 py-1 text-xs font-bold rounded-md transition ${
-                    gstIncluded ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  GST Included (YES)
-                </button>
-              </div>
+            <div className="flex items-start justify-between">
+              <label htmlFor="gstIncludedCheckbox" className="flex items-start space-x-3 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  id="gstIncludedCheckbox"
+                  checked={gstIncluded}
+                  onChange={(e) => setGstIncluded(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <div>
+                  <span className="text-xs font-bold text-slate-900 block">
+                    GST is included in this bill total — deduct GST before calculating the reward.
+                  </span>
+                  <span className="text-[11px] text-slate-500 block mt-0.5">
+                    Unchecked: GST deducted = ₹0, full valid bill amount eligible. Checked: embedded GST deducted via reverse GST formula.
+                  </span>
+                </div>
+              </label>
             </div>
 
             {gstIncluded && (

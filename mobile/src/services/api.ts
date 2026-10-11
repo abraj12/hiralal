@@ -562,10 +562,33 @@ export class MobileApiClient {
     return this.request(`/admin/bills?${params.toString()}`);
   }
 
-  static verifyAdminBill(id: string, action: 'APPROVE' | 'REJECT', rejectionReason?: string) {
+  static getGstRules() {
+    return this.request('/admin/settings/gst-rules');
+  }
+
+  static verifyAdminBill(
+    id: string,
+    actionOrOptions:
+      | 'APPROVE'
+      | 'REJECT'
+      | {
+          action: 'APPROVE' | 'REJECT';
+          rejectionReason?: string;
+          gstIncluded?: boolean;
+          gstRate?: number;
+          gstRuleId?: string;
+          gstOverrideReason?: string;
+        },
+    legacyRejectionReason?: string
+  ) {
+    const payload =
+      typeof actionOrOptions === 'string'
+        ? { action: actionOrOptions, rejectionReason: legacyRejectionReason }
+        : actionOrOptions;
+
     return this.request(`/admin/bills/${id}/verify`, {
       method: 'POST',
-      body: JSON.stringify({ action, rejectionReason }),
+      body: JSON.stringify(payload),
     });
   }
 
