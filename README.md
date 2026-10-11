@@ -6,7 +6,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org/)
 [![Prisma](https://img.shields.io/badge/Prisma-6.4-teal.svg)](https://www.prisma.io/)
 [![Redis](https://img.shields.io/badge/Redis-7-red.svg)](https://redis.io/)
-[![Tests](https://img.shields.io/badge/Tests-59%20Passing%20(100%25)-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-196%20Passing%20(100%25)-brightgreen.svg)]()
 [![Platform](https://img.shields.io/badge/Architecture-AWS%20Graviton2%20ARM64-orange.svg)]()
 
 Production rewards and loyalty management platform engineered specifically for **HIRALAL AND SONS SALES PVT. LTD.** (CIN: U51909BR2020PTC046116) by **ALGIONS AI LABS PRIVATE LIMITED** (CIN: U62011BR2026PTC088473).
@@ -118,8 +118,11 @@ MSG91_AUTH_KEY=msg91_auth_key
 MSG91_TEMPLATE_ID=msg91_template_id
 MSG91_SENDER_ID=HIRLAL
 
-# Admin Bootstrapping
-ADMIN_INITIAL_PASSWORD=STRONG_TEMPORARY_PASSWORD_FOR_SEED
+# Admin Bootstrapping (Separate credentials required; legacy ADMIN_INITIAL_PASSWORD rejected)
+BILL_ADMIN_MOBILE=REPLACE_WITH_PRODUCTION_BILL_ADMIN_10DIGIT_MOBILE
+OPERATIONS_ADMIN_MOBILE=REPLACE_WITH_PRODUCTION_OPERATIONS_ADMIN_10DIGIT_MOBILE
+BILL_ADMIN_INITIAL_PASSWORD=GENERATE_STRONG_TEMPORARY_BILL_ADMIN_PASSWORD
+OPERATIONS_ADMIN_INITIAL_PASSWORD=GENERATE_STRONG_TEMPORARY_OPERATIONS_ADMIN_PASSWORD
 CORS_ALLOWED_ORIGINS=https://admin.hiralalandsons.com
 ```
 
@@ -145,20 +148,26 @@ npx prisma migrate deploy
 npm run seed
 ```
 
-### 4. Execute Full Test Suite with Coverage
+### 4. Execute Full Test Suite
 ```bash
-npm test -- --coverage
+npm test -- --runInBand --forceExit
 ```
-All **59 tests across 9 test suites** run in-band and enforce coverage thresholds:
+All **196 tests across 18 test suites** run in-band and maintain 100% pass rate:
+- `global_reward_cap.spec.ts` (Monthly ₹50,000 ceiling, concurrent race condition approval, providerNameVerified checks)
+- `config_safety.spec.ts` (Strict environment validation, admin credential segregation, demo number rejection)
+- `migration_scenarios.spec.ts` (Fresh deployment, idempotent migrations, fail-closed legacy admin migration)
+- `admin_api_config.spec.ts` (Secure origin resolution and URL sanitization)
 - `auth_sessions_security.spec.ts` (OTP tokens, rotating refresh tokens, replay attack defense)
 - `concurrency_financial.spec.ts` (Race-condition approvals, double-redemption prevention)
-- `rewards_and_rules.spec.ts` (0.5% incentive math, pool ceiling, rejection reasons)
+- `rewards_and_rules.spec.ts` (0.5% incentive math, pool analytics, rejection reasons)
 - `payout_safety_worker.spec.ts` (Network timeout safety, 4xx refunds, webhook deduplication)
 - `kyc_and_storage.spec.ts` (Magic bytes inspection, PAN regex validation, AES-256-GCM)
 - `hardening_verification.spec.ts` (SignCare adapter, MSG91 transport, state machine, ledger audit)
-- `migration_scenarios.spec.ts` (Fresh DB deployment Scenario A & stability Scenario B)
-- `backup_restore.spec.ts` (OpenSSL AES-256 PBKDF2 encryption/decryption integrity)
-- `api_flows.spec.ts` (End-to-end API workflows)
+- `backup_restore.spec.ts` (OpenSSL AES-256-GCM authenticated encryption/decryption integrity)
+- `pan_migration.spec.ts` (Forward-only schema migration tests)
+- `payout_restore_reconciliation.spec.ts` (Reconciliation edge cases and disaster recovery integrity)
+- `seed_safety.spec.ts` (Production seed safety barriers and environment checks)
+- Additional business logic, security middleware, and end-to-end suites
 
 ---
 
@@ -197,7 +206,7 @@ export BACKUP_ENCRYPTION_PASSPHRASE="your-cryptographic-passphrase"
 ```
 1. Dumps PostgreSQL database using `pg_dump --clean --if-exists`.
 2. Compresses using `gzip -9`.
-3. Encrypts using AES-256-CBC with PBKDF2 salted key derivation (`openssl enc`).
+3. Encrypts using AES-256-GCM with PBKDF2 salted key derivation (`openssl enc`).
 4. Automatically uploads to private Cloudflare R2 prefix: `backups/postgres/YYYY/MM/DD/hiralal_backup_*.sql.gz.enc`.
 5. Prunes local backups older than 30 days.
 

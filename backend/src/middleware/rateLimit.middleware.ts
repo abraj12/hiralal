@@ -17,9 +17,10 @@ export interface RateLimitOptions {
   message?: string;
 }
 
-export function normalizeIdentifier(val: string | undefined): string {
-  if (!val) return 'anon';
+export function normalizeIdentifier(val: string | undefined): string | null {
+  if (!val || typeof val !== 'string') return null;
   const trimmed = val.trim();
+  if (!trimmed) return null;
   // Preserve uppercase alphanumeric prefix for admin identifiers so admins and craftsmen sharing phone numbers do not collide
   const adminMatch = trimmed.match(/^([A-Za-z]+)\s*([0-9]+)$/);
   if (adminMatch) {
@@ -35,6 +36,20 @@ export function normalizeIdentifier(val: string | undefined): string {
   return trimmed.toLowerCase();
 }
 
+/**
+ * Derives rate limit identifier. If mobile/identifier is missing,
+ * strictly falls back to ip:${req.ip} instead of masking client IP with 'anon'.
+ */
+export function requestIdentifier(req: Request, explicitVal?: string): string {
+  const extracted = explicitVal || req.body?.identifier || req.body?.mobile || req.body?.username;
+  const normalized = normalizeIdentifier(extracted);
+  if (normalized) {
+    return `id:${normalized}`;
+  }
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  return `ip:${ip}`;
+}
+
 export function createRateLimiter(options: {
   keyPrefix: string;
   limit: number;
@@ -46,7 +61,7 @@ export function createRateLimiter(options: {
     keyPrefix,
     limit,
     windowSeconds,
-    getIdentifier = (req: Request) => req.ip || 'anonymous',
+    getIdentifier = (req: Request) => `ip:${req.ip || 'unknown'}`,
     message = 'Too many requests. Please try again later.',
   } = options;
 
@@ -137,28 +152,56 @@ export function createRateLimiter(options: {
 }
 
 // Pre-configured rate limiters
+
+// 1. OTP Request Limiters (both IP and Identifier)
 export const otpRequestLimiter = createRateLimiter({
-  keyPrefix: 'otp:request',
+  keyPrefix: 'otp:request:id',
   limit: config.isProduction ? 5 : 25,
   windowSeconds: 300,
-  getIdentifier: (req) => normalizeIdentifier(req.body?.identifier || req.body?.mobile) || req.ip || 'anon',
-  message: 'Too many OTP requests. Please wait 5 minutes before trying again.',
+  getIdentifier: (req) => requestIdentifier(req),
+  message: 'Too many OTP requests for this mobile. Please wait 5 minutes before trying again.',
 });
 
+export const otpRequestIpLimiter = createRateLimiter({
+  keyPrefix: 'otp:request:ip',
+  limit: config.isProduction ? 15 : 60,
+  windowSeconds: 300,
+  getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
+  message: 'Too many OTP requests from this network. Please wait 5 minutes before trying again.',
+});
+
+// 2. OTP Verify Limiters (both IP and Identifier)
 export const otpVerifyLimiter = createRateLimiter({
-  keyPrefix: 'otp:verify',
+  keyPrefix: 'otp:verify:id',
   limit: config.isProduction ? 10 : 50,
   windowSeconds: 300,
-  getIdentifier: (req) => normalizeIdentifier(req.body?.identifier || req.body?.mobile) || req.ip || 'anon',
-  message: 'Too many verification attempts. Please wait 5 minutes before trying again.',
+  getIdentifier: (req) => requestIdentifier(req),
+  message: 'Too many verification attempts for this mobile. Please wait 5 minutes before trying again.',
 });
 
+export const otpVerifyIpLimiter = createRateLimiter({
+  keyPrefix: 'otp:verify:ip',
+  limit: config.isProduction ? 30 : 100,
+  windowSeconds: 300,
+  getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
+  message: 'Too many verification attempts from this network. Please wait 5 minutes before trying again.',
+});
+
+// 3. Login Limiters (both IP and Identifier)
 export const loginLimiter = createRateLimiter({
-  keyPrefix: 'auth:login',
+  keyPrefix: 'auth:login:id',
   limit: config.isProduction ? 15 : 60,
   windowSeconds: config.isProduction ? 900 : 180,
-  getIdentifier: (req) => normalizeIdentifier(req.body?.identifier || req.body?.mobile) || req.ip || 'anon',
-  message: 'Too many failed login attempts. Please wait a moment before trying again.',
+  getIdentifier: (req) => requestIdentifier(req),
+  message: 'Too many failed login attempts for this account. Please wait a moment before trying again.',
+});
+
+export const loginIpLimiter = createRateLimiter({
+  keyPrefix: 'auth:login:ip',
+  limit: config.isProduction ? 30 : 120,
+  windowSeconds: config.isProduction ? 900 : 180,
+  getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
+  message: 'Too many login attempts from this network. Please wait a moment before trying again.',
 });
 
 export function clearRateLimitCache() {
@@ -169,7 +212,7 @@ export const passwordResetLimiter = createRateLimiter({
   keyPrefix: 'auth:password_reset',
   limit: 3,
   windowSeconds: 900, // 3 attempts per 15 minutes
-  getIdentifier: (req) => req.body?.mobile || req.ip || 'anon',
+  getIdentifier: (req) => requestIdentifier(req),
   message: 'Too many password reset requests. Please wait 15 minutes before trying again.',
 });
 
@@ -177,7 +220,7 @@ export const kycLimiter = createRateLimiter({
   keyPrefix: 'kyc:verify',
   limit: 5,
   windowSeconds: 3600, // 5 attempts per hour
-  getIdentifier: (req: any) => req.user?.id || req.ip || 'anon',
+  getIdentifier: (req: any) => (req.user?.id ? `user:${req.user.id}` : `ip:${req.ip || 'unknown'}`),
   message: 'KYC PAN verification limit reached. Maximum 5 attempts per hour allowed.',
 });
 
@@ -185,7 +228,7 @@ export const payoutRedeemLimiter = createRateLimiter({
   keyPrefix: 'payout:redeem',
   limit: 3,
   windowSeconds: 60, // 3 requests per minute
-  getIdentifier: (req: any) => req.user?.id || req.ip || 'anon',
+  getIdentifier: (req: any) => (req.user?.id ? `user:${req.user.id}` : `ip:${req.ip || 'unknown'}`),
   message: 'Redemption request limit reached. Please wait a minute before requesting another payout.',
 });
 
@@ -193,7 +236,7 @@ export const adminLoginLimiter = createRateLimiter({
   keyPrefix: 'auth:admin_login_ip',
   limit: 5,
   windowSeconds: 900, // 5 attempts per 15 minutes by IP
-  getIdentifier: (req) => req.ip || 'anon',
+  getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
   message: 'Too many admin login attempts from this IP. Please wait 15 minutes.',
 });
 
@@ -201,6 +244,6 @@ export const adminAccountLoginLimiter = createRateLimiter({
   keyPrefix: 'auth:admin_login_user',
   limit: 5,
   windowSeconds: 900, // 5 attempts per 15 minutes by username/identifier
-  getIdentifier: (req) => normalizeIdentifier(req.body?.identifier || req.body?.username) || 'anon',
+  getIdentifier: (req) => requestIdentifier(req),
   message: 'Too many admin login attempts for this account. Please wait 15 minutes.',
 });

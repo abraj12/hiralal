@@ -16,6 +16,7 @@ import { StorageService } from '../services/storage.service';
 import { PayoutService } from '../services/payout.service';
 import { AuthService } from '../services/auth.service';
 import { BillStatus, Profession, UserStatus } from '@prisma/client';
+import { getIstYearAndMonth } from '../utils/timezone.utils';
 
 const router = Router();
 
@@ -76,6 +77,58 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
     const pool = await RewardService.getPoolAnalytics(filterProfession);
     const globalPool = await RewardService.getGlobalPoolAnalytics();
 
+    const { year: istYear, month: istMonth } = getIstYearAndMonth();
+    const istStartOfMonth = new Date(`${istYear}-${String(istMonth).padStart(2, '0')}-01T00:00:00+05:30`);
+
+    const monthlyRewardCredits = await prisma.walletTransaction.findMany({
+      where: {
+        type: 'REWARD_CREDIT',
+        createdAt: { gte: istStartOfMonth },
+      },
+      select: {
+        amount: true,
+        wallet: {
+          select: {
+            user: {
+              select: {
+                profession: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    let plumberTotal = 0;
+    let plumberCount = 0;
+    let tileTotal = 0;
+    let tileCount = 0;
+
+    for (const tx of monthlyRewardCredits) {
+      const prof = tx.wallet?.user?.profession;
+      const amt = Number(tx.amount || 0);
+      if (prof === 'PLUMBER') {
+        plumberTotal += amt;
+        plumberCount += 1;
+      } else if (prof === 'TILE_INSTALLER') {
+        tileTotal += amt;
+        tileCount += 1;
+      }
+    }
+
+    const programTotals = {
+      PLUMBER: {
+        totalAllocated: Math.round(plumberTotal * 100) / 100,
+        count: plumberCount,
+        averageReward: plumberCount > 0 ? Math.round((plumberTotal / plumberCount) * 100) / 100 : 0,
+      },
+      TILE_INSTALLER: {
+        totalAllocated: Math.round(tileTotal * 100) / 100,
+        count: tileCount,
+        averageReward: tileCount > 0 ? Math.round((tileTotal / tileCount) * 100) / 100 : 0,
+      },
+    };
+
     // 10 most recent bills
     const recentBills = await prisma.bill.findMany({
       where: billWhere,
@@ -102,6 +155,7 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
         totalRedeemed,
         pool,
         globalPool,
+        programTotals,
       },
       recentBills: recentBills.map((b) => ({
         ...b,

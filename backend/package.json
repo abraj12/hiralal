@@ -12,6 +12,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "seed": "ts-node src/prisma/seed.ts",
     "pan:migrate-legacy": "node dist/scripts/migrate-legacy-pan.js",
+    "admin:migrate-legacy": "node dist/scripts/migrate-legacy-admin.js",
     "test": "jest --runInBand --detectOpenHandles --forceExit"
   },
   "dependencies": {

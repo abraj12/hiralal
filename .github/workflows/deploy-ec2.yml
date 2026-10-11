@@ -12,6 +12,10 @@ on:
     types: [completed]
     branches: [main]
 
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -20,7 +24,7 @@ jobs:
     name: Production Deployment to AWS EC2
     runs-on: ubuntu-latest
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_deploy == 'DEPLOY') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_deploy == 'DEPLOY' && (github.ref == 'refs/heads/main' || github.ref_name == 'main')) ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
 
     steps:
@@ -87,6 +91,16 @@ jobs:
             # Build and deploy multi-container stack
             docker compose up -d --build
             
+            # Pre-deployment database backup gate before applying migrations
+            echo "Executing pre-deployment database backup gate..."
+            if [ -f scripts/backup-db.sh ]; then
+              chmod +x scripts/*.sh
+              ./scripts/backup-db.sh || {
+                echo "[FATAL ERROR] Pre-deployment database backup gate failed. Halting deployment before migrations." >&2
+                exit 1
+              }
+            fi
+
             # Run database migrations
             echo "Applying Prisma database migrations..."
             docker compose exec -T backend npx prisma migrate deploy

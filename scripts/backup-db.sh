@@ -9,7 +9,7 @@
 # DISASTER RECOVERY POLICY:
 # -------------------------
 # A backup is considered SUCCESSFUL ONLY after:
-#   1. Local pg_dump, gzip compression, and AES-256-CBC PBKDF2 encryption succeed.
+#   1. Local pg_dump, gzip compression, and Authenticated AES-256-GCM PBKDF2 encryption succeed.
 #   2. External Cloudflare R2 upload succeeds.
 #   3. Remote HeadObject verification proves the object exists with exact non-zero size.
 #

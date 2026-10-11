@@ -54,12 +54,26 @@ Base URL: `http://localhost:5000/api`
 
 #### 4. Admin Login
 - **Method**: `POST`
-- **Path**: `/auth/admin-login`
+- **Path**: `/auth/admin-login` (or `/auth/login` with admin credentials)
 - **Body**:
   ```json
   {
-    "username": "9999999999",
-    "password": "Admin@123"
+    "username": "BADM9876543210", // Role prefix + mobile or 10-digit mobile
+    "password": "StrongAdminPassword123"
+  }
+  ```
+- **Response Headers**:
+  - `Set-Cookie: admin_access_token=<JWT>; HttpOnly; Secure; SameSite=Lax; Path=/`
+- **Response Body (200)**:
+  ```json
+  {
+    "success": true,
+    "token": "<JWT_ADMIN_TOKEN>",
+    "admin": {
+      "id": "uuid",
+      "mobile": "9876543210",
+      "role": "BILL_ADMIN"
+    }
   }
   ```
 
@@ -151,3 +165,19 @@ Base URL: `http://localhost:5000/api`
     "minRedemptionAmount": 500
   }
   ```
+
+#### 4. Get Global Reward Pool Analytics
+- **Method**: `GET`
+- **Path**: `/rewards/pool`
+- **Headers**: `Authorization: Bearer <ADMIN_TOKEN>`
+- **Description**: Returns live IST month pool metrics including `totalPoolCap` (₹50,000), `usedAmount`, `headroom`, `exhausted`, and active profession rules.
+
+---
+
+### User Rewards Endpoints
+
+#### 1. Get User Reward Status
+- **Method**: `GET`
+- **Path**: `/rewards`
+- **Headers**: `Authorization: Bearer <TOKEN>`
+- **Description**: Returns authenticated user's reward calculation metrics and profession rules.

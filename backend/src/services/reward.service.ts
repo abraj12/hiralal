@@ -162,27 +162,37 @@ export class RewardService {
    * Uses atomic conditional SQL update to ensure strict concurrency protection.
    */
   static async claimGlobalMonthlyPoolAmount(tx: any, rewardAmount: number) {
-    const pool = await this.getCurrentMonthGlobalPool(tx);
-    const cap = Number(pool.totalPoolCap);
+    if (typeof rewardAmount !== 'number' || isNaN(rewardAmount) || !isFinite(rewardAmount) || rewardAmount <= 0) {
+      throw new Error('Reward amount must be a positive finite number.');
+    }
 
-    // Atomic conditional SQL update: only succeeds if usedAmount + rewardAmount <= totalPoolCap
+    const sanitizedReward = Math.round(rewardAmount * 100) / 100;
+    if (sanitizedReward <= 0) {
+      throw new Error('Reward amount must be greater than zero.');
+    }
+
+    const pool = await this.getCurrentMonthGlobalPool(tx);
+    const configuredCap = Number(pool.totalPoolCap);
+    const effectiveCap = Math.min(configuredCap, 50000.0);
+
+    // Atomic conditional SQL update: strictly caps at LEAST("totalPoolCap", 50000.00)
     const result: any[] = await tx.$queryRaw`
       UPDATE "GlobalRewardPool"
-      SET "usedAmount" = "usedAmount" + ${rewardAmount}::decimal,
-          "isCapped" = ("usedAmount" + ${rewardAmount}::decimal >= "totalPoolCap"),
+      SET "usedAmount" = "usedAmount" + ${sanitizedReward}::decimal,
+          "isCapped" = ("usedAmount" + ${sanitizedReward}::decimal >= LEAST("totalPoolCap", 50000.00::decimal)),
           "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${pool.id}
-        AND ("usedAmount" + ${rewardAmount}::decimal) <= "totalPoolCap"
+        AND ("usedAmount" + ${sanitizedReward}::decimal) <= LEAST("totalPoolCap", 50000.00::decimal)
       RETURNING *;
     `;
 
     if (!result || result.length === 0) {
       const current = await tx.globalRewardPool.findUnique({ where: { id: pool.id } });
-      const currentUsed = current ? Number(current.usedAmount) : cap;
-      const remaining = Math.max(0, cap - currentUsed);
+      const currentUsed = current ? Number(current.usedAmount) : effectiveCap;
+      const remaining = Math.max(0, effectiveCap - currentUsed);
 
       throw new Error(
-        `Monthly combined rewards pool ceiling of ₹${cap.toLocaleString('en-IN')} reached. Available headroom: ₹${remaining.toFixed(2)}. Approval rejected.`
+        `Monthly combined rewards pool ceiling of ₹${effectiveCap.toLocaleString('en-IN')} reached. Available headroom: ₹${remaining.toFixed(2)}. Approval rejected.`
       );
     }
 

@@ -64,13 +64,18 @@
    - `POSTGRES_PASSWORD=...`
    - `JWT_ACCESS_SECRET=...` (64+ character random string)
    - `JWT_REFRESH_SECRET=...` (64+ character random string)
+   - `JWT_ADMIN_ACCESS_SECRET=...` (64+ character random string)
+   - `BILL_ADMIN_PREFIX=BADM`, `OPERATIONS_ADMIN_PREFIX=OADM`
+   - `BILL_ADMIN_MOBILE=...`, `OPERATIONS_ADMIN_MOBILE=...` (Distinct 10-digit mobile numbers; demo numbers rejected)
+   - `BILL_ADMIN_INITIAL_PASSWORD=...`, `OPERATIONS_ADMIN_INITIAL_PASSWORD=...` (Distinct strong temporary passwords; legacy `ADMIN_INITIAL_PASSWORD` rejected)
    - `ENCRYPTION_KEY=...` (32-byte secret for app-level encryption)
    - `FIELD_ENCRYPTION_KEY=...` (64-hex-character AES-256 key)
    - `STORAGE_HMAC_SECRET=...`
    - `BACKUP_ENCRYPTION_PASSPHRASE=...` (Mandatory strong passphrase)
    - `R2_ACCESS_KEY_ID=...`, `R2_SECRET_ACCESS_KEY=...`, `R2_ENDPOINT=...`, `R2_BUCKET_NAME=...`
    - `RAZORPAYX_KEY_ID=...`, `RAZORPAYX_KEY_SECRET=...`, `RAZORPAYX_ACCOUNT_NUMBER=...`, `RAZORPAYX_WEBHOOK_SECRET=...`
-   - `SIGNCARE_API_KEY=...`
+   - `SIGNCARE_API_KEY=...`, `SIGNCARE_APP_ID=...`
+   - `MSG91_AUTH_KEY=...`, `MSG91_TEMPLATE_ID=...`
 
 ---
 
@@ -121,9 +126,19 @@
    docker compose exec backend npm run prisma:deploy
    ```
 
-5. Seed initial administrative rules:
+5. Seed initial administrative rules and accounts:
    ```bash
    docker compose exec backend npm run seed
+   ```
+
+6. Optional Legacy Admin Account Migration (Fail-Closed):
+   If upgrading from legacy single `ADMIN` role schemas:
+   ```bash
+   # Dry-run inspection first:
+   docker compose exec backend npm run admin:migrate-legacy -- --dry-run
+
+   # Execute migration:
+   docker compose exec backend npm run admin:migrate-legacy
    ```
 
 ---

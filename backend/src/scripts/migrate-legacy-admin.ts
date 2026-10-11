@@ -9,12 +9,23 @@ export interface AdminMigrationSummary {
   errors: Array<{ userId: string; reason: string }>;
 }
 
+export interface AdminMigrationOptions {
+  dryRun?: boolean;
+}
+
 /**
- * Forward-only, idempotent migration runner to classify legacy monolithic ADMIN accounts
+ * Forward-only, fail-closed migration runner to classify legacy monolithic ADMIN accounts
  * into separated role-based accounts (BILL_ADMIN or OPERATIONS_ADMIN).
- * Creates audit log entries for full compliance and traceability.
+ * Only maps to target roles if mobile strictly matches configured admin credentials.
+ * Rejects unmapped legacy accounts without modifying database records.
+ * Supports --dry-run for pre-flight verification without mutating state.
  */
-export async function migrateLegacyAdminAccounts(prisma: PrismaClient): Promise<AdminMigrationSummary> {
+export async function migrateLegacyAdminAccounts(
+  prisma: PrismaClient,
+  options: AdminMigrationOptions = {}
+): Promise<AdminMigrationSummary> {
+  const isDryRun = options.dryRun ?? process.argv.includes('--dry-run');
+
   const summary: AdminMigrationSummary = {
     totalFound: 0,
     migratedToOperations: 0,
@@ -30,37 +41,43 @@ export async function migrateLegacyAdminAccounts(prisma: PrismaClient): Promise<
 
   summary.totalFound = legacyAdmins.length;
 
+  const billMobile = config.admin.billAdminMobile?.replace(/\D/g, '').slice(-10);
+  const opsMobile = config.admin.operationsAdminMobile?.replace(/\D/g, '').slice(-10);
+
   for (const adminUser of legacyAdmins) {
     try {
-      let targetRole: UserRole = 'OPERATIONS_ADMIN';
-
-      // Check if mobile matches bill admin mobile
-      const billMobile = config.admin.billAdminMobile?.replace(/\D/g, '').slice(-10);
       const userPhone = adminUser.mobile.replace(/\D/g, '').slice(-10);
+      let targetRole: UserRole | null = null;
 
       if (billMobile && userPhone === billMobile) {
         targetRole = 'BILL_ADMIN';
-      } else if (userPhone === '9999999991') {
-        targetRole = 'BILL_ADMIN';
+      } else if (opsMobile && userPhone === opsMobile) {
+        targetRole = 'OPERATIONS_ADMIN';
+      } else {
+        throw new Error(
+          `Unmapped legacy admin mobile (${adminUser.mobile}). Mobile does not match configured BILL_ADMIN_MOBILE or OPERATIONS_ADMIN_MOBILE. Migration fails closed without altering role.`
+        );
       }
 
-      await prisma.$transaction(async (tx) => {
-        await tx.user.update({
-          where: { id: adminUser.id },
-          data: { role: targetRole },
-        });
+      if (!isDryRun) {
+        await prisma.$transaction(async (tx) => {
+          await tx.user.update({
+            where: { id: adminUser.id },
+            data: { role: targetRole },
+          });
 
-        await tx.auditLog.create({
-          data: {
-            adminId: adminUser.id,
-            action: 'LEGACY_ADMIN_ROLE_MIGRATION',
-            entityType: 'User',
-            entityId: adminUser.id,
-            oldValue: JSON.stringify({ role: 'ADMIN' }),
-            newValue: JSON.stringify({ role: targetRole }),
-          },
+          await tx.auditLog.create({
+            data: {
+              adminId: adminUser.id,
+              action: 'LEGACY_ADMIN_ROLE_MIGRATION',
+              entityType: 'User',
+              entityId: adminUser.id,
+              oldValue: JSON.stringify({ role: 'ADMIN' }),
+              newValue: JSON.stringify({ role: targetRole }),
+            },
+          });
         });
-      });
+      }
 
       if (targetRole === 'BILL_ADMIN') {
         summary.migratedToBillAdmin++;
@@ -68,14 +85,16 @@ export async function migrateLegacyAdminAccounts(prisma: PrismaClient): Promise<
         summary.migratedToOperations++;
       }
 
-      console.log(`✅ Migrated legacy ADMIN user ${adminUser.id} (${adminUser.mobile}) to ${targetRole}`);
+      console.log(
+        `${isDryRun ? '[DRY-RUN] Would migrate' : '✅ Migrated'} legacy ADMIN user ${adminUser.id} (${adminUser.mobile}) to ${targetRole}`
+      );
     } catch (err: any) {
       summary.failed++;
       summary.errors.push({
         userId: adminUser.id,
         reason: err.message || 'Unknown migration failure',
       });
-      console.error(`❌ Failed to migrate legacy ADMIN user ${adminUser.id}:`, err);
+      console.error(`❌ Failed to migrate legacy ADMIN user ${adminUser.id}:`, err.message);
     }
   }
 
@@ -84,7 +103,12 @@ export async function migrateLegacyAdminAccounts(prisma: PrismaClient): Promise<
 
 if (require.main === module) {
   const prisma = new PrismaClient();
-  migrateLegacyAdminAccounts(prisma)
+  const isDryRun = process.argv.includes('--dry-run');
+  if (isDryRun) {
+    console.log('🔍 Running legacy admin migration in DRY-RUN mode (no database writes)...');
+  }
+
+  migrateLegacyAdminAccounts(prisma, { dryRun: isDryRun })
     .then((summary) => {
       console.log('Migration summary:', JSON.stringify(summary, null, 2));
       process.exit(summary.failed > 0 ? 1 : 0);

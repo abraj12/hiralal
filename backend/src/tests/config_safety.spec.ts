@@ -77,7 +77,10 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       MSG91_AUTH_KEY: 'msg91_live_auth_key_1234567890abcdef',
       MSG91_TEMPLATE_ID: 'msg91_dlt_template_id_1234567890',
       CORS_ALLOWED_ORIGINS: 'https://admin.hiralalandsons.com,https://app.hiralalandsons.com',
-      ADMIN_INITIAL_PASSWORD: 'HiralalExecutiveAdmin2026!SecureKey',
+      BILL_ADMIN_MOBILE: '9876543210',
+      OPERATIONS_ADMIN_MOBILE: '9876543211',
+      BILL_ADMIN_INITIAL_PASSWORD: 'BillAdmin2026!SecurePass',
+      OPERATIONS_ADMIN_INITIAL_PASSWORD: 'OpsAdmin2026!SecurePass',
       JWT_ADMIN_ACCESS_SECRET: 'admin_access_secret_high_entropy_32_characters_long_prod_key_3',
       BILL_ADMIN_PREFIX: 'BADM',
       OPERATIONS_ADMIN_PREFIX: 'OADM',
@@ -86,6 +89,39 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
     it('passes when all production secrets are valid and high-entropy', () => {
       expect(() => validateProductionConfig('api', validBaseEnv)).not.toThrow();
       expect(() => validateProductionConfig('worker', validBaseEnv)).not.toThrow();
+    });
+
+    it('rejects ADMIN_INITIAL_PASSWORD in production', () => {
+      const withLegacyAdminPassword = {
+        ...validBaseEnv,
+        ADMIN_INITIAL_PASSWORD: 'HiralalExecutiveAdmin2026!SecureKey',
+      };
+      expect(() => validateProductionConfig('api', withLegacyAdminPassword)).toThrow(
+        /ADMIN_INITIAL_PASSWORD fallback is deprecated and forbidden in production/
+      );
+    });
+
+    it('rejects default demo admin mobile numbers in production', () => {
+      expect(() =>
+        validateProductionConfig('api', { ...validBaseEnv, BILL_ADMIN_MOBILE: '9999999991' })
+      ).toThrow(/Insecure default BILL_ADMIN_MOBILE/);
+
+      expect(() =>
+        validateProductionConfig('api', { ...validBaseEnv, OPERATIONS_ADMIN_MOBILE: '9999999992' })
+      ).toThrow(/Insecure default OPERATIONS_ADMIN_MOBILE/);
+    });
+
+    it('rejects colliding admin mobiles and passwords', () => {
+      expect(() =>
+        validateProductionConfig('api', { ...validBaseEnv, OPERATIONS_ADMIN_MOBILE: '9876543210' })
+      ).toThrow(/must be distinct mobile numbers/);
+
+      expect(() =>
+        validateProductionConfig('api', {
+          ...validBaseEnv,
+          OPERATIONS_ADMIN_INITIAL_PASSWORD: 'BillAdmin2026!SecurePass',
+        })
+      ).toThrow(/must be distinct passwords/);
     });
 
     it('throws error when a required environment variable is missing', () => {

@@ -382,5 +382,9 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
       expect(await prisma.redemptionSettings.count()).toBeGreaterThan(0);
       expect(await prisma.payout.count()).toBeGreaterThan(0);
     });
+
+    afterAll(async () => {
+      await prisma.rewardRule.deleteMany({ where: { id: 'test_rule_plumber' } });
+    });
   });
 });

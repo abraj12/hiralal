@@ -8,14 +8,61 @@ export interface AuthenticatedRequest extends Request {
   user?: User;
 }
 
+function parseCookies(cookieHeader?: string): Record<string, string> {
+  const list: Record<string, string> = {};
+  if (!cookieHeader) return list;
+  cookieHeader.split(';').forEach((cookie) => {
+    const parts = cookie.split('=');
+    if (parts.length >= 2) {
+      const name = parts[0].trim();
+      const val = parts.slice(1).join('=').trim();
+      list[name] = decodeURIComponent(val);
+    }
+  });
+  return list;
+}
+
 export async function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  let token: string | undefined;
+  let isCookieAuth = false;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else {
+    const cookies = (req as any).cookies || parseCookies(req.headers.cookie);
+    if (cookies && cookies.admin_access_token) {
+      token = cookies.admin_access_token;
+      isCookieAuth = true;
+    }
+  }
+
+  if (!token) {
     res.status(401).json({ success: false, message: 'Authentication required. No token provided.' });
     return;
   }
 
-  const token = authHeader.split(' ')[1];
+  // Enforce CSRF / Origin validation for cookie-based authentication on mutating requests
+  if (isCookieAuth && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    const origin = (req.headers.origin as string) || '';
+    const referer = (req.headers.referer as string) || '';
+    const csrfHeader = (req.headers['x-csrf-token'] as string) || (req.headers['x-requested-with'] as string);
+
+    const isOriginAllowed = origin && config.cors.allowedOrigins.some((allowed) => origin.startsWith(allowed));
+    const isRefererAllowed = referer && config.cors.allowedOrigins.some((allowed) => referer.startsWith(allowed));
+    const isLocalDev =
+      !config.isProduction &&
+      (origin.includes('localhost') || origin.includes('127.0.0.1') || referer.includes('localhost') || referer.includes('127.0.0.1'));
+
+    if (!isOriginAllowed && !isRefererAllowed && !isLocalDev && !csrfHeader) {
+      res.status(403).json({
+        success: false,
+        code: 'CSRF_VALIDATION_FAILED',
+        message: 'CSRF / Origin validation failed for cookie-authenticated request.',
+      });
+      return;
+    }
+  }
   try {
     let decoded: any;
     try {

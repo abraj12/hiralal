@@ -1,11 +1,11 @@
 import { Router, Response } from 'express';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
+import { authenticate, requireUser, requireAdmin, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { prisma } from '../db';
 import { RewardService } from '../services/reward.service';
 
 const router = Router();
 
-router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
 
@@ -76,11 +76,22 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
   }
 });
 
-router.get('/pool', async (req, res) => {
-  res.json({
-    success: true,
-    message: 'Monthly reward pool limit is retired. Approved rewards are credited in full to user wallets without pool capping.',
-  });
+router.get('/pool', authenticate, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const globalPool = await RewardService.getGlobalPoolAnalytics();
+    const plumberPool = await RewardService.getPoolAnalytics('PLUMBER');
+    const tilePool = await RewardService.getPoolAnalytics('TILE_INSTALLER');
+    res.json({
+      success: true,
+      globalPool,
+      pools: {
+        PLUMBER: plumberPool,
+        TILE_INSTALLER: tilePool,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 export default router;

@@ -11,9 +11,9 @@ interface RewardPoolBarProps {
 
 export default function RewardPoolBar({
   totalPoolCap = 50000,
-  usedAmount = 37850,
-  remainingAmount = 12150,
-  percentageUsed = 75.7,
+  usedAmount = 0,
+  remainingAmount = 50000,
+  percentageUsed = 0,
   isCapped = false,
 }: RewardPoolBarProps) {
   const isHighUsage = percentageUsed >= 75;

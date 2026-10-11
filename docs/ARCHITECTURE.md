@@ -60,10 +60,11 @@ To maintain commercial-grade accounting integrity:
 
 ### 4. Monthly ₹50,000 Reward Pool Atomic Enforcement
 
-The program strictly enforces a ceiling of **₹50,000 per calendar month** across all submitted bills:
-1. When an administrator approves a bill, the system recalculates `reward = billAmount * 0.005`.
-2. The system checks `currentUsed + calculatedReward <= 50,000`.
-3. If the cap is reached, the transaction is rejected or flagged as capped, protecting business liquidity.
+The program strictly enforces a hard ceiling of **₹50,000 per calendar month** across all approved bills across all professions:
+1. When an administrator approves a bill, the transaction atomically claims both the profession pool and the global monthly pool inside a single database transaction (`tx.$executeRaw`).
+2. Global pool claim executes `LEAST("totalPoolCap", 50000.00::decimal)` using atomic `UPDATE ... WHERE "usedAmount" + $1 <= LEAST("totalPoolCap", 50000.00::decimal)`.
+3. If headroom is exceeded, the update returns `count === 0` and rolls back the transaction entirely with `GLOBAL_REWARD_POOL_EXHAUSTED`, leaving zero orphaned reward credits.
+4. Concurrency boundary tests with `Promise.allSettled()` verify race condition safety when headroom is less than the sum of concurrent bills.
 
 ---
 
@@ -83,3 +84,29 @@ Payouts transition through an explicit state machine:
      +--- Webhook 'payout.reversed'  ---> [ FAILED / REVERSED ]
                                                 (Ledger credits availableBalance back as PAYOUT_REVERSAL)
 ```
+
+---
+
+### 6. Payment Account Verification & Authoritative Beneficiary Match
+
+Financial integrity requires strict bank-side name verification before funds can be redeemed:
+1. **Provider Verification (`providerNameVerified`)**:
+   - `PaymentAccount.providerNameVerified` defaults to `false`.
+   - Set to `true` strictly when RazorpayX fund account validation returns `active: true` and a registered provider name (`registered_name` or `name`).
+   - Insecure fallbacks to user-provided input strings or profile full names are strictly prohibited.
+2. **PAN vs. Beneficiary Matching**:
+   - Both `checkUserEligibility` and `requestRedemption` enforce `validateBeneficiaryMatch`.
+   - Requires verified payment account, `providerNameVerified === true`, `panStatus === 'VERIFIED'`, and `areNamesMatching(beneficiaryName, panHolderName)` returning true with >= 0.75 Jaro-Winkler similarity.
+   - Payout requests fail with `BENEFICIARY_PAN_MISMATCH` if identity congruence is not met.
+
+---
+
+### 7. Dual Authentication & Admin Web Portal Protection
+
+The platform supports unified API security across mobile and web:
+1. **Mobile App**:
+   - Authenticates via `Authorization: Bearer <token>`.
+   - Standard mobile flow without browser cookie constraints or CORS restrictions.
+2. **Admin Web Portal**:
+   - Issues secure, HTTP-only, `SameSite=Lax` cookie `admin_access_token` on administrative login.
+   - Protected with CSRF/Origin validation: mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`) require verified `Origin` or `X-Requested-With: XMLHttpRequest` matching configured admin origins.

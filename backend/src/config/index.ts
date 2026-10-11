@@ -157,7 +157,10 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     'MSG91_AUTH_KEY',
     'MSG91_TEMPLATE_ID',
     'CORS_ALLOWED_ORIGINS',
-    'ADMIN_INITIAL_PASSWORD',
+    'BILL_ADMIN_MOBILE',
+    'OPERATIONS_ADMIN_MOBILE',
+    'BILL_ADMIN_INITIAL_PASSWORD',
+    'OPERATIONS_ADMIN_INITIAL_PASSWORD',
   ];
 
   const workerOnlyVars = [
@@ -235,16 +238,27 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
         throw new Error('[FATAL] BILL_ADMIN_PREFIX and OPERATIONS_ADMIN_PREFIX must be distinct non-empty prefixes.');
       }
     }
+    if (env.ADMIN_INITIAL_PASSWORD) {
+      throw new Error(
+        '[FATAL] ADMIN_INITIAL_PASSWORD fallback is deprecated and forbidden in production. Configure separate BILL_ADMIN_INITIAL_PASSWORD and OPERATIONS_ADMIN_INITIAL_PASSWORD.'
+      );
+    }
     if (env.BILL_ADMIN_MOBILE) {
       const m1 = env.BILL_ADMIN_MOBILE.replace(/\D/g, '').slice(-10);
       if (m1 === '9999999991') {
         throw new Error('[FATAL] Insecure default BILL_ADMIN_MOBILE (9999999991) is rejected in production.');
+      }
+      if (m1.length !== 10) {
+        throw new Error('[FATAL] BILL_ADMIN_MOBILE must be a valid 10-digit Indian mobile number.');
       }
     }
     if (env.OPERATIONS_ADMIN_MOBILE) {
       const m2 = env.OPERATIONS_ADMIN_MOBILE.replace(/\D/g, '').slice(-10);
       if (m2 === '9999999992') {
         throw new Error('[FATAL] Insecure default OPERATIONS_ADMIN_MOBILE (9999999992) is rejected in production.');
+      }
+      if (m2.length !== 10) {
+        throw new Error('[FATAL] OPERATIONS_ADMIN_MOBILE must be a valid 10-digit Indian mobile number.');
       }
     }
     if (env.BILL_ADMIN_MOBILE && env.OPERATIONS_ADMIN_MOBILE) {
@@ -260,8 +274,12 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     if (env.OPERATIONS_ADMIN_INITIAL_PASSWORD && env.OPERATIONS_ADMIN_INITIAL_PASSWORD.length < 8) {
       throw new Error('[FATAL] OPERATIONS_ADMIN_INITIAL_PASSWORD must be at least 8 characters.');
     }
-    if (env.ADMIN_INITIAL_PASSWORD && env.ADMIN_INITIAL_PASSWORD.length < 8) {
-      throw new Error('[FATAL] ADMIN_INITIAL_PASSWORD must be at least 8 characters.');
+    if (
+      env.BILL_ADMIN_INITIAL_PASSWORD &&
+      env.OPERATIONS_ADMIN_INITIAL_PASSWORD &&
+      env.BILL_ADMIN_INITIAL_PASSWORD === env.OPERATIONS_ADMIN_INITIAL_PASSWORD
+    ) {
+      throw new Error('[FATAL] BILL_ADMIN_INITIAL_PASSWORD and OPERATIONS_ADMIN_INITIAL_PASSWORD must be distinct passwords.');
     }
   }
 }

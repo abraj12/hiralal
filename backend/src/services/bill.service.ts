@@ -355,6 +355,9 @@ export class BillService {
       // 4. Final reward calculation strictly rule-based
       const finalReward = RewardService.calculateReward(gstCalc.eligibleRewardAmount, rulePercentage);
 
+      // Preserve applicable profession-specific limits.
+      await RewardService.claimPoolAmount(tx, profession, finalReward);
+
       // 4b. Atomically claim from global monthly combined reward pool (₹50,000 hard ceiling)
       await RewardService.claimGlobalMonthlyPoolAmount(tx, finalReward);
 

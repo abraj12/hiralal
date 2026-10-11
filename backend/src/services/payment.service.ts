@@ -3,7 +3,24 @@ import { config } from '../config';
 import { PaymentType } from '@prisma/client';
 import { encryptSensitive } from '../utils/crypto.utils';
 
+export function readProviderRegisteredName(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value.trim().replace(/\s+/g, ' ');
+
+  if (normalized.length < 2 || normalized.length > 200) {
+    return null;
+  }
+
+  return normalized;
+}
+
 export class PaymentService {
+  static forceRealProvider = false;
+  static mockProviderActive = false;
+
   /**
    * Masks sensitive account info for presentation:
    * e.g., raj****@okhdfcbank or HDFC Bank ••••••5678
@@ -59,11 +76,33 @@ export class PaymentService {
       throw new Error('This UPI ID is already registered and verified with another user account.');
     }
 
-    let isValid = true;
-    let registeredName = user.fullName;
+    let isValid = false;
+    let providerRegisteredName: string | null = null;
+    let providerNameVerified = false;
 
-    // Real RazorpayX VPA Validation
-    if (config.razorpayx.keyId && config.razorpayx.keySecret && config.nodeEnv !== 'test') {
+    if (config.isProduction || config.nodeEnv === 'production') {
+      if (this.mockProviderActive) {
+        throw new Error('Test-only provider mocks cannot be selected in production mode.');
+      }
+      if (!config.razorpayx.keyId || !config.razorpayx.keySecret) {
+        throw new Error('Payment provider credentials are not configured. Verification cannot proceed in production.');
+      }
+    }
+
+    const isTestMock = config.nodeEnv === 'test' && !this.forceRealProvider;
+
+    if (isTestMock) {
+      if (config.isProduction || config.nodeEnv === 'production') {
+        throw new Error('Test-only provider mocks cannot be selected in production mode.');
+      }
+      isValid = true;
+      providerRegisteredName = user.fullName;
+      providerNameVerified = true;
+    } else {
+      if (!config.razorpayx.keyId || !config.razorpayx.keySecret) {
+        throw new Error('Payment provider credentials are not configured. Verification cannot proceed.');
+      }
+
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10000); // 10s strict timeout
 
@@ -89,23 +128,25 @@ export class PaymentService {
 
         const data: any = await res.json().catch(() => null);
 
-        // Explicit documented success contract
-        const isExplicitSuccess =
+        const providerName = readProviderRegisteredName(data?.results?.registered_name);
+
+        const explicitlyVerified =
           res.ok &&
           data &&
           (data.status === 'completed' || data.status === 'created') &&
-          data.results?.account_status === 'active';
+          data.results?.account_status === 'active' &&
+          providerName !== null;
 
-        if (isExplicitSuccess) {
-          isValid = true;
-          registeredName = data.results?.registered_name || user.fullName;
-        } else {
-          const errorMsg =
-            data?.error?.description ||
-            data?.results?.status_details?.description ||
-            `UPI validation failed with status: ${data?.status || 'network_error'}`;
-          throw new Error(errorMsg);
+        if (!explicitlyVerified) {
+          throw new Error(
+            'The payment provider could not confirm the beneficiary name. ' +
+            'Please retry verification or contact support.'
+          );
         }
+
+        isValid = true;
+        providerRegisteredName = providerName;
+        providerNameVerified = true;
       } catch (err: any) {
         if (err.name === 'AbortError') {
           throw new Error('UPI account validation timed out. Please try again.');
@@ -116,7 +157,6 @@ export class PaymentService {
       }
     }
 
-    const providerRegisteredName = registeredName;
     const maskedInfo = this.maskPaymentInfo('UPI', cleanUpi);
 
     // Save or update account
@@ -132,11 +172,12 @@ export class PaymentService {
           userId,
           accountType: 'UPI',
           upiId: cleanUpi,
-          accountHolderName: registeredName,
+          accountHolderName: providerRegisteredName || user.fullName,
           providerRegisteredName,
+          providerNameVerified,
           maskedInfo,
           isVerified: isValid,
-          verifiedAt: new Date(),
+          verifiedAt: isValid ? new Date() : null,
           isDefault: true,
         },
       });
@@ -190,11 +231,33 @@ export class PaymentService {
       throw new Error('This bank account is already registered and verified with another user account.');
     }
 
-    let isValid = true;
-    let registeredName = cleanName;
+    let isValid = false;
+    let providerRegisteredName: string | null = null;
+    let providerNameVerified = false;
 
-    // Real RazorpayX Bank Account Validation
-    if (config.razorpayx.keyId && config.razorpayx.keySecret && config.nodeEnv !== 'test') {
+    if (config.isProduction || config.nodeEnv === 'production') {
+      if (this.mockProviderActive) {
+        throw new Error('Test-only provider mocks cannot be selected in production mode.');
+      }
+      if (!config.razorpayx.keyId || !config.razorpayx.keySecret) {
+        throw new Error('Payment provider credentials are not configured. Verification cannot proceed in production.');
+      }
+    }
+
+    const isTestMock = config.nodeEnv === 'test' && !this.forceRealProvider;
+
+    if (isTestMock) {
+      if (config.isProduction || config.nodeEnv === 'production') {
+        throw new Error('Test-only provider mocks cannot be selected in production mode.');
+      }
+      isValid = true;
+      providerRegisteredName = cleanName;
+      providerNameVerified = true;
+    } else {
+      if (!config.razorpayx.keyId || !config.razorpayx.keySecret) {
+        throw new Error('Payment provider credentials are not configured. Verification cannot proceed.');
+      }
+
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10000); // 10s strict timeout
 
@@ -224,23 +287,25 @@ export class PaymentService {
 
         const data: any = await res.json().catch(() => null);
 
-        // Explicit documented success contract
-        const isExplicitSuccess =
+        const providerName = readProviderRegisteredName(data?.results?.registered_name);
+
+        const explicitlyVerified =
           res.ok &&
           data &&
           (data.status === 'completed' || data.status === 'created') &&
-          data.results?.account_status === 'active';
+          data.results?.account_status === 'active' &&
+          providerName !== null;
 
-        if (isExplicitSuccess) {
-          isValid = true;
-          registeredName = data.results?.registered_name || cleanName;
-        } else {
-          const errorMsg =
-            data?.error?.description ||
-            data?.results?.status_details?.description ||
-            `Bank account validation failed with status: ${data?.status || 'network_error'}`;
-          throw new Error(errorMsg);
+        if (!explicitlyVerified) {
+          throw new Error(
+            'The payment provider could not confirm the beneficiary name. ' +
+            'Please retry verification or contact support.'
+          );
         }
+
+        isValid = true;
+        providerRegisteredName = providerName;
+        providerNameVerified = true;
       } catch (err: any) {
         if (err.name === 'AbortError') {
           throw new Error('Bank account validation timed out. Please try again.');
@@ -251,7 +316,6 @@ export class PaymentService {
       }
     }
 
-    const providerRegisteredName = registeredName;
     const encryptedAccount = encryptSensitive(cleanAccount);
 
     return await prisma.$transaction(async (tx) => {
@@ -264,15 +328,16 @@ export class PaymentService {
         data: {
           userId: params.userId,
           accountType: 'BANK_ACCOUNT',
-          accountHolderName: registeredName,
+          accountHolderName: providerRegisteredName || cleanName,
           providerRegisteredName,
+          providerNameVerified,
           accountNumber: maskedInfo,
           accountNumberEncrypted: encryptedAccount,
           ifscCode: cleanIfsc,
           bankName: params.bankName || 'Bank',
           maskedInfo,
           isVerified: isValid,
-          verifiedAt: new Date(),
+          verifiedAt: isValid ? new Date() : null,
           isDefault: true,
         },
       });
@@ -292,6 +357,7 @@ export class PaymentService {
       bankName: a.bankName,
       accountHolderName: a.accountHolderName,
       providerRegisteredName: a.providerRegisteredName,
+      providerNameVerified: a.providerNameVerified,
       isVerified: a.isVerified,
       isDefault: a.isDefault,
       verifiedAt: a.verifiedAt,

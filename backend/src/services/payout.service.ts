@@ -62,6 +62,48 @@ export class PayoutService {
   }
 
   /**
+   * Authoritative helper to validate that the verified PAN holder name matches
+   * the provider-confirmed payment account beneficiary name.
+   */
+  static validateBeneficiaryMatch(
+    verifiedKycRecord: { panStatus?: string; nameMatched?: boolean; verifiedName?: string | null; panName?: string | null } | null,
+    verifiedAccount: { isVerified?: boolean; providerNameVerified?: boolean; providerRegisteredName?: string | null } | null
+  ): { isValid: boolean; reason?: string; panHolderName?: string; beneficiaryName?: string } {
+    if (!verifiedKycRecord || verifiedKycRecord.panStatus !== 'VERIFIED') {
+      return { isValid: false, reason: 'Please verify your PAN card details before redeeming rewards.' };
+    }
+
+    if (!verifiedKycRecord.nameMatched) {
+      return { isValid: false, reason: 'Your verified PAN name does not match your registered account name. Please update your profile name or complete verification.' };
+    }
+
+    const panHolderName = (verifiedKycRecord.verifiedName || verifiedKycRecord.panName || '').trim();
+    if (!panHolderName) {
+      return { isValid: false, reason: 'Authoritative PAN card name is missing from verification records.' };
+    }
+
+    if (!verifiedAccount || !verifiedAccount.isVerified) {
+      return { isValid: false, reason: 'Please add and verify a bank account or UPI ID to receive payouts.' };
+    }
+
+    if (verifiedAccount.providerNameVerified !== true) {
+      return { isValid: false, reason: 'The payment account beneficiary name has not been verified by the payment provider. Please re-verify your payout account.' };
+    }
+
+    const beneficiaryName = (verifiedAccount.providerRegisteredName || '').trim();
+    if (!beneficiaryName) {
+      return { isValid: false, reason: 'Authoritative beneficiary name is missing from payment provider verification.' };
+    }
+
+    const match = areNamesMatching(beneficiaryName, panHolderName);
+    if (!match) {
+      return { isValid: false, reason: 'Registered payment account beneficiary name does not match verified PAN name.' };
+    }
+
+    return { isValid: true, panHolderName, beneficiaryName };
+  }
+
+  /**
    * Evaluates user eligibility for rewards payout based on their profession.
    */
   static async checkUserEligibility(userId: string) {
@@ -85,16 +127,10 @@ export class PayoutService {
     const { settings, isWindowOpen } = await this.getRedemptionSettings(user.profession || undefined);
 
     const availableBalance = user.wallet ? Number(user.wallet.availableBalance) : 0;
-    const hasVerifiedKyc = user.kycRecords.length > 0;
-    const verifiedKycRecord = hasVerifiedKyc ? user.kycRecords[0] : null;
-    const isNameMatched = Boolean(verifiedKycRecord?.nameMatched || user.isNameLocked);
+    const verifiedKycRecord = user.kycRecords.length > 0 ? user.kycRecords[0] : null;
     const verifiedAccount = user.paymentAccounts[0] || null;
 
-    const panHolderName = verifiedKycRecord?.verifiedName || verifiedKycRecord?.panName || user.fullName || '';
-    const beneficiaryName = verifiedAccount?.providerRegisteredName || verifiedAccount?.accountHolderName || '';
-    const isBeneficiaryMatched = Boolean(
-      verifiedAccount && panHolderName && beneficiaryName && areNamesMatching(beneficiaryName, panHolderName)
-    );
+    const beneficiaryCheck = this.validateBeneficiaryMatch(verifiedKycRecord, verifiedAccount);
 
     let canRedeem = true;
     let reason = '';
@@ -113,24 +149,15 @@ export class PayoutService {
     } else if (activePayout) {
       canRedeem = false;
       reason = 'You have a redemption request currently in progress. Please wait until it completes.';
-    } else if (!hasVerifiedKyc) {
-      canRedeem = false;
-      reason = 'Please verify your PAN card details before redeeming rewards.';
-    } else if (!isNameMatched) {
-      canRedeem = false;
-      reason = 'Your verified PAN name does not match your registered account name. Please update your profile name or complete verification.';
-    } else if (!verifiedAccount) {
-      canRedeem = false;
-      reason = 'Please add and verify a bank account or UPI ID to receive payouts.';
     } else if (availableBalance <= 0) {
       canRedeem = false;
       reason = 'No balance available for redemption.';
     } else if (availableBalance < settings.minimumAmount) {
       canRedeem = false;
       reason = `Minimum redemption amount is ₹${settings.minimumAmount}. Your current balance is ₹${availableBalance.toFixed(2)}.`;
-    } else if (!isBeneficiaryMatched) {
+    } else if (!beneficiaryCheck.isValid) {
       canRedeem = false;
-      reason = 'Registered payment account beneficiary name does not match verified PAN name.';
+      reason = beneficiaryCheck.reason || 'Beneficiary verification failed.';
     }
 
     return {
@@ -229,16 +256,6 @@ export class PayoutService {
         const isNameMatched = Boolean(verifiedKycRecord?.nameMatched || user.isNameLocked);
         const verifiedAccount = user.paymentAccounts[0] || null;
 
-        if (!hasVerifiedKyc) {
-          throw new Error('Please verify your PAN card details before redeeming rewards.');
-        }
-        if (!isNameMatched) {
-          throw new Error('Your verified PAN name does not match your registered account name. Please update your profile name or complete verification.');
-        }
-        if (!verifiedAccount) {
-          throw new Error('A verified bank account or UPI ID is required for payout.');
-        }
-
         if (currentAvailable <= 0) {
           throw new Error('No balance available for redemption.');
         }
@@ -246,10 +263,9 @@ export class PayoutService {
           throw new Error(`Minimum redemption amount is ₹${settings.minimumAmount}. Your current balance is ₹${currentAvailable.toFixed(2)}.`);
         }
 
-        const panHolderName = verifiedKycRecord?.verifiedName || verifiedKycRecord?.panName || user.fullName || '';
-        const beneficiaryName = verifiedAccount.providerRegisteredName || verifiedAccount.accountHolderName || '';
-        if (!beneficiaryName || !areNamesMatching(beneficiaryName, panHolderName)) {
-          throw new Error('Registered payment account beneficiary name does not match verified PAN name.');
+        const beneficiaryCheck = PayoutService.validateBeneficiaryMatch(verifiedKycRecord, verifiedAccount);
+        if (!beneficiaryCheck.isValid) {
+          throw new Error(beneficiaryCheck.reason || 'Beneficiary verification failed.');
         }
 
         // 100% full balance redemption

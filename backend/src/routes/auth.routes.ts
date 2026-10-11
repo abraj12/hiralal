@@ -6,8 +6,11 @@ import { AuthService, normalizeStrictIndianMobile } from '../services/auth.servi
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import {
   otpRequestLimiter,
+  otpRequestIpLimiter,
   otpVerifyLimiter,
+  otpVerifyIpLimiter,
   loginLimiter,
+  loginIpLimiter,
   passwordResetLimiter,
   adminLoginLimiter,
   adminAccountLoginLimiter,
@@ -17,6 +20,17 @@ import { config } from '../config';
 import { generateSecureToken, sha256Hash } from '../utils/crypto.utils';
 
 const router = Router();
+
+function setAdminCookie(res: Response, token?: string) {
+  if (!token) return;
+  res.cookie('admin_access_token', token, {
+    httpOnly: true,
+    secure: config.isProduction,
+    sameSite: config.isProduction ? 'strict' : 'lax',
+    maxAge: 24 * 3600 * 1000,
+    path: '/',
+  });
+}
 
 // ==========================================
 // 1. OTP REQUEST & VERIFICATION
@@ -36,8 +50,8 @@ const handleOtpRequest = async (req: Request, res: Response) => {
   }
 };
 
-router.post('/otp/request', otpRequestLimiter, handleOtpRequest);
-router.post('/send-otp', otpRequestLimiter, handleOtpRequest); // Backwards compatibility alias
+router.post('/otp/request', otpRequestIpLimiter, otpRequestLimiter, handleOtpRequest);
+router.post('/send-otp', otpRequestIpLimiter, otpRequestLimiter, handleOtpRequest); // Backwards compatibility alias
 
 const handleOtpVerify = async (req: Request, res: Response) => {
   try {
@@ -52,8 +66,8 @@ const handleOtpVerify = async (req: Request, res: Response) => {
   }
 };
 
-router.post('/otp/verify', otpVerifyLimiter, handleOtpVerify);
-router.post('/verify-otp', otpVerifyLimiter, handleOtpVerify); // Backwards compatibility alias
+router.post('/otp/verify', otpVerifyIpLimiter, otpVerifyLimiter, handleOtpVerify);
+router.post('/verify-otp', otpVerifyIpLimiter, otpVerifyLimiter, handleOtpVerify); // Backwards compatibility alias
 
 // ==========================================
 // 2. REGISTRATION (Consumes verificationToken)
@@ -108,7 +122,7 @@ router.post('/register', async (req: Request, res: Response) => {
 // 3. LOGIN & SESSIONS
 // ==========================================
 
-router.post('/login', loginLimiter, async (req: Request, res: Response) => {
+router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Response) => {
   const rawIdentifier = String(req.body?.identifier || req.body?.mobile || '').trim();
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
@@ -128,6 +142,9 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
     });
 
     if (result.kind === 'USER_AUTHENTICATED') {
+      if (['BILL_ADMIN', 'OPERATIONS_ADMIN'].includes((result.session.user as any)?.role)) {
+        setAdminCookie(res, result.session.accessToken || result.session.token);
+      }
       return res.status(200).json({
         success: true,
         type: 'USER_AUTHENTICATED',
@@ -211,6 +228,19 @@ router.post('/logout', async (req: Request, res: Response) => {
       }
     }
 
+    const cookies = (req as any).cookies || { admin_access_token: req.headers.cookie?.match(/admin_access_token=([^;]+)/)?.[1] };
+    const cookieToken = cookies?.admin_access_token;
+    if (!userId && cookieToken) {
+      try {
+        const decodedAdmin = jwt.verify(cookieToken, config.admin.accessSecret) as any;
+        if (decodedAdmin?.userId || decodedAdmin?.id) {
+          userId = decodedAdmin.userId || decodedAdmin.id;
+        }
+      } catch {
+        // Token is invalid/unverified
+      }
+    }
+
     if (!refreshToken && !userId) {
       return res.status(400).json({
         success: false,
@@ -219,6 +249,7 @@ router.post('/logout', async (req: Request, res: Response) => {
     }
 
     await AuthService.logout(refreshToken, userId);
+    res.clearCookie('admin_access_token', { path: '/' });
     res.json({ success: true, message: 'Logged out successfully.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
@@ -284,7 +315,7 @@ router.post('/password-reset/complete', async (req: Request, res: Response) => {
 // 5. ADMIN AUTHENTICATION (OTP-First Flow)
 // ==========================================
 
-router.post('/admin/otp/request', otpRequestLimiter, async (req: Request, res: Response) => {
+router.post('/admin/otp/request', otpRequestIpLimiter, otpRequestLimiter, async (req: Request, res: Response) => {
   try {
     const identifier = req.body.identifier || req.body.username;
     const { password } = req.body;
@@ -310,7 +341,7 @@ router.post('/admin/otp/request', otpRequestLimiter, async (req: Request, res: R
   }
 });
 
-router.post('/admin/otp/verify', otpVerifyLimiter, async (req: Request, res: Response) => {
+router.post('/admin/otp/verify', otpVerifyIpLimiter, otpVerifyLimiter, async (req: Request, res: Response) => {
   try {
     const identifier = req.body.identifier || req.body.username;
     const { otpCode, challengeToken, verificationToken } = req.body;
@@ -330,6 +361,9 @@ router.post('/admin/otp/verify', otpVerifyLimiter, async (req: Request, res: Res
       userAgent,
       ipAddress,
     });
+    if (result.accessToken || result.token) {
+      setAdminCookie(res, result.accessToken || result.token);
+    }
     res.json(result);
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
@@ -366,6 +400,10 @@ router.post(
         userAgent,
         ipAddress,
       });
+
+      if (result.accessToken || result.token) {
+        setAdminCookie(res, result.accessToken || result.token);
+      }
 
       res.json({ success: true, ...result });
     } catch (err: any) {
@@ -404,6 +442,9 @@ router.post(
         userAgent,
         ipAddress,
       });
+      if (result.accessToken || result.token) {
+        setAdminCookie(res, result.accessToken || result.token);
+      }
       return res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(401).json({ success: false, message: err.message });

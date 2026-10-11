@@ -325,6 +325,7 @@ model PaymentAccount {
   upiId                  String?
   accountHolderName      String?
   providerRegisteredName String?
+  providerNameVerified   Boolean     @default(false)
   accountNumber          String?
   accountNumberEncrypted String?
   ifscCode               String?

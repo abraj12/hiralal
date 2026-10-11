@@ -21,6 +21,9 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
     await prisma.paymentAccount.deleteMany({ where: { user: { mobile: '9888888888' } } });
     await prisma.wallet.deleteMany({ where: { user: { mobile: '9888888888' } } });
     await prisma.user.deleteMany({ where: { mobile: '9888888888' } });
+    await prisma.rewardRule.deleteMany({
+      where: { id: { in: ['test_rule_plumber', 'test_rule_tile', 'rule_plumber_test', 'rule_tile_test'] } },
+    });
 
     // Reset pool for clean test run
     const { year, month } = getIstYearAndMonth();

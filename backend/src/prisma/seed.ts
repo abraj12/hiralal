@@ -25,10 +25,11 @@ async function main() {
       if (!process.env.BILL_ADMIN_MOBILE) {
         throw new Error('BILL_ADMIN_MOBILE is required in production.');
       }
-      if (process.env.BILL_ADMIN_MOBILE.replace(/\D/g, '').slice(-10) === '9999999991') {
+      const cleanBill = process.env.BILL_ADMIN_MOBILE.replace(/\D/g, '').slice(-10);
+      if (cleanBill === '9999999991') {
         throw new Error('Default mobile 9999999991 is not permitted for BILL_ADMIN in production.');
       }
-      if (!process.env.BILL_ADMIN_INITIAL_PASSWORD && !process.env.ADMIN_INITIAL_PASSWORD) {
+      if (!process.env.BILL_ADMIN_INITIAL_PASSWORD) {
         throw new Error('BILL_ADMIN_INITIAL_PASSWORD is required to provision Bill Admin in production.');
       }
     }
@@ -36,7 +37,6 @@ async function main() {
     const billAdminMobile = process.env.BILL_ADMIN_MOBILE || '9999999991';
     const billAdminPassword =
       process.env.BILL_ADMIN_INITIAL_PASSWORD ||
-      process.env.ADMIN_INITIAL_PASSWORD ||
       (process.env.NODE_ENV === 'production' ? '' : 'BillAdmin@123');
 
     let billAdmin = await prisma.user.findFirst({
@@ -46,7 +46,7 @@ async function main() {
     if (!billAdmin) {
       if (!billAdminPassword) {
         throw new Error(
-          'BILL_ADMIN_INITIAL_PASSWORD or ADMIN_INITIAL_PASSWORD is required to provision Bill Admin in production.'
+          'BILL_ADMIN_INITIAL_PASSWORD is required to provision Bill Admin in production.'
         );
       }
       const billAdminHash = await bcrypt.hash(billAdminPassword, 10);
@@ -70,18 +70,25 @@ async function main() {
       if (!process.env.OPERATIONS_ADMIN_MOBILE) {
         throw new Error('OPERATIONS_ADMIN_MOBILE is required in production.');
       }
-      if (process.env.OPERATIONS_ADMIN_MOBILE.replace(/\D/g, '').slice(-10) === '9999999992') {
+      const cleanOps = process.env.OPERATIONS_ADMIN_MOBILE.replace(/\D/g, '').slice(-10);
+      if (cleanOps === '9999999992') {
         throw new Error('Default mobile 9999999992 is not permitted for OPERATIONS_ADMIN in production.');
       }
-      if (!process.env.OPERATIONS_ADMIN_INITIAL_PASSWORD && !process.env.ADMIN_INITIAL_PASSWORD) {
+      const cleanBill = (process.env.BILL_ADMIN_MOBILE || '').replace(/\D/g, '').slice(-10);
+      if (cleanBill && cleanOps === cleanBill) {
+        throw new Error('BILL_ADMIN_MOBILE and OPERATIONS_ADMIN_MOBILE must be distinct in production.');
+      }
+      if (!process.env.OPERATIONS_ADMIN_INITIAL_PASSWORD) {
         throw new Error('OPERATIONS_ADMIN_INITIAL_PASSWORD is required to provision Operations Admin in production.');
+      }
+      if (process.env.BILL_ADMIN_INITIAL_PASSWORD === process.env.OPERATIONS_ADMIN_INITIAL_PASSWORD) {
+        throw new Error('BILL_ADMIN_INITIAL_PASSWORD and OPERATIONS_ADMIN_INITIAL_PASSWORD must be distinct.');
       }
     }
 
     const opsAdminMobile = process.env.OPERATIONS_ADMIN_MOBILE || '9999999992';
     const opsAdminPassword =
       process.env.OPERATIONS_ADMIN_INITIAL_PASSWORD ||
-      process.env.ADMIN_INITIAL_PASSWORD ||
       (process.env.NODE_ENV === 'production' ? '' : 'OpsAdmin@123');
 
     let opsAdmin = await prisma.user.findFirst({
@@ -91,7 +98,7 @@ async function main() {
     if (!opsAdmin) {
       if (!opsAdminPassword) {
         throw new Error(
-          'OPERATIONS_ADMIN_INITIAL_PASSWORD or ADMIN_INITIAL_PASSWORD is required to provision Operations Admin in production.'
+          'OPERATIONS_ADMIN_INITIAL_PASSWORD is required to provision Operations Admin in production.'
         );
       }
       const opsAdminHash = await bcrypt.hash(opsAdminPassword, 10);

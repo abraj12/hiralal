@@ -98,7 +98,9 @@ describe('Part B & C — Global Reward Pool (₹50,000 Combined Hard Cap), Self-
     });
 
     // Clean up test rules if left over
-    await prisma.rewardRule.deleteMany({ where: { id: { in: ['rule_plumber_test', 'rule_tile_test'] } } });
+    await prisma.rewardRule.deleteMany({
+      where: { id: { in: ['rule_plumber_test', 'rule_tile_test', 'test_rule_plumber', 'test_rule_tile'] } },
+    });
 
     // Enable redemption window
     await prisma.redemptionSettings.upsert({
@@ -130,7 +132,9 @@ describe('Part B & C — Global Reward Pool (₹50,000 Combined Hard Cap), Self-
     await prisma.user.deleteMany({
       where: { mobile: { in: ['9811100001', '9811100002', '9811100003', '9811100004'] } },
     });
-    await prisma.rewardRule.deleteMany({ where: { id: { in: ['rule_plumber_test', 'rule_tile_test'] } } });
+    await prisma.rewardRule.deleteMany({
+      where: { id: { in: ['rule_plumber_test', 'rule_tile_test', 'test_rule_plumber', 'test_rule_tile'] } },
+    });
     await prisma.globalRewardPool.upsert({
       where: { global_pool_year_month_unique: { year, month } },
       update: { usedAmount: 0.0, totalPoolCap: 50000.0, isCapped: false },
@@ -199,6 +203,90 @@ describe('Part B & C — Global Reward Pool (₹50,000 Combined Hard Cap), Self-
           await RewardService.claimGlobalMonthlyPoolAmount(tx, 1.0);
         })
       ).rejects.toThrow(/Monthly combined rewards pool ceiling of ₹50,000 reached/);
+    });
+
+    it('enforces atomic concurrency boundary when headroom is ₹50: exactly 1 succeeds, 1 rejected, no orphaned credits', async () => {
+      // 1. Reset GlobalRewardPool so usedAmount = 49950.0 (exactly ₹50 headroom left)
+      await prisma.globalRewardPool.upsert({
+        where: { global_pool_year_month_unique: { year, month } },
+        update: { usedAmount: 49950.0, totalPoolCap: 50000.0, isCapped: false },
+        create: { year, month, totalPoolCap: 50000.0, usedAmount: 49950.0, isCapped: false },
+      });
+
+      // Also ensure profession pool has sufficient headroom
+      await prisma.rewardPool.upsert({
+        where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
+        update: { usedAmount: 0.0, totalPoolCap: 50000.0, isCapped: false },
+        create: { profession: 'PLUMBER', year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
+      });
+
+      // 2. Create 2 pending bills each for ₹50 reward (0.5% of ₹10,000 = ₹50)
+      const billA = await prisma.bill.create({
+        data: {
+          userId: testPlumber.id,
+          invoiceNumber: `INV-CONCUR-A-${Date.now()}`,
+          invoiceDate: new Date(),
+          billAmount: 10000,
+          grossBillAmount: 10000,
+          calculatedReward: 50,
+          status: 'PENDING',
+          fileUrl: 'https://storage/concurrent-a.pdf',
+          fileKey: 'bills/concurrent-a.pdf',
+          fileHash: `hash_concur_a_${Date.now()}`,
+        },
+      });
+
+      const billB = await prisma.bill.create({
+        data: {
+          userId: testPlumber.id,
+          invoiceNumber: `INV-CONCUR-B-${Date.now()}`,
+          invoiceDate: new Date(),
+          billAmount: 10000,
+          grossBillAmount: 10000,
+          calculatedReward: 50,
+          status: 'PENDING',
+          fileUrl: 'https://storage/concurrent-b.pdf',
+          fileKey: 'bills/concurrent-b.pdf',
+          fileHash: `hash_concur_b_${Date.now()}`,
+        },
+      });
+
+      // 3. Concurrently approve both bills
+      const results = await Promise.allSettled([
+        BillService.approveBill(billA.id, testBillAdmin.id),
+        BillService.approveBill(billB.id, testBillAdmin.id),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(1);
+
+      const rejectionReason = (rejected[0] as PromiseRejectedResult).reason;
+      expect(rejectionReason.message).toMatch(/Monthly combined rewards pool ceiling of ₹50,000 reached/);
+
+      // Verify global pool state: usedAmount exactly hits ₹50,000 and isCapped is true
+      const analytics = await RewardService.getGlobalPoolAnalytics();
+      expect(analytics.usedAmount).toBe(50000.0);
+      expect(analytics.remainingAmount).toBe(0.0);
+      expect(analytics.isCapped).toBe(true);
+
+      // Verify no orphaned wallet transactions
+      const txs = await prisma.walletTransaction.findMany({
+        where: {
+          referenceId: { in: [billA.id, billB.id] },
+        },
+      });
+      expect(txs.length).toBe(1);
+      expect(Number(txs[0].amount)).toBe(50.0);
+
+      // Verify bill statuses: exactly 1 APPROVED and 1 PENDING
+      const updatedA = await prisma.bill.findUnique({ where: { id: billA.id } });
+      const updatedB = await prisma.bill.findUnique({ where: { id: billB.id } });
+
+      const statuses = [updatedA?.status, updatedB?.status].sort();
+      expect(statuses).toEqual(['APPROVED', 'PENDING']);
     });
   });
 
@@ -294,6 +382,7 @@ describe('Part B & C — Global Reward Pool (₹50,000 Combined Hard Cap), Self-
           upiId: 'differentperson@okhdfcbank',
           accountHolderName: 'VIJAY MALLYA',
           providerRegisteredName: 'VIJAY MALLYA',
+          providerNameVerified: true,
           maskedInfo: 'dif****@okhdfcbank',
           isVerified: true,
           isDefault: true,
@@ -313,6 +402,32 @@ describe('Part B & C — Global Reward Pool (₹50,000 Combined Hard Cap), Self-
       await prisma.paymentAccount.delete({ where: { id: mismatchedAccount.id } });
     });
 
+    it('rejects payout eligibility when payment account providerNameVerified is false', async () => {
+      const unverifiedProviderAccount = await prisma.paymentAccount.create({
+        data: {
+          userId: testPlumber.id,
+          accountType: 'UPI',
+          upiId: 'rameshkumar@okhdfcbank',
+          accountHolderName: 'Ramesh Kumar',
+          providerRegisteredName: 'RAMESH KUMAR',
+          providerNameVerified: false,
+          maskedInfo: 'ram****@okhdfcbank',
+          isVerified: true,
+          isDefault: true,
+        },
+      });
+
+      const eligibility = await PayoutService.checkUserEligibility(testPlumber.id);
+      expect(eligibility.canRedeem).toBe(false);
+      expect(eligibility.reason).toContain('The payment account beneficiary name has not been verified by the payment provider');
+
+      await expect(
+        PayoutService.requestRedemption(testPlumber.id, 'idempotency_unverified_prov_123')
+      ).rejects.toThrow(/The payment account beneficiary name has not been verified by the payment provider/);
+
+      await prisma.paymentAccount.delete({ where: { id: unverifiedProviderAccount.id } });
+    });
+
     it('allows payout eligibility and redemption when beneficiary name matches verified PAN name', async () => {
       // Add matching payment account
       await prisma.paymentAccount.create({
@@ -322,6 +437,7 @@ describe('Part B & C — Global Reward Pool (₹50,000 Combined Hard Cap), Self-
           upiId: 'rameshkumar@okhdfcbank',
           accountHolderName: 'Ramesh Kumar',
           providerRegisteredName: 'RAMESH KUMAR',
+          providerNameVerified: true,
           maskedInfo: 'ram****@okhdfcbank',
           isVerified: true,
           isDefault: true,
