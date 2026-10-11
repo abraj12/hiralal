@@ -724,7 +724,9 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
         });
       expect(resGarbage.status).toBe(400);
 
-      // 7. Empty date string
+      // 7. Empty date string: API contract is that empty effectiveFrom defaults to today (IST midnight).
+      // The route strips empty string to undefined, and createRule() calls parseIndiaBusinessDate(undefined)
+      // which returns today's IST midnight. This is a valid effective date, so creation succeeds with 201.
       const resEmpty = await request(app)
         .post('/api/admin/settings/reward-rules')
         .set('Authorization', `Bearer ${opsAdminToken}`)
@@ -733,7 +735,7 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
           rewardPercentage: 0.60,
           effectiveFrom: '',
         });
-      expect([201, 400]).toContain(resEmpty.status);
+      expect(resEmpty.status).toBe(201); // empty → today IST → valid date → rule created
     });
 
     test('invoice date submission rejects impossible calendar dates', async () => {

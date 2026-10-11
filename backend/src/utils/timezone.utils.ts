@@ -99,7 +99,11 @@ export function parseStrictIndiaDateOnly(dateStr: string): Date {
 }
 
 /**
- * Explicit parser for ISO timestamps (e.g. "2026-10-15T14:30:00.000Z").
+ * Explicit parser for ISO timestamps (e.g. "2026-10-15T14:30:00.000Z" or "2026-10-15T14:30:00+05:30").
+ * Validates:
+ *   - Calendar date (delegated to parseStrictIndiaDateOnly)
+ *   - Time components: hour 0–23, minute 0–59, second 0–59
+ *   - Trailing garbage after the timezone offset is rejected
  * Preserves time and timezone information without silently stripping them.
  */
 export function parseStrictIndiaTimestamp(isoStr: string): Date {
@@ -107,16 +111,42 @@ export function parseStrictIndiaTimestamp(isoStr: string): Date {
     throw new Error('Timestamp must be a non-empty string.');
   }
   const trimmed = isoStr.trim();
-  const dateMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (dateMatch) {
-    parseStrictIndiaDateOnly(`${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`);
+
+  // Must match: YYYY-MM-DDTHH:MM[:SS[.fff]][Z|(+|-)HH:MM] with no trailing characters
+  const tsMatch = trimmed.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:[.,]\d+)?)?([Zz]|[+-]\d{2}:\d{2})$/
+  );
+  if (!tsMatch) {
+    throw new Error(
+      `Invalid timestamp format: "${isoStr}". Expected ISO 8601 with explicit timezone (e.g. 2026-10-15T14:30:00+05:30 or 2026-10-15T14:30:00Z).`
+    );
   }
+
+  // Validate calendar date portion
+  parseStrictIndiaDateOnly(`${tsMatch[1]}-${tsMatch[2]}-${tsMatch[3]}`);
+
+  // Validate time components
+  const hour = parseInt(tsMatch[4], 10);
+  const minute = parseInt(tsMatch[5], 10);
+  const second = tsMatch[6] !== undefined ? parseInt(tsMatch[6], 10) : 0;
+
+  if (hour > 23) {
+    throw new Error(`Invalid hour ${hour} in timestamp "${isoStr}". Hours must be 0–23.`);
+  }
+  if (minute > 59) {
+    throw new Error(`Invalid minute ${minute} in timestamp "${isoStr}". Minutes must be 0–59.`);
+  }
+  if (second > 59) {
+    throw new Error(`Invalid second ${second} in timestamp "${isoStr}". Seconds must be 0–59.`);
+  }
+
   const parsed = new Date(trimmed);
   if (isNaN(parsed.getTime())) {
     throw new Error(`Invalid timestamp string: "${isoStr}".`);
   }
   return parsed;
 }
+
 
 /**
  * Universal business date parser for India business operations.
@@ -176,6 +206,8 @@ export function formatIndiaTimeOnly(date: Date | string): string {
 
 /**
  * Combines date (YYYY-MM-DD) and time (HH:mm) strings in Asia/Kolkata into an ISO string with explicit +05:30 offset.
+ * Strictly validates both inputs: the date must be a valid India business calendar date, and
+ * the time must match HH:mm exactly with hour 0–23 and minute 0–59.
  */
 export function parseIndiaIsoDateTime(dateStr: string, timeStr: string): string {
   if (!dateStr || !timeStr) {
@@ -185,9 +217,23 @@ export function parseIndiaIsoDateTime(dateStr: string, timeStr: string): string 
   const cleanTime = timeStr.trim();
   // Strictly validate date part
   parseStrictIndiaDateOnly(cleanDate);
+  // Strictly validate time part: must be HH:mm with valid ranges
+  const timeMatch = cleanTime.match(/^(\d{2}):(\d{2})$/);
+  if (!timeMatch) {
+    throw new Error(`Invalid time format: "${cleanTime}". Expected HH:mm (e.g. 09:30).`);
+  }
+  const h = parseInt(timeMatch[1], 10);
+  const m = parseInt(timeMatch[2], 10);
+  if (h > 23) {
+    throw new Error(`Invalid hour ${h} in time "${cleanTime}". Hours must be 0–23.`);
+  }
+  if (m > 59) {
+    throw new Error(`Invalid minute ${m} in time "${cleanTime}". Minutes must be 0–59.`);
+  }
   const dateObj = new Date(`${cleanDate}T${cleanTime}:00+05:30`);
   if (isNaN(dateObj.getTime())) {
     throw new Error(`Invalid date/time combination: "${cleanDate} ${cleanTime}".`);
   }
   return dateObj.toISOString();
 }
+

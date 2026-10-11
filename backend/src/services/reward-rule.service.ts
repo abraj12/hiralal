@@ -204,58 +204,31 @@ export class RewardRuleService {
   }
 
   /**
-   * Updates an existing reward rule if not already referenced by approved bills.
-   * If already used, callers should create a new version instead.
+   * @deprecated REMOVED — in-place mutation of RewardRule rows is permanently prohibited.
+   *
+   * RewardRule records are append-only audit history. Any change to a reward rate, effective date,
+   * or activation status MUST be implemented by calling createRule() to insert a new versioned row.
+   * Existing rows are immutable after creation and must never be altered in place.
+   *
+   * This method unconditionally throws [REWARD_RULE_MUTATION_REMOVED] to prevent accidental
+   * in-place mutations from reaching the database, regardless of caller intent.
+   *
+   * Migration path: call RewardRuleService.createRule() to add a new rule version.
    */
   static async updateRule(
-    adminId: string,
-    ruleId: string,
-    params: {
+    _adminId: string,
+    _ruleId: string,
+    _params: {
       rewardPercentage?: number;
       effectiveUntil?: Date | null;
       isActive?: boolean;
     },
-    tx: any = prisma
-  ): Promise<RewardRule> {
-    const existing = await tx.rewardRule.findUnique({
-      where: { id: ruleId },
-      include: { _count: { select: { bills: true } } },
-    });
-
-    if (!existing) {
-      throw new Error('Reward rule not found.');
-    }
-
-    // Financial immutability invariant:
-    // If approved bills have used this rule, do not mutate percentage in-place!
-    if (existing._count.bills > 0 && params.rewardPercentage !== undefined && Number(existing.rewardPercentage) !== params.rewardPercentage) {
-      throw new Error(
-        `Reward rule v${existing.version} is already bound to ${existing._count.bills} approved invoice(s). Create a new rule version to alter percentages without violating financial immutability.`
-      );
-    }
-
-    const updated = await tx.rewardRule.update({
-      where: { id: ruleId },
-      data: {
-        ...(params.rewardPercentage !== undefined && { rewardPercentage: params.rewardPercentage }),
-        ...(params.effectiveUntil !== undefined && { effectiveUntil: params.effectiveUntil }),
-        ...(params.isActive !== undefined && { isActive: params.isActive }),
-        updatedByAdminId: adminId,
-      },
-    });
-
-    await tx.auditLog.create({
-      data: {
-        adminId,
-        action: 'REWARD_RULE_UPDATED',
-        entityType: 'RewardRule',
-        entityId: ruleId,
-        oldValue: JSON.stringify(existing),
-        newValue: JSON.stringify(updated),
-      },
-    });
-
-    return updated;
+    _tx?: any
+  ): Promise<never> {
+    throw new Error(
+      '[REWARD_RULE_MUTATION_REMOVED] In-place mutation of RewardRule records is permanently prohibited. ' +
+      'Reward rules are append-only audit history. Use RewardRuleService.createRule() to add a new versioned rule.'
+    );
   }
 
   /**

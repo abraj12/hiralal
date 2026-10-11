@@ -133,11 +133,18 @@ async function main() {
             isActive: true,
           },
         });
-      } else if (activeRule.effectiveFrom > new Date('2020-01-01T00:00:00+05:30') && activeRule.id.startsWith('rule_')) {
-        await prisma.rewardRule.update({
-          where: { id: activeRule.id },
-          data: { effectiveFrom: new Date('2020-01-01T00:00:00+05:30') },
-        });
+      } else {
+        // RewardRule records are append-only. If an existing active rule has an undesirable
+        // effectiveFrom (e.g. a legacy row inserted by migration with CURRENT_TIMESTAMP),
+        // it MUST be corrected via a separately reviewed and approved migration, not by
+        // this seed script. Attempting to mutate existing rows here would violate the
+        // historical-immutability invariant enforced throughout the codebase.
+        //
+        // To fix a legacy row: create and review a new migration in backend/prisma/migrations/
+        // then document it in the project changelog before applying it.
+        console.log(
+          `ℹ️  [SEED] Active ${prof} rule already exists (v${activeRule.version}, effectiveFrom: ${activeRule.effectiveFrom.toISOString()}). Preserving as-is. If effectiveFrom is incorrect, correct it via a separately reviewed migration, not via seed.`
+        );
       }
     }
     console.log('✅ Profession reward rules provisioned: 0.50% Plumber, 0.50% Tile Installer');

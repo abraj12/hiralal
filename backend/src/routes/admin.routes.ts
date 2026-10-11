@@ -17,7 +17,7 @@ import { PayoutService } from '../services/payout.service';
 import { AuthService } from '../services/auth.service';
 import { NotificationService } from '../services/notification.service';
 import { BillStatus, Profession, UserStatus } from '@prisma/client';
-import { getIstYearAndMonth } from '../utils/timezone.utils';
+import { getIstYearAndMonth, parseStrictIndiaTimestamp } from '../utils/timezone.utils';
 
 const router = Router();
 
@@ -735,8 +735,24 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
     const admin = req.user!;
     const { isEnabled, startAt, endAt, message, profession } = req.body;
 
-    const startDate = startAt ? new Date(startAt) : null;
-    const endDate = endAt ? new Date(endAt) : null;
+    let startDate: Date | null = null;
+    let endDate: Date | null = null;
+
+    try {
+      if (startAt !== undefined && startAt !== null && startAt !== '') {
+        startDate = parseStrictIndiaTimestamp(String(startAt));
+      }
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: `Invalid start time: ${err.message}` });
+    }
+
+    try {
+      if (endAt !== undefined && endAt !== null && endAt !== '') {
+        endDate = parseStrictIndiaTimestamp(String(endAt));
+      }
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: `Invalid end time: ${err.message}` });
+    }
 
     if (startDate && endDate && endDate <= startDate) {
       return res.status(400).json({ success: false, message: 'End date and time must be after the start date.' });

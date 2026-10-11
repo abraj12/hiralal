@@ -40,9 +40,28 @@ export function parseIndiaIsoDateTime(dateStr: string, timeStr: string): string 
   }
   const cleanDate = dateStr.trim();
   const cleanTime = timeStr.trim();
+  // Validate date: must be exact YYYY-MM-DD
+  const dateMatch = cleanDate.match(/^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/);
+  if (!dateMatch) {
+    throw new Error(`Invalid date format: "${cleanDate}". Expected YYYY-MM-DD.`);
+  }
+  // Validate time: must be exact HH:mm with valid ranges
+  const timeMatch = cleanTime.match(/^(\d{2}):(\d{2})$/);
+  if (!timeMatch) {
+    throw new Error(`Invalid time format: "${cleanTime}". Expected HH:mm (e.g. 09:30).`);
+  }
+  const h = parseInt(timeMatch[1], 10);
+  const m = parseInt(timeMatch[2], 10);
+  if (h > 23) {
+    throw new Error(`Invalid hour ${h} in time "${cleanTime}". Hours must be 0–23.`);
+  }
+  if (m > 59) {
+    throw new Error(`Invalid minute ${m} in time "${cleanTime}". Minutes must be 0–59.`);
+  }
   const dateObj = new Date(`${cleanDate}T${cleanTime}:00+05:30`);
   if (isNaN(dateObj.getTime())) {
     throw new Error(`Invalid date/time combination: "${cleanDate} ${cleanTime}".`);
   }
   return dateObj.toISOString();
 }
+
