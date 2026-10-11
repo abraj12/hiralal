@@ -117,70 +117,7 @@ async function main() {
       console.log(`ℹ️ Existing Operations Admin detected (${opsAdmin.mobile}). Preserving existing credentials.`);
     }
 
-    // 2. Provision Initial Monthly Reward Pools per Profession
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
-
-    await prisma.rewardPool.upsert({
-      where: {
-        pool_profession_year_month_unique: {
-          profession: 'PLUMBER',
-          year,
-          month,
-        },
-      },
-      update: {},
-      create: {
-        profession: 'PLUMBER',
-        year,
-        month,
-        totalPoolCap: 50000.0,
-        usedAmount: 0.0,
-        isCapped: false,
-      },
-    });
-
-    await prisma.rewardPool.upsert({
-      where: {
-        pool_profession_year_month_unique: {
-          profession: 'TILE_INSTALLER',
-          year,
-          month,
-        },
-      },
-      update: {},
-      create: {
-        profession: 'TILE_INSTALLER',
-        year,
-        month,
-        totalPoolCap: 50000.0,
-        usedAmount: 0.0,
-        isCapped: false,
-      },
-    });
-    console.log('✅ Monthly reward pools provisioned: ₹50,000 Plumbers, ₹50,000 Tile Installers');
-
-    // 2b. Provision Global Combined Reward Pool (₹50,000 combined ceiling)
-    await prisma.globalRewardPool.upsert({
-      where: {
-        global_pool_year_month_unique: {
-          year,
-          month,
-        },
-      },
-      update: {},
-      create: {
-        year,
-        month,
-        totalPoolCap: 50000.0,
-        usedAmount: 0.0,
-        isCapped: false,
-      },
-    });
-    console.log('✅ Global monthly reward pool provisioned: ₹50,000 combined ceiling');
-
-    // 3. Provision Reward Rules for Plumber & Tile Installer
+    // 2. Provision Reward Rules for Plumber & Tile Installer
     const existingRules = await prisma.rewardRule.findMany();
     if (existingRules.length === 0) {
       await prisma.rewardRule.createMany({
@@ -188,7 +125,6 @@ async function main() {
           {
             profession: 'PLUMBER',
             rewardPercentage: 0.50,
-            monthlyPoolLimit: 50000.0,
             minRedemptionAmount: 500.0,
             maxRedemptionAmount: 10000.0,
             effectiveFrom: new Date('2020-01-01'),
@@ -198,7 +134,6 @@ async function main() {
           {
             profession: 'TILE_INSTALLER',
             rewardPercentage: 0.75,
-            monthlyPoolLimit: 50000.0,
             minRedemptionAmount: 500.0,
             maxRedemptionAmount: 10000.0,
             effectiveFrom: new Date('2020-01-01'),

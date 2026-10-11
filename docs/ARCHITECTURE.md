@@ -58,25 +58,28 @@ To maintain commercial-grade accounting integrity:
 
 ---
 
-### 4. Monthly ₹50,000 Reward Pool Atomic Enforcement
+### 4. Pool-Free Reward Distribution & Dynamic Rule Versioning
 
-The program strictly enforces a hard ceiling of **₹50,000 per calendar month** across all approved bills across all professions:
-1. When an administrator approves a bill, the transaction atomically claims both the profession pool and the global monthly pool inside a single database transaction (`tx.$executeRaw`).
-2. Global pool claim executes `LEAST("totalPoolCap", 50000.00::decimal)` using atomic `UPDATE ... WHERE "usedAmount" + $1 <= LEAST("totalPoolCap", 50000.00::decimal)`.
-3. If headroom is exceeded, the update returns `count === 0` and rolls back the transaction entirely with `GLOBAL_REWARD_POOL_EXHAUSTED`, leaving zero orphaned reward credits.
-4. Concurrency boundary tests with `Promise.allSettled()` verify race condition safety when headroom is less than the sum of concurrent bills.
+The platform operates without artificial reward budget pool caps:
+1. Valid bills submitted by verified plumbers and tile installers are approved and rewarded in full based on server-side versioned business rules, regardless of historical volume or monthly total amounts.
+2. Rewards are computed strictly on the backend at 2-decimal paise precision (`eligibleAmount * rewardPercentage / 100`).
+3. Rule updates by Operations Admins generate new versioned rules (`RewardRule.version`), preserving immutable historical calculations for all previously approved bills.
+4. Concurrency boundary tests with `Promise.allSettled()` verify atomic double-entry ledger transactions and idempotent approval state transitions.
 
 ---
 
-### 5. Payout State Machine (RazorpayX Integration)
+### 5. Payout State Machine (Two-Tier Operations Approval & RazorpayX Integration)
 
-Payouts transition through an explicit state machine:
+Payouts transition through an explicit multi-stage workflow:
 
 ```
-[ PENDING ]
+[ REQUESTED / PENDING ]  ---> (Craftsman requests 100% full eligible balance redemption)
      |
-     v
-[ PROCESSING ]  ---> (Ledger Debits Wallet availableBalance, increments processingAmount)
+     v  (Operations Admin reviews KYC, provider verification & ledger solvency)
+[ APPROVED ]
+     |
+     v  (Dispatched to RazorpayX gateway daemon)
+[ PROCESSING / PAYOUT_INITIATED ]  ---> (Ledger Debits Wallet availableBalance, increments processingAmount)
      |
      +--- Webhook 'payout.processed' ---> [ SUCCESS ]
      |                                          (processingAmount decremented, totalRedeemed incremented)

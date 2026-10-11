@@ -160,17 +160,11 @@ Base URL: `http://localhost:5000/api`
 - **Body**:
   ```json
   {
+    "profession": "PLUMBER",
     "percentage": 0.5,
-    "monthlyPoolLimit": 50000,
     "minRedemptionAmount": 500
   }
   ```
-
-#### 4. Get Global Reward Pool Analytics
-- **Method**: `GET`
-- **Path**: `/rewards/pool`
-- **Headers**: `Authorization: Bearer <ADMIN_TOKEN>`
-- **Description**: Returns live IST month pool metrics including `totalPoolCap` (₹50,000), `usedAmount`, `headroom`, `exhausted`, and active profession rules.
 
 ---
 

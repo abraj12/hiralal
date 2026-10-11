@@ -52,7 +52,7 @@ export default function Sidebar({ pendingBillsCount = 0 }: SidebarProps) {
       roles: ['BILL_ADMIN'],
     },
     {
-      label: 'Rewards & Pool',
+      label: 'Reward Analytics',
       href: '/rewards',
       icon: Gift,
       roles: ['OPERATIONS_ADMIN'],

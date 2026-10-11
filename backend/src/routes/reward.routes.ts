@@ -1,7 +1,6 @@
 import { Router, Response } from 'express';
-import { authenticate, requireUser, requireAdmin, AuthenticatedRequest } from '../middleware/auth.middleware';
+import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { prisma } from '../db';
-import { RewardService } from '../services/reward.service';
 
 const router = Router();
 
@@ -70,24 +69,6 @@ router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res
         description: t.description,
         createdAt: t.createdAt,
       })),
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-router.get('/pool', authenticate, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const globalPool = await RewardService.getGlobalPoolAnalytics();
-    const plumberPool = await RewardService.getPoolAnalytics('PLUMBER');
-    const tilePool = await RewardService.getPoolAnalytics('TILE_INSTALLER');
-    res.json({
-      success: true,
-      globalPool,
-      pools: {
-        PLUMBER: plumberPool,
-        TILE_INSTALLER: tilePool,
-      },
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });

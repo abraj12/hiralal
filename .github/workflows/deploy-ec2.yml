@@ -88,8 +88,23 @@ jobs:
               ./scripts/verify-nginx-ssl.sh ./nginx/ssl
             fi
             
-            # Build and deploy multi-container stack
-            docker compose up -d --build
+            # Build stack images
+            echo "Building application container images..."
+            docker compose build
+
+            # Ensure data stores are online for backup and migration
+            echo "Starting postgres and redis data tier..."
+            docker compose up -d postgres redis
+
+            # Wait up to 30 seconds for postgres healthy status
+            echo "Waiting for postgres to become healthy..."
+            for i in {1..30}; do
+              if docker compose ps postgres | grep -qi "healthy"; then
+                echo "Postgres is healthy."
+                break
+              fi
+              sleep 1
+            done
             
             # Pre-deployment database backup gate before applying migrations
             echo "Executing pre-deployment database backup gate..."
@@ -101,9 +116,13 @@ jobs:
               }
             fi
 
-            # Run database migrations
+            # Run database migrations in an isolated container
             echo "Applying Prisma database migrations..."
-            docker compose exec -T backend npx prisma migrate deploy
+            docker compose run --rm backend npx prisma migrate deploy
+
+            # Launch full application stack
+            echo "Starting all application services..."
+            docker compose up -d
             
             # Wait for container health checks
             echo "Verifying service readiness..."

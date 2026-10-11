@@ -22,6 +22,37 @@ function parseCookies(cookieHeader?: string): Record<string, string> {
   return list;
 }
 
+function isExactAllowedOrigin(
+  originOrUrl: string | undefined,
+  allowedOrigins: string[],
+  isProduction: boolean
+): boolean {
+  if (!originOrUrl) return false;
+
+  try {
+    const parsed = new URL(originOrUrl);
+
+    // Compare the canonical origin, not a string prefix.
+    const isMatch = allowedOrigins.some((allowed) => {
+      try {
+        return new URL(allowed).origin === parsed.origin;
+      } catch {
+        return false;
+      }
+    });
+
+    if (isMatch) return true;
+
+    if (!isProduction && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')) {
+      return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export async function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   let token: string | undefined;
@@ -42,19 +73,16 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     return;
   }
 
-  // Enforce CSRF / Origin validation for cookie-based authentication on mutating requests
+  // Enforce strict CSRF / Origin validation for cookie-based authentication on mutating requests
   if (isCookieAuth && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
     const origin = (req.headers.origin as string) || '';
     const referer = (req.headers.referer as string) || '';
-    const csrfHeader = (req.headers['x-csrf-token'] as string) || (req.headers['x-requested-with'] as string);
 
-    const isOriginAllowed = origin && config.cors.allowedOrigins.some((allowed) => origin.startsWith(allowed));
-    const isRefererAllowed = referer && config.cors.allowedOrigins.some((allowed) => referer.startsWith(allowed));
-    const isLocalDev =
-      !config.isProduction &&
-      (origin.includes('localhost') || origin.includes('127.0.0.1') || referer.includes('localhost') || referer.includes('127.0.0.1'));
+    const validOrigin =
+      isExactAllowedOrigin(origin, config.cors.allowedOrigins, config.isProduction) ||
+      (!origin && isExactAllowedOrigin(referer, config.cors.allowedOrigins, config.isProduction));
 
-    if (!isOriginAllowed && !isRefererAllowed && !isLocalDev && !csrfHeader) {
+    if (!validOrigin) {
       res.status(403).json({
         success: false,
         code: 'CSRF_VALIDATION_FAILED',

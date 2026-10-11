@@ -614,41 +614,33 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
     });
   });
 
-  describe('6. RewardService - Pool Analytics & Headroom Checks', () => {
-    test('getPoolAnalytics returns analytics for single profession and both professions', async () => {
-      const plumberAnalytics = await RewardService.getPoolAnalytics('PLUMBER');
-      expect(plumberAnalytics.profession).toBe('PLUMBER');
-      expect(plumberAnalytics.totalPoolCap).toBeGreaterThan(0);
-      expect(plumberAnalytics.percentageUsed).toBeDefined();
+  describe('6. RewardService - Calculations & Dynamic Rule Versioning', () => {
+    test('calculateReward deterministically calculates paise precision reward', () => {
+      const reward1 = RewardService.calculateReward(10000, 0.5);
+      expect(reward1).toBe(50.0);
 
-      const tileAnalytics = await RewardService.getPoolAnalytics('TILE_INSTALLER');
-      expect(tileAnalytics.profession).toBe('TILE_INSTALLER');
-      expect(tileAnalytics.totalPoolCap).toBeGreaterThan(0);
-
-      const bothAnalytics = await RewardService.getPoolAnalytics();
-      expect(bothAnalytics.plumber).toBeDefined();
-      expect(bothAnalytics.tileInstaller).toBeDefined();
-      expect(bothAnalytics.totalPoolCap).toBe(plumberAnalytics.totalPoolCap + tileAnalytics.totalPoolCap);
+      const reward2 = RewardService.calculateReward(25450, 0.75);
+      expect(reward2).toBe(190.87);
     });
 
-    test('checkPoolAvailability handles number argument and profession argument', async () => {
-      const resNum = await RewardService.checkPoolAvailability(100);
-      expect(resNum.available).toBe(true);
+    test('getRewardRule retrieves active versioned rule for professions', async () => {
+      const plumberRule = await RewardService.getRewardRule('PLUMBER');
+      expect(plumberRule.profession).toBe('PLUMBER');
+      expect(plumberRule.rewardPercentage).toBeGreaterThan(0);
 
-      const resProf = await RewardService.checkPoolAvailability('TILE_INSTALLER', 200);
-      expect(resProf.available).toBe(true);
+      const tileRule = await RewardService.getRewardRule('TILE_INSTALLER');
+      expect(tileRule.profession).toBe('TILE_INSTALLER');
+      expect(tileRule.rewardPercentage).toBeGreaterThan(0);
     });
 
     test('updateRewardRules creates new rule version', async () => {
       const newRule = await RewardService.updateRewardRules(opsAdminId, {
         profession: 'TILE_INSTALLER',
         percentage: 0.65,
-        monthlyPoolLimit: 75000,
       });
 
       expect(newRule.profession).toBe('TILE_INSTALLER');
       expect(Number(newRule.rewardPercentage)).toBe(0.65);
-      expect(Number(newRule.monthlyPoolLimit)).toBe(75000);
     });
   });
 

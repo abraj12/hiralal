@@ -97,19 +97,39 @@
 
 ---
 
-## 4. Multi-Container Deployment
+## 4. Multi-Container Deployment Sequence
 
 1. Validate Docker Compose configuration:
    ```bash
    docker compose config
    ```
 
-2. Build and start services in background:
+2. Build application container images:
    ```bash
-   docker compose up -d --build
+   docker compose build
    ```
 
-3. Verify all 6 service containers are running and healthy:
+3. Start PostgreSQL and Redis data tier:
+   ```bash
+   docker compose up -d postgres redis
+   ```
+
+4. Execute Pre-Deployment Database Backup Gate:
+   ```bash
+   ./scripts/backup-db.sh
+   ```
+
+5. Run Prisma database migrations in an isolated container:
+   ```bash
+   docker compose run --rm backend npx prisma migrate deploy
+   ```
+
+6. Start all application services:
+   ```bash
+   docker compose up -d
+   ```
+
+7. Verify all 6 service containers are running and healthy:
    ```bash
    docker compose ps
    ```
@@ -121,12 +141,7 @@
    - `hiralal_admin` (Next.js Admin Frontend)
    - `hiralal_nginx` (Nginx TLS Reverse Proxy)
 
-4. Run Prisma database migrations:
-   ```bash
-   docker compose exec backend npm run prisma:deploy
-   ```
-
-5. Seed initial administrative rules and accounts:
+8. Seed initial administrative rules and accounts (first deployment only):
    ```bash
    docker compose exec backend npm run seed
    ```

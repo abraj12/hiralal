@@ -126,7 +126,6 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     await RewardRuleService.createRule(adminUserId, {
       profession: 'PLUMBER',
       rewardPercentage: 0.50,
-      monthlyPoolLimit: 50000.0,
       minRedemptionAmount: 500.0,
       maxRedemptionAmount: 10000.0,
       effectiveFrom: new Date('2026-10-01'),
@@ -135,30 +134,9 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     await RewardRuleService.createRule(adminUserId, {
       profession: 'TILE_INSTALLER',
       rewardPercentage: 0.75,
-      monthlyPoolLimit: 40000.0,
       minRedemptionAmount: 500.0,
       maxRedemptionAmount: 10000.0,
       effectiveFrom: new Date('2026-10-01'),
-    });
-
-    // Reset current month pools for both professions
-    const { year, month } = getIstYearAndMonth();
-    await prisma.globalRewardPool.upsert({
-      where: { global_pool_year_month_unique: { year, month } },
-      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-    });
-
-    await prisma.rewardPool.upsert({
-      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
-      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-      create: { profession: 'PLUMBER', year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-    });
-
-    await prisma.rewardPool.upsert({
-      where: { pool_profession_year_month_unique: { profession: 'TILE_INSTALLER', year, month } },
-      update: { totalPoolCap: 40000.0, usedAmount: 0.0, isCapped: false },
-      create: { profession: 'TILE_INSTALLER', year, month, totalPoolCap: 40000.0, usedAmount: 0.0, isCapped: false },
     });
   });
 
@@ -185,19 +163,11 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       data: {
         profession: 'PLUMBER',
         rewardPercentage: 0.50,
-        monthlyPoolLimit: 50000.0,
         minRedemptionAmount: 500.0,
         maxRedemptionAmount: 10000.0,
         effectiveFrom: new Date('2020-01-01'),
         isActive: true,
       },
-    });
-
-    const { year, month } = getIstYearAndMonth();
-    await prisma.globalRewardPool.upsert({
-      where: { global_pool_year_month_unique: { year, month } },
-      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
     });
 
     await prisma.$disconnect();
@@ -339,7 +309,6 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     const newPlumberRule = await RewardRuleService.createRule(adminUserId, {
       profession: 'PLUMBER',
       rewardPercentage: 0.60,
-      monthlyPoolLimit: 60000.0,
       effectiveFrom: new Date('2026-10-04'),
     });
 
@@ -381,7 +350,6 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     await RewardRuleService.createRule(adminUserId, {
       profession: 'PLUMBER',
       rewardPercentage: 1.25,
-      monthlyPoolLimit: 80000.0,
       effectiveFrom: new Date('2026-10-05'),
     });
 
@@ -508,13 +476,6 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
   // Test 10: Admin GST Override and Audit Logging
   // -------------------------------------------------------------
   it('Scenario 10: Admin GST override stores justification and audit log', async () => {
-    // Reset plumber pool so approval is allowed
-    const { year, month } = getIstYearAndMonth();
-    await prisma.rewardPool.update({
-      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
-      data: { usedAmount: 0.0, isCapped: false },
-    });
-
     const bill = await BillService.submitBill({
       userId: plumberUserId,
       invoiceNumber: `INV-OVERRIDE-${Date.now()}`,
@@ -558,7 +519,6 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       data: {
         profession: 'PLUMBER',
         rewardPercentage: 0.80,
-        monthlyPoolLimit: 50000.0,
         minRedemptionAmount: 500.0,
         maxRedemptionAmount: 10000.0,
         effectiveFrom: overlapFrom,
@@ -572,7 +532,6 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       data: {
         profession: 'PLUMBER',
         rewardPercentage: 0.90,
-        monthlyPoolLimit: 50000.0,
         minRedemptionAmount: 500.0,
         maxRedemptionAmount: 10000.0,
         effectiveFrom: overlapFrom,

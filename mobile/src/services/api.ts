@@ -490,9 +490,9 @@ export class MobileApiClient {
 
   // Payouts
   static redeemRewards(data: {
-    amount?: number;
-    paymentAccountId?: string;
     idempotencyKey: string;
+    paymentAccountId?: string;
+    amount?: number;
   }) {
     return this.request('/payouts/redeem', {
       method: 'POST',

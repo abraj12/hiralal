@@ -47,11 +47,11 @@ describe('Phase 19 — Database Migrations Verification', () => {
       await testPrisma.$connect();
       const userCount = await testPrisma.user.count();
       const walletCount = await testPrisma.wallet.count();
-      const poolCount = await testPrisma.rewardPool.count();
+      const billCount = await testPrisma.bill.count();
 
       expect(userCount).toBe(0);
       expect(walletCount).toBe(0);
-      expect(poolCount).toBe(0);
+      expect(billCount).toBe(0);
 
       const migrations: any = await testPrisma.$queryRaw`
         SELECT migration_name, finished_at FROM _prisma_migrations;

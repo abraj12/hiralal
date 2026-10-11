@@ -12,7 +12,6 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
-import RewardPoolBar from '../components/RewardPoolBar';
 import BillVerificationModal from '../components/BillVerificationModal';
 import { AdminApiClient } from '../lib/api';
 
@@ -40,19 +39,18 @@ export default function AdminDashboardPage() {
   }, [profession]);
 
   const stats = data?.stats || {
-    totalUsers: 2,
-    plumbersCount: 1,
-    tilesCount: 1,
-    pendingBills: 3,
-    rewardsThisMonth: 1875,
-    pendingPayouts: 1,
-    pool: {
-      totalPoolCap: 50000,
-      usedAmount: 37850,
-      remainingAmount: 12150,
-      percentageUsed: 75.7,
-      isCapped: false,
-    },
+    totalUsers: 0,
+    plumbersCount: 0,
+    tilesCount: 0,
+    pendingBills: 0,
+    rewardsThisMonth: 0,
+    totalRewardsCredited: 0,
+    availableWalletLiability: 0,
+    reservedWalletLiability: 0,
+    pendingPayouts: 0,
+    pendingPayoutAmount: 0,
+    successfulPayouts: 0,
+    totalRedeemed: 0,
   };
 
   const recentBills = data?.recentBills || [];
@@ -179,15 +177,51 @@ export default function AdminDashboardPage() {
           </div>
         </div>
 
-        {/* Section 2: Reward Pool Cap Status Bar */}
-        <div className="mb-8">
-          <RewardPoolBar
-            totalPoolCap={stats.pool.totalPoolCap}
-            usedAmount={stats.pool.usedAmount}
-            remainingAmount={stats.pool.remainingAmount}
-            percentageUsed={stats.pool.percentageUsed}
-            isCapped={stats.pool.isCapped}
-          />
+        {/* Section 2: Financial Liability & Solvency Summary */}
+        <div className="mb-8 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+            <div>
+              <h2 className="text-base font-bold text-slate-900">Wallet Liability & Payout Solvency</h2>
+              <p className="text-xs text-slate-500">Live ledger balances across all registered trade partners</p>
+            </div>
+            <button
+              onClick={() => router.push('/rewards')}
+              className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center space-x-1"
+            >
+              <span>Detailed analytics</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-4 bg-slate-50 rounded-xl">
+              <span className="text-xs font-semibold text-slate-500 block mb-1">Available Wallet Liability</span>
+              <span className="text-xl font-black text-slate-900">
+                ₹{Number(stats.availableWalletLiability || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+              <span className="text-[10px] text-slate-400 block mt-1">Payable on demand</span>
+            </div>
+            <div className="p-4 bg-amber-50 rounded-xl">
+              <span className="text-xs font-semibold text-amber-700 block mb-1">Reserved In-Flight</span>
+              <span className="text-xl font-black text-amber-900">
+                ₹{Number(stats.reservedWalletLiability || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+              <span className="text-[10px] text-amber-600 block mt-1">Pending payout approval</span>
+            </div>
+            <div className="p-4 bg-emerald-50 rounded-xl">
+              <span className="text-xs font-semibold text-emerald-700 block mb-1">Total Rewards Credited</span>
+              <span className="text-xl font-black text-emerald-900">
+                ₹{Number(stats.totalRewardsCredited || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+              <span className="text-[10px] text-emerald-600 block mt-1">All-time ledger credits</span>
+            </div>
+            <div className="p-4 bg-purple-50 rounded-xl">
+              <span className="text-xs font-semibold text-purple-700 block mb-1">Settled Disbursements</span>
+              <span className="text-xl font-black text-purple-900">
+                ₹{Number(stats.totalRedeemed || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+              <span className="text-[10px] text-purple-600 block mt-1">Disbursed via RazorpayX</span>
+            </div>
+          </div>
         </div>
 
         {/* Section 3: Recent Bills Verification Queue */}

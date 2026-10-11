@@ -25,18 +25,6 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
       where: { id: { in: ['test_rule_plumber', 'test_rule_tile', 'rule_plumber_test', 'rule_tile_test'] } },
     });
 
-    // Reset pool for clean test run
-    const { year, month } = getIstYearAndMonth();
-    await prisma.rewardPool.upsert({
-      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
-      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-      create: { profession: 'PLUMBER', year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-    });
-    await prisma.globalRewardPool.upsert({
-      where: { global_pool_year_month_unique: { year, month } },
-      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-    });
 
     // Provision admin user for audit log foreign keys
     const admin = await prisma.user.upsert({
@@ -106,38 +94,23 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
     });
   });
 
-  describe('2. Monthly ₹50,000 Reward Pool Cap Enforcement', () => {
-    test('Initializes monthly pool and provides headroom check', async () => {
-      const pool = await RewardService.getCurrentMonthPool();
-      expect(Number(pool.totalPoolCap)).toBe(50000.0);
-      expect(pool.year).toBe(new Date().getFullYear());
+  describe('2. Dynamic Profession Reward Rules & Versioning', () => {
+    test('Retrieves active versioned rules for professions', async () => {
+      const plumberRule = await RewardService.getRewardRule('PLUMBER');
+      expect(plumberRule.profession).toBe('PLUMBER');
+      expect(plumberRule.rewardPercentage).toBeGreaterThan(0);
 
-      const check = await RewardService.checkPoolAvailability(500.0);
-      expect(check.available).toBe(true);
+      const tileRule = await RewardService.getRewardRule('TILE_INSTALLER');
+      expect(tileRule.profession).toBe('TILE_INSTALLER');
+      expect(tileRule.rewardPercentage).toBeGreaterThan(0);
     });
 
-    test('Calculates pool analytics correctly', async () => {
-      const analytics = await RewardService.getPoolAnalytics('PLUMBER');
-      expect(analytics.totalPoolCap).toBe(50000.0);
-      expect(typeof analytics.usedAmount).toBe('number');
-      expect(typeof analytics.remainingAmount).toBe('number');
-
-      // Combined analytics for both professions
-      const combined = await RewardService.getPoolAnalytics();
-      expect(combined.plumber).toBeDefined();
-      expect(combined.tileInstaller).toBeDefined();
-      expect(combined.totalPoolCap).toBeGreaterThan(0);
-      expect(typeof combined.usedAmount).toBe('number');
-    });
-
-    test('Updates reward rules for profession', async () => {
+    test('Updates reward rules for profession without pool limit constraints', async () => {
       const updated = await RewardService.updateRewardRules(testAdminId, {
         percentage: 0.55,
-        monthlyPoolLimit: 55000.0,
         profession: 'PLUMBER',
       });
       expect(Number(updated.rewardPercentage)).toBe(0.55);
-      expect(Number(updated.monthlyPoolLimit)).toBe(55000.0);
     });
   });
 
@@ -300,12 +273,6 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
   });
 
   afterAll(async () => {
-    const { year, month } = getIstYearAndMonth();
-    await prisma.globalRewardPool.upsert({
-      where: { global_pool_year_month_unique: { year, month } },
-      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-    });
     await prisma.$disconnect();
   });
 });

@@ -191,7 +191,6 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
 
     try {
       const res = await MobileApiClient.redeemRewards({
-        amount: amountToRedeem,
         idempotencyKey: currentKey,
       });
       if (res.payout) {

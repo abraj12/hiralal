@@ -104,16 +104,6 @@ export interface RewardSummaryDto {
   totalBillsCount: number;
 }
 
-export interface RewardPoolDto {
-  year: number;
-  month: number;
-  totalPoolCap: number;
-  usedAmount: number;
-  remainingAmount: number;
-  percentageUsed: number;
-  isCapped: boolean;
-}
-
 export interface PaymentAccountDto {
   id: string;
   accountType: PaymentType;

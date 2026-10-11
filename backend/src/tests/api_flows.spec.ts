@@ -15,19 +15,6 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
   let testAdminId: string;
 
   beforeAll(async () => {
-    // Reset pool for clean test run
-    const { year, month } = getIstYearAndMonth();
-    await prisma.rewardPool.upsert({
-      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
-      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-      create: { profession: 'PLUMBER', year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-    });
-    await prisma.globalRewardPool.upsert({
-      where: { global_pool_year_month_unique: { year, month } },
-      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-    });
-
     await prisma.rewardRule.updateMany({
       where: { profession: 'PLUMBER', isActive: true },
       data: { isActive: false },
@@ -36,7 +23,6 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
       data: {
         profession: 'PLUMBER',
         rewardPercentage: 0.50,
-        monthlyPoolLimit: 50000.0,
         minRedemptionAmount: 500.0,
         maxRedemptionAmount: 10000.0,
         effectiveFrom: new Date('2020-01-01'),
@@ -232,13 +218,14 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     expect(res.body.bill.calculatedReward == null || Number(res.body.bill.calculatedReward) === 0).toBe(true);
   });
 
-  test('GET /api/admin/dashboard returns operational stats and pool', async () => {
+  test('GET /api/admin/dashboard returns operational stats and wallet liability', async () => {
     const res = await request(app)
       .get('/api/admin/dashboard?profession=PLUMBER')
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
     expect(res.body.stats.totalUsers).toBeGreaterThan(0);
-    expect(res.body.stats.pool.totalPoolCap).toBe(50000);
+    expect(res.body.stats.availableWalletLiability).toBeDefined();
+    expect(res.body.stats.totalRewardsCredited).toBeDefined();
   });
 
   test('Admin approves bill and credits reward to user wallet', async () => {
@@ -326,7 +313,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
       .set('Authorization', `Bearer ${billAdminToken}`)
       .send({ action: 'APPROVE', customRewardAmount: 500 });
     expect(res.status).toBe(400);
-    expect(res.body.message).toContain('Manual customRewardAmount overrides are strictly prohibited');
+    expect(res.body.message).toMatch(/custom reward overrides/i);
   });
 
   test('Contract F: POST /api/auth/logout rejects missing token and accepts verified token', async () => {

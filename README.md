@@ -152,14 +152,14 @@ npm run seed
 ```bash
 npm test -- --runInBand --forceExit
 ```
-All **196 tests across 18 test suites** run in-band and maintain 100% pass rate:
-- `global_reward_cap.spec.ts` (Monthly ₹50,000 ceiling, concurrent race condition approval, providerNameVerified checks)
+All **193 tests across 18 test suites** run in-band and maintain 100% pass rate:
+- `global_reward_cap.spec.ts` (Pool-free reward credit integrity, volume scaling, concurrent race condition approval, providerNameVerified checks)
 - `config_safety.spec.ts` (Strict environment validation, admin credential segregation, demo number rejection)
 - `migration_scenarios.spec.ts` (Fresh deployment, idempotent migrations, fail-closed legacy admin migration)
 - `admin_api_config.spec.ts` (Secure origin resolution and URL sanitization)
 - `auth_sessions_security.spec.ts` (OTP tokens, rotating refresh tokens, replay attack defense)
 - `concurrency_financial.spec.ts` (Race-condition approvals, double-redemption prevention)
-- `rewards_and_rules.spec.ts` (0.5% incentive math, pool analytics, rejection reasons)
+- `rewards_and_rules.spec.ts` (Dynamic incentive math, versioned rules, rejection reasons)
 - `payout_safety_worker.spec.ts` (Network timeout safety, 4xx refunds, webhook deduplication)
 - `kyc_and_storage.spec.ts` (Magic bytes inspection, PAN regex validation, AES-256-GCM)
 - `hardening_verification.spec.ts` (SignCare adapter, MSG91 transport, state machine, ledger audit)

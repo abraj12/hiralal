@@ -190,7 +190,6 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
   describe('3. Restore Deep Financial Ledger & Data Reconciliation', () => {
     let testUser: any;
     let testWallet: any;
-    let testPool: any;
     let testBill: any;
     let testPayout: any;
 
@@ -223,16 +222,10 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
         },
       });
 
-      testPool = await prisma.rewardPool.upsert({
-        where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year: 2026, month: 10 } },
-        update: { totalPoolCap: 50000.0, usedAmount: 2000.0 },
-        create: { profession: 'PLUMBER', year: 2026, month: 10, totalPoolCap: 50000.0, usedAmount: 2000.0 },
-      });
-
       await prisma.rewardRule.upsert({
         where: { id: 'test_rule_plumber' },
         update: { rewardPercentage: 0.50, isActive: true },
-        create: { id: 'test_rule_plumber', profession: 'PLUMBER', rewardPercentage: 0.50, monthlyPoolLimit: 50000.0 },
+        create: { id: 'test_rule_plumber', profession: 'PLUMBER', rewardPercentage: 0.50 },
       });
 
       await prisma.redemptionSettings.upsert({
@@ -350,11 +343,12 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
       expect(Number(wallet?.availableBalance)).toBe(calculatedAvailableBalance);
     });
 
-    it('verifies reward pool usedAmount reconciles with approved bills', async () => {
-      const pool = await prisma.rewardPool.findUnique({
-        where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year: 2026, month: 10 } },
+    it('verifies reward rules reconcile properly', async () => {
+      const rule = await prisma.rewardRule.findUnique({
+        where: { id: 'test_rule_plumber' },
       });
-      expect(Number(pool?.usedAmount)).toBe(2000.0);
+      expect(rule?.isActive).toBe(true);
+      expect(Number(rule?.rewardPercentage)).toBe(0.50);
     });
 
     it('verifies payout state machine and ledger correlation (no orphaned debits)', async () => {
@@ -377,7 +371,6 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
       expect(await prisma.wallet.count()).toBeGreaterThan(0);
       expect(await prisma.walletTransaction.count()).toBeGreaterThan(0);
       expect(await prisma.bill.count()).toBeGreaterThan(0);
-      expect(await prisma.rewardPool.count()).toBeGreaterThan(0);
       expect(await prisma.rewardRule.count()).toBeGreaterThan(0);
       expect(await prisma.redemptionSettings.count()).toBeGreaterThan(0);
       expect(await prisma.payout.count()).toBeGreaterThan(0);

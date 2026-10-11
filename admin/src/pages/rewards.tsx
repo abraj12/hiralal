@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Gift, TrendingUp, DollarSign, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
+import { Gift, TrendingUp, DollarSign, AlertCircle, RefreshCw, Loader2, Wallet, ArrowUpRight, CheckCircle2 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
-import RewardPoolBar from '../components/RewardPoolBar';
 import { AdminApiClient } from '../lib/api';
 
 export default function AdminRewardsPage() {
@@ -17,7 +16,7 @@ export default function AdminRewardsPage() {
       setData(res);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'Failed to fetch reward pool data.');
+      setError(err.message || 'Failed to fetch reward financial data.');
     } finally {
       setLoading(false);
     }
@@ -27,12 +26,15 @@ export default function AdminRewardsPage() {
     fetchStats();
   }, []);
 
-  const pool = data?.stats?.globalPool || data?.stats?.pool || {
-    totalPoolCap: 50000,
-    usedAmount: 0,
-    remainingAmount: 50000,
-    percentageUsed: 0,
-    isCapped: false,
+  const stats = data?.stats || {
+    rewardsThisMonth: 0,
+    totalRewardsCredited: 0,
+    availableWalletLiability: 0,
+    reservedWalletLiability: 0,
+    pendingPayouts: 0,
+    pendingPayoutAmount: 0,
+    successfulPayouts: 0,
+    totalRedeemed: 0,
   };
 
   const programTotals = data?.stats?.programTotals || {
@@ -48,10 +50,10 @@ export default function AdminRewardsPage() {
         <div className="mb-8 flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-              Reward Pool & Financial Ledger
+              Reward Analytics & Financial Ledger
             </h1>
             <p className="text-xs text-slate-500 mt-1">
-              Real-time monthly pool utilization, profession breakdowns, and reward distribution
+              Real-time incentive distribution, partner profession breakdowns, and wallet liabilities
             </p>
           </div>
           <button
@@ -68,7 +70,7 @@ export default function AdminRewardsPage() {
           <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 flex items-start space-x-3 text-red-800">
             <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
             <div className="flex-1">
-              <h4 className="text-sm font-bold">Failed to load reward pool data</h4>
+              <h4 className="text-sm font-bold">Failed to load reward ledger data</h4>
               <p className="text-xs text-red-700 mt-0.5">{error}</p>
             </div>
             <button
@@ -83,20 +85,74 @@ export default function AdminRewardsPage() {
         {loading && !data ? (
           <div className="flex flex-col items-center justify-center p-16 bg-white rounded-2xl border border-slate-200 shadow-sm">
             <Loader2 className="w-8 h-8 text-blue-600 animate-spin mb-3" />
-            <p className="text-sm font-medium text-slate-600">Loading live reward pool analytics...</p>
+            <p className="text-sm font-medium text-slate-600">Loading live reward analytics...</p>
           </div>
         ) : (
           <>
-            <div className="mb-8">
-              <RewardPoolBar
-                totalPoolCap={pool.totalPoolCap}
-                usedAmount={pool.usedAmount}
-                remainingAmount={pool.remainingAmount}
-                percentageUsed={pool.percentageUsed}
-                isCapped={pool.isCapped}
-              />
+            {/* Financial Ledger Summary Grid */}
+            <div className="mb-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Available Wallet Liability
+                  </span>
+                  <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                    <Wallet className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  ₹{Number(stats.availableWalletLiability || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">Payable on demand to trade partners</p>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Incentives Credited (Month)
+                  </span>
+                  <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
+                    <Gift className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  ₹{Number(stats.rewardsThisMonth || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">Current monthly cycle credits</p>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Lifetime Rewards Credited
+                  </span>
+                  <div className="p-2 bg-purple-50 text-purple-600 rounded-xl">
+                    <TrendingUp className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  ₹{Number(stats.totalRewardsCredited || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">All-time ledger credits</p>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Settled Disbursements
+                  </span>
+                  <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                </div>
+                <div className="text-2xl font-black text-slate-900">
+                  ₹{Number(stats.totalRedeemed || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">{stats.successfulPayouts || 0} successful payouts</p>
+              </div>
             </div>
 
+            {/* Profession Program Breakdown */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
                 <h3 className="text-sm font-bold text-slate-900 mb-3">Plumbing Program Allocation</h3>

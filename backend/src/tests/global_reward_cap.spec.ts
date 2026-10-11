@@ -1,13 +1,14 @@
+import request from 'supertest';
+import { app } from '../server';
 import { BillService } from '../services/bill.service';
 import { RewardService } from '../services/reward.service';
 import { PayoutService } from '../services/payout.service';
 import { prisma } from '../db';
-import { getIstYearAndMonth } from '../utils/timezone.utils';
 import { areNamesMatching } from '../utils/name.utils';
+import jwt from 'jsonwebtoken';
+import { config } from '../config';
 
-describe('Part B & C — Global Reward Pool (₹50,000 Combined Hard Cap), Self-Approval Prevention, and Beneficiary Matching', () => {
-  const { year, month } = getIstYearAndMonth();
-
+describe('Part B & C — Pool-Free Reward Integrity, Volume Scaling, Self-Approval Prevention, and Beneficiary Matching', () => {
   let testPlumber: any;
   let testTileInstaller: any;
   let testBillAdmin: any;
@@ -35,13 +36,6 @@ describe('Part B & C — Global Reward Pool (₹50,000 Combined Hard Cap), Self-
     });
     await prisma.user.deleteMany({
       where: { mobile: { in: ['9811100001', '9811100002', '9811100003', '9811100004'] } },
-    });
-
-    // Reset GlobalRewardPool for the current month
-    await prisma.globalRewardPool.upsert({
-      where: { global_pool_year_month_unique: { year, month } },
-      update: { usedAmount: 0.0, totalPoolCap: 50000.0, isCapped: false },
-      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
     });
 
     // Create Test Plumber
@@ -135,92 +129,71 @@ describe('Part B & C — Global Reward Pool (₹50,000 Combined Hard Cap), Self-
     await prisma.rewardRule.deleteMany({
       where: { id: { in: ['rule_plumber_test', 'rule_tile_test', 'test_rule_plumber', 'test_rule_tile'] } },
     });
-    await prisma.globalRewardPool.upsert({
-      where: { global_pool_year_month_unique: { year, month } },
-      update: { usedAmount: 0.0, totalPoolCap: 50000.0, isCapped: false },
-      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-    });
   });
 
-  describe('1. Global Reward Pool Combined Hard Cap (₹50,000)', () => {
-    it('initializes GlobalRewardPool with ₹50,000 cap and 0 usedAmount', async () => {
-      const globalPool = await RewardService.getCurrentMonthGlobalPool();
-      expect(Number(globalPool.totalPoolCap)).toBe(50000.0);
-      expect(Number(globalPool.usedAmount)).toBe(0.0);
-      expect(globalPool.isCapped).toBe(false);
-    });
-
-    it('draws down shared budget when claiming global monthly pool amount', async () => {
-      await prisma.$transaction(async (tx) => {
-        await RewardService.claimGlobalMonthlyPoolAmount(tx, 15000.0);
+  describe('1. Pool-Free Reward Integrity & High-Volume Scaling', () => {
+    it('approves valid bill and credits full reward without any reward pool checks', async () => {
+      const bill = await prisma.bill.create({
+        data: {
+          userId: testPlumber.id,
+          invoiceNumber: `INV-NOPOOL-1-${Date.now()}`,
+          invoiceDate: new Date(),
+          billAmount: 20000,
+          grossBillAmount: 20000,
+          calculatedReward: 100,
+          status: 'PENDING',
+          fileUrl: 'https://storage/nopool-1.pdf',
+          fileKey: 'bills/nopool-1.pdf',
+          fileHash: `hash_nopool_1_${Date.now()}`,
+        },
       });
 
-      const analytics = await RewardService.getGlobalPoolAnalytics();
-      expect(analytics.usedAmount).toBe(15000.0);
-      expect(analytics.remainingAmount).toBe(35000.0);
-      expect(analytics.percentageUsed).toBe(30.0);
-      expect(analytics.isCapped).toBe(false);
+      const initialWallet = await prisma.wallet.findUnique({ where: { userId: testPlumber.id } });
+      const initialBal = Number(initialWallet?.availableBalance || 0);
+
+      const approvalRes = await BillService.approveBill(bill.id, testBillAdmin.id);
+      expect(approvalRes.bill.status).toBe('APPROVED');
+      expect(Number(approvalRes.bill.calculatedReward)).toBe(100.0);
+
+      const finalWallet = await prisma.wallet.findUnique({ where: { userId: testPlumber.id } });
+      expect(Number(finalWallet?.availableBalance)).toBe(initialBal + 100.0);
+
+      const tx = await prisma.walletTransaction.findFirst({
+        where: { referenceId: bill.id, type: 'REWARD_CREDIT' },
+      });
+      expect(tx).toBeDefined();
+      expect(Number(tx?.amount)).toBe(100.0);
     });
 
-    it('allows secondary profession claim drawing from the same global pool', async () => {
-      await prisma.$transaction(async (tx) => {
-        await RewardService.claimGlobalMonthlyPoolAmount(tx, 20000.0);
+    it('approves large volume rewards exceeding ₹50,000 threshold without any pool constraint', async () => {
+      const highValBill = await prisma.bill.create({
+        data: {
+          userId: testTileInstaller.id,
+          invoiceNumber: `INV-HIGHVOL-${Date.now()}`,
+          invoiceDate: new Date(),
+          billAmount: 10000000,
+          grossBillAmount: 10000000,
+          calculatedReward: 75000,
+          status: 'PENDING',
+          fileUrl: 'https://storage/highvol.pdf',
+          fileKey: 'bills/highvol.pdf',
+          fileHash: `hash_highvol_${Date.now()}`,
+        },
       });
 
-      const analytics = await RewardService.getGlobalPoolAnalytics();
-      expect(analytics.usedAmount).toBe(35000.0);
-      expect(analytics.remainingAmount).toBe(15000.0);
-      expect(analytics.percentageUsed).toBe(70.0);
+      const initialWallet = await prisma.wallet.findUnique({ where: { userId: testTileInstaller.id } });
+      const initialBal = Number(initialWallet?.availableBalance || 0);
+
+      const approvalRes = await BillService.approveBill(highValBill.id, testBillAdmin.id);
+      expect(approvalRes.bill.status).toBe('APPROVED');
+      const rewardCredited = Number(approvalRes.bill.calculatedReward);
+      expect(rewardCredited).toBeGreaterThan(50000.0);
+
+      const updatedWallet = await prisma.wallet.findUnique({ where: { userId: testTileInstaller.id } });
+      expect(Number(updatedWallet?.availableBalance)).toBe(initialBal + rewardCredited);
     });
 
-    it('rejects claim when combined rewards exceed ₹50,000 hard ceiling', async () => {
-      // Current used is 35,000. Claiming 20,000 would reach 55,000 > 50,000
-      await expect(
-        prisma.$transaction(async (tx) => {
-          await RewardService.claimGlobalMonthlyPoolAmount(tx, 20000.0);
-        })
-      ).rejects.toThrow(/Monthly combined rewards pool ceiling of ₹50,000 reached/);
-
-      // Verify rollback occurred: usedAmount is still 35,000
-      const analytics = await RewardService.getGlobalPoolAnalytics();
-      expect(analytics.usedAmount).toBe(35000.0);
-    });
-
-    it('allows claim exactly up to the remaining headroom (₹15,000)', async () => {
-      await prisma.$transaction(async (tx) => {
-        await RewardService.claimGlobalMonthlyPoolAmount(tx, 15000.0);
-      });
-
-      const analytics = await RewardService.getGlobalPoolAnalytics();
-      expect(analytics.usedAmount).toBe(50000.0);
-      expect(analytics.remainingAmount).toBe(0.0);
-      expect(analytics.percentageUsed).toBe(100.0);
-      expect(analytics.isCapped).toBe(true);
-
-      // Subsequent claims must be rejected
-      await expect(
-        prisma.$transaction(async (tx) => {
-          await RewardService.claimGlobalMonthlyPoolAmount(tx, 1.0);
-        })
-      ).rejects.toThrow(/Monthly combined rewards pool ceiling of ₹50,000 reached/);
-    });
-
-    it('enforces atomic concurrency boundary when headroom is ₹50: exactly 1 succeeds, 1 rejected, no orphaned credits', async () => {
-      // 1. Reset GlobalRewardPool so usedAmount = 49950.0 (exactly ₹50 headroom left)
-      await prisma.globalRewardPool.upsert({
-        where: { global_pool_year_month_unique: { year, month } },
-        update: { usedAmount: 49950.0, totalPoolCap: 50000.0, isCapped: false },
-        create: { year, month, totalPoolCap: 50000.0, usedAmount: 49950.0, isCapped: false },
-      });
-
-      // Also ensure profession pool has sufficient headroom
-      await prisma.rewardPool.upsert({
-        where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
-        update: { usedAmount: 0.0, totalPoolCap: 50000.0, isCapped: false },
-        create: { profession: 'PLUMBER', year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-      });
-
-      // 2. Create 2 pending bills each for ₹50 reward (0.5% of ₹10,000 = ₹50)
+    it('allows concurrent bill approvals to succeed simultaneously with zero pool contention', async () => {
       const billA = await prisma.bill.create({
         data: {
           userId: testPlumber.id,
@@ -251,7 +224,6 @@ describe('Part B & C — Global Reward Pool (₹50,000 Combined Hard Cap), Self-
         },
       });
 
-      // 3. Concurrently approve both bills
       const results = await Promise.allSettled([
         BillService.approveBill(billA.id, testBillAdmin.id),
         BillService.approveBill(billB.id, testBillAdmin.id),
@@ -260,33 +232,49 @@ describe('Part B & C — Global Reward Pool (₹50,000 Combined Hard Cap), Self-
       const fulfilled = results.filter((r) => r.status === 'fulfilled');
       const rejected = results.filter((r) => r.status === 'rejected');
 
-      expect(fulfilled.length).toBe(1);
-      expect(rejected.length).toBe(1);
+      expect(fulfilled.length).toBe(2);
+      expect(rejected.length).toBe(0);
 
-      const rejectionReason = (rejected[0] as PromiseRejectedResult).reason;
-      expect(rejectionReason.message).toMatch(/Monthly combined rewards pool ceiling of ₹50,000 reached/);
-
-      // Verify global pool state: usedAmount exactly hits ₹50,000 and isCapped is true
-      const analytics = await RewardService.getGlobalPoolAnalytics();
-      expect(analytics.usedAmount).toBe(50000.0);
-      expect(analytics.remainingAmount).toBe(0.0);
-      expect(analytics.isCapped).toBe(true);
-
-      // Verify no orphaned wallet transactions
-      const txs = await prisma.walletTransaction.findMany({
-        where: {
-          referenceId: { in: [billA.id, billB.id] },
-        },
-      });
-      expect(txs.length).toBe(1);
-      expect(Number(txs[0].amount)).toBe(50.0);
-
-      // Verify bill statuses: exactly 1 APPROVED and 1 PENDING
       const updatedA = await prisma.bill.findUnique({ where: { id: billA.id } });
       const updatedB = await prisma.bill.findUnique({ where: { id: billB.id } });
+      expect(updatedA?.status).toBe('APPROVED');
+      expect(updatedB?.status).toBe('APPROVED');
+    });
 
-      const statuses = [updatedA?.status, updatedB?.status].sort();
-      expect(statuses).toEqual(['APPROVED', 'PENDING']);
+    it('strictly rejects any verify request attempting customRewardAmount override with HTTP 400', async () => {
+      const billToVerify = await prisma.bill.create({
+        data: {
+          userId: testPlumber.id,
+          invoiceNumber: `INV-CUSTOM-OVERRIDE-${Date.now()}`,
+          invoiceDate: new Date(),
+          billAmount: 10000,
+          grossBillAmount: 10000,
+          calculatedReward: 50,
+          status: 'PENDING',
+          fileUrl: 'https://storage/custom-test.pdf',
+          fileKey: 'bills/custom-test.pdf',
+          fileHash: `hash_custom_${Date.now()}`,
+        },
+      });
+
+      const adminToken = jwt.sign(
+        { userId: testBillAdmin.id, role: 'BILL_ADMIN' },
+        config.admin.accessSecret
+      );
+
+      const response = await request(app)
+        .post(`/api/admin/bills/${billToVerify.id}/verify`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          action: 'APPROVE',
+          customRewardAmount: 500.0,
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toMatch(/custom reward overrides/i);
+
+      const checkBill = await prisma.bill.findUnique({ where: { id: billToVerify.id } });
+      expect(checkBill?.status).toBe('PENDING');
     });
   });
 

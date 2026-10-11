@@ -18,13 +18,6 @@ describe('Concurrency & Financial Integrity Tests', () => {
     await prisma.paymentAccount.deleteMany({ where: { user: { mobile: '9777777777' } } });
     await prisma.user.deleteMany({ where: { mobile: '9777777777' } });
 
-    const { year, month } = getIstYearAndMonth();
-    await prisma.globalRewardPool.upsert({
-      where: { global_pool_year_month_unique: { year, month } },
-      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-    });
-
     // Create Craftsman
     craftsmanUser = await prisma.user.create({
       data: {
@@ -90,18 +83,9 @@ describe('Concurrency & Financial Integrity Tests', () => {
     await prisma.walletTransaction.deleteMany({ where: { userId: craftsmanUser.id } });
     await prisma.wallet.deleteMany({ where: { userId: craftsmanUser.id } });
     await prisma.user.deleteMany({ where: { id: craftsmanUser.id } });
-
-    const { year, month } = getIstYearAndMonth();
-    await prisma.globalRewardPool.upsert({
-      where: { global_pool_year_month_unique: { year, month } },
-      update: { totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-      create: { year, month, totalPoolCap: 50000.0, usedAmount: 0.0, isCapped: false },
-    });
   });
 
   test('1. Parallel Bill Approvals: All concurrent valid bill approvals are credited reliably without pool restriction', async () => {
-    const { year, month } = getIstYearAndMonth();
-
     // Ensure active rule for PLUMBER is 0.50%
     await prisma.rewardRule.updateMany({
       where: { profession: 'PLUMBER', isActive: true },
@@ -111,7 +95,6 @@ describe('Concurrency & Financial Integrity Tests', () => {
       data: {
         profession: 'PLUMBER',
         rewardPercentage: 0.50,
-        monthlyPoolLimit: 50000.0,
         minRedemptionAmount: 500.0,
         maxRedemptionAmount: 10000.0,
         effectiveFrom: new Date('2020-01-01'),
@@ -213,12 +196,6 @@ describe('Concurrency & Financial Integrity Tests', () => {
   });
 
   test('4. Duplicate Bill Approval Race: Firing 2 concurrent approvals on same bill produces exactly 1 approval and 1 credit', async () => {
-    const { year, month } = getIstYearAndMonth();
-    await prisma.rewardPool.update({
-      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
-      data: { usedAmount: 0.0, isCapped: false },
-    });
-
     const pdfBuffer = Buffer.from(`%PDF-1.4 test duplicate approval bill ${Date.now()}`);
     const bill = await BillService.submitBill({
       userId: craftsmanUser.id,
@@ -257,12 +234,6 @@ describe('Concurrency & Financial Integrity Tests', () => {
   });
 
   test('5. Bill Approval vs Rejection Race: Concurrently approving and rejecting same bill allows exactly one terminal transition', async () => {
-    const { year, month } = getIstYearAndMonth();
-    await prisma.rewardPool.update({
-      where: { pool_profession_year_month_unique: { profession: 'PLUMBER', year, month } },
-      data: { usedAmount: 0.0, isCapped: false },
-    });
-
     const pdfBuffer = Buffer.from(`%PDF-1.4 test race approve reject bill ${Date.now()}`);
     const bill = await BillService.submitBill({
       userId: craftsmanUser.id,

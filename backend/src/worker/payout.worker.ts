@@ -108,6 +108,27 @@ export class PayoutWorker {
     }
     payout = freshPayout;
 
+    // Strict Authoritative Beneficiary Verification Gate before dispatch
+    const kycRecord = await prisma.kycRecord.findFirst({
+      where: { userId: payout.userId, panStatus: 'VERIFIED' },
+    });
+
+    const beneficiaryCheck = PayoutService.validateBeneficiaryMatch(kycRecord, payout.paymentAccount);
+    if (!beneficiaryCheck.isValid) {
+      const reason = beneficiaryCheck.reason || 'Authoritative beneficiary identity verification failed prior to dispatch.';
+      console.error(`[PAYOUT-WORKER] Payout ${payout.id} dispatch aborted: ${reason}`);
+      await prisma.payout.update({
+        where: { id: payout.id },
+        data: {
+          status: 'PROCESSING',
+          failureReason: reason,
+        },
+      });
+      return;
+    }
+
+    const verifiedBeneficiaryName = (beneficiaryCheck.beneficiaryName || payout.paymentAccount.providerRegisteredName || '').trim();
+
     const isRazorpayConfigured = Boolean(
       config.razorpayx.keyId &&
       config.razorpayx.keySecret &&
@@ -138,7 +159,7 @@ export class PayoutWorker {
       const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
       const paymentAccount = payout.paymentAccount;
 
-      // 1. Resolve Contact on RazorpayX with timeout
+      // 1. Resolve Contact on RazorpayX using authoritative beneficiary name
       const contactController = new AbortController();
       const contactTimer = setTimeout(() => contactController.abort(), 10000);
       let contactRes: globalThis.Response;
@@ -151,7 +172,7 @@ export class PayoutWorker {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            name: payout.user.fullName,
+            name: verifiedBeneficiaryName,
             contact: payout.user.mobile,
             type: 'vendor',
             reference_id: payout.user.id,
@@ -168,7 +189,7 @@ export class PayoutWorker {
         throw new Error(contactData.error?.description || `Failed to create recipient contact on RazorpayX (HTTP ${contactRes.status})`);
       }
 
-      // 2. Resolve Fund Account on RazorpayX with timeout
+      // 2. Resolve Fund Account on RazorpayX using authoritative beneficiary name
       let fundAccountBody: any;
       if (paymentAccount.accountType === 'UPI') {
         const upiAddress = resolveUpiAddress(paymentAccount);
@@ -183,7 +204,7 @@ export class PayoutWorker {
           contact_id: contactId,
           account_type: 'bank_account',
           bank_account: {
-            name: paymentAccount.accountHolderName || payout.user.fullName,
+            name: verifiedBeneficiaryName,
             ifsc: paymentAccount.ifscCode,
             account_number: accountNumber,
           },

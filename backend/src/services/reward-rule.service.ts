@@ -44,7 +44,6 @@ export class RewardRuleService {
         data: {
           profession,
           rewardPercentage: profession === 'PLUMBER' ? 0.50 : 0.75,
-          monthlyPoolLimit: 50000.0,
           minRedemptionAmount: 500.0,
           maxRedemptionAmount: 10000.0,
           effectiveFrom: new Date('2020-01-01'),
@@ -72,7 +71,6 @@ export class RewardRuleService {
     params: {
       profession: Profession;
       rewardPercentage: number;
-      monthlyPoolLimit?: number;
       minRedemptionAmount?: number;
       maxRedemptionAmount?: number;
       effectiveFrom?: Date;
@@ -87,7 +85,6 @@ export class RewardRuleService {
       throw new Error('Reward percentage must be between 0.01% and 50.00%.');
     }
 
-    const monthlyPoolLimit = params.monthlyPoolLimit !== undefined ? params.monthlyPoolLimit : 0.0;
     const minRedemption = params.minRedemptionAmount !== undefined ? params.minRedemptionAmount : 500;
     const maxRedemption = params.maxRedemptionAmount !== undefined ? params.maxRedemptionAmount : 0.0;
 
@@ -151,7 +148,6 @@ export class RewardRuleService {
       data: {
         profession,
         rewardPercentage,
-        monthlyPoolLimit,
         minRedemptionAmount: minRedemption,
         maxRedemptionAmount: maxRedemption,
         effectiveFrom,
@@ -173,7 +169,6 @@ export class RewardRuleService {
         newValue: JSON.stringify({
           profession: newRule.profession,
           rewardPercentage: Number(newRule.rewardPercentage),
-          monthlyPoolLimit: Number(newRule.monthlyPoolLimit),
           version: newRule.version,
           effectiveFrom: newRule.effectiveFrom,
         }),
@@ -192,7 +187,6 @@ export class RewardRuleService {
     ruleId: string,
     params: {
       rewardPercentage?: number;
-      monthlyPoolLimit?: number;
       minRedemptionAmount?: number;
       maxRedemptionAmount?: number;
       effectiveUntil?: Date | null;
@@ -221,7 +215,6 @@ export class RewardRuleService {
       where: { id: ruleId },
       data: {
         ...(params.rewardPercentage !== undefined && { rewardPercentage: params.rewardPercentage }),
-        ...(params.monthlyPoolLimit !== undefined && { monthlyPoolLimit: params.monthlyPoolLimit }),
         ...(params.minRedemptionAmount !== undefined && { minRedemptionAmount: params.minRedemptionAmount }),
         ...(params.maxRedemptionAmount !== undefined && { maxRedemptionAmount: params.maxRedemptionAmount }),
         ...(params.effectiveUntil !== undefined && { effectiveUntil: params.effectiveUntil }),

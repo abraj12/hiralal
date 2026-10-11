@@ -74,8 +74,32 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
     });
     const totalRedeemed = Number(redeemedBills._sum.amount || 0);
 
-    const pool = await RewardService.getPoolAnalytics(filterProfession);
-    const globalPool = await RewardService.getGlobalPoolAnalytics();
+    const pendingPayoutAgg = await prisma.payout.aggregate({
+      where: { ...payoutWhere, status: { in: ['PENDING', 'PROCESSING', 'PAYOUT_INITIATED'] } },
+      _sum: { amount: true },
+    });
+    const pendingPayoutAmount = Number(pendingPayoutAgg._sum.amount || 0);
+
+    const failedPayouts = await prisma.payout.count({
+      where: { ...payoutWhere, status: { in: ['FAILED', 'REVERSED'] } },
+    });
+    const failedPayoutAgg = await prisma.payout.aggregate({
+      where: { ...payoutWhere, status: { in: ['FAILED', 'REVERSED'] } },
+      _sum: { amount: true },
+    });
+    const failedPayoutAmount = Number(failedPayoutAgg._sum.amount || 0);
+
+    const walletLiabilityAgg = await prisma.wallet.aggregate({
+      _sum: { availableBalance: true, processingAmount: true },
+    });
+    const availableWalletLiability = Number(walletLiabilityAgg._sum.availableBalance || 0);
+    const reservedWalletLiability = Number(walletLiabilityAgg._sum.processingAmount || 0);
+
+    const totalRewardsCreditedAgg = await prisma.walletTransaction.aggregate({
+      where: { type: 'REWARD_CREDIT' },
+      _sum: { amount: true },
+    });
+    const totalRewardsCredited = Number(totalRewardsCreditedAgg._sum.amount || 0);
 
     const { year: istYear, month: istMonth } = getIstYearAndMonth();
     const istStartOfMonth = new Date(`${istYear}-${String(istMonth).padStart(2, '0')}-01T00:00:00+05:30`);
@@ -150,11 +174,15 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
         approvedBillsCount,
         rejectedBillsCount,
         rewardsThisMonth: Math.round(rewardsThisMonth * 100) / 100,
+        totalRewardsCredited: Math.round(totalRewardsCredited * 100) / 100,
+        availableWalletLiability: Math.round(availableWalletLiability * 100) / 100,
+        reservedWalletLiability: Math.round(reservedWalletLiability * 100) / 100,
         pendingPayouts,
+        pendingPayoutAmount: Math.round(pendingPayoutAmount * 100) / 100,
         successfulPayouts,
-        totalRedeemed,
-        pool,
-        globalPool,
+        totalRedeemed: Math.round(totalRedeemed * 100) / 100,
+        failedPayouts,
+        failedPayoutAmount: Math.round(failedPayoutAmount * 100) / 100,
         programTotals,
       },
       recentBills: recentBills.map((b) => ({
@@ -388,13 +416,13 @@ router.get('/bills', requireBillAdmin, async (req: AuthenticatedRequest, res: Re
  */
 router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { action, rejectionReason, gstIncluded, gstRate, gstRuleId, gstOverrideReason, customRewardAmount } = req.body;
+    const { action, rejectionReason, gstIncluded, gstRate, gstRuleId, gstOverrideReason } = req.body;
     const admin = req.user!;
 
-    if (customRewardAmount !== undefined && customRewardAmount !== null) {
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'customRewardAmount')) {
       return res.status(400).json({
         success: false,
-        message: 'Manual customRewardAmount overrides are strictly prohibited. Rewards must be calculated exclusively via system reward rules.',
+        message: 'Custom reward overrides are not permitted. Rewards are calculated using the applicable system rules.',
       });
     }
 
@@ -609,7 +637,6 @@ router.get('/settings/reward-rules', requireOperationsAdmin, async (req: Authent
     const prof = (profession && profession !== 'ALL') ? (profession as Profession) : undefined;
 
     const rules = await RewardRuleService.listRules(prof);
-    const pool = await RewardService.getPoolAnalytics(prof);
 
     res.json({
       success: true,
@@ -619,14 +646,12 @@ router.get('/settings/reward-rules', requireOperationsAdmin, async (req: Authent
         version: r.version,
         rewardPercentage: Number(r.rewardPercentage),
         percentage: Number(r.rewardPercentage),
-        monthlyPoolLimit: Number(r.monthlyPoolLimit),
         minRedemptionAmount: Number(r.minRedemptionAmount),
         maxRedemptionAmount: Number(r.maxRedemptionAmount),
         effectiveFrom: r.effectiveFrom,
         effectiveUntil: r.effectiveUntil,
         isActive: r.isActive,
       })),
-      pool,
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
@@ -636,7 +661,7 @@ router.get('/settings/reward-rules', requireOperationsAdmin, async (req: Authent
 router.post('/settings/reward-rules', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const admin = req.user!;
-    const { profession, rewardPercentage, monthlyPoolLimit, minRedemptionAmount, maxRedemptionAmount, effectiveFrom, effectiveUntil } = req.body;
+    const { profession, rewardPercentage, minRedemptionAmount, maxRedemptionAmount, effectiveFrom, effectiveUntil } = req.body;
 
     if (!profession || !['PLUMBER', 'TILE_INSTALLER'].includes(profession)) {
       return res.status(400).json({ success: false, message: 'Valid profession (PLUMBER or TILE_INSTALLER) is required.' });
@@ -645,7 +670,6 @@ router.post('/settings/reward-rules', requireOperationsAdmin, async (req: Authen
     const created = await RewardRuleService.createRule(admin.id, {
       profession: profession as Profession,
       rewardPercentage: parseFloat(rewardPercentage),
-      monthlyPoolLimit: parseFloat(monthlyPoolLimit),
       minRedemptionAmount: minRedemptionAmount ? parseFloat(minRedemptionAmount) : undefined,
       maxRedemptionAmount: maxRedemptionAmount ? parseFloat(maxRedemptionAmount) : undefined,
       effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : undefined,
@@ -664,13 +688,12 @@ router.post('/settings/reward-rules', requireOperationsAdmin, async (req: Authen
 
 router.put('/settings/reward-rules', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { percentage, monthlyPoolLimit, minRedemptionAmount, profession } = req.body;
+    const { percentage, minRedemptionAmount, profession } = req.body;
     const admin = req.user!;
 
     const prof = profession as Profession || 'PLUMBER';
     const updated = await RewardService.updateRewardRules(admin.id, {
       percentage: percentage ? parseFloat(percentage) : undefined,
-      monthlyPoolLimit: monthlyPoolLimit ? parseFloat(monthlyPoolLimit) : undefined,
       minRedemptionAmount: minRedemptionAmount ? parseFloat(minRedemptionAmount) : undefined,
       profession: prof,
     });

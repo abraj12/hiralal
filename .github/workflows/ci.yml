@@ -82,8 +82,8 @@ jobs:
       - name: Seed Initial Test Data
         working-directory: backend
         env:
-          DATABASE_URL: postgresql://postgres:testpassword@localhost:5432/hiralal_rewards_test?schema=public
-          ADMIN_INITIAL_PASSWORD: Admin@123
+          BILL_ADMIN_INITIAL_PASSWORD: BillAdminSecure#2026
+          OPERATIONS_ADMIN_INITIAL_PASSWORD: OpsAdminSecure#2026
           ENABLE_DEMO_SEED: true
         run: npm run seed
 
@@ -100,8 +100,8 @@ jobs:
           MSG91_AUTH_KEY: test_msg91_auth_key_ci
           MSG91_TEMPLATE_ID: test_msg91_template_ci
           SIGNCARE_API_KEY: test_signcare_api_key_ci
-          SIGNCARE_APP_ID: test_signcare_app_id_ci
-          ADMIN_INITIAL_PASSWORD: Admin@123
+          BILL_ADMIN_INITIAL_PASSWORD: BillAdminSecure#2026
+          OPERATIONS_ADMIN_INITIAL_PASSWORD: OpsAdminSecure#2026
           REDIS_HOST: 127.0.0.1
           REDIS_PORT: 6379
           RAZORPAYX_KEY_ID: rzp_test_hiralal2026

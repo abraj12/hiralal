@@ -162,7 +162,6 @@ export class AdminApiClient {
   static createRewardRule(data: {
     profession: 'PLUMBER' | 'TILE_INSTALLER';
     rewardPercentage: number;
-    monthlyPoolLimit?: number;
     minRedemptionAmount?: number;
     maxRedemptionAmount?: number;
     effectiveFrom?: string;
@@ -176,7 +175,6 @@ export class AdminApiClient {
 
   static updateRewardRules(data: {
     percentage?: number;
-    monthlyPoolLimit?: number;
     minRedemptionAmount?: number;
     profession?: string;
   }) {

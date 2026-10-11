@@ -231,7 +231,7 @@ export default function AdminSettingsPage() {
             Business Rules & System Configuration
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Dynamic admin control over reward percentages, monthly caps, GST rates, and redemption windows
+            Dynamic admin control over reward percentages, GST rates, and redemption windows
           </p>
         </div>
 
