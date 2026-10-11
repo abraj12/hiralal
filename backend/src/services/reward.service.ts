@@ -40,11 +40,15 @@ export class RewardService {
     }
   ) {
     const prof: Profession = params.profession || 'PLUMBER';
-    const activeRule = await RewardRuleService.getApplicableRule(prof);
+    let pct = params.percentage;
+    if (pct === undefined) {
+      const activeRule = await RewardRuleService.getApplicableRule(prof);
+      pct = Number(activeRule.rewardPercentage);
+    }
 
     return await RewardRuleService.createRule(adminId, {
       profession: prof,
-      rewardPercentage: params.percentage !== undefined ? params.percentage : Number(activeRule.rewardPercentage),
+      rewardPercentage: pct,
     });
   }
 }

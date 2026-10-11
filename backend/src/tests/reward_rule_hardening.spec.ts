@@ -81,6 +81,24 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
         wallet: { create: { availableBalance: 0, processingAmount: 0, totalRedeemed: 0 } },
       },
     });
+
+    // Ensure deterministic baseline rules exist for both professions
+    for (const prof of ['PLUMBER', 'TILE_INSTALLER'] as const) {
+      const count = await prisma.rewardRule.count({
+        where: { profession: prof, isActive: true, effectiveFrom: { lte: new Date('2026-10-10') } },
+      });
+      if (count === 0) {
+        await prisma.rewardRule.create({
+          data: {
+            profession: prof,
+            rewardPercentage: 0.50,
+            effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+            isActive: true,
+            version: 1,
+          },
+        });
+      }
+    }
   });
 
   afterAll(async () => {
