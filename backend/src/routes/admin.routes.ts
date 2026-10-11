@@ -412,6 +412,45 @@ router.get('/bills', requireBillAdmin, async (req: AuthenticatedRequest, res: Re
 });
 
 /**
+ * 4.1 Fresh Signed Document URL for Bill Inspection (Admin Only)
+ */
+router.get('/bills/:id/document-url', requireBillAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const bill = await prisma.bill.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        fileKey: true,
+        mimeType: true,
+        invoiceNumber: true,
+        status: true,
+      },
+    });
+
+    if (!bill) {
+      return res.status(404).json({ success: false, code: 'BILL_NOT_FOUND', message: 'Bill not found.' });
+    }
+
+    if (!bill.fileKey) {
+      return res.status(404).json({ success: false, code: 'DOCUMENT_NOT_FOUND', message: 'No document file associated with this bill.' });
+    }
+
+    const documentUrl = await StorageService.getSignedInvoiceUrl(bill.fileKey, 1800);
+    res.json({
+      success: true,
+      documentUrl,
+      mimeType: bill.mimeType,
+      fileType: bill.mimeType,
+      expiresIn: 1800,
+    });
+  } catch (err: any) {
+    console.error(`[STORAGE-ERROR] Failed to generate signed URL for bill ${req.params.id}: ${err.message}`);
+    res.status(500).json({ success: false, message: 'Could not generate document access URL. Please retry.' });
+  }
+});
+
+/**
  * 5. Bill Verification (Approve / Reject with GST and Financial Snapshot)
  */
 router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequest, res: Response) => {

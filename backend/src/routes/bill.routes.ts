@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import fs from 'fs';
+import path from 'path';
 import { BillService } from '../services/bill.service';
 import { StorageService } from '../services/storage.service';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
@@ -201,6 +202,25 @@ router.get('/file', async (req: Request, res: Response) => {
     const isValid = StorageService.verifySignedUrl(key, expires, sig);
     if (!isValid) {
       return res.status(403).json({ success: false, message: 'Signed URL has expired or signature is invalid.' });
+    }
+
+    // Set private, no-cache headers to prevent intermediate caching of sensitive documents
+    res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    // Extension inspection for safe content-type and inline disposition
+    const ext = path.extname(key).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      '.pdf': 'application/pdf',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.webp': 'image/webp',
+    };
+    if (mimeMap[ext]) {
+      res.setHeader('Content-Type', mimeMap[ext]);
+      res.setHeader('Content-Disposition', `inline; filename="invoice${ext}"`);
     }
 
     const localPath = StorageService.getLocalFilePath(key);

@@ -99,7 +99,7 @@ app.get('/health/live', (_req: Request, res: Response) => {
   });
 });
 
-app.get('/health/ready', async (_req: Request, res: Response) => {
+const readyHandler = async (_req: Request, res: Response) => {
   try {
     const dbOk = await checkDatabaseConnection();
     const redisOk = await checkRedisConnection();
@@ -116,11 +116,14 @@ app.get('/health/ready', async (_req: Request, res: Response) => {
   } catch (err: any) {
     res.status(503).json({
       status: 'unhealthy',
-      error: err.message,
+      error: config.isProduction ? 'Dependency check failed' : err.message,
       timestamp: new Date().toISOString(),
     });
   }
-});
+};
+
+app.get('/health/ready', readyHandler);
+app.get('/ready', readyHandler);
 
 // API Routes
 app.use('/api/auth', authRoutes);

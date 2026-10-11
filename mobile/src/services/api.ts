@@ -562,6 +562,10 @@ export class MobileApiClient {
     return this.request(`/admin/bills?${params.toString()}`);
   }
 
+  static getAdminBillDocumentUrl(id: string) {
+    return this.request(`/admin/bills/${id}/document-url`);
+  }
+
   static getGstRules() {
     return this.request('/admin/settings/gst-rules');
   }

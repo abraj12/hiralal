@@ -11,6 +11,7 @@ import {
   Modal,
   ScrollView,
   Image,
+  Linking,
 } from 'react-native';
 import {
   CheckCircle2,
@@ -22,6 +23,8 @@ import {
   CheckSquare,
   Square,
   X,
+  ExternalLink,
+  Eye,
 } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
@@ -31,6 +34,12 @@ export default function BillReviewScreen() {
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // Document preview state
+  const [docUrl, setDocUrl] = useState<string | null>(null);
+  const [docLoading, setDocLoading] = useState(false);
+  const [docError, setDocError] = useState<string | null>(null);
+  const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
 
   // Rejection modal state
   const [rejectId, setRejectId] = useState<string | null>(null);
@@ -81,6 +90,9 @@ export default function BillReviewScreen() {
 
   const openReviewModal = (bill: any) => {
     setReviewBill(bill);
+    setDocUrl(bill.fileUrl || null);
+    setDocError(null);
+    setDocLoading(false);
     setReviewGstIncluded(false);
     const defaultRule = gstRules.find((r: any) => r.isDefault) || gstRules[0];
     if (defaultRule) {
@@ -91,6 +103,37 @@ export default function BillReviewScreen() {
       setReviewGstRuleId(undefined);
     }
     setReviewGstOverrideReason('');
+  };
+
+  const handleRefreshDocumentUrl = async () => {
+    if (!reviewBill) return;
+    setDocLoading(true);
+    setDocError(null);
+    try {
+      const res = await MobileApiClient.getAdminBillDocumentUrl(reviewBill.id);
+      if (res && res.documentUrl) {
+        setDocUrl(res.documentUrl);
+      } else {
+        setDocError('Document URL is unavailable.');
+      }
+    } catch (err: any) {
+      setDocError(err.message || 'Failed to refresh document link.');
+    } finally {
+      setDocLoading(false);
+    }
+  };
+
+  const handleOpenExternal = async (url: string) => {
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Cannot Open URL', 'No application available to open this link.');
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to open link.');
+    }
   };
 
   const handleConfirmApprove = async () => {
@@ -278,16 +321,87 @@ export default function BillReviewScreen() {
                   </Text>
                 </View>
 
-                {/* Invoice image preview if available */}
-                {reviewBill.fileUrl && (
-                  <View style={styles.imagePreviewWrapper}>
-                    <Image
-                      source={{ uri: reviewBill.fileUrl }}
-                      style={styles.invoiceImagePreview}
-                      resizeMode="contain"
-                    />
+                {/* Document preview section */}
+                <View style={styles.docSection}>
+                  <View style={styles.docHeaderRow}>
+                    <Text style={styles.docHeaderTitle}>Invoice Document</Text>
+                    <TouchableOpacity
+                      style={styles.refreshDocBtn}
+                      onPress={handleRefreshDocumentUrl}
+                      disabled={docLoading}
+                    >
+                      {docLoading ? (
+                        <ActivityIndicator size="small" color="#2563EB" />
+                      ) : (
+                        <>
+                          <RefreshCw size={13} color="#2563EB" />
+                          <Text style={styles.refreshDocBtnText}>Refresh Link</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
                   </View>
-                )}
+
+                  {docLoading ? (
+                    <View style={styles.docLoadingBox}>
+                      <ActivityIndicator size="small" color="#2563EB" />
+                      <Text style={styles.docLoadingText}>Loading secure document link...</Text>
+                    </View>
+                  ) : docError ? (
+                    <View style={styles.docErrorBox}>
+                      <AlertCircle size={16} color="#DC2626" />
+                      <Text style={styles.docErrorText}>{docError}</Text>
+                      <TouchableOpacity
+                        style={styles.docRetryBtn}
+                        onPress={handleRefreshDocumentUrl}
+                      >
+                        <Text style={styles.docRetryBtnText}>Retry</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : !docUrl ? (
+                    <View style={styles.noDocBox}>
+                      <FileText size={28} color="#94A3B8" />
+                      <Text style={styles.noDocText}>No document preview loaded</Text>
+                      <TouchableOpacity
+                        style={styles.loadDocBtn}
+                        onPress={handleRefreshDocumentUrl}
+                        disabled={docLoading}
+                      >
+                        <Text style={styles.loadDocBtnText}>Fetch Document Link</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (docUrl.toLowerCase().includes('.pdf') || reviewBill.fileType === 'application/pdf') ? (
+                    <View style={styles.pdfDocCard}>
+                      <FileText size={32} color="#DC2626" />
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={styles.pdfCardTitle}>PDF Invoice Attached</Text>
+                        <Text style={styles.pdfCardSub}>Tap below to view full document</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.openPdfBtn}
+                        onPress={() => handleOpenExternal(docUrl)}
+                      >
+                        <ExternalLink size={14} color="#ffffff" />
+                        <Text style={styles.openPdfBtnText}>Open</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.imagePreviewWrapper}>
+                      <Image
+                        source={{ uri: docUrl }}
+                        style={styles.invoiceImagePreview}
+                        resizeMode="contain"
+                        onError={() => setDocError('Failed to load image. The signed URL may have expired.')}
+                      />
+                      <TouchableOpacity
+                        style={styles.enlargeBtn}
+                        onPress={() => setFullscreenImage(docUrl)}
+                      >
+                        <Eye size={14} color="#ffffff" />
+                        <Text style={styles.enlargeBtnText}>View Fullscreen</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
 
                 {/* Worker remarks if present */}
                 {reviewBill.remarks && (
@@ -438,6 +552,25 @@ export default function BillReviewScreen() {
                 </TouchableOpacity>
               </View>
             </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* Fullscreen Image Modal */}
+      {fullscreenImage && (
+        <Modal visible={true} transparent={true} animationType="fade">
+          <View style={styles.fullscreenModalOverlay}>
+            <TouchableOpacity
+              style={styles.fullscreenCloseBtn}
+              onPress={() => setFullscreenImage(null)}
+            >
+              <X size={24} color="#ffffff" />
+            </TouchableOpacity>
+            <Image
+              source={{ uri: fullscreenImage }}
+              style={styles.fullscreenImage}
+              resizeMode="contain"
+            />
           </View>
         </Modal>
       )}
@@ -823,5 +956,169 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  docSection: {
+    marginBottom: 12,
+  },
+  docHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  docHeaderTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    textTransform: 'uppercase',
+  },
+  refreshDocBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#EFF6FF',
+  },
+  refreshDocBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  docLoadingBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    gap: 8,
+  },
+  docLoadingText: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+  docErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 10,
+    padding: 10,
+    gap: 8,
+  },
+  docErrorText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#B91C1C',
+  },
+  docRetryBtn: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  docRetryBtnText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  noDocBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  noDocText: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  loadDocBtn: {
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  loadDocBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  pdfDocCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 12,
+  },
+  pdfCardTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  pdfCardSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  openPdfBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  openPdfBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  enlargeBtn: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  enlargeBtnText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  fullscreenModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 10,
+  },
+  fullscreenCloseBtn: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    zIndex: 10,
+    padding: 8,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 20,
+  },
+  fullscreenImage: {
+    width: '100%',
+    height: '90%',
   },
 });

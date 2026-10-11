@@ -53,9 +53,22 @@ export class AdminApiClient {
     };
 
     const method = (options.method || 'GET').toUpperCase();
+    const isMutating = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+    const isAuthBootstrap = endpoint.includes('/auth/login') ||
+      endpoint.includes('/auth/admin-login') ||
+      endpoint.includes('/auth/otp') ||
+      endpoint.includes('/auth/send-otp') ||
+      endpoint.includes('/auth/verify-otp') ||
+      endpoint.includes('/auth/password-reset');
+
     const csrfToken = getCsrfToken();
-    if (csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+    if (csrfToken && isMutating) {
       headers['X-CSRF-Token'] = csrfToken;
+    } else if (isMutating && !isAuthBootstrap && typeof window !== 'undefined') {
+      const user = this.getUser();
+      if (user) {
+        throw new Error('Anti-CSRF session token is missing. Please refresh your session or log in again.');
+      }
     }
 
     const controller = new AbortController();
@@ -78,7 +91,8 @@ export class AdminApiClient {
       }
 
       if (!res.ok) {
-        if (res.status === 401 && typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+        const isCsrfMismatch = res.status === 403 && data.code === 'CSRF_TOKEN_MISMATCH';
+        if ((res.status === 401 || isCsrfMismatch) && typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
           this.clearToken();
           window.location.href = '/login';
         }
@@ -93,6 +107,11 @@ export class AdminApiClient {
       }
       throw err;
     }
+  }
+
+  // Document URL Retrieval with Fresh Signed Access
+  static getBillDocumentUrl(id: string) {
+    return this.request(`/admin/bills/${id}/document-url`);
   }
 
   // Dashboard Overview with Profession Filtering

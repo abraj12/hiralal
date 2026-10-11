@@ -256,9 +256,13 @@ router.post('/logout', async (req: Request, res: Response) => {
       });
     }
 
-    await AuthService.logout(refreshToken, userId);
-    res.clearCookie('admin_access_token', { path: '/' });
-    res.clearCookie('csrf_token', { path: '/' });
+    const cookieOpts = {
+      path: '/',
+      secure: config.isProduction,
+      sameSite: (config.isProduction ? 'strict' : 'lax') as 'strict' | 'lax',
+    };
+    res.clearCookie('admin_access_token', { ...cookieOpts, httpOnly: true });
+    res.clearCookie('csrf_token', { ...cookieOpts, httpOnly: false });
     res.json({ success: true, message: 'Logged out successfully.' });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });

@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { prisma } from '../db';
@@ -6,6 +7,29 @@ import { User, UserRole } from '@prisma/client';
 
 export interface AuthenticatedRequest extends Request {
   user?: User;
+}
+
+export function csrfTokensMatch(
+  cookieToken: unknown,
+  headerToken: unknown
+): boolean {
+  if (
+    typeof cookieToken !== 'string' ||
+    typeof headerToken !== 'string' ||
+    cookieToken.length === 0 ||
+    headerToken.length === 0
+  ) {
+    return false;
+  }
+
+  const cookieBuffer = Buffer.from(cookieToken, 'utf8');
+  const headerBuffer = Buffer.from(headerToken, 'utf8');
+
+  if (cookieBuffer.length !== headerBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(cookieBuffer, headerBuffer);
 }
 
 function parseCookies(cookieHeader?: string): Record<string, string> {
@@ -16,7 +40,11 @@ function parseCookies(cookieHeader?: string): Record<string, string> {
     if (parts.length >= 2) {
       const name = parts[0].trim();
       const val = parts.slice(1).join('=').trim();
-      list[name] = decodeURIComponent(val);
+      try {
+        list[name] = decodeURIComponent(val);
+      } catch {
+        list[name] = val;
+      }
     }
   });
   return list;
@@ -91,17 +119,27 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       return;
     }
 
-    const cookies = (req as any).cookies || parseCookies(req.headers.cookie);
-    if (cookies && cookies.csrf_token) {
-      const headerCsrf = req.headers['x-csrf-token'] as string;
-      if (!headerCsrf || headerCsrf !== cookies.csrf_token) {
-        res.status(403).json({
-          success: false,
-          code: 'CSRF_TOKEN_MISMATCH',
-          message: 'Anti-CSRF token missing or mismatch for cookie-authenticated request.',
-        });
-        return;
-      }
+    const cookies =
+      (req as any).cookies || parseCookies(req.headers.cookie);
+
+    const csrfCookie =
+      typeof cookies?.csrf_token === 'string'
+        ? cookies.csrf_token
+        : '';
+
+    const csrfHeader =
+      typeof req.headers['x-csrf-token'] === 'string'
+        ? req.headers['x-csrf-token']
+        : '';
+
+    if (!csrfTokensMatch(csrfCookie, csrfHeader)) {
+      res.status(403).json({
+        success: false,
+        code: 'CSRF_TOKEN_MISMATCH',
+        message:
+          'Anti-CSRF validation failed. Refresh the session and retry.',
+      });
+      return;
     }
   }
   try {

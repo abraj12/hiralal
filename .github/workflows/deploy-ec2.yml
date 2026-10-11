@@ -23,6 +23,7 @@ jobs:
   deploy-production:
     name: Production Deployment to AWS EC2
     runs-on: ubuntu-latest
+    environment: production
     if: >-
       (github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_deploy == 'DEPLOY' && (github.ref == 'refs/heads/main' || github.ref_name == 'main')) ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
@@ -37,19 +38,15 @@ jobs:
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
           EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
         run: |
-          if [ -z "${EC2_HOST}" ] || [ -z "${EC2_SSH_KEY}" ]; then
-            echo "[FATAL ERROR] Mandatory EC2 deployment secrets (EC2_HOST or EC2_SSH_KEY) are missing. Halting deployment." >&2
+          if [ -z "${EC2_HOST}" ] || [ -z "${EC2_SSH_KEY}" ] || [ -z "${EC2_SSH_KNOWN_HOSTS}" ]; then
+            echo "[FATAL ERROR] Mandatory EC2 deployment secrets (EC2_HOST, EC2_SSH_KEY, or EC2_SSH_KNOWN_HOSTS) are missing. Halting deployment." >&2
             exit 1
           fi
           mkdir -p ~/.ssh
           echo "${EC2_SSH_KEY}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          if [ -n "${EC2_SSH_KNOWN_HOSTS}" ]; then
-            echo "${EC2_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
-            chmod 644 ~/.ssh/known_hosts
-          else
-            ssh-keyscan -H "${EC2_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
-          fi
+          echo "${EC2_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
 
       - name: Execute Remote Deployment on EC2
         env:
@@ -131,12 +128,13 @@ jobs:
             sleep 10
             docker compose ps
             
-            # Smoke test health probe
+            # Smoke test health & readiness probes
             HEALTH_URL="http://localhost/health"
-            if curl -f -s "${HEALTH_URL}" | grep -qi "ok"; then
+            READY_URL="http://localhost/health/ready"
+            if curl -f -s "${HEALTH_URL}" | grep -qi "ok" && curl -f -s "${READY_URL}" | grep -qi "ok"; then
               echo "==> Deployment SUCCESS: Release ${DEPLOYED_SHA} healthy and verified!"
             else
-              echo "==> Health probe failed. Inspecting logs:"
+              echo "==> Health or readiness probe failed. Inspecting logs:"
               docker compose logs --tail=50
               exit 1
             fi

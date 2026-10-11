@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, CheckCircle2, XCircle, FileText, ExternalLink, AlertTriangle, ShieldCheck, Calculator } from 'lucide-react';
+import { X, CheckCircle2, XCircle, FileText, ExternalLink, AlertTriangle, ShieldCheck, Calculator, RefreshCw } from 'lucide-react';
 import { AdminApiClient } from '../lib/api';
 
 interface BillVerificationModalProps {
@@ -23,6 +23,40 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
 
   const [rewardPercentage, setRewardPercentage] = useState<number | null>(null);
   const [rulesUnavailable, setRulesUnavailable] = useState(false);
+
+  // Document Preview & Signed URL Refresh
+  const [docUrl, setDocUrl] = useState<string | null>(bill.fileUrl || null);
+  const [docLoading, setDocLoading] = useState(false);
+  const [docError, setDocError] = useState<string | null>(null);
+
+  const handleRefreshDocumentUrl = async () => {
+    setDocLoading(true);
+    setDocError(null);
+    try {
+      const res = await AdminApiClient.getBillDocumentUrl(bill.id);
+      if (res && res.documentUrl) {
+        setDocUrl(res.documentUrl);
+      } else {
+        setDocError('Document file could not be located in secure storage vault.');
+      }
+    } catch (err: any) {
+      setDocError(err.message || 'Failed to refresh signed document link.');
+    } finally {
+      setDocLoading(false);
+    }
+  };
+
+  const targetUrl = docUrl || bill.fileUrl;
+  const isPdf = Boolean(
+    bill.fileName?.toLowerCase().endsWith('.pdf') ||
+    bill.mimeType === 'application/pdf' ||
+    targetUrl?.toLowerCase().includes('.pdf')
+  );
+  const isImage = !isPdf && Boolean(
+    bill.fileName?.match(/\.(jpg|jpeg|png|webp)$/i) ||
+    bill.mimeType?.startsWith('image/') ||
+    targetUrl?.match(/\.(jpg|jpeg|png|webp)/i)
+  );
 
   const isPlumber = (bill.profession || bill.userProfession) === 'PLUMBER';
   const grossAmount = Number(bill.grossBillAmount || bill.billAmount || 0);
@@ -276,36 +310,118 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
           )}
 
           {/* Secure Invoice Document Preview */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                Attached Document
-              </span>
-              <a
-                href={bill.fileUrl?.startsWith('http') ? bill.fileUrl : (bill.fileUrl?.startsWith('/') ? bill.fileUrl : `/${bill.fileUrl || ''}`)}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-blue-600 hover:underline flex items-center space-x-1 font-medium"
-              >
-                <span>Open in Fullscreen</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <FileText className="w-4 h-4 text-blue-600" />
+                <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                  Original Invoice Document
+                </span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={handleRefreshDocumentUrl}
+                  disabled={docLoading}
+                  className="text-xs text-slate-600 hover:text-slate-900 flex items-center space-x-1 font-semibold px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 transition"
+                  title="Request fresh signed URL from Cloudflare R2 vault"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${docLoading ? 'animate-spin' : ''}`} />
+                  <span>Refresh Link</span>
+                </button>
+                {targetUrl && (
+                  <a
+                    href={targetUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 hover:text-blue-800 flex items-center space-x-1 font-semibold px-2 py-1 rounded bg-blue-50 hover:bg-blue-100 transition"
+                  >
+                    <span>Fullscreen</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+              </div>
             </div>
 
-            <div className="border border-slate-200 rounded-xl p-4 bg-slate-100/60 flex items-center justify-center min-h-[200px]">
-              <div className="text-center">
-                <FileText className="w-12 h-12 text-blue-500 mx-auto mb-2" />
-                <p className="text-xs font-semibold text-slate-700">{bill.invoiceNumber}</p>
-                <p className="text-[11px] text-slate-400 mt-1">Protected Cloudflare R2 Document Vault</p>
-                <a
-                  href={bill.fileUrl?.startsWith('http') ? bill.fileUrl : (bill.fileUrl?.startsWith('/') ? bill.fileUrl : `/${bill.fileUrl || ''}`)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-3 inline-block px-3 py-1.5 bg-white border border-slate-200 text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50 shadow-sm"
-                >
-                  View Signed Invoice
-                </a>
-              </div>
+            <div className="border border-slate-200 rounded-xl p-3 bg-slate-100/70 overflow-hidden min-h-[180px] flex flex-col justify-center items-center">
+              {docLoading ? (
+                <div className="py-12 text-center text-xs text-slate-500 flex flex-col items-center">
+                  <RefreshCw className="w-8 h-8 text-blue-500 animate-spin mb-2" />
+                  <span>Retrieving secure signed invoice...</span>
+                </div>
+              ) : docError ? (
+                <div className="py-6 px-4 text-center max-w-sm">
+                  <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+                  <p className="text-xs font-bold text-slate-800">Document Unavailable</p>
+                  <p className="text-[11px] text-slate-500 mt-1">{docError}</p>
+                  <button
+                    type="button"
+                    onClick={handleRefreshDocumentUrl}
+                    className="mt-3 px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 shadow-sm transition"
+                  >
+                    Retry Loading Document
+                  </button>
+                </div>
+              ) : !targetUrl ? (
+                <div className="py-8 text-center">
+                  <FileText className="w-10 h-10 text-slate-400 mx-auto mb-2" />
+                  <p className="text-xs font-semibold text-slate-700">No active signed URL</p>
+                  <button
+                    type="button"
+                    onClick={handleRefreshDocumentUrl}
+                    className="mt-2 px-3 py-1 bg-white border border-slate-300 text-xs font-bold text-slate-700 rounded-lg hover:bg-slate-50"
+                  >
+                    Load Document
+                  </button>
+                </div>
+              ) : isImage ? (
+                <div className="w-full text-center">
+                  <img
+                    src={targetUrl}
+                    alt={`Invoice #${bill.invoiceNumber}`}
+                    className="max-h-[380px] w-auto mx-auto rounded-lg object-contain shadow-sm border border-slate-200 bg-white"
+                    onError={() => setDocError('Image failed to load. The signed URL may have expired.')}
+                  />
+                  <p className="text-[11px] text-slate-400 mt-2">
+                    {bill.fileName || 'Original invoice image'} • Cloudflare R2 Protected Vault
+                  </p>
+                </div>
+              ) : isPdf ? (
+                <div className="w-full">
+                  <iframe
+                    src={`${targetUrl}#toolbar=0`}
+                    className="w-full h-80 rounded-lg border border-slate-200 bg-white"
+                    title={`Invoice PDF ${bill.invoiceNumber}`}
+                  />
+                  <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500 px-1">
+                    <span>{bill.fileName || 'Invoice Document (PDF)'}</span>
+                    <a
+                      href={targetUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 font-bold hover:underline flex items-center space-x-1"
+                    >
+                      <span>Open in new window</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-6">
+                  <FileText className="w-12 h-12 text-blue-500 mx-auto mb-2" />
+                  <p className="text-xs font-bold text-slate-800">{bill.invoiceNumber}</p>
+                  <p className="text-[11px] text-slate-500 mt-1">{bill.fileName || 'Uploaded Invoice Document'}</p>
+                  <a
+                    href={targetUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-3 inline-flex items-center space-x-1.5 px-3.5 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 shadow-sm transition"
+                  >
+                    <span>View / Download Document</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              )}
             </div>
           </div>
 

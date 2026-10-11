@@ -15,16 +15,19 @@ import jwt from 'jsonwebtoken';
 describe('Production Hardening & Financial Integrity Release Candidate Tests', () => {
   const adminMobile = '9876549901';
   const plumberMobile = '9876549902';
+  const billAdminMobile = '9876549903';
   let adminUser: any;
   let plumberUser: any;
+  let billAdminUser: any;
   let adminToken: string;
   let plumberToken: string;
+  let billAdminToken: string;
   let activeGstRule: any;
   let expiredGstRule: any;
 
   beforeAll(async () => {
     // Clean up test data
-    const mobiles = [adminMobile, plumberMobile];
+    const mobiles = [adminMobile, plumberMobile, billAdminMobile];
     await prisma.bill.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
     await prisma.payout.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
     await prisma.paymentAccount.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
@@ -42,6 +45,17 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
         fullName: 'Hardening Admin Lead',
         passwordHash: 'hash',
         role: 'OPERATIONS_ADMIN',
+        status: 'ACTIVE',
+        isVerified: true,
+      },
+    });
+
+    billAdminUser = await prisma.user.create({
+      data: {
+        mobile: billAdminMobile,
+        fullName: 'Hardening Bill Admin',
+        passwordHash: 'hash',
+        role: 'BILL_ADMIN',
         status: 'ACTIVE',
         isVerified: true,
       },
@@ -69,6 +83,12 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
 
     adminToken = jwt.sign(
       { userId: adminUser.id, role: adminUser.role },
+      config.admin.accessSecret || config.jwt.accessSecret,
+      { expiresIn: '1h' }
+    );
+
+    billAdminToken = jwt.sign(
+      { userId: billAdminUser.id, role: billAdminUser.role },
       config.admin.accessSecret || config.jwt.accessSecret,
       { expiresIn: '1h' }
     );
@@ -338,6 +358,120 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
+    });
+
+    test('4.4 Cookie auth on mutating route fails closed if csrf_token cookie is missing', async () => {
+      const res = await request(app)
+        .post('/api/admin/settings/redemption')
+        .set('Cookie', `admin_access_token=${adminToken}`)
+        .set('Origin', 'http://localhost:3000')
+        .set('X-CSRF-Token', 'some_token_without_cookie')
+        .send({ isEnabled: true, minimumAmount: 500, maximumAmount: 10000 });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('CSRF_TOKEN_MISMATCH');
+    });
+
+    test('4.5 Cookie auth on mutating route fails closed if both csrf_token cookie and X-CSRF-Token header are missing', async () => {
+      const res = await request(app)
+        .post('/api/admin/settings/redemption')
+        .set('Cookie', `admin_access_token=${adminToken}`)
+        .set('Origin', 'http://localhost:3000')
+        .send({ isEnabled: true, minimumAmount: 500, maximumAmount: 10000 });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('CSRF_TOKEN_MISMATCH');
+    });
+
+    test('4.6 Malformed percent-encoded Cookie is handled safely without throwing 500', async () => {
+      const res = await request(app)
+        .get('/api/admin/dashboard')
+        .set('Cookie', `admin_access_token=${adminToken}; malformed=%E0%A4%A; regular=value`)
+        .set('Origin', 'http://localhost:3000');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    test('4.7 POST /api/auth/logout clears admin_access_token and csrf_token cookies', async () => {
+      const res = await request(app)
+        .post('/api/auth/logout')
+        .set('Cookie', `admin_access_token=${adminToken}; csrf_token=some_token`)
+        .send();
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      const cookies = res.headers['set-cookie'];
+      expect(cookies).toBeDefined();
+      const cookieStr = Array.isArray(cookies) ? cookies.join(';') : cookies;
+      expect(cookieStr).toContain('admin_access_token=;');
+      expect(cookieStr).toContain('csrf_token=;');
+    });
+  });
+
+  describe('5. Bill Document URL & Secure Inspection', () => {
+    let testBill: any;
+
+    beforeAll(async () => {
+      testBill = await BillService.submitBill({
+        userId: plumberUser.id,
+        invoiceNumber: `INV-DOC-${Date.now()}`,
+        invoiceDate: '2026-10-11',
+        billAmount: 3500.0,
+        fileBuffer: Buffer.from('%PDF-1.4 Mock invoice content for document url test'),
+        fileName: 'invoice_test.pdf',
+        mimeType: 'application/pdf',
+      });
+    });
+
+    test('5.1 Authorized admin can retrieve fresh signed document URL', async () => {
+      const res = await request(app)
+        .get(`/api/admin/bills/${testBill.id}/document-url`)
+        .set('Authorization', `Bearer ${billAdminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.documentUrl).toBeDefined();
+      expect(typeof res.body.documentUrl).toBe('string');
+      expect(res.body.fileType).toBe('application/pdf');
+    });
+
+    test('5.2 Non-existent bill returns 404', async () => {
+      const nonExistentId = '00000000-0000-0000-0000-000000000000';
+      const res = await request(app)
+        .get(`/api/admin/bills/${nonExistentId}/document-url`)
+        .set('Authorization', `Bearer ${billAdminToken}`);
+
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('BILL_NOT_FOUND');
+    });
+
+    test('5.3 Unauthorized craftsman cannot access admin document URL', async () => {
+      const res = await request(app)
+        .get(`/api/admin/bills/${testBill.id}/document-url`)
+        .set('Authorization', `Bearer ${plumberToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+    });
+  });
+
+  describe('6. System Health & Readiness Endpoints', () => {
+    test('6.1 GET /health/ready returns readiness check', async () => {
+      const res = await request(app).get('/health/ready');
+      expect([200, 503]).toContain(res.status);
+      expect(res.body.status).toBeDefined();
+      expect(res.body.checks).toBeDefined();
+      expect(res.body.checks.database).toBeDefined();
+    });
+
+    test('6.2 GET /ready alias functions identical to /health/ready', async () => {
+      const res = await request(app).get('/ready');
+      expect([200, 503]).toContain(res.status);
+      expect(res.body.status).toBeDefined();
+      expect(res.body.checks).toBeDefined();
+      expect(res.body.checks.database).toBeDefined();
     });
   });
 });

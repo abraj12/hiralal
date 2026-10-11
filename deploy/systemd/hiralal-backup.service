@@ -1,0 +1,26 @@
+[Unit]
+Description=Hiralal & Sons Automated Encrypted Database Backup Service
+Documentation=https://github.com/abraj12/hiralal
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/hiralal
+EnvironmentFile=-/etc/hiralal/backup.env
+EnvironmentFile=-/opt/hiralal/.env
+ExecStart=/opt/hiralal/scripts/backup-db.sh
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=1800
+
+# Security Hardening Directives
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/backups/hiralal /opt/hiralal
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

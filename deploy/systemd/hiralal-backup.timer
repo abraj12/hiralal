@@ -1,0 +1,12 @@
+[Unit]
+Description=Timer for Hiralal & Sons Daily Off-Site Database Backup
+Documentation=https://github.com/abraj12/hiralal
+
+[Timer]
+# Run daily at 02:30 AM Indian Standard Time (21:00 UTC)
+OnCalendar=*-*-* 21:00:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

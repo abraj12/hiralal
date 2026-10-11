@@ -135,12 +135,13 @@ export class BillService {
 
     return await Promise.all(
       bills.map(async (b) => {
-        let freshUrl = b.fileUrl;
+        let freshUrl: string | null = null;
         if (b.fileKey) {
           try {
             freshUrl = await StorageService.getSignedInvoiceUrl(b.fileKey, 1800);
-          } catch (e) {
-            // Keep existing URL if signing error
+          } catch (e: any) {
+            console.error(`[STORAGE-ERROR] Failed to generate signed URL for user bill ${b.id}: ${e?.message || e}`);
+            freshUrl = null;
           }
         }
 
@@ -204,12 +205,13 @@ export class BillService {
 
     return await Promise.all(
       bills.map(async (b) => {
-        let freshUrl = b.fileUrl;
+        let freshUrl: string | null = null;
         if (b.fileKey) {
           try {
             freshUrl = await StorageService.getSignedInvoiceUrl(b.fileKey, 1800);
-          } catch (e) {
-            // fallback
+          } catch (e: any) {
+            console.error(`[STORAGE-ERROR] Failed to generate signed URL for admin bill ${b.id}: ${e?.message || e}`);
+            freshUrl = null;
           }
         }
 
