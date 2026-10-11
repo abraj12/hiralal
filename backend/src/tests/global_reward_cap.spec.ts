@@ -91,9 +91,27 @@ describe('Part B & C — Pool-Free Reward Integrity, Volume Scaling, Self-Approv
       },
     });
 
-    // Clean up test rules if left over
+    // Clean up and establish deterministic baseline 0.50% reward rules
     await prisma.rewardRule.deleteMany({
-      where: { id: { in: ['rule_plumber_test', 'rule_tile_test', 'test_rule_plumber', 'test_rule_tile'] } },
+      where: { profession: { in: ['PLUMBER', 'TILE_INSTALLER'] } },
+    });
+    await prisma.rewardRule.create({
+      data: {
+        profession: 'PLUMBER',
+        rewardPercentage: 0.50,
+        effectiveFrom: new Date('2020-01-01'),
+        isActive: true,
+        version: 1,
+      },
+    });
+    await prisma.rewardRule.create({
+      data: {
+        profession: 'TILE_INSTALLER',
+        rewardPercentage: 0.50,
+        effectiveFrom: new Date('2020-01-01'),
+        isActive: true,
+        version: 1,
+      },
     });
 
     // Enable redemption window
@@ -127,7 +145,25 @@ describe('Part B & C — Pool-Free Reward Integrity, Volume Scaling, Self-Approv
       where: { mobile: { in: ['9811100001', '9811100002', '9811100003', '9811100004'] } },
     });
     await prisma.rewardRule.deleteMany({
-      where: { id: { in: ['rule_plumber_test', 'rule_tile_test', 'test_rule_plumber', 'test_rule_tile'] } },
+      where: { profession: { in: ['PLUMBER', 'TILE_INSTALLER'] } },
+    });
+    await prisma.rewardRule.create({
+      data: {
+        profession: 'PLUMBER',
+        rewardPercentage: 0.50,
+        effectiveFrom: new Date('2020-01-01'),
+        isActive: true,
+        version: 1,
+      },
+    });
+    await prisma.rewardRule.create({
+      data: {
+        profession: 'TILE_INSTALLER',
+        rewardPercentage: 0.50,
+        effectiveFrom: new Date('2020-01-01'),
+        isActive: true,
+        version: 1,
+      },
     });
   });
 
@@ -171,9 +207,9 @@ describe('Part B & C — Pool-Free Reward Integrity, Volume Scaling, Self-Approv
           userId: testTileInstaller.id,
           invoiceNumber: `INV-HIGHVOL-${Date.now()}`,
           invoiceDate: new Date(),
-          billAmount: 10000000,
-          grossBillAmount: 10000000,
-          calculatedReward: 75000,
+          billAmount: 12000000,
+          grossBillAmount: 12000000,
+          calculatedReward: 60000,
           status: 'PENDING',
           fileUrl: 'https://storage/highvol.pdf',
           fileKey: 'bills/highvol.pdf',
