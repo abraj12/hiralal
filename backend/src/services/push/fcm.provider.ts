@@ -30,6 +30,7 @@ interface TokenCache {
 
 export class FcmProvider {
   private static tokenCache: TokenCache | null = null;
+  private static inFlightTokenPromise: Promise<string> | null = null;
   private static fetchClient: typeof fetch = globalThis.fetch;
   private static configOverride: FcmConfigOverride | null = null;
 
@@ -56,6 +57,7 @@ export class FcmProvider {
   static overrideConfig(override: FcmConfigOverride | null): void {
     this.configOverride = override;
     this.tokenCache = null;
+    this.inFlightTokenPromise = null;
   }
 
   /**
@@ -63,6 +65,7 @@ export class FcmProvider {
    */
   static resetTokenCache(): void {
     this.tokenCache = null;
+    this.inFlightTokenPromise = null;
   }
 
   /**
@@ -86,7 +89,7 @@ export class FcmProvider {
 
   /**
    * Generates or retrieves cached Google OAuth2 Bearer Access Token for FCM HTTP v1.
-   * Exchanges RS256-signed JWT assertion against Google OAuth2 token endpoint.
+   * Uses single in-flight promise synchronization for concurrent callers.
    */
   static async getAccessToken(): Promise<string> {
     const { clientEmail, privateKey } = this.getEffectiveConfig();
@@ -95,16 +98,31 @@ export class FcmProvider {
       throw new Error('FCM credentials are not configured.');
     }
 
-    const now = Math.floor(Date.now() / 1000);
-
     // Return cached token if valid (with 5-minute safety buffer)
     if (this.tokenCache && this.tokenCache.expiresAt > Date.now()) {
       return this.tokenCache.accessToken;
     }
 
+    if (this.inFlightTokenPromise) {
+      return this.inFlightTokenPromise;
+    }
+
+    this.inFlightTokenPromise = this.requestNewAccessToken(clientEmail, privateKey).finally(() => {
+      this.inFlightTokenPromise = null;
+    });
+
+    return this.inFlightTokenPromise;
+  }
+
+  /**
+   * Exchanges RS256-signed JWT assertion against Google OAuth2 token endpoint.
+   * Note: 'sub' claim is omitted unless domain-wide delegation is explicitly required.
+   */
+  private static async requestNewAccessToken(clientEmail: string, privateKey: string): Promise<string> {
+    const now = Math.floor(Date.now() / 1000);
+
     const payload = {
       iss: clientEmail,
-      sub: clientEmail,
       aud: 'https://oauth2.googleapis.com/token',
       iat: now,
       exp: now + 3600, // 1 hour expiration
@@ -169,9 +187,11 @@ export class FcmProvider {
     const cleanToken = payload.token.trim();
 
     // Explicit behavior when FCM credentials are not configured:
-    // Notice: skipped = true, success = false, no fake ID.
+    // Returns skipped = true, success = false without fabricating IDs
     if (!this.isConfigured()) {
-      if (process.env.NODE_ENV !== 'test') {
+      if (config.isProduction) {
+        console.warn('[FCM-PROVIDER] [WARNING] Firebase Cloud Messaging credentials are not configured in production. Push delivery is disabled.');
+      } else if (process.env.NODE_ENV !== 'test') {
         console.log(`[FCM-PROVIDER] [SKIPPED] FCM credentials not configured. Notification to ${this.maskToken(cleanToken)} skipped.`);
       }
       return {
@@ -185,7 +205,7 @@ export class FcmProvider {
     const fcmEndpoint = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
 
     let attempt = 0;
-    const maxAttempts = 2;
+    const maxAttempts = 3; // 1 initial attempt + up to 2 retries
 
     while (attempt < maxAttempts) {
       attempt++;
@@ -199,11 +219,18 @@ export class FcmProvider {
               title: payload.title,
               body: payload.body,
             },
+            android: {
+              priority: 'HIGH',
+            },
           },
         };
 
         if (payload.data && Object.keys(payload.data).length > 0) {
-          fcmPayload.message.data = payload.data;
+          const stringifiedData: Record<string, string> = {};
+          for (const [k, v] of Object.entries(payload.data)) {
+            stringifiedData[k] = typeof v === 'string' ? v : String(v);
+          }
+          fcmPayload.message.data = stringifiedData;
         }
 
         const controller = new AbortController();
@@ -241,15 +268,18 @@ export class FcmProvider {
         const errStatus = errObj.status || '';
         const errMsg = errObj.message || `FCM HTTP Error ${statusCode}`;
 
-        // Check if token is unregistered or invalid
+        // Deactivate token ONLY when the response specifically identifies an unregistered or invalid token.
+        // DO NOT deactivate solely because statusCode is 404 (which could be an invalid project or URL).
         const isUnregistered =
-          statusCode === 404 ||
-          errStatus === 'NOT_FOUND' ||
-          errStatus === 'UNREGISTERED' ||
           (Array.isArray(errObj.details) &&
-            errObj.details.some((d: any) => d.errorCode === 'UNREGISTERED')) ||
-          errMsg.toLowerCase().includes('not registered') ||
-          errMsg.toLowerCase().includes('unregistered');
+            errObj.details.some(
+              (d: any) => d.errorCode === 'UNREGISTERED' || d.errorCode === 'INVALID_ARGUMENT'
+            )) ||
+          errStatus === 'UNREGISTERED' ||
+          (typeof errMsg === 'string' &&
+            (errMsg.includes('registration-token-not-registered') ||
+              errMsg.toLowerCase().includes('not registered') ||
+              errMsg.toLowerCase().includes('invalid registration token')));
 
         if (isUnregistered) {
           // Deactivate token in database to prevent future failed deliveries
@@ -270,17 +300,23 @@ export class FcmProvider {
           };
         }
 
-        // On 401/403: auth failure, clear token cache
-        if (statusCode === 401 || statusCode === 403) {
+        // On 401/403: auth failure, clear token cache and retry if attempts remain
+        if ((statusCode === 401 || statusCode === 403) && attempt < maxAttempts) {
           this.resetTokenCache();
-          if (attempt < maxAttempts) {
-            continue; // Retry once with fresh token
-          }
+          continue;
         }
 
-        // On 429 (rate limit) or 5xx (server error): retry once after short backoff
+        // On 429 (rate limit) or 5xx (server error): retry with bounded exponential backoff
         if ((statusCode === 429 || statusCode >= 500) && attempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 500));
+          let delayMs = Math.min(500 * Math.pow(2, attempt - 1), 3000);
+          const retryAfterHeader = response.headers?.get?.('retry-after') || response.headers?.get?.('Retry-After');
+          if (retryAfterHeader) {
+            const parsedSec = parseInt(retryAfterHeader, 10);
+            if (!isNaN(parsedSec) && parsedSec > 0) {
+              delayMs = Math.min(parsedSec * 1000, 5000);
+            }
+          }
+          await new Promise((r) => setTimeout(r, delayMs));
           continue;
         }
 
@@ -301,7 +337,8 @@ export class FcmProvider {
         }
 
         if (attempt < maxAttempts && !err.message?.includes('credentials')) {
-          await new Promise((r) => setTimeout(r, 500));
+          const delayMs = Math.min(500 * Math.pow(2, attempt - 1), 3000);
+          await new Promise((r) => setTimeout(r, delayMs));
           continue;
         }
 

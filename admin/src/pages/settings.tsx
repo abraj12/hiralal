@@ -26,13 +26,16 @@ export default function AdminSettingsPage() {
   const [activeTab, setActiveTab] = useState<TabType>('PLUMBER');
 
   // Profession Rules State
+  const todayDateStr = new Date().toISOString().split('T')[0];
   const [plumberRules, setPlumberRules] = useState<any[]>([]);
   const [tileRules, setTileRules] = useState<any[]>([]);
   const [plumberForm, setPlumberForm] = useState({
     rewardPercentage: '0.5',
+    effectiveFrom: todayDateStr,
   });
   const [tileForm, setTileForm] = useState({
     rewardPercentage: '0.5',
+    effectiveFrom: todayDateStr,
   });
 
   // GST State
@@ -64,9 +67,10 @@ export default function AdminSettingsPage() {
       if (pRes.rules && pRes.rules.length > 0) {
         setPlumberRules(pRes.rules);
         const active = pRes.rules.find((r: any) => r.isActive) || pRes.rules[0];
-        setPlumberForm({
+        setPlumberForm((prev) => ({
+          ...prev,
           rewardPercentage: (active.rewardPercentage || active.percentage || 0.5).toString(),
-        });
+        }));
       }
 
       // 2. Fetch Tile Installer rules
@@ -74,9 +78,10 @@ export default function AdminSettingsPage() {
       if (tRes.rules && tRes.rules.length > 0) {
         setTileRules(tRes.rules);
         const active = tRes.rules.find((r: any) => r.isActive) || tRes.rules[0];
-        setTileForm({
+        setTileForm((prev) => ({
+          ...prev,
           rewardPercentage: (active.rewardPercentage || active.percentage || 0.5).toString(),
-        });
+        }));
       }
 
       // 3. Fetch GST Rules
@@ -131,9 +136,10 @@ export default function AdminSettingsPage() {
       await AdminApiClient.createRewardRule({
         profession: prof,
         rewardPercentage: parseFloat(form.rewardPercentage),
+        effectiveFrom: form.effectiveFrom ? form.effectiveFrom : undefined,
       });
 
-      setSuccessMsg(`New versioned reward rule deployed for ${prof === 'PLUMBER' ? 'Plumbers' : 'Tile Installers'}! Historical approved bills remain financially immutable.`);
+      setSuccessMsg(`New versioned reward rule deployed for ${prof === 'PLUMBER' ? 'Plumbers' : 'Tile Installers'} effective ${form.effectiveFrom || 'immediately'}! Historical approved bills remain financially immutable.`);
       await fetchAllData();
     } catch (err: any) {
       setErrorMsg(err.message || `Failed to update rule for ${prof}`);
@@ -326,7 +332,26 @@ export default function AdminSettingsPage() {
                       className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
                     />
                     <span className="text-[10px] text-slate-400 mt-1 block">
-                      Internal calculation rate applied to verified eligible bill amount
+                      Internal calculation rate applied to verified eligible bill amount (0.01% - 10.00%)
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Effective Date (IST Business Calendar)
+                    </label>
+                    <input
+                      type="date"
+                      value={activeTab === 'PLUMBER' ? plumberForm.effectiveFrom : tileForm.effectiveFrom}
+                      onChange={(e) =>
+                        activeTab === 'PLUMBER'
+                          ? setPlumberForm({ ...plumberForm, effectiveFrom: e.target.value })
+                          : setTileForm({ ...tileForm, effectiveFrom: e.target.value })
+                      }
+                      className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-1 block">
+                      Invoices on or after this date will receive this rate. Prior bills remain unchanged.
                     </span>
                   </div>
                 </div>
@@ -366,27 +391,44 @@ export default function AdminSettingsPage() {
                     <tr>
                       <th className="py-2.5 px-4">Version</th>
                       <th className="py-2.5 px-4">Reward Rate</th>
-                      <th className="py-2.5 px-4">Effective Date</th>
+                      <th className="py-2.5 px-4">Effective From</th>
+                      <th className="py-2.5 px-4">Effective Until</th>
                       <th className="py-2.5 px-4">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {(activeTab === 'PLUMBER' ? plumberRules : tileRules).map((r: any) => (
-                      <tr key={r.id}>
-                        <td className="py-3 px-4 font-bold text-slate-900">v{r.version}</td>
-                        <td className="py-3 px-4 font-bold text-emerald-600">{r.rewardPercentage || r.percentage}%</td>
-                        <td className="py-3 px-4 text-slate-500">
-                          {r.effectiveFrom ? new Date(r.effectiveFrom).toLocaleDateString('en-IN') : 'Creation'}
-                        </td>
-                        <td className="py-3 px-4">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            r.isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
-                          }`}>
-                            {r.isActive ? 'ACTIVE' : 'SUPERSEDED'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {(activeTab === 'PLUMBER' ? plumberRules : tileRules).map((r: any) => {
+                      const now = new Date();
+                      const fromDate = r.effectiveFrom ? new Date(r.effectiveFrom) : null;
+                      const untilDate = r.effectiveUntil ? new Date(r.effectiveUntil) : null;
+
+                      let statusBadge = { label: 'CURRENT', badgeClass: 'bg-emerald-100 text-emerald-700' };
+                      if (!r.isActive) {
+                        statusBadge = { label: 'INACTIVE', badgeClass: 'bg-slate-100 text-slate-500' };
+                      } else if (fromDate && fromDate > now) {
+                        statusBadge = { label: 'SCHEDULED', badgeClass: 'bg-blue-100 text-blue-700' };
+                      } else if (untilDate && untilDate <= now) {
+                        statusBadge = { label: 'HISTORICAL', badgeClass: 'bg-amber-100 text-amber-800' };
+                      }
+
+                      return (
+                        <tr key={r.id}>
+                          <td className="py-3 px-4 font-bold text-slate-900">v{r.version}</td>
+                          <td className="py-3 px-4 font-bold text-emerald-600">{r.rewardPercentage || r.percentage}%</td>
+                          <td className="py-3 px-4 text-slate-600 font-medium">
+                            {fromDate ? fromDate.toLocaleDateString('en-IN') : 'Beginning'}
+                          </td>
+                          <td className="py-3 px-4 text-slate-500">
+                            {untilDate ? untilDate.toLocaleDateString('en-IN') : 'Present (Open-ended)'}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${statusBadge.badgeClass}`}>
+                              {statusBadge.label}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

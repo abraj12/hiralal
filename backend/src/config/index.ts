@@ -29,7 +29,6 @@ export interface AppConfig {
     secretAccessKey: string;
     bucketName: string;
     endpoint: string;
-    publicUrl?: string;
   };
   signcare: {
     baseUrl: string;
@@ -398,13 +397,14 @@ const allowedOrigins = allowedOriginsEnv
   .filter(Boolean);
 
 export function parseFcmConfig(): { projectId: string; clientEmail: string; privateKey: string } {
-  let projectId = process.env.FIREBASE_PROJECT_ID || '';
-  let clientEmail = process.env.FIREBASE_CLIENT_EMAIL || '';
-  let privateKey = process.env.FIREBASE_PRIVATE_KEY || '';
+  let projectId = process.env.FIREBASE_PROJECT_ID || process.env.FCM_PROJECT_ID || '';
+  let clientEmail = process.env.FIREBASE_CLIENT_EMAIL || process.env.FCM_CLIENT_EMAIL || '';
+  let privateKey = process.env.FIREBASE_PRIVATE_KEY || process.env.FCM_PRIVATE_KEY || '';
 
-  if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+  const saKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY || process.env.FCM_SERVICE_ACCOUNT_KEY;
+  if (saKey) {
     try {
-      const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY.trim();
+      const raw = saKey.trim();
       let parsed: any = null;
       if (raw.startsWith('{')) {
         parsed = JSON.parse(raw);
@@ -460,7 +460,6 @@ export const config: AppConfig = {
     endpoint:
       process.env.R2_ENDPOINT ||
       (process.env.R2_ACCOUNT_ID ? `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : ''),
-    publicUrl: process.env.CLOUDFLARE_R2_PUBLIC_URL || '',
   },
 
   signcare: {

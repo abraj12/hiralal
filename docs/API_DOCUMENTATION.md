@@ -351,3 +351,85 @@ Requests 100% full available balance redemption. Has no minimum or maximum thres
     "idempotencyKey": "broadcast-diwali-2026"
   }
   ```
+
+---
+
+### 5. Administrative Settings & Review Endpoints
+
+#### Role-Based Access Control (RBAC) Matrix
+| Endpoint | Method | Permitted Role | Purpose |
+| :--- | :--- | :--- | :--- |
+| `/admin/bills` | `GET` | `BILL_ADMIN` | List and filter worker bills for verification |
+| `/admin/bills/:id/document-url` | `GET` | `BILL_ADMIN` | Generate 1800s temporary S3 signed URL for invoice inspection |
+| `/admin/bills/:id/review-config` | `GET` | `BILL_ADMIN` | Inspect applicable reward rule & GST rules for a bill's `invoiceDate` |
+| `/admin/bills/:id/verify` | `POST` | `BILL_ADMIN` | Approve or reject bill with reverse-GST computation |
+| `/admin/settings/reward-rules` | `GET` | `OPERATIONS_ADMIN` | List all versioned reward rules across professions |
+| `/admin/settings/reward-rules` | `POST` | `OPERATIONS_ADMIN` | Deploy new versioned reward rule with effective date |
+| `/admin/settings/gst-rules` | `GET` | `OPERATIONS_ADMIN` | List active GST tax treatment rules |
+| `/admin/settings/gst-rules` | `POST` | `OPERATIONS_ADMIN` | Create new standard or concessional GST rule |
+| `/admin/settings/redemption` | `GET`, `POST` | `OPERATIONS_ADMIN` | Configure scheduled redemption calendar windows |
+| `/admin/payouts` | `GET`, `POST` | `OPERATIONS_ADMIN` | Review and approve/reject craftsman redemptions |
+
+*Note: Accessing any `OPERATIONS_ADMIN` endpoint with a `BILL_ADMIN` token strictly returns `403 Forbidden` (`code: "FORBIDDEN"`). Hiding UI links is supplemented by strict server-side middleware enforcement.*
+
+#### 5.1 List Reward Rules (Operations Admin Only)
+- **Method**: `GET`
+- **Path**: `/admin/settings/reward-rules?profession=PLUMBER` // or "TILE_INSTALLER", "ALL"
+- **Headers**: `Authorization: Bearer <OPERATIONS_ADMIN_TOKEN>`
+
+#### 5.2 Deploy Versioned Reward Rule (Operations Admin Only)
+- **Method**: `POST`
+- **Path**: `/admin/settings/reward-rules`
+- **Headers**: `Authorization: Bearer <OPERATIONS_ADMIN_TOKEN>`
+- **Body**:
+  ```json
+  {
+    "profession": "PLUMBER", // "PLUMBER" or "TILE_INSTALLER"
+    "rewardPercentage": 0.50, // Finite number between 0.01% and 10.00%
+    "effectiveFrom": "2026-10-15" // Invoices on or after this date receive this rate
+  }
+  ```
+- **Response (201)**:
+  ```json
+  {
+    "success": true,
+    "message": "New versioned rule (v2) created for PLUMBER.",
+    "rule": {
+      "id": "rule-uuid",
+      "profession": "PLUMBER",
+      "version": 2,
+      "rewardPercentage": 0.50,
+      "effectiveFrom": "2026-10-15T00:00:00.000Z",
+      "effectiveUntil": null,
+      "isActive": true
+    }
+  }
+  ```
+
+#### 5.3 Inspect Applicable Review Rules for Bill Verification (Bill Admin)
+- **Method**: `GET`
+- **Path**: `/admin/bills/:id/review-config`
+- **Headers**: `Authorization: Bearer <BILL_ADMIN_TOKEN>`
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "billId": "bill-uuid",
+    "invoiceDate": "2026-10-01T00:00:00.000Z",
+    "profession": "PLUMBER",
+    "rewardRule": {
+      "id": "rule-uuid",
+      "version": 1,
+      "rewardPercentage": 0.50,
+      "effectiveFrom": "2020-01-01T00:00:00.000Z",
+      "effectiveUntil": null
+    },
+    "gstRules": [
+      {
+        "id": "gst-18-uuid",
+        "ratePercentage": 18.0,
+        "description": "Standard 18% GST"
+      }
+    ]
+  }
+  ```

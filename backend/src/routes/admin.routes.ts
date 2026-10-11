@@ -828,9 +828,14 @@ router.post('/settings/reward-rules', requireOperationsAdmin, async (req: Authen
       return res.status(400).json({ success: false, message: 'Valid profession (PLUMBER or TILE_INSTALLER) is required.' });
     }
 
+    const pct = typeof rewardPercentage === 'number' ? rewardPercentage : parseFloat(rewardPercentage);
+    if (!Number.isFinite(pct) || Number.isNaN(pct)) {
+      return res.status(400).json({ success: false, message: 'Reward percentage must be a valid, finite number.' });
+    }
+
     const created = await RewardRuleService.createRule(admin.id, {
       profession: profession as Profession,
-      rewardPercentage: parseFloat(rewardPercentage),
+      rewardPercentage: pct,
       effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : undefined,
       effectiveUntil: effectiveUntil ? new Date(effectiveUntil) : null,
     });
@@ -838,7 +843,15 @@ router.post('/settings/reward-rules', requireOperationsAdmin, async (req: Authen
     res.status(201).json({
       success: true,
       message: `New versioned rule (v${created.version}) created for ${profession}.`,
-      rule: created,
+      rule: {
+        id: created.id,
+        profession: created.profession,
+        version: created.version,
+        rewardPercentage: Number(created.rewardPercentage),
+        effectiveFrom: created.effectiveFrom,
+        effectiveUntil: created.effectiveUntil,
+        isActive: created.isActive,
+      },
     });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
