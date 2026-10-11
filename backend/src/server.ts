@@ -17,6 +17,7 @@ import paymentRoutes from './routes/payment.routes';
 import payoutRoutes from './routes/payout.routes';
 import webhookRoutes from './routes/webhook.routes';
 import adminRoutes from './routes/admin.routes';
+import notificationRoutes from './routes/notification.routes';
 
 const app = express();
 
@@ -135,6 +136,7 @@ app.use('/api/payment-account', paymentRoutes);
 app.use('/api/payouts', payoutRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // 404 Handler
 app.use((req: any, res: Response) => {

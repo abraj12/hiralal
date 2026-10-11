@@ -18,6 +18,7 @@ import {
 import { prisma } from '../db';
 import { config } from '../config';
 import { generateSecureToken, sha256Hash } from '../utils/crypto.utils';
+import { PlayIntegrityService } from '../services/integrity/playIntegrity.service';
 
 const router = Router();
 
@@ -255,6 +256,8 @@ router.post('/logout', async (req: Request, res: Response) => {
         message: 'A valid session token (Authorization header) or refresh token is required for logout.',
       });
     }
+
+    await AuthService.logout(refreshToken, userId);
 
     const cookieOpts = {
       path: '/',
@@ -587,6 +590,53 @@ router.patch('/me', authenticate, requireUser, async (req: AuthenticatedRequest,
   } catch (err: any) {
     const isLockedError = err.message && err.message.includes('locked');
     res.status(isLockedError ? 403 : 400).json({ success: false, message: err.message });
+  }
+});
+
+// ==========================================
+// 8. PLAY INTEGRITY NONCE & VERIFICATION
+// ==========================================
+
+router.get('/integrity/nonce', async (_req: Request, res: Response) => {
+  try {
+    const result = await PlayIntegrityService.generateNonce();
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/integrity/nonce', async (_req: Request, res: Response) => {
+  try {
+    const result = await PlayIntegrityService.generateNonce();
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/integrity/verify', async (req: Request, res: Response) => {
+  try {
+    const { nonce, integrityToken } = req.body;
+    if (!nonce || !integrityToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both nonce and integrityToken are required.',
+      });
+    }
+
+    const verdict = await PlayIntegrityService.verifyToken({ nonce, integrityToken });
+    if (!verdict.success) {
+      return res.status(400).json({
+        success: false,
+        message: verdict.error || 'Integrity verification failed.',
+        verdict,
+      });
+    }
+
+    res.json({ success: true, verdict });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 

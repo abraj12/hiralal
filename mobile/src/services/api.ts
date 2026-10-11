@@ -611,4 +611,49 @@ export class MobileApiClient {
       body: JSON.stringify({ action, reason }),
     });
   }
+
+  // ==========================================
+  // In-App Notifications & Device Token API
+  // ==========================================
+
+  static getNotifications(page = 1, limit = 20) {
+    return this.request(`/notifications?page=${page}&limit=${limit}`);
+  }
+
+  static getUnreadNotificationCount() {
+    return this.request('/notifications/unread-count');
+  }
+
+  static markNotificationRead(id: string) {
+    return this.request(`/notifications/${id}/read`, { method: 'PATCH' });
+  }
+
+  static markAllNotificationsRead() {
+    return this.request('/notifications/read-all', { method: 'PATCH' });
+  }
+
+  static registerDevicePushToken(token: string, platform = Platform.OS.toUpperCase()) {
+    return this.request('/notifications/device-token', {
+      method: 'POST',
+      body: JSON.stringify({ token, platform }),
+    });
+  }
+
+  static deactivateDevicePushToken(token: string) {
+    return this.request(`/notifications/device-token/${encodeURIComponent(token)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Play Integrity API
+  static getIntegrityNonce() {
+    return this.request('/auth/integrity/nonce', { method: 'POST' });
+  }
+
+  static verifyIntegrityToken(nonce: string, integrityToken: string) {
+    return this.request('/auth/integrity/verify', {
+      method: 'POST',
+      body: JSON.stringify({ nonce, integrityToken }),
+    });
+  }
 }

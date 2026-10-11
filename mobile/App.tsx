@@ -14,6 +14,7 @@ import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
 import BillReviewScreen from './src/screens/BillReviewScreen';
 import OperationsDashboardScreen from './src/screens/OperationsDashboardScreen';
+import NotificationScreen from './src/screens/NotificationScreen';
 
 function MainAppNavigator() {
   const { currentScreen, activeTab, user } = useApp();
@@ -25,6 +26,7 @@ function MainAppNavigator() {
     if (currentScreen === 'LOGIN') return <LoginScreen />;
     if (currentScreen === 'REGISTER') return <RegisterScreen />;
     if (currentScreen === 'UPLOAD_BILL') return <UploadBillScreen />;
+    if (currentScreen === 'NOTIFICATIONS') return <NotificationScreen />;
 
     // Role-specific screens when logged in
     if (user?.role === 'BILL_ADMIN') {

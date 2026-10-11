@@ -485,6 +485,23 @@ export class BillService {
         },
       });
 
+      // 10. User In-App Notification
+      await tx.notification.create({
+        data: {
+          userId: bill.userId,
+          title: 'Bill Approved',
+          message: `Your bill (Invoice #${bill.invoiceNumber || bill.id.slice(0, 8)}) has been approved! ₹${finalReward.toFixed(2)} has been credited to your rewards wallet.`,
+          type: 'BILL_APPROVED',
+          metadata: {
+            billId: bill.id,
+            invoiceNumber: bill.invoiceNumber,
+            rewardCredited: finalReward,
+            walletBalance: newBalance,
+          },
+          dedupeKey: `bill_approved_${bill.id}`,
+        },
+      });
+
       return {
         bill: updatedBill,
         creditedReward: finalReward,
@@ -555,6 +572,22 @@ export class BillService {
             profession: bill.user?.profession,
             rejectionReason: rejectionReason.trim(),
           }),
+        },
+      });
+
+      // User In-App Notification
+      await tx.notification.create({
+        data: {
+          userId: bill.userId,
+          title: 'Bill Rejected',
+          message: `Your bill (Invoice #${bill.invoiceNumber || bill.id.slice(0, 8)}) could not be approved. Reason: ${rejectionReason.trim()}`,
+          type: 'BILL_REJECTED',
+          metadata: {
+            billId: bill.id,
+            invoiceNumber: bill.invoiceNumber,
+            rejectionReason: rejectionReason.trim(),
+          },
+          dedupeKey: `bill_rejected_${bill.id}`,
         },
       });
 

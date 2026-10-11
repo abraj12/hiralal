@@ -249,6 +249,30 @@ export class AdminApiClient {
     return this.request('/admin/audit-logs');
   }
 
+  // Notifications Management
+  static broadcastNotification(data: {
+    title: string;
+    message: string;
+    targetAudience?: 'ALL' | 'PLUMBER' | 'TILE_WORKER';
+    idempotencyKey?: string;
+  }) {
+    return this.request('/admin/notifications/broadcast', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  static sendDirectNotification(userId: string, data: { title: string; message: string }) {
+    return this.request(`/admin/notifications/users/${userId}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  static getNotificationHistory(page = 1, limit = 20) {
+    return this.request(`/admin/notifications/history?page=${page}&limit=${limit}`);
+  }
+
   // Admin Password-First OTP-Second Authentication Flow
   static login(identifier: string, password: string) {
     return this.request('/auth/login', {

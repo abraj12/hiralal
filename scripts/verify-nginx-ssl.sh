@@ -19,11 +19,12 @@ fi
 
 CERT_FILE="${SSL_DIR}/fullchain.pem"
 KEY_FILE="${SSL_DIR}/privkey.pem"
-REQUIRED_DOMAIN="hiralalandsons.com"
+REQUIRED_DOMAIN="hsspl.algions.in"
 
 echo "================================================================================"
 echo "🔒 [HIRALAL & SONS] Verifying Cloudflare Origin SSL Configuration"
 echo "Target SSL Directory: ${SSL_DIR}"
+echo "Target Hostname: ${REQUIRED_DOMAIN}"
 echo "================================================================================"
 
 function print_cloudflare_instructions() {
@@ -35,13 +36,13 @@ function print_cloudflare_instructions() {
 In Cloudflare "Full (Strict)" mode, Nginx requires a valid Origin Certificate.
 
 To provision a Cloudflare Origin Certificate for HIRALAL AND SONS SALES PVT. LTD.:
-1. Log in to Cloudflare Dashboard -> Choose domain 'hiralalandsons.com'.
+1. Log in to Cloudflare Dashboard -> Choose domain 'hsspl.algions.in' (or parent zone 'algions.in').
 2. Navigate to SSL/TLS -> Origin Server -> Click "Create Certificate".
 3. Configuration:
    - Key type: RSA (2048)
    - Hostnames:
-       *.hiralalandsons.com
-       hiralalandsons.com
+       *.hsspl.algions.in
+       hsspl.algions.in
    - Certificate Validity: 15 years
 4. Copy the "Origin Certificate" text into:
    /etc/nginx/ssl/fullchain.pem (or ./nginx/ssl/fullchain.pem)
@@ -122,11 +123,11 @@ if command -v openssl >/dev/null 2>&1; then
   echo "✅ [CHECK 5/6] Certificate and Private Key pair match verified."
 fi
 
-# 7. Verify Domain Match (CN or SAN matches hiralalandsons.com or *.hiralalandsons.com)
+# 7. Verify Domain Match (CN or SAN matches hsspl.algions.in or *.hsspl.algions.in)
 STRICT_DOMAIN_CHECK="${STRICT_DOMAIN_CHECK:-true}"
 if command -v openssl >/dev/null 2>&1; then
   CERT_TEXT=$(openssl x509 -in "${CERT_FILE}" -text -noout)
-  if echo "${CERT_TEXT}" | grep -qE "(CN\s*=\s*\*?\.?hiralalandsons\.com|DNS:\*?\.?hiralalandsons\.com)"; then
+  if echo "${CERT_TEXT}" | grep -qE "(CN\s*=\s*\*?\.?hsspl\.algions\.in|DNS:\*?\.?hsspl\.algions\.in)"; then
     echo "✅ [CHECK 6/6] Certificate matches target domain: ${REQUIRED_DOMAIN}"
   else
     if [ "${STRICT_DOMAIN_CHECK}" = "false" ]; then

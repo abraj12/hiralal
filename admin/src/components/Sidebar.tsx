@@ -11,6 +11,7 @@ import {
   Settings,
   LogOut,
   ShieldCheck,
+  Bell,
 } from 'lucide-react';
 import { AdminApiClient } from '../lib/api';
 
@@ -67,6 +68,12 @@ export default function Sidebar({ pendingBillsCount = 0 }: SidebarProps) {
       label: 'Audit Logs',
       href: '/audit-logs',
       icon: History,
+      roles: ['OPERATIONS_ADMIN'],
+    },
+    {
+      label: 'Notifications',
+      href: '/notifications',
+      icon: Bell,
       roles: ['OPERATIONS_ADMIN'],
     },
     {

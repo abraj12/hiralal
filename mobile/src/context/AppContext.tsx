@@ -15,10 +15,11 @@ interface AppContextType {
   transactions: any[];
   bills: any[];
   activeTab: 'HOME' | 'BILLS' | 'REWARDS' | 'WALLET' | 'PROFILE';
-  currentScreen: 'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL';
+  currentScreen: 'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL' | 'NOTIFICATIONS';
   isLoading: boolean;
+  unreadNotificationCount: number;
   setActiveTab: (tab: 'HOME' | 'BILLS' | 'REWARDS' | 'WALLET' | 'PROFILE') => void;
-  setCurrentScreen: (screen: 'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL') => void;
+  setCurrentScreen: (screen: 'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL' | 'NOTIFICATIONS') => void;
   setProfession: (profession: ProfessionType) => void;
   login: (mobile: string, pass: string) => Promise<any>;
   loginAdmin: (identifier: string, pass: string, verificationToken: string) => Promise<void>;
@@ -33,7 +34,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [user, setUser] = useState<any>(null);
   const [profession, setProfessionState] = useState<ProfessionType>('PLUMBER');
   const [activeTab, setActiveTab] = useState<'HOME' | 'BILLS' | 'REWARDS' | 'WALLET' | 'PROFILE'>('HOME');
-  const [currentScreen, setCurrentScreen] = useState<'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL'>('WELCOME');
+  const [currentScreen, setCurrentScreen] = useState<'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL' | 'NOTIFICATIONS'>('WELCOME');
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
 
   const [wallet, setWallet] = useState({
@@ -48,12 +50,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const refreshData = async () => {
     try {
-      const [walletRes, billsRes, profileRes] = await Promise.all([
+      const [walletRes, billsRes, profileRes, notifRes] = await Promise.all([
         MobileApiClient.getWallet().catch(() => null),
         MobileApiClient.getBills().catch(() => null),
         MobileApiClient.getProfile().catch(() => null),
+        MobileApiClient.getUnreadNotificationCount().catch(() => null),
       ]);
 
+      if (notifRes && typeof notifRes.unreadCount === 'number') {
+        setUnreadNotificationCount(notifRes.unreadCount);
+      }
       if (walletRes && walletRes.wallet) {
         setWallet(walletRes.wallet);
         if (walletRes.transactions) {
@@ -190,6 +196,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activeTab,
         currentScreen,
         isLoading,
+        unreadNotificationCount,
         setActiveTab,
         setCurrentScreen,
         setProfession: setProfessionState,

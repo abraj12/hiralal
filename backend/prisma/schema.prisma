@@ -94,6 +94,8 @@ model User {
   paymentAccounts PaymentAccount[]
   payouts         Payout[]
   notifications   Notification[]
+  pushDeviceTokens PushDeviceToken[]
+  notificationCampaigns NotificationCampaign[]
   auditLogs       AuditLog[]
   sessions        AuthSession[]
 
@@ -407,15 +409,49 @@ model AuditLog {
 }
 
 model Notification {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String
   message   String
-  type      String   @default("GENERAL")
-  isRead    Boolean  @default(false)
-  createdAt DateTime @default(now())
+  type      String    @default("GENERAL")
+  isRead    Boolean   @default(false)
+  readAt    DateTime?
+  metadata  Json?
+  dedupeKey String?   @unique
+  createdAt DateTime  @default(now())
 
   @@index([userId])
   @@index([isRead])
+}
+
+model PushDeviceToken {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token      String   @unique
+  platform   String   @default("ANDROID") // ANDROID, IOS, WEB
+  isActive   Boolean  @default(true)
+  lastUsedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId])
+  @@index([token])
+}
+
+model NotificationCampaign {
+  id               String   @id @default(uuid())
+  title            String
+  message          String
+  targetAudience   String   @default("ALL") // ALL, PLUMBER, TILE_WORKER, USER
+  recipientCount   Int      @default(0)
+  createdByAdminId String
+  createdByAdmin   User     @relation(fields: [createdByAdminId], references: [id], onDelete: Cascade)
+  idempotencyKey   String?  @unique
+  metadata         Json?
+  createdAt        DateTime @default(now())
+
+  @@index([createdByAdminId])
+  @@index([createdAt])
 }

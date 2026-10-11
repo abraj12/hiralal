@@ -81,7 +81,7 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       RAZORPAYX_WEBHOOK_SECRET: 'rzp_sec_live_webhook_signature_key_2026',
       MSG91_AUTH_KEY: 'msg91_live_auth_key_1234567890abcdef',
       MSG91_TEMPLATE_ID: 'msg91_dlt_template_id_1234567890',
-      CORS_ALLOWED_ORIGINS: 'https://admin.hiralalandsons.com,https://app.hiralalandsons.com',
+      CORS_ALLOWED_ORIGINS: 'https://hsspl.algions.in',
       BILL_ADMIN_MOBILE: '9876543210',
       OPERATIONS_ADMIN_MOBILE: '9876543211',
       BILL_ADMIN_INITIAL_PASSWORD: 'BillAdmin2026!SecurePass',

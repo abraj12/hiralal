@@ -292,4 +292,55 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
     expect(blockedRes.status).toBe(429);
     expect(blockedRes.body.code).toBe('RATE_LIMIT_EXCEEDED');
   });
+
+  test('9. Logout revokes active session, clears activeSessionId, and causes subsequent authenticated requests to fail with 401', async () => {
+    // 1. Log in to establish fresh session
+    const loginRes = await request(app)
+      .post('/api/auth/login')
+      .send({ mobile: testMobile, password: 'NewSecretPassword@2026' });
+
+    expect(loginRes.status).toBe(200);
+    const { accessToken, refreshToken, user } = loginRes.body;
+    expect(accessToken).toBeDefined();
+    expect(refreshToken).toBeDefined();
+
+    // 2. Verified authenticated request succeeds before logout
+    const preLogoutRes = await request(app)
+      .get('/api/wallet')
+      .set('Authorization', `Bearer ${accessToken}`);
+    expect(preLogoutRes.status).toBe(200);
+
+    // 3. Perform logout
+    const logoutRes = await request(app)
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ refreshToken });
+
+    expect(logoutRes.status).toBe(200);
+    expect(logoutRes.body.success).toBe(true);
+
+    // 4. Verify in DB that activeSessionId is null and session is revoked
+    const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
+    expect(dbUser?.activeSessionId).toBeNull();
+
+    const activeSessions = await prisma.authSession.findMany({
+      where: { userId: user.id, revokedAt: null },
+    });
+    expect(activeSessions.length).toBe(0);
+
+    // 5. Subsequent request with the same access token MUST be rejected with 401
+    const postLogoutRes = await request(app)
+      .get('/api/wallet')
+      .set('Authorization', `Bearer ${accessToken}`);
+    expect(postLogoutRes.status).toBe(401);
+    expect(postLogoutRes.body.success).toBe(false);
+
+    // 6. Attempting to use the revoked refresh token must also fail with 401
+    const refreshRes = await request(app)
+      .post('/api/auth/refresh')
+      .send({ refreshToken });
+    expect(refreshRes.status).toBe(401);
+    expect(refreshRes.body.success).toBe(false);
+  });
 });
+

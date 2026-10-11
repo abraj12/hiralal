@@ -13,7 +13,7 @@ if [ ! -f "${SSL_DIR}/fullchain.pem" ] || [ ! -f "${SSL_DIR}/privkey.pem" ]; the
   openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
     -keyout "${SSL_DIR}/privkey.pem" \
     -out "${SSL_DIR}/fullchain.pem" \
-    -subj "/C=IN/ST=Bihar/L=Gopalganj/O=Hiralal and Sons Sales Pvt Ltd/CN=*.hiralalandsons.com"
+    -subj "/C=IN/ST=Bihar/L=Gopalganj/O=Hiralal and Sons Sales Pvt Ltd/CN=*.hsspl.algions.in"
   chmod 600 "${SSL_DIR}/privkey.pem"
   chmod 644 "${SSL_DIR}/fullchain.pem"
   echo "[SUCCESS] Self-signed certificates placed in ${SSL_DIR}."

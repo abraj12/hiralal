@@ -123,7 +123,7 @@ BILL_ADMIN_MOBILE=REPLACE_WITH_PRODUCTION_BILL_ADMIN_10DIGIT_MOBILE
 OPERATIONS_ADMIN_MOBILE=REPLACE_WITH_PRODUCTION_OPERATIONS_ADMIN_10DIGIT_MOBILE
 BILL_ADMIN_INITIAL_PASSWORD=GENERATE_STRONG_TEMPORARY_BILL_ADMIN_PASSWORD
 OPERATIONS_ADMIN_INITIAL_PASSWORD=GENERATE_STRONG_TEMPORARY_OPERATIONS_ADMIN_PASSWORD
-CORS_ALLOWED_ORIGINS=https://admin.hiralalandsons.com
+CORS_ALLOWED_ORIGINS=https://hsspl.algions.in
 ```
 
 ---
@@ -236,7 +236,7 @@ The script decrypts, decompresses, restores the SQL dump via `psql`, and execute
 ## 9. Cloudflare Configuration & SSL Setup
 
 1. **SSL/TLS Mode**: **Full (Strict)**.
-2. **Origin Certificate**: Generate Cloudflare Origin CA certificate valid for `*.hiralalandsons.com` and `hiralalandsons.com`.
+2. **Origin Certificate**: Generate Cloudflare Origin CA certificate valid for `*.hsspl.algions.in` and `hsspl.algions.in`.
 3. Place certificate in `/etc/nginx/ssl/fullchain.pem` and private key in `/etc/nginx/ssl/privkey.pem`.
 4. **Real IP Resolution**: Nginx restores the original client IP from `CF-Connecting-IP` strictly when requests originate from Cloudflare's published IPv4 and IPv6 CIDR ranges.
 

@@ -15,6 +15,7 @@ import { BillService } from '../services/bill.service';
 import { StorageService } from '../services/storage.service';
 import { PayoutService } from '../services/payout.service';
 import { AuthService } from '../services/auth.service';
+import { NotificationService } from '../services/notification.service';
 import { BillStatus, Profession, UserStatus } from '@prisma/client';
 import { getIstYearAndMonth } from '../utils/timezone.utils';
 
@@ -941,6 +942,90 @@ router.get('/audit-logs', requireOperationsAdmin, async (_req: AuthenticatedRequ
     });
 
     res.json({ success: true, logs });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ==========================================
+// NOTIFICATIONS MANAGEMENT (OPERATIONS_ADMIN)
+// ==========================================
+
+/**
+ * POST /api/admin/notifications/broadcast
+ * Broadcasts an announcement or alert to craftsmen/workers.
+ * Restricted to OPERATIONS_ADMIN only (BILL_ADMIN gets 403).
+ */
+router.post('/notifications/broadcast', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const adminId = req.user!.id;
+    const { title, message, targetAudience, idempotencyKey, metadata } = req.body;
+
+    if (!title || !message) {
+      return res.status(400).json({ success: false, message: 'Title and message are required.' });
+    }
+
+    const campaign = await NotificationService.broadcastToWorkers(adminId, {
+      title,
+      message,
+      targetAudience,
+      idempotencyKey,
+      metadata,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: `Notification broadcast dispatched to ${campaign.recipientCount} workers.`,
+      campaign,
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/notifications/users/:userId
+ * Sends a direct message or notification to a specific user.
+ * Restricted to OPERATIONS_ADMIN only.
+ */
+router.post('/notifications/users/:userId', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const adminId = req.user!.id;
+    const targetUserId = req.params.userId;
+    const { title, message, metadata } = req.body;
+
+    if (!title || !message) {
+      return res.status(400).json({ success: false, message: 'Title and message are required.' });
+    }
+
+    const notification = await NotificationService.sendDirectNotification(adminId, targetUserId, {
+      title,
+      message,
+      metadata,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Direct notification dispatched successfully.',
+      notification,
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/notifications/history
+ * Retrieves broadcast campaign history and recipient metrics.
+ * Restricted to OPERATIONS_ADMIN only.
+ */
+router.get('/notifications/history', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const page = req.query.page ? parseInt(String(req.query.page), 10) : 1;
+    const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 20;
+
+    const history = await NotificationService.getCampaignHistory({ page, limit });
+    res.json({ success: true, ...history });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }

@@ -10,7 +10,7 @@ describe('Phase 4 — Admin Panel Production API URL & Hardening', () => {
   });
 
   it('accepts secure HTTPS URLs in production', () => {
-    expect(getAdminApiBase('https://api.hiralalandsons.com/api', 'production')).toBe('https://api.hiralalandsons.com/api');
+    expect(getAdminApiBase('https://hsspl.algions.in/api', 'production')).toBe('https://hsspl.algions.in/api');
   });
 
   it('accepts relative same-origin paths in production', () => {

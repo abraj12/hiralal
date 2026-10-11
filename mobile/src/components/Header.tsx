@@ -4,7 +4,7 @@ import { Bell, RefreshCw } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 
 export default function Header() {
-  const { user, theme } = useApp();
+  const { user, theme, setCurrentScreen, unreadNotificationCount } = useApp();
 
   return (
     <View style={styles.container}>
@@ -24,9 +24,13 @@ export default function Header() {
         </View>
 
         {/* Notification Bell */}
-        <TouchableOpacity style={styles.bellButton}>
+        <TouchableOpacity
+          style={styles.bellButton}
+          onPress={() => setCurrentScreen('NOTIFICATIONS')}
+          activeOpacity={0.7}
+        >
           <Bell size={20} color="#334155" />
-          <View style={styles.badgeDot} />
+          {unreadNotificationCount > 0 && <View style={styles.badgeDot} />}
         </TouchableOpacity>
       </View>
     </View>

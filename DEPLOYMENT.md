@@ -81,7 +81,7 @@
 
 ## 3. SSL / TLS Certificate Setup (Cloudflare Origin CA)
 
-1. In Cloudflare Dashboard, generate an Origin Certificate for `hiralalandsons.com` and `*.hiralalandsons.com`.
+1. In Cloudflare Dashboard, generate an Origin Certificate for `hsspl.algions.in` and `*.hsspl.algions.in`.
 2. Save certificate files into `nginx/ssl/`:
    ```bash
    mkdir -p nginx/ssl

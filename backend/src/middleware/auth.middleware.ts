@@ -182,8 +182,8 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     }
 
     // Single active session validation
-    if (decoded.sessionId && user.activeSessionId && decoded.sessionId !== user.activeSessionId) {
-      res.status(401).json({ success: false, message: 'Session expired or invalidated by a newer login.' });
+    if (decoded.sessionId && (!user.activeSessionId || decoded.sessionId !== user.activeSessionId)) {
+      res.status(401).json({ success: false, message: 'Session expired or invalidated by a newer login or logout.' });
       return;
     }
 
