@@ -43,7 +43,7 @@ export class RewardRuleService {
       return await tx.rewardRule.create({
         data: {
           profession,
-          rewardPercentage: profession === 'PLUMBER' ? 0.50 : 0.75,
+          rewardPercentage: 0.50,
           effectiveFrom: new Date('2020-01-01'),
           isActive: true,
           version: 1,

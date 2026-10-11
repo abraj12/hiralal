@@ -134,12 +134,21 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
 
     await RewardRuleService.createRule(adminUserId, {
       profession: 'TILE_INSTALLER',
-      rewardPercentage: 0.75,
+      rewardPercentage: 0.50,
       effectiveFrom: new Date('2026-10-01'),
     });
   });
 
   afterAll(async () => {
+    await prisma.payout.deleteMany({
+      where: { user: { mobile: { in: ['9700000001', '9700000002'] } } },
+    });
+    await prisma.paymentAccount.deleteMany({
+      where: { user: { mobile: { in: ['9700000001', '9700000002'] } } },
+    });
+    await prisma.kycRecord.deleteMany({
+      where: { user: { mobile: { in: ['9700000001', '9700000002'] } } },
+    });
     await prisma.bill.deleteMany({
       where: { user: { mobile: { in: ['9700000001', '9700000002'] } } },
     });
@@ -269,9 +278,9 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
   });
 
   // -------------------------------------------------------------
-  // Test 4: Profession Distinction: Plumber (0.50%) vs Tile (0.75%)
+  // Test 4: Profession Defaults: Plumber (0.50%) & Tile Installer (0.50%)
   // -------------------------------------------------------------
-  it('Scenario 4: Profession Distinction: Tile installer receives 0.75% while plumber receives 0.50%', async () => {
+  it('Scenario 4: Profession Defaults: Tile installer and plumber both receive standard 0.50% default reward', async () => {
     // Submit bill for Tile Worker
     const bill = await BillService.submitBill({
       userId: tileUserId,
@@ -290,12 +299,12 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     });
     const approved = res.bill;
 
-    // 0.75% of 10000 = 75.00
-    expect(Number(approved.calculatedReward)).toBe(75.0);
-    expect(Number(approved.rewardRateSnapshot)).toBe(0.75);
+    // 0.50% of 10000 = 50.00
+    expect(Number(approved.calculatedReward)).toBe(50.0);
+    expect(Number(approved.rewardRateSnapshot)).toBe(0.50);
 
     const wallet = await prisma.wallet.findUnique({ where: { userId: tileUserId } });
-    expect(Number(wallet?.availableBalance)).toBe(75.0);
+    expect(Number(wallet?.availableBalance)).toBe(50.0);
   });
 
   // -------------------------------------------------------------
@@ -316,7 +325,7 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     const activeTileRule = await RewardRuleService.getApplicableRule('TILE_INSTALLER', new Date('2026-10-04'));
 
     expect(Number(activePlumberRule.rewardPercentage)).toBe(0.60);
-    expect(Number(activeTileRule.rewardPercentage)).toBe(0.75); // Tile rule unaffected
+    expect(Number(activeTileRule.rewardPercentage)).toBe(0.50); // Tile rule unaffected at 0.50%
   });
 
   // -------------------------------------------------------------
@@ -445,7 +454,7 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     const approvedTile = resTile.bill;
 
     expect(approvedTile.status).toBe('APPROVED');
-    expect(Number(approvedTile.calculatedReward)).toBe(75.0);
+    expect(Number(approvedTile.calculatedReward)).toBe(50.0);
   });
 
   // -------------------------------------------------------------
@@ -541,5 +550,138 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     } finally {
       await prisma.rewardRule.deleteMany({ where: { id: { in: [rule1.id, rule2.id] } } });
     }
+  });
+
+  // -------------------------------------------------------------
+  // Test 12: Historical Rule Versions Authoritative Across Time Windows
+  // -------------------------------------------------------------
+  it('Scenario 12: Historical effective-dated rule versions are authoritative based on invoiceDate', async () => {
+    // Create an explicit historical rule for 2025: 0.75%
+    const histRule = await prisma.rewardRule.create({
+      data: {
+        profession: 'PLUMBER',
+        rewardPercentage: 0.75,
+        effectiveFrom: new Date('2025-01-01T00:00:00Z'),
+        effectiveUntil: new Date('2025-12-31T23:59:59Z'),
+        isActive: true,
+        version: 801,
+      },
+    });
+
+    try {
+      // 1. Submit and approve bill dated in 2025 historical window
+      const histBill = await BillService.submitBill({
+        userId: plumberUserId,
+        invoiceNumber: `INV-HIST-${Date.now()}`,
+        invoiceDate: '2025-06-15',
+        billAmount: 10000.0,
+        fileBuffer: createDummyPdfBuffer('hist'),
+        fileName: 'hist.pdf',
+        mimeType: 'application/pdf',
+      });
+
+      const resHist = await BillService.approveBill({
+        billId: histBill.id,
+        adminId: adminUserId,
+        gstIncluded: false,
+      });
+
+      expect(Number(resHist.bill.rewardRateSnapshot)).toBe(0.75);
+      expect(Number(resHist.bill.calculatedReward)).toBe(75.0);
+
+      // 2. Submit and approve bill dated in current 2026 window
+      const currBill = await BillService.submitBill({
+        userId: plumberUserId,
+        invoiceNumber: `INV-CURR-${Date.now()}`,
+        invoiceDate: '2026-10-05',
+        billAmount: 10000.0,
+        fileBuffer: createDummyPdfBuffer('curr'),
+        fileName: 'curr.pdf',
+        mimeType: 'application/pdf',
+      });
+
+      const resCurr = await BillService.approveBill({
+        billId: currBill.id,
+        adminId: adminUserId,
+        gstIncluded: false,
+      });
+
+      // Under rule active on 2026-10-05 (v3 was 1.25% in Scenario 6)
+      expect(Number(resCurr.bill.rewardRateSnapshot)).toBe(1.25);
+      expect(Number(resCurr.bill.calculatedReward)).toBe(125.0);
+    } finally {
+      await prisma.rewardRule.deleteMany({ where: { id: histRule.id } });
+    }
+  });
+
+  // -------------------------------------------------------------
+  // Test 13: Full Balance Redemption (100% Reserved, No Caps or Thresholds)
+  // -------------------------------------------------------------
+  it('Scenario 13: Full balance redemption reserves 100% available balance without monthly caps or thresholds', async () => {
+    // 1. Open redemption window
+    await prisma.redemptionSettings.upsert({
+      where: { id: 'default' },
+      update: { isEnabled: true, startAt: null, endAt: null },
+      create: { id: 'default', isEnabled: true, startAt: null, endAt: null },
+    });
+
+    // 2. Set user wallet balance to ₹1,250.75
+    await prisma.wallet.update({
+      where: { userId: plumberUserId },
+      data: {
+        availableBalance: 1250.75,
+        processingAmount: 0.0,
+      },
+    });
+
+    // 3. Create verified KYC and Payment Account
+    await prisma.kycRecord.deleteMany({ where: { userId: plumberUserId } });
+    const kyc = await prisma.kycRecord.create({
+      data: {
+        userId: plumberUserId,
+        panName: 'Ramesh Plumber',
+        verifiedName: 'Ramesh Plumber',
+        panStatus: 'VERIFIED',
+        nameMatched: true,
+        maskedPan: 'ABCDE1234F',
+        provider: 'SIGNCARE',
+      },
+    });
+
+    await prisma.paymentAccount.deleteMany({ where: { userId: plumberUserId } });
+    const acct = await prisma.paymentAccount.create({
+      data: {
+        userId: plumberUserId,
+        accountType: 'UPI',
+        upiId: 'ramesh@oksbi',
+        maskedInfo: 'ramesh@oksbi',
+        providerRegisteredName: 'Ramesh Plumber',
+        providerNameVerified: true,
+        isVerified: true,
+        isDefault: true,
+      },
+    });
+
+    // 4. Request full redemption
+    const idempotencyKey = `full-redemption-${Date.now()}`;
+    const result = await PayoutService.requestRedemption(plumberUserId, idempotencyKey);
+
+    expect(Number(result.amountDebited)).toBe(1250.75);
+    expect(Number(result.payout.amount)).toBe(1250.75);
+    expect(result.payout.status).toBe('PENDING');
+
+    // 5. Verify wallet state: 100% funds moved from available to processing
+    const updatedWallet = await prisma.wallet.findUnique({ where: { userId: plumberUserId } });
+    expect(Number(updatedWallet?.availableBalance)).toBe(0.0);
+    expect(Number(updatedWallet?.processingAmount)).toBe(1250.75);
+
+    // 6. Verify idempotency: re-calling returns same payout without re-debiting
+    const retryResult = await PayoutService.requestRedemption(plumberUserId, idempotencyKey);
+    expect(retryResult.payout.id).toBe(result.payout.id);
+
+    // 7. Verify in-flight restriction: cannot start new payout while one is pending
+    await expect(
+      PayoutService.requestRedemption(plumberUserId, `second-attempt-${Date.now()}`)
+    ).rejects.toThrow(/redemption request currently in progress/i);
   });
 });

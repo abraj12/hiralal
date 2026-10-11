@@ -131,14 +131,14 @@ async function main() {
           },
           {
             profession: 'TILE_INSTALLER',
-            rewardPercentage: 0.75,
+            rewardPercentage: 0.50,
             effectiveFrom: new Date('2020-01-01'),
             version: 1,
             isActive: true,
           },
         ],
       });
-      console.log('✅ Profession reward rules provisioned: 0.50% Plumber, 0.75% Tile Installer');
+      console.log('✅ Profession reward rules provisioned: 0.50% Plumber, 0.50% Tile Installer');
     }
 
     // 4. Provision GST Tax Rules

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, SafeAreaView, StatusBar, Platform } from 'react-native';
+import { View, StyleSheet, SafeAreaView, StatusBar, Platform, Text, TouchableOpacity } from 'react-native';
 import { AppProvider, useApp } from './src/context/AppContext';
 import BottomNav from './src/components/BottomNav';
 import AnimatedSplashScreen from './src/components/AnimatedSplashScreen';
@@ -17,9 +17,9 @@ import OperationsDashboardScreen from './src/screens/OperationsDashboardScreen';
 import NotificationScreen from './src/screens/NotificationScreen';
 
 function MainAppNavigator() {
-  const { currentScreen, activeTab, user } = useApp();
+  const { currentScreen, activeTab, user, logout } = useApp();
 
-  const isAdmin = user?.role === 'BILL_ADMIN' || user?.role === 'OPERATIONS_ADMIN' || user?.role === 'ADMIN';
+  const isAdmin = user?.role === 'BILL_ADMIN' || user?.role === 'OPERATIONS_ADMIN';
 
   const renderActiveScreen = () => {
     if (currentScreen === 'WELCOME') return <WelcomeScreen />;
@@ -33,8 +33,23 @@ function MainAppNavigator() {
       return <BillReviewScreen />;
     }
 
-    if (user?.role === 'OPERATIONS_ADMIN' || user?.role === 'ADMIN') {
+    if (user?.role === 'OPERATIONS_ADMIN') {
       return <OperationsDashboardScreen />;
+    }
+
+    // Fail closed for legacy ADMIN: require role migration
+    if (user?.role === 'ADMIN') {
+      return (
+        <View style={styles.legacyNoticeContainer}>
+          <Text style={styles.legacyNoticeTitle}>Role Migration Required</Text>
+          <Text style={styles.legacyNoticeText}>
+            Legacy administrator accounts have been deprecated. Please contact system administration to migrate your account to Bill Admin or Operations Admin.
+          </Text>
+          <TouchableOpacity style={styles.legacyNoticeBtn} onPress={logout}>
+            <Text style={styles.legacyNoticeBtnText}>Sign Out</Text>
+          </TouchableOpacity>
+        </View>
+      );
     }
 
     // Main bottom-tabs navigation for regular craftsman users
@@ -102,5 +117,37 @@ const styles = StyleSheet.create({
   },
   screenWrapper: {
     flex: 1,
+  },
+  legacyNoticeContainer: {
+    flex: 1,
+    padding: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+  },
+  legacyNoticeTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#0F172A',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  legacyNoticeText: {
+    fontSize: 14,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  legacyNoticeBtn: {
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  legacyNoticeBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
   },
 });

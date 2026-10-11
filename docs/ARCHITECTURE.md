@@ -1,6 +1,9 @@
 # Architecture & System Design Documentation
 
-## Hiralal and Sons Sales Pvt. Ltd. - Rewards Management System
+## Hiralal and Sons Sales Pvt. Ltd. — Rewards Management System
+**Production Domain:** `https://hsspl.algions.in`
+
+---
 
 ### 1. High-Level Architecture
 
@@ -23,8 +26,8 @@ The platform is designed around a single unified mobile application with dynamic
                                        |
          -------------------------------------------------------------
          |                |                  |                       |
-   PostgreSQL 16    Cloudflare R2        RazorpayX               Indian SMS / KYC
-    Prisma ORM    (Private Invoices)   (Payouts & Webhooks)      (Surepass / Mock)
+   PostgreSQL 16    Cloudflare R2        RazorpayX               SignCare / MSG91
+    Prisma ORM    (Private Invoices)   (Payouts & Webhooks)      (KYC PAN / SMS OTP)
 ```
 
 ---
@@ -50,21 +53,35 @@ The mobile application **strictly does not duplicate screens or maintain two cod
 To maintain commercial-grade accounting integrity:
 1. **Never directly overwrite wallet balances**: Every addition or deduction generates an immutable `WalletTransaction` entry recording:
    - `amount`
-   - `type` (`REWARD_CREDIT`, `PAYOUT_DEBIT`, `PAYOUT_REVERSAL`, `MANUAL_ADJUSTMENT`)
+   - `type` (`REWARD_CREDIT`, `PAYOUT_DEBIT`, `PAYOUT_REVERSAL`)
    - `balanceAfter`
    - `referenceType` (`BILL`, `PAYOUT`, `ADMIN`)
    - `referenceId`
-2. **Optimistic Locking & Concurrency**: The `Wallet` entity tracks an incrementing `version` field to prevent race conditions during concurrent disbursements.
+2. **Pessimistic & Optimistic Concurrency**: Financial transactions lock the wallet row (`SELECT ... FOR UPDATE`) inside atomic database transactions and track an incrementing `version` field.
 
 ---
 
-### 4. Pool-Free Reward Distribution & Dynamic Rule Versioning
+### 4. Authoritative Reward Rules & Reverse GST Calculation Basis
 
-The platform operates without artificial reward budget pool caps:
-1. Valid bills submitted by verified plumbers and tile installers are approved and rewarded in full based on server-side versioned business rules, regardless of historical volume or monthly total amounts.
-2. Rewards are computed strictly on the backend at 2-decimal paise precision (`eligibleAmount * rewardPercentage / 100`).
-3. Rule updates by Operations Admins generate new versioned rules (`RewardRule.version`), preserving immutable historical calculations for all previously approved bills.
-4. Concurrency boundary tests with `Promise.allSettled()` verify atomic double-entry ledger transactions and idempotent approval state transitions.
+1. **Standard Reward Percentage**: The default business rule is **0.50% of the approved bill** for both `PLUMBER` and `TILE_INSTALLER`.
+2. **Effective-Dated Database Rules**:
+   - The database table `RewardRule` is authoritative for historical calculations.
+   - When a bill is approved, the rule active on the bill's `invoiceDate` is resolved:
+     `effectiveFrom <= invoiceDate AND (effectiveUntil IS NULL OR effectiveUntil > invoiceDate)`.
+   - The rate snapshot (`rewardRateSnapshot`) is immutably recorded on the `Bill`.
+3. **GST Reverse-Calculation Formula**:
+   - **GST-Excluded / Zero GST**:
+     `gstAmount = 0.00`
+     `eligibleAmount = grossBillAmount`
+   - **GST-Inclusive Invoices**:
+     `gstAmount = roundMoney(grossBillAmount * rate / (100 + rate))`
+     `eligibleAmount = roundMoney(grossBillAmount - gstAmount)`
+   - **Reward Credit**:
+     `calculatedReward = roundMoney(eligibleAmount * rewardPercentage / 100)`
+4. **Pool-Free Model & Full-Balance Redemption**:
+   - No monthly reward caps or global reward pools.
+   - No minimum or maximum redemption thresholds.
+   - Redemption requests reserve **100% of the user's available balance** when the redemption window is open.
 
 ---
 
@@ -96,20 +113,27 @@ Financial integrity requires strict bank-side name verification before funds can
 1. **Provider Verification (`providerNameVerified`)**:
    - `PaymentAccount.providerNameVerified` defaults to `false`.
    - Set to `true` strictly when RazorpayX fund account validation returns `active: true` and a registered provider name (`registered_name` or `name`).
-   - Insecure fallbacks to user-provided input strings or profile full names are strictly prohibited.
 2. **PAN vs. Beneficiary Matching**:
    - Both `checkUserEligibility` and `requestRedemption` enforce `validateBeneficiaryMatch`.
    - Requires verified payment account, `providerNameVerified === true`, `panStatus === 'VERIFIED'`, and `areNamesMatching(beneficiaryName, panHolderName)` returning true with >= 0.75 Jaro-Winkler similarity.
-   - Payout requests fail with `BENEFICIARY_PAN_MISMATCH` if identity congruence is not met.
+   - Payout requests fail if identity congruence is not met.
 
 ---
 
-### 7. Dual Authentication & Admin Web Portal Protection
+### 7. Dual Authentication & Role Segregation
 
-The platform supports unified API security across mobile and web:
-1. **Mobile App**:
-   - Authenticates via `Authorization: Bearer <token>`.
-   - Standard mobile flow without browser cookie constraints or CORS restrictions.
-2. **Admin Web Portal**:
-   - Issues secure, HTTP-only, `SameSite=Lax` cookie `admin_access_token` on administrative login.
-   - Protected with CSRF/Origin validation: mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`) require verified `Origin` or `X-Requested-With: XMLHttpRequest` matching configured admin origins.
+The platform enforces strict role-based separation:
+- **`BILL_ADMIN`**: Gated to Bill verification (`GET /api/admin/bills`, `GET /api/admin/bills/:id/document-url`, `POST /api/admin/bills/:id/verify`) and read-only dashboard overview.
+- **`OPERATIONS_ADMIN`**: Gated to Payout approval/rejection (`/api/admin/payouts`), user directory, settings (reward rules, GST rules, redemption windows), audit logs, and broadcast notifications.
+- **Legacy `ADMIN` Role**: Deprecated and fails closed. Blocked from accessing admin routes. Must be migrated forward using `migrate-legacy-admin.ts`.
+- **Password-First Admin Two-Factor Auth**: Admin credentials require password validation FIRST before issuing a single-use verification challenge and dispatching transactional OTP. Admin sessions enforce single active sessions across devices.
+
+---
+
+### 8. Firebase Cloud Messaging (FCM HTTP v1) Push Delivery
+
+Push notifications use the Google OAuth2 service-account protocol:
+1. Backend exchanges service-account credentials for short-lived Google OAuth2 Bearer tokens (`https://oauth2.googleapis.com/token`).
+2. Dispatches notifications directly to Google FCM HTTP v1 (`https://fcm.googleapis.com/v1/projects/{projectId}/messages:send`).
+3. Handles `UNREGISTERED` / `NOT_FOUND` token errors by automatically deactivating stale tokens in `PushDeviceToken`.
+4. In-app notifications persist independently in the database even if push delivery is skipped or fails.

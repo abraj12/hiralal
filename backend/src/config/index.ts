@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
 dotenv.config();
 
 export interface AppConfig {
@@ -66,6 +67,11 @@ export interface AppConfig {
   };
   otp: {
     ttlSeconds: number;
+  };
+  fcm: {
+    projectId: string;
+    clientEmail: string;
+    privateKey: string;
   };
   timezone: string;
 }
@@ -391,6 +397,37 @@ const allowedOrigins = allowedOriginsEnv
   .map((o) => o.trim())
   .filter(Boolean);
 
+export function parseFcmConfig(): { projectId: string; clientEmail: string; privateKey: string } {
+  let projectId = process.env.FIREBASE_PROJECT_ID || '';
+  let clientEmail = process.env.FIREBASE_CLIENT_EMAIL || '';
+  let privateKey = process.env.FIREBASE_PRIVATE_KEY || '';
+
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    try {
+      const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY.trim();
+      let parsed: any = null;
+      if (raw.startsWith('{')) {
+        parsed = JSON.parse(raw);
+      } else if (fs.existsSync(raw)) {
+        parsed = JSON.parse(fs.readFileSync(raw, 'utf8'));
+      }
+      if (parsed) {
+        projectId = projectId || parsed.project_id || '';
+        clientEmail = clientEmail || parsed.client_email || '';
+        privateKey = privateKey || parsed.private_key || '';
+      }
+    } catch {
+      // In development or test, ignore JSON parsing errors
+    }
+  }
+
+  if (privateKey) {
+    privateKey = privateKey.replace(/\\n/g, '\n');
+  }
+
+  return { projectId, clientEmail, privateKey };
+}
+
 export const config: AppConfig = {
   serviceRole,
   port: parseInt(process.env.PORT || '5000', 10),
@@ -475,6 +512,8 @@ export const config: AppConfig = {
       return parsed;
     })(),
   },
+
+  fcm: parseFcmConfig(),
 
   timezone: 'Asia/Kolkata',
 };

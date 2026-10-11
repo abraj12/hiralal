@@ -32,7 +32,7 @@ export default function AdminSettingsPage() {
     rewardPercentage: '0.5',
   });
   const [tileForm, setTileForm] = useState({
-    rewardPercentage: '0.75',
+    rewardPercentage: '0.5',
   });
 
   // GST State
@@ -75,7 +75,7 @@ export default function AdminSettingsPage() {
         setTileRules(tRes.rules);
         const active = tRes.rules.find((r: any) => r.isActive) || tRes.rules[0];
         setTileForm({
-          rewardPercentage: (active.rewardPercentage || active.percentage || 0.75).toString(),
+          rewardPercentage: (active.rewardPercentage || active.percentage || 0.5).toString(),
         });
       }
 
