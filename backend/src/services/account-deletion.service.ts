@@ -130,7 +130,12 @@ export class AccountDeletionService {
         data: { isActive: false },
       });
 
-      // 4. Record AccountDeletionOperation
+      // 4. Record AccountDeletionOperation (cancelling any prior active operations to enforce one active op per user)
+      await tx.accountDeletionOperation.updateMany({
+        where: { userId: user.id, status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE'] } },
+        data: { status: 'CANCELLED', completedAt: now, leaseExpiresAt: null },
+      });
+
       await tx.accountDeletionOperation.create({
         data: {
           userId: user.id,
@@ -241,100 +246,161 @@ export class AccountDeletionService {
 
     for (const u of dueUsers) {
       try {
-        // 1. Fresh user validation before claiming or touching any files
-        const freshUser = await prismaClient.user.findUnique({
-          where: { id: u.id },
-          select: { id: true, deletionScheduledAt: true, deletionRequestedAt: true, status: true, mobile: true },
+        // Step 1: Atomic Claim Transaction with PostgreSQL row-level locks
+        const claimResult = await prismaClient.$transaction(async (tx: any) => {
+          // 1. Lock the target User row with PostgreSQL SELECT ... FOR UPDATE
+          const lockedUsers = await tx.$queryRaw`
+            SELECT "id", "mobile", "status", "deletionScheduledAt", "deletionRequestedAt"
+            FROM "User"
+            WHERE "id" = ${u.id}
+            FOR UPDATE
+          `;
+
+          if (!lockedUsers || (lockedUsers as any[]).length === 0) {
+            return { claimed: false, reason: 'USER_NOT_FOUND' };
+          }
+
+          const lockedUser = (lockedUsers as any[])[0];
+
+          // Check if cancelled, grace period still active, or already suspended
+          if (
+            !lockedUser.deletionScheduledAt ||
+            new Date(lockedUser.deletionScheduledAt) > now ||
+            lockedUser.status === 'SUSPENDED'
+          ) {
+            if (!lockedUser.deletionScheduledAt || lockedUser.status === 'SUSPENDED') {
+              await tx.accountDeletionOperation.updateMany({
+                where: { userId: u.id, status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE'] } },
+                data: { status: 'CANCELLED', completedAt: now, leaseExpiresAt: null },
+              });
+            }
+            return { claimed: false, reason: 'CANCELLED_OR_INACTIVE' };
+          }
+
+          // 2. Lock the operation row where it exists
+          const lockedOps = await tx.$queryRaw`
+            SELECT "id", "status", "attemptCount", "nextRetryAt", "leaseOwner", "leaseVersion", "leaseExpiresAt", "destructiveStartedAt"
+            FROM "AccountDeletionOperation"
+            WHERE "userId" = ${u.id}
+              AND "status" IN ('PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE')
+            ORDER BY "createdAt" DESC
+            LIMIT 1
+            FOR UPDATE
+          `;
+
+          const leaseExpiry = new Date(now.getTime() + 60000); // 60-second claim lease
+          let opId: string;
+          let opVersion = 1;
+          let attemptCount = 1;
+
+          if (!lockedOps || (lockedOps as any[]).length === 0) {
+            // Create initial operation record atomically
+            const newOp = await tx.accountDeletionOperation.create({
+              data: {
+                userId: u.id,
+                status: 'IN_PROGRESS',
+                scheduledFor: lockedUser.deletionScheduledAt,
+                startedAt: now,
+                destructiveStartedAt: now,
+                attemptCount: 1,
+                leaseOwner,
+                leaseVersion: 1,
+                leaseExpiresAt: leaseExpiry,
+              },
+            });
+            opId = newOp.id;
+            opVersion = 1;
+            attemptCount = 1;
+          } else {
+            const op = (lockedOps as any[])[0];
+
+            // If in retry backoff window, skip
+            if (op.nextRetryAt && new Date(op.nextRetryAt) > now) {
+              return { claimed: false, reason: 'RETRY_BACKOFF' };
+            }
+
+            // Check lease ownership / expiry
+            const isExpired = !op.leaseExpiresAt || new Date(op.leaseExpiresAt) <= now;
+            const isOwner = op.leaseOwner === leaseOwner;
+
+            if (!isExpired && !isOwner) {
+              // Active unexpired lease held by another worker
+              return { claimed: false, reason: 'LEASE_CONFLICT' };
+            }
+
+            opVersion = (op.leaseVersion || 0) + 1;
+            attemptCount = (op.attemptCount || 0) + 1;
+            await tx.accountDeletionOperation.update({
+              where: { id: op.id },
+              data: {
+                status: 'IN_PROGRESS',
+                startedAt: now,
+                destructiveStartedAt: op.destructiveStartedAt || now,
+                attemptCount,
+                leaseOwner,
+                leaseVersion: opVersion,
+                leaseExpiresAt: leaseExpiry,
+              },
+            });
+            opId = op.id;
+          }
+
+          // Fetch bills to delete
+          const userBills = await tx.bill.findMany({
+            where: { userId: u.id },
+            select: { id: true, fileKey: true },
+          });
+
+          return {
+            claimed: true,
+            operationId: opId,
+            currentLeaseVersion: opVersion,
+            attemptCount,
+            bills: userBills,
+          };
         });
 
-        if (!freshUser || !freshUser.deletionScheduledAt || freshUser.deletionScheduledAt > now || freshUser.status === 'SUSPENDED') {
-          // Deletion was cancelled or grace period still active
-          await prismaClient.accountDeletionOperation.updateMany({
-            where: { userId: u.id, status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE'] } },
-            data: { status: 'CANCELLED', completedAt: new Date(), leaseExpiresAt: null },
-          });
+        if (!claimResult.claimed) {
           continue;
         }
 
-        // 2. Atomic claim / fencing on AccountDeletionOperation
-        const leaseExpiry = new Date(now.getTime() + 60000); // 60-second lease
-        let operation = await prismaClient.accountDeletionOperation.findFirst({
-          where: { userId: u.id, status: { in: ['PENDING', 'FAILED_RETRYABLE', 'IN_PROGRESS'] } },
-          orderBy: { createdAt: 'desc' },
-        });
+        const { operationId, currentLeaseVersion, attemptCount, bills } = claimResult as any;
 
-        let currentLeaseVersion = 1;
-        if (!operation) {
-          operation = await prismaClient.accountDeletionOperation.create({
-            data: {
-              userId: u.id,
-              status: 'IN_PROGRESS',
-              scheduledFor: freshUser.deletionScheduledAt,
-              startedAt: now,
-              attemptCount: 1,
-              leaseOwner,
-              leaseVersion: 1,
-              leaseExpiresAt: leaseExpiry,
-            },
-          });
-          currentLeaseVersion = 1;
-        } else {
-          // If in retry backoff window and nextRetryAt > now, skip
-          if (operation.nextRetryAt && operation.nextRetryAt > now) {
-            continue;
-          }
-
-          const claim = await prismaClient.accountDeletionOperation.updateMany({
-            where: {
-              id: operation.id,
-              status: { in: ['PENDING', 'FAILED_RETRYABLE', 'IN_PROGRESS'] },
-              OR: [
-                { leaseExpiresAt: null },
-                { leaseExpiresAt: { lt: now } },
-                { leaseOwner },
-              ],
-            },
-            data: {
-              status: 'IN_PROGRESS',
-              startedAt: now,
-              attemptCount: { increment: 1 },
-              leaseOwner,
-              leaseVersion: { increment: 1 },
-              leaseExpiresAt: leaseExpiry,
-            },
-          });
-
-          if (claim.count === 0) {
-            // Concurrent worker already holds an active lease
-            continue;
-          }
-
-          const refreshed = await prismaClient.accountDeletionOperation.findUnique({
-            where: { id: operation.id },
-          });
-          operation = refreshed || operation;
-          currentLeaseVersion = operation.leaseVersion;
-        }
-
-        // 3. Verify distributed lease before any destructive work
-        assertLease?.();
-
-        // 4. Re-check: cancellation check right before file deletions
-        const preFileCheck = await prismaClient.user.findUnique({ where: { id: u.id } });
-        if (!preFileCheck || !preFileCheck.deletionScheduledAt || preFileCheck.deletionScheduledAt > now) {
-          await prismaClient.accountDeletionOperation.updateMany({
-            where: { id: operation.id, leaseOwner },
-            data: { status: 'CANCELLED', completedAt: new Date(), leaseExpiresAt: null },
-          });
-          continue;
-        }
-
-        // 5. Delete private invoice files from Cloudflare R2 storage
+        // Step 2: Delete private invoice files from Cloudflare R2 storage
+        // Protected by distributed worker lease + DB CAS lease renewal before each file deletion
         const failedFileKeys: string[] = [];
         let deletedFilesCount = 0;
+        let leaseLost = false;
 
-        for (const bill of u.bills) {
+        for (const bill of bills) {
           if (bill.fileKey) {
+            // Distributed worker heartbeat verification
+            assertLease?.();
+
+            // CAS lease verification & renewal in DB before each external R2 deletion
+            const renewExpiry = new Date(Date.now() + 60000);
+            const renewResult = await prismaClient.accountDeletionOperation.updateMany({
+              where: {
+                id: operationId,
+                leaseOwner,
+                leaseVersion: currentLeaseVersion,
+                status: 'IN_PROGRESS',
+                leaseExpiresAt: { gt: new Date() },
+              },
+              data: {
+                leaseExpiresAt: renewExpiry,
+              },
+            });
+
+            if (renewResult.count !== 1) {
+              console.warn(
+                `[ACCOUNT-DELETION] Lease lost for operation ${operationId} (worker: ${leaseOwner}, v${currentLeaseVersion}). Halting destructive R2 deletions.`
+              );
+              failedFileKeys.push(bill.fileKey);
+              leaseLost = true;
+              break;
+            }
+
             try {
               await StorageService.getProvider().delete(bill.fileKey);
               deletedFilesCount++;
@@ -345,21 +411,31 @@ export class AccountDeletionService {
           }
         }
 
+        if (leaseLost) {
+          errors.push({
+            userId: u.id,
+            error: `Lease ownership lost during file deletion; processing aborted to prevent duplicate worker race.`,
+          });
+          continue;
+        }
+
         // If any R2 delete fails: record failed file keys, increment attemptCount,
         // set status = 'FAILED_RETRYABLE' with exponential backoff, DO NOT anonymize user or mark complete.
         if (failedFileKeys.length > 0) {
-          const attemptCount = (operation.attemptCount || 0) + 1;
           const backoffMs = Math.min(5 * 60 * 1000 * Math.pow(2, attemptCount - 1), 24 * 60 * 60 * 1000);
-          const nextRetryAt = new Date(now.getTime() + backoffMs);
+          const nextRetryAt = new Date(Date.now() + backoffMs);
 
-          await prismaClient.accountDeletionOperation.update({
-            where: { id: operation.id },
+          await prismaClient.accountDeletionOperation.updateMany({
+            where: {
+              id: operationId,
+              leaseOwner,
+              leaseVersion: currentLeaseVersion,
+            },
             data: {
               status: 'FAILED_RETRYABLE',
-              attemptCount,
               nextRetryAt,
               lastError: `Failed to delete ${failedFileKeys.length} invoice file(s) from storage: ${failedFileKeys.join(', ')}`,
-              failedFileKeys: failedFileKeys,
+              failedFileKeys,
               deletedFilesCount,
               leaseExpiresAt: null,
             },
@@ -372,44 +448,65 @@ export class AccountDeletionService {
           continue;
         }
 
-        // 6. All files verified deleted. Verify lease ownership before irreversible anonymization.
+        // Step 3: All files verified deleted. Verify distributed lease before irreversible anonymization.
         assertLease?.();
 
-        // 7. Anonymize personal profile and purge credentials atomically under fencing lock
+        // Step 4: Anonymize personal profile and purge credentials atomically under row locks and CAS fencing
         await prismaClient.$transaction(async (tx: any) => {
-          // Fencing verification inside transaction
-          const lockedOp = await tx.accountDeletionOperation.findUnique({
-            where: { id: operation.id },
-          });
+          // 1. Lock the operation row FOR UPDATE and verify lease fencing
+          const lockedOps = await tx.$queryRaw`
+            SELECT "id", "leaseOwner", "leaseVersion", "status"
+            FROM "AccountDeletionOperation"
+            WHERE "id" = ${operationId}
+            FOR UPDATE
+          `;
 
-          if (!lockedOp || lockedOp.leaseOwner !== leaseOwner || lockedOp.leaseVersion !== currentLeaseVersion) {
-            throw new Error(`[ACCOUNT-DELETION] Lease fencing failed: ownership lost to another worker (expected v${currentLeaseVersion}, found v${lockedOp?.leaseVersion})`);
+          if (!lockedOps || (lockedOps as any[]).length === 0) {
+            throw new Error(`[ACCOUNT-DELETION] Operation ${operationId} not found during anonymization`);
           }
 
-          // Cancellation check inside transaction
-          const lockedUser = await tx.user.findUnique({
-            where: { id: u.id },
-          });
+          const lockedOp = (lockedOps as any[])[0];
+          if (
+            lockedOp.leaseOwner !== leaseOwner ||
+            lockedOp.leaseVersion !== currentLeaseVersion ||
+            lockedOp.status !== 'IN_PROGRESS'
+          ) {
+            throw new Error(
+              `[ACCOUNT-DELETION] Lease fencing failed: ownership lost to another worker (expected v${currentLeaseVersion} owned by ${leaseOwner}, found v${lockedOp.leaseVersion} owned by ${lockedOp.leaseOwner})`
+            );
+          }
 
-          if (!lockedUser || !lockedUser.deletionScheduledAt) {
-            await tx.accountDeletionOperation.update({
-              where: { id: operation.id },
-              data: { status: 'CANCELLED', completedAt: now, leaseExpiresAt: null },
+          // 2. Lock User row FOR UPDATE
+          const lockedUsers = await tx.$queryRaw`
+            SELECT "id", "mobile", "deletionScheduledAt"
+            FROM "User"
+            WHERE "id" = ${u.id}
+            FOR UPDATE
+          `;
+
+          if (!lockedUsers || (lockedUsers as any[]).length === 0) {
+            throw new Error(`[ACCOUNT-DELETION] User ${u.id} not found during anonymization`);
+          }
+
+          const lockedUser = (lockedUsers as any[])[0];
+          if (!lockedUser.deletionScheduledAt) {
+            await tx.accountDeletionOperation.updateMany({
+              where: { id: operationId, leaseOwner, leaseVersion: currentLeaseVersion },
+              data: { status: 'CANCELLED', completedAt: new Date(), leaseExpiresAt: null },
             });
             return;
           }
 
-          // Delete active tokens and sessions
+          // 3. Purge active push tokens, redact AppInstallation, sessions, and OTP requests
           await tx.pushDeviceToken.deleteMany({ where: { userId: u.id } });
-          // Redact AppInstallation records: remove userId link and stored push token
           await tx.appInstallation.updateMany({
             where: { userId: u.id },
             data: { userId: null, pushToken: null },
           });
           await tx.authSession.deleteMany({ where: { userId: u.id } });
-          await tx.otpRequest.deleteMany({ where: { mobile: u.mobile } });
+          await tx.otpRequest.deleteMany({ where: { mobile: lockedUser.mobile } });
 
-          // Purge sensitive KYC records while retaining anonymous status
+          // 4. Purge sensitive KYC records while retaining anonymous status
           await tx.kycRecord.updateMany({
             where: { userId: u.id },
             data: {
@@ -422,7 +519,7 @@ export class AccountDeletionService {
             },
           });
 
-          // Purge sensitive payout account details
+          // 5. Purge sensitive payout account details
           await tx.paymentAccount.updateMany({
             where: { userId: u.id },
             data: {
@@ -437,7 +534,7 @@ export class AccountDeletionService {
             },
           });
 
-          // Anonymize User record (retain ID for ledger foreign keys)
+          // 6. Anonymize User record (retain ID for ledger foreign keys)
           const anonymizedMobile = `DEL_${u.id.replace(/-/g, '').slice(0, 8)}_${Date.now()}`;
           await tx.user.update({
             where: { id: u.id },
@@ -457,19 +554,19 @@ export class AccountDeletionService {
             },
           });
 
-          // Complete the tracking operation
-          await tx.accountDeletionOperation.update({
-            where: { id: operation.id },
+          // 7. Complete the tracking operation with CAS fencing
+          await tx.accountDeletionOperation.updateMany({
+            where: { id: operationId, leaseOwner, leaseVersion: currentLeaseVersion },
             data: {
               status: 'COMPLETED',
-              completedAt: now,
+              completedAt: new Date(),
               deletedFilesCount,
               failedFileKeys: null,
               leaseExpiresAt: null,
             },
           });
 
-          // Audit Log
+          // 8. Audit Log
           await tx.auditLog.create({
             data: {
               action: 'ACCOUNT_DELETION_EXECUTED',
@@ -477,8 +574,8 @@ export class AccountDeletionService {
               entityId: u.id,
               newValue: JSON.stringify({
                 userId: u.id,
-                operationId: operation.id,
-                executedAt: now,
+                operationId,
+                executedAt: new Date(),
                 deletedFilesCount,
                 policy: 'PERSONAL_DATA_ANONYMIZED_FINANCIAL_RECORDS_RETAINED',
               }),

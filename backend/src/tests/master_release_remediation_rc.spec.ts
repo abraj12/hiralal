@@ -287,6 +287,14 @@ describe('Master Release-Blocker Remediation Final Corrective Verification (Work
       } finally {
         (StorageService as any).provider = originalProvider;
         await prisma.bill.delete({ where: { id: bill.id } });
+        await prisma.user.update({
+          where: { id: userId },
+          data: {
+            deletionRequestedAt: null,
+            deletionScheduledAt: null,
+          },
+        });
+        await prisma.accountDeletionOperation.deleteMany({ where: { userId } });
       }
     });
   });

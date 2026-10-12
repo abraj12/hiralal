@@ -162,6 +162,27 @@ services:
         max-size: '20m'
         max-file: '5'
 
+  migrate:
+    profiles:
+      - tools
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.migrate
+    container_name: hiralal_migrate
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public
+    networks:
+      - hiralal_net
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '3'
+
   worker:
     build:
       context: ./backend

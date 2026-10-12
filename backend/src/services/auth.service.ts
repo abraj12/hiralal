@@ -1041,18 +1041,64 @@ export class AuthService {
     const refreshToken = generateSecureToken(40);
     const refreshTokenHash = sha256Hash(refreshToken);
     const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000);
-
-    const deletionPending = Boolean(user.deletionScheduledAt && user.deletionScheduledAt > new Date());
+    let deletionCancelled = false;
 
     await prisma.$transaction(async (tx) => {
-      // Invalidate all existing sessions for this user
-      await tx.authSession.updateMany({
-        where: { userId: user.id, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
+      // 1. Lock user row FOR UPDATE to prevent race with deletion worker
+      const lockedUsers = await tx.$queryRaw<Array<{
+        id: string;
+        status: string;
+        deletionScheduledAt: Date | null;
+        deletionRequestedAt: Date | null;
+      }>>`
+        SELECT "id", "status", "deletionScheduledAt", "deletionRequestedAt"
+        FROM "User"
+        WHERE "id" = ${user.id}
+        FOR UPDATE
+      `;
 
-      // Update activeSessionId on user and cancel pending deletion if active
-      if (deletionPending) {
+      if (!lockedUsers || lockedUsers.length === 0) {
+        throw new Error('User not found.');
+      }
+      const lockedUser = lockedUsers[0];
+
+      if (lockedUser.status === 'SUSPENDED') {
+        throw new Error('Your account has been suspended. Please contact customer support.');
+      }
+
+      // 2. Lock active AccountDeletionOperation row FOR UPDATE if one exists
+      const lockedOps = await tx.$queryRaw<Array<{
+        id: string;
+        status: string;
+        destructiveStartedAt: Date | null;
+        leaseExpiresAt: Date | null;
+      }>>`
+        SELECT "id", "status", "destructiveStartedAt", "leaseExpiresAt"
+        FROM "AccountDeletionOperation"
+        WHERE "userId" = ${user.id}
+          AND "status" IN ('PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE')
+        ORDER BY "createdAt" DESC
+        LIMIT 1
+        FOR UPDATE
+      `;
+
+      const activeOp = lockedOps && lockedOps.length > 0 ? lockedOps[0] : null;
+
+      // If worker has already claimed and entered destructive phase, login cannot cancel deletion!
+      if (activeOp && activeOp.destructiveStartedAt) {
+        throw new Error('Your account deletion is in progress and cannot be cancelled.');
+      }
+
+      const now = new Date();
+
+      if (lockedUser.deletionScheduledAt) {
+        const scheduledTime = new Date(lockedUser.deletionScheduledAt);
+        if (scheduledTime <= now) {
+          throw new Error('Account deletion grace period has expired.');
+        }
+
+        // Within grace period and not destructive: cancel deletion atomically
+        deletionCancelled = true;
         await tx.user.update({
           where: { id: user.id },
           data: {
@@ -1063,12 +1109,17 @@ export class AuthService {
           },
         });
 
-        await tx.accountDeletionOperation.updateMany({
-          where: { userId: user.id, status: { in: ['PENDING', 'FAILED_RETRYABLE', 'IN_PROGRESS'] } },
-          data: { status: 'CANCELLED' },
-        });
+        if (activeOp) {
+          await tx.accountDeletionOperation.update({
+            where: { id: activeOp.id },
+            data: {
+              status: 'CANCELLED',
+              completedAt: now,
+              leaseExpiresAt: null,
+            },
+          });
+        }
 
-        // Audit log for cancellation
         await tx.auditLog.create({
           data: {
             action: 'ACCOUNT_DELETION_CANCELLED_BY_LOGIN',
@@ -1076,7 +1127,7 @@ export class AuthService {
             entityId: user.id,
             newValue: JSON.stringify({
               reason: 'User authenticated during 7-day grace period',
-              cancelledAt: new Date(),
+              cancelledAt: now,
             }),
             ipAddress,
             userAgent,
@@ -1088,6 +1139,12 @@ export class AuthService {
           data: { activeSessionId: sessionId },
         });
       }
+
+      // Invalidate all existing sessions for this user
+      await tx.authSession.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: now },
+      });
 
       // Create new session
       await tx.authSession.create({
@@ -1116,8 +1173,8 @@ export class AuthService {
     const accessToken = this.generateAccessToken(user.id, user.role, user.mobile, sessionId);
 
     return {
-      deletionCancelled: deletionPending,
-      message: deletionPending ? 'Your scheduled account deletion has been cancelled.' : undefined,
+      deletionCancelled,
+      message: deletionCancelled ? 'Your scheduled account deletion has been cancelled.' : undefined,
       user: {
         id: user.id,
         mobile: user.mobile,

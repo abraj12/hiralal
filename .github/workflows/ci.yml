@@ -258,6 +258,15 @@ jobs:
           push: false
           tags: hiralal-admin:ci-arm64-test
 
+      - name: Build Migration Runner Docker Image for linux/arm64
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile.migrate
+          platforms: linux/arm64
+          push: false
+          tags: hiralal-migrate:ci-arm64-test
+
   full-stack-compose-smoke-test:
     name: Full 6-Container Docker Compose Stack Smoke Test
     runs-on: ubuntu-latest
@@ -345,12 +354,10 @@ jobs:
             sleep 2
           done
 
-      - name: Run Prisma Database Migrations on Clean Test Database
-        working-directory: backend
-        env:
-          DATABASE_URL: postgresql://postgres:HiralalTestPostgresPass2026!@localhost:5432/hiralal_rewards?schema=public
+      - name: Build and Run Dedicated Prisma Migration Runner Image
         run: |
-          npx prisma migrate deploy
+          docker compose --profile tools -f docker-compose.yml -f docker-compose.ci.yml build migrate
+          docker compose --profile tools -f docker-compose.yml -f docker-compose.ci.yml run --rm migrate
 
       - name: Initialize Stack Database Seed Fixtures
         working-directory: backend

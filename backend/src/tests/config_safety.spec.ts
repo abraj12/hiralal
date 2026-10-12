@@ -1,4 +1,11 @@
+import crypto from 'crypto';
 import { isUnsafeProductionValue, validateProductionConfig } from '../config';
+
+const validTestRsaKey = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+}).privateKey;
 
 describe('Phase 2 — Production Secrets Validation & Safety', () => {
   describe('isUnsafeProductionValue', () => {
@@ -91,7 +98,7 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       OPERATIONS_ADMIN_PREFIX: 'OADM',
       REDIS_PASSWORD: 'redis_prod_strong_secret_key_min_24_chars_2026',
       PLAY_INTEGRITY_CLIENT_EMAIL: 'play-integrity@hiralal-rewards.iam.gserviceaccount.com',
-      PLAY_INTEGRITY_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC...\n-----END PRIVATE KEY-----',
+      PLAY_INTEGRITY_PRIVATE_KEY: validTestRsaKey,
       PLAY_INTEGRITY_PACKAGE_NAME: 'com.hiralal.rewards',
       PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
       PLAY_INTEGRITY_ALLOW_MOCK: 'false',

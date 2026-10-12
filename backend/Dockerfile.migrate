@@ -1,0 +1,19 @@
+# Dedicated Prisma Migration Runner for Hiralal & Sons Rewards Platform
+# Retains pinned Prisma CLI and generated client for safe, isolated database migrations.
+# Optimized for linux/arm64 (AWS Graviton2) and linux/amd64.
+FROM node:22-alpine
+
+WORKDIR /app
+
+RUN apk add --no-cache openssl libc6-compat dumb-init
+
+COPY package*.json ./
+
+RUN npm ci
+
+COPY prisma ./prisma/
+
+RUN npx prisma generate
+
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+CMD ["npx", "prisma", "migrate", "deploy"]

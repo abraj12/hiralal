@@ -18,8 +18,10 @@ import fs from 'fs';
 import path from 'path';
 import { app } from '../server';
 import { prisma } from '../db';
-import { config, validateProductionConfig, validateProductionPlayIntegrity, isPlaceholderCredential } from '../config';
+import { config, validateProductionConfig, validateProductionPlayIntegrity, validatePlayIntegrityPrivateKey, isPlaceholderCredential } from '../config';
 import { AccountDeletionService } from '../services/account-deletion.service';
+import { AuthService } from '../services/auth.service';
+import { StorageService } from '../services/storage';
 import { FcmProvider } from '../services/push/fcm.provider';
 import {
   computeIntegrityRequestHash,
@@ -33,6 +35,12 @@ const TEST_MOBILE = '9833300088';
 const OTHER_USER_MOBILE = '9833300089';
 const TEST_ADMIN_MOBILE = '9833300090';
 const TEST_PASSWORD = 'PhaseG_Test@2026';
+
+const validRsaKey = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+}).privateKey as string;
 
 let userId: string;
 let otherUserId: string;
@@ -70,7 +78,7 @@ const validProductionEnv: Record<string, string> = {
   BILL_ADMIN_INITIAL_PASSWORD: 'ValidBillPass2026!',
   OPERATIONS_ADMIN_INITIAL_PASSWORD: 'ValidOpsPass2026!',
   PLAY_INTEGRITY_CLIENT_EMAIL: 'play-integrity@hiralal-rewards.iam.gserviceaccount.com',
-  PLAY_INTEGRITY_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC...\n-----END PRIVATE KEY-----',
+  PLAY_INTEGRITY_PRIVATE_KEY: validRsaKey,
   PLAY_INTEGRITY_PACKAGE_NAME: 'com.hiralal.rewards',
   PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
   PLAY_INTEGRITY_ALLOW_MOCK: 'false',
@@ -203,6 +211,29 @@ describe('Production Config — Fail-Fast Validation', () => {
     expect(() => validateProductionPlayIntegrity(env)).toThrow(
       /private key contains an insecure placeholder/
     );
+  });
+
+  test('rejects unparseable or corrupted cryptographic private key', () => {
+    const env = { ...validProductionEnv, PLAY_INTEGRITY_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\ncorrupted_not_valid_asn1_base64==\n-----END PRIVATE KEY-----' };
+    expect(() => validateProductionPlayIntegrity(env)).toThrow(
+      /private key is invalid or unusable/
+    );
+  });
+
+  test('rejects non-RSA private key (e.g. ED25519 key)', () => {
+    const nonRsaKey = (crypto.generateKeyPairSync('ed25519', {
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    } as any).privateKey) as string;
+    const env = { ...validProductionEnv, PLAY_INTEGRITY_PRIVATE_KEY: nonRsaKey };
+    expect(() => validateProductionPlayIntegrity(env)).toThrow(
+      /private key must be an RSA private key/
+    );
+  });
+
+  test('accepts valid RSA private key with escaped newlines in env', () => {
+    const escapedKey = validRsaKey.replace(/\n/g, '\\n');
+    expect(() => validatePlayIntegrityPrivateKey(escapedKey)).not.toThrow();
   });
 
   test('rejects non-matching package name', () => {
@@ -537,6 +568,229 @@ describe('Account Deletion — Concurrency Fencing & Cleanup', () => {
 
     await prisma.accountDeletionOperation.delete({ where: { id: op.id } });
   });
+
+  test('two concurrent workers claiming the same due operation: exactly one wins lease', async () => {
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        deletionRequestedAt: new Date(Date.now() - 8 * 24 * 3600 * 1000),
+        deletionScheduledAt: new Date(Date.now() - 1 * 24 * 3600 * 1000),
+      },
+    });
+
+    const op = await prisma.accountDeletionOperation.create({
+      data: {
+        userId,
+        status: 'PENDING',
+        scheduledFor: new Date(Date.now() - 1 * 24 * 3600 * 1000),
+      },
+    });
+
+    try {
+      // Worker 1 claims
+      const w1Claim = await prisma.accountDeletionOperation.updateMany({
+        where: {
+          id: op.id,
+          status: { in: ['PENDING', 'FAILED_RETRYABLE', 'IN_PROGRESS'] },
+          OR: [
+            { leaseExpiresAt: null },
+            { leaseExpiresAt: { lt: new Date() } },
+          ],
+        },
+        data: {
+          status: 'IN_PROGRESS',
+          startedAt: new Date(),
+          destructiveStartedAt: new Date(),
+          leaseOwner: 'worker-1',
+          leaseVersion: 1,
+          leaseExpiresAt: new Date(Date.now() + 60000),
+        },
+      });
+      expect(w1Claim.count).toBe(1);
+
+      // Worker 2 attempts concurrent claim while Worker 1's lease is active (unexpired)
+      const w2Claim = await prisma.accountDeletionOperation.updateMany({
+        where: {
+          id: op.id,
+          status: { in: ['PENDING', 'FAILED_RETRYABLE', 'IN_PROGRESS'] },
+          OR: [
+            { leaseExpiresAt: null },
+            { leaseExpiresAt: { lt: new Date() } },
+          ],
+        },
+        data: {
+          status: 'IN_PROGRESS',
+          leaseOwner: 'worker-2',
+          leaseVersion: 2,
+          leaseExpiresAt: new Date(Date.now() + 60000),
+        },
+      });
+      expect(w2Claim.count).toBe(0); // Worker 2 blocked!
+    } finally {
+      await prisma.accountDeletionOperation.delete({ where: { id: op.id } }).catch(() => {});
+      await prisma.user.update({ where: { id: userId }, data: { deletionScheduledAt: null, deletionRequestedAt: null } });
+    }
+  });
+
+  test('login after grace deadline with destructiveStartedAt cannot cancel deletion and is rejected', async () => {
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        deletionRequestedAt: new Date(Date.now() - 8 * 24 * 3600 * 1000),
+        deletionScheduledAt: new Date(Date.now() - 1 * 24 * 3600 * 1000),
+      },
+    });
+
+    const op = await prisma.accountDeletionOperation.create({
+      data: {
+        userId,
+        status: 'IN_PROGRESS',
+        scheduledFor: new Date(Date.now() - 1 * 24 * 3600 * 1000),
+        startedAt: new Date(),
+        destructiveStartedAt: new Date(), // Destructive processing started!
+        leaseOwner: 'worker-node-1',
+        leaseVersion: 1,
+        leaseExpiresAt: new Date(Date.now() + 60000),
+      },
+    });
+
+    try {
+      await expect(AuthService.login(TEST_MOBILE, TEST_PASSWORD)).rejects.toThrow(
+        /account deletion is in progress and cannot be cancelled/i
+      );
+
+      // Verify deletion lifecycle is NOT cancelled
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      expect(user?.deletionScheduledAt).not.toBeNull();
+
+      const opCheck = await prisma.accountDeletionOperation.findUnique({ where: { id: op.id } });
+      expect(opCheck?.status).toBe('IN_PROGRESS');
+      expect(opCheck?.destructiveStartedAt).toBeDefined();
+    } finally {
+      await prisma.accountDeletionOperation.delete({ where: { id: op.id } }).catch(() => {});
+      await prisma.user.update({ where: { id: userId }, data: { deletionScheduledAt: null, deletionRequestedAt: null } });
+    }
+  });
+
+  test('login after grace period has expired without active operation is rejected', async () => {
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        deletionRequestedAt: new Date(Date.now() - 8 * 24 * 3600 * 1000),
+        deletionScheduledAt: new Date(Date.now() - 1 * 24 * 3600 * 1000), // Grace period expired
+      },
+    });
+
+    try {
+      await expect(AuthService.login(TEST_MOBILE, TEST_PASSWORD)).rejects.toThrow(
+        /grace period has expired/i
+      );
+    } finally {
+      await prisma.user.update({ where: { id: userId }, data: { deletionScheduledAt: null, deletionRequestedAt: null } });
+    }
+  });
+
+  test('storage R2 failure sets status to FAILED_RETRYABLE and prevents user anonymization', async () => {
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        deletionRequestedAt: new Date(Date.now() - 8 * 24 * 3600 * 1000),
+        deletionScheduledAt: new Date(Date.now() - 1 * 24 * 3600 * 1000),
+      },
+    });
+
+    const testBill = await prisma.bill.create({
+      data: {
+        userId,
+        invoiceNumber: `INV-FAIL-${Date.now()}`,
+        invoiceDate: new Date(),
+        billAmount: 1000,
+        grossBillAmount: 1000,
+        calculatedReward: 5,
+        status: 'APPROVED',
+        fileUrl: 'https://r2.test/unreachable.pdf',
+        fileKey: 'unreachable/test.pdf',
+      },
+    });
+
+    // Mock storage delete to fail
+    const storageSpy = jest.spyOn(StorageService.getProvider(), 'delete')
+      .mockRejectedValueOnce(new Error('Cloudflare R2 503 Service Unavailable'));
+
+    try {
+      const result = await AccountDeletionService.processScheduledDeletions(prisma);
+      expect(result.errors.length).toBeGreaterThan(0);
+      expect(result.errors[0].error).toMatch(/Storage file deletion failed/);
+
+      // Verify operation is marked FAILED_RETRYABLE, NOT COMPLETED
+      const op = await prisma.accountDeletionOperation.findFirst({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(op?.status).toBe('FAILED_RETRYABLE');
+      expect(op?.failedFileKeys).toEqual(['unreachable/test.pdf']);
+      expect(op?.nextRetryAt).toBeDefined();
+
+      // Verify user was NOT anonymized
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      expect(user?.fullName).toBe('Phase G Test User');
+      expect(user?.status).toBe('ACTIVE');
+    } finally {
+      storageSpy.mockRestore();
+      await prisma.bill.delete({ where: { id: testBill.id } }).catch(() => {});
+      await prisma.accountDeletionOperation.deleteMany({ where: { userId } }).catch(() => {});
+      await prisma.user.update({ where: { id: userId }, data: { deletionScheduledAt: null, deletionRequestedAt: null } });
+    }
+  });
+
+  test('partial unique index prevents multiple active deletion operations for the same user', async () => {
+    const op1 = await prisma.accountDeletionOperation.create({
+      data: {
+        userId,
+        status: 'PENDING',
+        scheduledFor: new Date(),
+      },
+    });
+
+    // Attempting to create a second active operation (e.g. IN_PROGRESS) must fail with unique constraint violation
+    await expect(
+      prisma.accountDeletionOperation.create({
+        data: {
+          userId,
+          status: 'IN_PROGRESS',
+          scheduledFor: new Date(),
+        },
+      })
+    ).rejects.toThrow();
+
+    await prisma.accountDeletionOperation.delete({ where: { id: op1.id } });
+  });
+
+  test('heartbeat loss (assertLease throws) immediately halts destructive processing', async () => {
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        deletionRequestedAt: new Date(Date.now() - 8 * 24 * 3600 * 1000),
+        deletionScheduledAt: new Date(Date.now() - 1 * 24 * 3600 * 1000),
+      },
+    });
+
+    const assertLeaseFailing = () => {
+      throw new Error('Heartbeat lease expired: Redis lock lost to network partition');
+    };
+
+    const result = await AccountDeletionService.processScheduledDeletions(prisma, assertLeaseFailing);
+    expect(result.processedCount).toBe(0);
+    expect(result.errors.length).toBe(1);
+    expect(result.errors[0].error).toMatch(/Heartbeat lease expired/);
+
+    // Verify user was NOT anonymized
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    expect(user?.fullName).toBe('Phase G Test User');
+
+    await prisma.accountDeletionOperation.deleteMany({ where: { userId } }).catch(() => {});
+    await prisma.user.update({ where: { id: userId }, data: { deletionScheduledAt: null, deletionRequestedAt: null } });
+  });
 });
 
 // ==========================================
@@ -545,35 +799,101 @@ describe('Account Deletion — Concurrency Fencing & Cleanup', () => {
 describe('Admin Bill Review Configuration Alignment', () => {
   test('GET /api/admin/bills/:id/review-config returns submissionTimestamp based on bill.createdAt', async () => {
     const historicalSubmission = new Date('2026-06-15T10:00:00.000Z');
-    const bill = await prisma.bill.create({
+    const distinctInvoiceDate = new Date('2026-05-01T00:00:00.000Z');
+
+    // Self-contained fixture: find max version and create an active historical rule
+    const maxVersionAgg = await prisma.rewardRule.aggregate({
+      where: { profession: 'PLUMBER' },
+      _max: { version: true },
+    });
+    const nextVersion = (maxVersionAgg._max.version ?? 0) + 1;
+
+    // effectiveFrom is on submission timestamp (after invoiceDate), proving invoiceDate does not replace createdAt
+    const historicalRule = await prisma.rewardRule.create({
       data: {
-        userId,
-        invoiceNumber: `INV-PHG-${Date.now()}`,
-        invoiceDate: new Date('2026-06-15'),
-        billAmount: 10000.0,
-        grossBillAmount: 10000.0,
-        calculatedReward: 50.0,
-        status: 'PENDING',
-        fileUrl: 'https://r2.hiralal.com/bills/test.pdf',
-        fileKey: 'bills/test.pdf',
-        createdAt: historicalSubmission,
+        profession: 'PLUMBER',
+        rewardPercentage: 0.75,
+        effectiveFrom: historicalSubmission,
+        effectiveUntil: null,
+        isActive: true,
+        version: nextVersion,
       },
     });
 
-    const res = await request(app)
-      .get(`/api/admin/bills/${bill.id}/review-config`)
-      .set('Authorization', `Bearer ${billAdminToken}`);
+    let billId: string | undefined;
+    try {
+      const bill = await prisma.bill.create({
+        data: {
+          userId,
+          invoiceNumber: `INV-PHG-${Date.now()}`,
+          invoiceDate: distinctInvoiceDate,
+          billAmount: 10000.0,
+          grossBillAmount: 10000.0,
+          calculatedReward: 75.0,
+          status: 'PENDING',
+          fileUrl: 'https://r2.hiralal.com/bills/test.pdf',
+          fileKey: 'bills/test.pdf',
+          createdAt: historicalSubmission,
+        },
+      });
+      billId = bill.id;
 
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.submissionTimestamp).toBeDefined();
-    // Must match the bill's createdAt submission timestamp
-    expect(new Date(res.body.submissionTimestamp).toISOString()).toBe(historicalSubmission.toISOString());
-    expect(res.body.rewardRule).toBeDefined();
-    expect(res.body.gstRules).toBeDefined();
-    expect(Array.isArray(res.body.gstRules)).toBe(true);
+      const res = await request(app)
+        .get(`/api/admin/bills/${bill.id}/review-config`)
+        .set('Authorization', `Bearer ${billAdminToken}`);
 
-    await prisma.bill.delete({ where: { id: bill.id } });
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.submissionTimestamp).toBeDefined();
+      // Must match the bill's createdAt submission timestamp
+      expect(new Date(res.body.submissionTimestamp).toISOString()).toBe(historicalSubmission.toISOString());
+      expect(new Date(res.body.invoiceDate).toISOString()).toBe(distinctInvoiceDate.toISOString());
+      expect(res.body.rewardRule).toBeDefined();
+      expect(res.body.rewardRule.id).toBe(historicalRule.id);
+      expect(res.body.rewardRule.version).toBe(historicalRule.version);
+      expect(res.body.rewardRule.rewardPercentage).toBe(0.75);
+      expect(res.body.gstRules).toBeDefined();
+      expect(Array.isArray(res.body.gstRules)).toBe(true);
+    } finally {
+      if (billId) {
+        await prisma.bill.delete({ where: { id: billId } }).catch(() => {});
+      }
+      await prisma.rewardRule.delete({ where: { id: historicalRule.id } }).catch(() => {});
+    }
+  });
+
+  test('GET /api/admin/bills/:id/review-config fails closed with 503 when no applicable rule exists', async () => {
+    const ancientSubmission = new Date('1990-01-01T00:00:00.000Z');
+    let billId: string | undefined;
+    try {
+      const bill = await prisma.bill.create({
+        data: {
+          userId,
+          invoiceNumber: `INV-PHG-ANCIENT-${Date.now()}`,
+          invoiceDate: new Date('1990-01-01'),
+          billAmount: 5000.0,
+          grossBillAmount: 5000.0,
+          calculatedReward: 25.0,
+          status: 'PENDING',
+          fileUrl: 'https://r2.hiralal.com/bills/ancient.pdf',
+          fileKey: 'bills/ancient.pdf',
+          createdAt: ancientSubmission,
+        },
+      });
+      billId = bill.id;
+
+      const res = await request(app)
+        .get(`/api/admin/bills/${bill.id}/review-config`)
+        .set('Authorization', `Bearer ${billAdminToken}`);
+
+      expect(res.status).toBe(503);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('REVIEW_CONFIG_UNAVAILABLE');
+    } finally {
+      if (billId) {
+        await prisma.bill.delete({ where: { id: billId } }).catch(() => {});
+      }
+    }
   });
 });
 

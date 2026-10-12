@@ -137,9 +137,10 @@ jobs:
               exit 1
             }
 
-            # Run database migrations in an isolated container
-            echo "Applying Prisma database migrations..."
-            docker compose run --rm backend npx prisma migrate deploy
+            # Run database migrations using dedicated migration runner
+            echo "Building and applying Prisma database migrations..."
+            docker compose --profile tools build migrate
+            docker compose --profile tools run --rm migrate
 
             # Launch full application stack
             echo "Starting all application services..."

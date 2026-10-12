@@ -506,6 +506,7 @@ model AccountDeletionOperation {
   status            DeletionOperationStatus @default(PENDING)
   scheduledFor      DateTime
   startedAt         DateTime?
+  destructiveStartedAt DateTime?
   completedAt       DateTime?
   attemptCount      Int                     @default(0)
   nextRetryAt       DateTime?

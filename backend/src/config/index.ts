@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import fs from 'fs';
+import { createPrivateKey } from 'node:crypto';
 dotenv.config();
 
 export interface AppConfig {
@@ -377,6 +378,35 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
   }
 }
 
+export function validatePlayIntegrityPrivateKey(configuredValue: string | undefined): void {
+  const pem = configuredValue?.replace(/\\n/g, '\n').trim();
+
+  if (!pem) {
+    throw new Error('[FATAL] Play Integrity private key is missing or malformed.');
+  }
+
+  if (isPlaceholderCredential(pem)) {
+    throw new Error('[FATAL] Play Integrity private key contains an insecure placeholder or example value.');
+  }
+
+  if (!pem.includes('PRIVATE KEY')) {
+    throw new Error('[FATAL] Play Integrity private key is missing or malformed.');
+  }
+
+  try {
+    const key = createPrivateKey(pem);
+
+    if (key.asymmetricKeyType !== 'rsa') {
+      throw new Error('Unexpected key type.');
+    }
+  } catch (err: any) {
+    if (err.message === 'Unexpected key type.') {
+      throw new Error('[FATAL] Play Integrity private key must be an RSA private key.');
+    }
+    throw new Error('[FATAL] Play Integrity private key is invalid or unusable.');
+  }
+}
+
 export function validateProductionPlayIntegrity(env: Record<string, string | undefined>): void {
   const clientEmail = env.PLAY_INTEGRITY_CLIENT_EMAIL?.trim();
   const privateKey = env.PLAY_INTEGRITY_PRIVATE_KEY?.trim();
@@ -393,13 +423,7 @@ export function validateProductionPlayIntegrity(env: Record<string, string | und
     throw new Error('[FATAL] Play Integrity service-account email contains an insecure placeholder or example value.');
   }
 
-  if (!privateKey || !privateKey.includes('PRIVATE KEY')) {
-    throw new Error('[FATAL] Play Integrity private key is missing or malformed.');
-  }
-
-  if (isPlaceholderCredential(privateKey)) {
-    throw new Error('[FATAL] Play Integrity private key contains an insecure placeholder or example value.');
-  }
+  validatePlayIntegrityPrivateKey(privateKey);
 
   if (packageName !== 'com.hiralal.rewards') {
     throw new Error('[FATAL] Play Integrity package name does not match the approved Android package.');
