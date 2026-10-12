@@ -558,48 +558,12 @@ router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequ
       }
 
       if (gstIncluded) {
-        if (!gstRuleId) {
-          if (
-            typeof gstRate !== 'number' ||
-            !Number.isFinite(gstRate) ||
-            gstRate < 0 ||
-            gstRate > 100
-          ) {
-            return res.status(400).json({
-              success: false,
-              message: 'A valid GST rate between 0% and 100% is required for a manual GST rate override.',
-            });
-          }
-          if (
-            typeof gstOverrideReason !== 'string' ||
-            !gstOverrideReason.trim()
-          ) {
-            return res.status(400).json({
-              success: false,
-              message: 'A reason is required for a manual GST rate override.',
-            });
-          }
-        } else {
-          if (typeof gstRuleId !== 'string' || !gstRuleId.trim()) {
-            return res.status(400).json({
-              success: false,
-              message: 'Invalid GST rule selection.',
-            });
-          }
-          if (
-            gstRate !== undefined &&
-            (
-              typeof gstRate !== 'number' ||
-              !Number.isFinite(gstRate) ||
-              gstRate < 0 ||
-              gstRate > 100
-            )
-          ) {
-            return res.status(400).json({
-              success: false,
-              message: 'GST rate must be between 0% and 100%.',
-            });
-          }
+        if (!gstRuleId || typeof gstRuleId !== 'string' || !gstRuleId.trim()) {
+          return res.status(400).json({
+            success: false,
+            code: 'GST_RULE_REQUIRED',
+            message: 'A valid configured GST rule must be selected when GST is included. Bill Review Administrators cannot manually override GST rates; rates are determined strictly by Operations Administrator rules.',
+          });
         }
       }
 

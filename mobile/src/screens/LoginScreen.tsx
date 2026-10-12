@@ -47,6 +47,14 @@ export default function LoginScreen() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
+  // Mode & Administrator Role Selection
+  const [authMode, setAuthMode] = useState<'WORKER' | 'ADMIN'>('WORKER');
+  const [adminRoleChoice, setAdminRoleChoice] = useState<'BILL_ADMIN' | 'OPERATIONS_ADMIN'>('BILL_ADMIN');
+  const [adminPrefixes, setAdminPrefixes] = useState<{ billAdmin: string; operationsAdmin: string }>({
+    billAdmin: 'BADM',
+    operationsAdmin: 'OADM',
+  });
+
   // Administrator OTP Verification State
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [adminOtp, setAdminOtp] = useState('');
@@ -66,6 +74,17 @@ export default function LoginScreen() {
   const [forgotError, setForgotError] = useState<string | null>(null);
   const [forgotLoading, setForgotLoading] = useState(false);
 
+  // Load configured administrator prefixes dynamically from server
+  useEffect(() => {
+    MobileApiClient.getAdminPrefixes()
+      .then((res) => {
+        if (res && res.prefixes) {
+          setAdminPrefixes(res.prefixes);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Cooldown countdown timer for OTP resend
   useEffect(() => {
     let timer: any;
@@ -79,7 +98,7 @@ export default function LoginScreen() {
 
   // ========================================================
   // UNIFIED LOGIN SUBMIT HANDLER
-  // Backend classifies ordinary user vs configured admin identifier
+  // Worker uses mobile directly; Admin builds identifier with configured role prefix
   // ========================================================
   const handleUnifiedLogin = async () => {
     if (loginState === 'VALIDATING' || loginState === 'SUBMITTING_CREDENTIALS') {
@@ -88,7 +107,7 @@ export default function LoginScreen() {
 
     const trimmedId = identifier.trim();
     if (!trimmedId) {
-      setErrorMsg('Please enter your mobile number.');
+      setErrorMsg(authMode === 'ADMIN' ? 'Please enter your administrator mobile number.' : 'Please enter your mobile number.');
       setLoginState('ERROR');
       return;
     }
@@ -99,12 +118,28 @@ export default function LoginScreen() {
       return;
     }
 
+    let finalId = trimmedId;
+    if (authMode === 'ADMIN') {
+      const activePrefix =
+        adminRoleChoice === 'BILL_ADMIN' ? adminPrefixes.billAdmin : adminPrefixes.operationsAdmin;
+      const cleanDigits = trimmedId.replace(/\D/g, '').slice(-10);
+      if (trimmedId.toUpperCase().startsWith(activePrefix.toUpperCase())) {
+        finalId = trimmedId.toUpperCase();
+      } else if (cleanDigits.length === 10) {
+        finalId = `${activePrefix}${cleanDigits}`;
+      } else {
+        setErrorMsg('Please enter a valid 10-digit registered mobile number.');
+        setLoginState('ERROR');
+        return;
+      }
+    }
+
     setErrorMsg(null);
     setInfoMsg(null);
     setLoginState('SUBMITTING_CREDENTIALS');
 
     try {
-      const res = await login(trimmedId, password);
+      const res = await login(finalId, password);
 
       if (res?.requiresOtp) {
         // Backend detected valid admin identifier + verified password. Issued OTP challenge.
@@ -136,7 +171,13 @@ export default function LoginScreen() {
       return;
     }
 
-    const cleanAdminId = identifier.trim().toUpperCase().replace(/\s+/g, '');
+    const activePrefix =
+      adminRoleChoice === 'BILL_ADMIN' ? adminPrefixes.billAdmin : adminPrefixes.operationsAdmin;
+    const cleanDigits = identifier.replace(/\D/g, '').slice(-10);
+    const cleanAdminId = identifier.toUpperCase().startsWith(activePrefix.toUpperCase())
+      ? identifier.trim().toUpperCase()
+      : `${activePrefix}${cleanDigits}`;
+
     setOtpError(null);
     setLoginState('VERIFYING_OTP');
 
@@ -159,7 +200,12 @@ export default function LoginScreen() {
   // Resend Admin OTP
   const handleResendAdminOtp = async () => {
     if (cooldownRemaining > 0) return;
-    const cleanAdminId = identifier.trim().toUpperCase().replace(/\s+/g, '');
+    const activePrefix =
+      adminRoleChoice === 'BILL_ADMIN' ? adminPrefixes.billAdmin : adminPrefixes.operationsAdmin;
+    const cleanDigits = identifier.replace(/\D/g, '').slice(-10);
+    const cleanAdminId = identifier.toUpperCase().startsWith(activePrefix.toUpperCase())
+      ? identifier.trim().toUpperCase()
+      : `${activePrefix}${cleanDigits}`;
 
     try {
       setOtpError(null);
@@ -313,14 +359,115 @@ export default function LoginScreen() {
           </View>
         )}
 
+        {/* Mode Selector (Worker vs Administrator) */}
+        <View style={styles.modeSelectorContainer}>
+          <TouchableOpacity
+            style={[styles.modeTab, authMode === 'WORKER' && styles.modeTabActive]}
+            onPress={() => {
+              setAuthMode('WORKER');
+              setErrorMsg(null);
+            }}
+            activeOpacity={0.8}
+          >
+            <User size={16} color={authMode === 'WORKER' ? '#1E60D5' : '#64748B'} />
+            <Text style={[styles.modeTabText, authMode === 'WORKER' && styles.modeTabTextActive]}>
+              Worker
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.modeTab, authMode === 'ADMIN' && styles.modeTabActive]}
+            onPress={() => {
+              setAuthMode('ADMIN');
+              setErrorMsg(null);
+            }}
+            activeOpacity={0.8}
+          >
+            <Shield size={16} color={authMode === 'ADMIN' ? '#1E60D5' : '#64748B'} />
+            <Text style={[styles.modeTabText, authMode === 'ADMIN' && styles.modeTabTextActive]}>
+              Administrator
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* If Administrator Mode: Role Selection & Prefix Indicator */}
+        {authMode === 'ADMIN' && (
+          <View style={styles.adminRoleSection}>
+            <Text style={styles.adminRoleSectionTitle}>Select Administrator Role</Text>
+            <View style={styles.roleChipsRow}>
+              <TouchableOpacity
+                style={[
+                  styles.roleChip,
+                  adminRoleChoice === 'BILL_ADMIN' && styles.roleChipActive,
+                ]}
+                onPress={() => {
+                  setAdminRoleChoice('BILL_ADMIN');
+                  setErrorMsg(null);
+                }}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.roleChipText,
+                    adminRoleChoice === 'BILL_ADMIN' && styles.roleChipTextActive,
+                  ]}
+                >
+                  Bill Review Admin
+                </Text>
+                <View style={[styles.prefixPill, adminRoleChoice === 'BILL_ADMIN' && styles.prefixPillActive]}>
+                  <Text style={[styles.prefixPillText, adminRoleChoice === 'BILL_ADMIN' && styles.prefixPillTextActive]}>
+                    {adminPrefixes.billAdmin}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.roleChip,
+                  adminRoleChoice === 'OPERATIONS_ADMIN' && styles.roleChipActive,
+                ]}
+                onPress={() => {
+                  setAdminRoleChoice('OPERATIONS_ADMIN');
+                  setErrorMsg(null);
+                }}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.roleChipText,
+                    adminRoleChoice === 'OPERATIONS_ADMIN' && styles.roleChipTextActive,
+                  ]}
+                >
+                  Operations Admin
+                </Text>
+                <View style={[styles.prefixPill, adminRoleChoice === 'OPERATIONS_ADMIN' && styles.prefixPillActive]}>
+                  <Text style={[styles.prefixPillText, adminRoleChoice === 'OPERATIONS_ADMIN' && styles.prefixPillTextActive]}>
+                    {adminPrefixes.operationsAdmin}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.adminHintText}>
+              Logging in as {adminRoleChoice === 'BILL_ADMIN' ? 'Bill Review' : 'Operations'} Administrator. Two-factor authentication required.
+            </Text>
+          </View>
+        )}
+
         {/* Unified Login Form */}
         <View style={styles.form}>
           {/* 1. Unified Identifier Field */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Mobile Number</Text>
+            <Text style={styles.label}>
+              {authMode === 'WORKER' ? 'Mobile Number' : 'Administrator Mobile Number'}
+            </Text>
             <View style={styles.inputWrapper}>
               <View style={styles.prefixBox}>
-                <Text style={styles.prefixText}>🇮🇳 +91</Text>
+                <Text style={styles.prefixText}>
+                  {authMode === 'WORKER'
+                    ? '🇮🇳 +91'
+                    : adminRoleChoice === 'BILL_ADMIN'
+                    ? adminPrefixes.billAdmin
+                    : adminPrefixes.operationsAdmin}
+                </Text>
               </View>
               <TextInput
                 style={styles.input}
@@ -330,7 +477,11 @@ export default function LoginScreen() {
                   setErrorMsg(null);
                   if (loginState === 'ERROR') setLoginState('IDLE');
                 }}
-                placeholder="Enter your mobile number"
+                placeholder={
+                  authMode === 'WORKER'
+                    ? 'Enter your mobile number'
+                    : 'Enter registered 10-digit number'
+                }
                 placeholderTextColor="#94A3B8"
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -404,13 +555,22 @@ export default function LoginScreen() {
             )}
           </TouchableOpacity>
 
-          {/* 5. Create Account Navigation */}
-          <View style={styles.createAccountRow}>
-            <Text style={styles.noAccountText}>Don't have an account yet? </Text>
-            <TouchableOpacity onPress={() => setCurrentScreen('REGISTER')}>
-              <Text style={styles.createAccountLink}>Register Now</Text>
-            </TouchableOpacity>
-          </View>
+          {/* 5. Create Account Navigation (Workers only) */}
+          {authMode === 'WORKER' ? (
+            <View style={styles.createAccountRow}>
+              <Text style={styles.noAccountText}>Don't have an account yet? </Text>
+              <TouchableOpacity onPress={() => setCurrentScreen('REGISTER')}>
+                <Text style={styles.createAccountLink}>Register Now</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.adminNoticeRow}>
+              <Shield size={14} color="#64748B" />
+              <Text style={styles.adminNoticeText}>
+                Administrator accounts are strictly managed by system governance.
+              </Text>
+            </View>
+          )}
         </View>
       </ScrollView>
 
@@ -928,5 +1088,119 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 13,
     fontWeight: '600',
+  },
+  modeSelectorContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 16,
+  },
+  modeTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 9,
+    gap: 6,
+  },
+  modeTabActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  modeTabText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  modeTabTextActive: {
+    color: '#1E60D5',
+    fontWeight: '700',
+  },
+  adminRoleSection: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+  },
+  adminRoleSectionTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  roleChipsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  roleChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+  },
+  roleChipActive: {
+    borderColor: '#1E60D5',
+    backgroundColor: '#EFF6FF',
+  },
+  roleChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  roleChipTextActive: {
+    color: '#1E60D5',
+    fontWeight: '700',
+  },
+  prefixPill: {
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  prefixPillActive: {
+    backgroundColor: '#DBEAFE',
+  },
+  prefixPillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  prefixPillTextActive: {
+    color: '#1E60D5',
+  },
+  adminHintText: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 8,
+    lineHeight: 15,
+  },
+  adminNoticeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 16,
+    paddingHorizontal: 16,
+  },
+  adminNoticeText: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
   },
 });

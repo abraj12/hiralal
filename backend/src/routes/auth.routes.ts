@@ -45,6 +45,20 @@ function setAdminCookie(res: Response, token?: string) {
 }
 
 // ==========================================
+// 0. PUBLIC ADMIN PREFIXES DISCOVERY
+// ==========================================
+
+router.get('/admin-prefixes', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    prefixes: {
+      billAdmin: config.admin.billAdminPrefix,
+      operationsAdmin: config.admin.operationsAdminPrefix,
+    },
+  });
+});
+
+// ==========================================
 // 1. OTP REQUEST & VERIFICATION
 // ==========================================
 
@@ -638,6 +652,7 @@ router.post(
         'BILL_UPLOAD',
         'KYC_SUBMIT',
         'PAYOUT_REDEEM',
+        'BENEFICIARY_VERIFY',
         'ACCOUNT_DELETION',
       ] as const;
 
@@ -645,7 +660,7 @@ router.post(
         return res.status(400).json({
           success: false,
           code: 'INVALID_ACTION',
-          message: 'A valid protected integrity action is required (BILL_UPLOAD, KYC_SUBMIT, PAYOUT_REDEEM, ACCOUNT_DELETION).',
+          message: 'A valid protected integrity action is required (BILL_UPLOAD, KYC_SUBMIT, PAYOUT_REDEEM, BENEFICIARY_VERIFY, ACCOUNT_DELETION).',
         });
       }
 
@@ -682,13 +697,13 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const { action = 'AUTH', requestHash } = req.body ?? {};
-      const allowedPreAuthActions = ['AUTH', 'GENERAL'] as const;
+      const allowedPreAuthActions = ['AUTH', 'REGISTRATION', 'FORGOT_PASSWORD', 'GENERAL'] as const;
 
       if (!action || !allowedPreAuthActions.includes(action)) {
         return res.status(400).json({
           success: false,
           code: 'INVALID_ACTION',
-          message: 'Pre-auth integrity action must be AUTH or GENERAL.',
+          message: 'Pre-auth integrity action must be AUTH, REGISTRATION, FORGOT_PASSWORD, or GENERAL.',
         });
       }
 

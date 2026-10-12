@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { THEMES, ThemeConfig, ProfessionType } from '../theme/professionTheme';
 import { MobileApiClient } from '../services/api';
+import { NotificationsService } from '../services/notifications.service';
 
 const INSTALLATION_KEY = 'hiralal_installation_id';
 
@@ -138,6 +139,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               setBills(billsRes.bills);
             }
             setCurrentScreen('MAIN');
+            NotificationsService.registerDeviceToken().catch(() => {});
             getOrCreateInstallationId()
               .then(instId => MobileApiClient.triggerWelcomeNotification(instId))
               .catch(() => {});
@@ -189,6 +191,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setCurrentScreen('MAIN');
     setActiveTab('HOME');
+    NotificationsService.registerDeviceToken().catch(() => {});
     getOrCreateInstallationId()
       .then(instId => MobileApiClient.triggerWelcomeNotification(instId))
       .catch(() => {});
@@ -200,16 +203,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const res = await MobileApiClient.loginAdmin(identifier, pass, verificationToken);
     await MobileApiClient.setToken(res.accessToken || res.token);
     setUser(res.user);
+    NotificationsService.registerDeviceToken().catch(() => {});
     setCurrentScreen('MAIN');
   };
 
   const loginAdminSession = async (adminUser: any, token: string) => {
     await MobileApiClient.setToken(token);
     setUser(adminUser);
+    NotificationsService.registerDeviceToken().catch(() => {});
     setCurrentScreen('MAIN');
   };
 
   const logout = async () => {
+    await NotificationsService.deactivateDeviceToken().catch(() => {});
     await MobileApiClient.logout();
     setUser(null);
     setWallet({ availableBalance: 0, processingAmount: 0, totalRedeemed: 0, lifetimeCashback: 0 });

@@ -34,10 +34,9 @@ export async function migrateLegacyAdminAccounts(
     errors: [],
   };
 
-  const legacyAdmins = await prisma.user.findMany({
-    where: { role: 'ADMIN' },
-    orderBy: { createdAt: 'asc' },
-  });
+  const legacyAdmins = await prisma.$queryRawUnsafe<Array<{ id: string; mobile: string; role: string }>>(
+    'SELECT id, mobile, "role"::text as role FROM "User" WHERE "role"::text = \'ADMIN\' ORDER BY "createdAt" ASC'
+  );
 
   summary.totalFound = legacyAdmins.length;
 

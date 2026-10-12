@@ -380,10 +380,10 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
         });
 
       expect(res.status).toBe(400);
-      expect(res.body.message).toMatch(/A reason is required for a manual GST rate override/i);
+      expect(res.body.message).toMatch(/A valid configured GST rule must be selected when GST is included/i);
     });
 
-    test('3.3b Manual GST override with valid rate and non-empty reason succeeds and creates BILL_GST_MANUAL_OVERRIDE audit log', async () => {
+    test('3.3b Rejects manual GST override attempt without configured gstRuleId with 400', async () => {
       const res = await request(app)
         .post(`/api/admin/bills/${testBill.id}/verify`)
         .set('Authorization', `Bearer ${adminToken}`)
@@ -391,63 +391,32 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
           action: 'APPROVE',
           gstIncluded: true,
           gstRate: 12.0,
-          gstOverrideReason: 'Special composite tax scheme applied on invoice',
+          gstOverrideReason: 'Attempt manual override',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('GST_RULE_REQUIRED');
+      expect(res.body.message).toMatch(/valid configured GST rule must be selected/i);
+    });
+
+    test('3.3c Approves with configured gstRuleId when GST is included', async () => {
+      const activeRule = await prisma.gstRule.findFirst({
+        where: { isActive: true },
+      });
+      expect(activeRule).toBeDefined();
+
+      const res = await request(app)
+        .post(`/api/admin/bills/${testBill.id}/verify`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          action: 'APPROVE',
+          gstIncluded: true,
+          gstRuleId: activeRule!.id,
         });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(Number(res.body.bill.gstRate)).toBe(12.0);
-
-      const auditLog = await prisma.auditLog.findFirst({
-        where: {
-          action: 'BILL_GST_MANUAL_OVERRIDE',
-          entityId: testBill.id,
-        },
-      });
-      expect(auditLog).toBeDefined();
-      expect(auditLog?.adminId).toBe(adminUser.id);
-      const parsedAudit = JSON.parse(auditLog?.newValue || '{}');
-      expect(parsedAudit.gstOverrideReason).toBe('Special composite tax scheme applied on invoice');
-      expect(Number(parsedAudit.manualGstRate)).toBe(12.0);
-    });
-
-    test('3.3c Rejects manual GST override with whitespace-only override reason with 400', async () => {
-      const res = await request(app)
-        .post(`/api/admin/bills/${testBill.id}/verify`)
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          action: 'APPROVE',
-          gstIncluded: true,
-          gstRate: 12.0,
-          gstOverrideReason: '    ',
-        });
-
-      expect(res.status).toBe(400);
-      expect(res.body.message).toMatch(/A reason is required for a manual GST rate override/i);
-    });
-
-    test('3.3d Rejects manual GST override with negative or >100 rate with 400', async () => {
-      const resNegative = await request(app)
-        .post(`/api/admin/bills/${testBill.id}/verify`)
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          action: 'APPROVE',
-          gstIncluded: true,
-          gstRate: -5.0,
-          gstOverrideReason: 'Negative rate test',
-        });
-      expect(resNegative.status).toBe(400);
-
-      const resOver100 = await request(app)
-        .post(`/api/admin/bills/${testBill.id}/verify`)
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          action: 'APPROVE',
-          gstIncluded: true,
-          gstRate: 120.0,
-          gstOverrideReason: 'Over 100 rate test',
-        });
-      expect(resOver100.status).toBe(400);
+      expect(Number(res.body.bill.gstRate)).toBe(Number(activeRule!.ratePercentage));
     });
 
     test('3.4 Approves with gstIncluded: false and credits reward on full bill amount', async () => {

@@ -1,10 +1,16 @@
 import { Router, Response } from 'express';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
+import { requireActionIntegrity } from '../middleware/integrity.middleware';
 import { PaymentService } from '../services/payment.service';
 
 const router = Router();
 
-router.post('/upi/verify', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
+router.post(
+  '/upi/verify',
+  authenticate,
+  requireUser,
+  requireActionIntegrity('BENEFICIARY_VERIFY'),
+  async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const { upiId, accountHolderName } = req.body;
@@ -31,7 +37,12 @@ router.post('/upi/verify', authenticate, requireUser, async (req: AuthenticatedR
   }
 });
 
-router.post('/bank/verify', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
+router.post(
+  '/bank/verify',
+  authenticate,
+  requireUser,
+  requireActionIntegrity('BENEFICIARY_VERIFY'),
+  async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const { accountHolderName, accountNumber, ifscCode, bankName } = req.body;

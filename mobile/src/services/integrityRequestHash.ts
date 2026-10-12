@@ -128,3 +128,24 @@ export async function createAccountDeletionRequestHash(data?: {
 
   return sha256Json(canonicalPayload);
 }
+
+/**
+ * Computes canonical request hash for beneficiary account verification (UPI or Bank).
+ */
+export async function createBeneficiaryVerificationRequestHash(data: {
+  accountType: 'UPI' | 'BANK';
+  identifier: string;
+  ifscCode?: string;
+  accountHolderName?: string;
+}): Promise<string> {
+  const canonicalPayload = {
+    version: 1,
+    action: 'BENEFICIARY_VERIFY',
+    accountType: data.accountType,
+    identifier: String(data.identifier || '').trim(),
+    ...(data.ifscCode ? { ifscCode: String(data.ifscCode).trim().toUpperCase() } : {}),
+    ...(data.accountHolderName ? { accountHolderName: String(data.accountHolderName).trim() } : {}),
+  };
+
+  return sha256Json(canonicalPayload);
+}

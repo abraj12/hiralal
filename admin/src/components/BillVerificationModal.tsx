@@ -19,7 +19,6 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   const [gstRules, setGstRules] = useState<any[]>([]);
   const [selectedGstRate, setSelectedGstRate] = useState<number>(18.0);
   const [selectedGstRuleId, setSelectedGstRuleId] = useState<string>('');
-  const [gstOverrideReason, setGstOverrideReason] = useState<string>('');
 
   const [rewardPercentage, setRewardPercentage] = useState<number | null>(null);
   const [rulesUnavailable, setRulesUnavailable] = useState(false);
@@ -115,7 +114,6 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
         gstIncluded,
         gstRate: gstIncluded ? selectedGstRate : 0,
         gstRuleId: gstIncluded ? (selectedGstRuleId || undefined) : undefined,
-        gstOverrideReason: gstOverrideReason.trim() || undefined,
       });
       onVerified();
       onClose();
@@ -234,41 +232,29 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
             </div>
 
             {gstIncluded && (
-              <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-200">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Applicable GST Rate:
-                  </label>
-                  <select
-                    value={selectedGstRuleId}
-                    onChange={(e) => {
-                      const ruleId = e.target.value;
-                      setSelectedGstRuleId(ruleId);
-                      const found = gstRules.find((r) => r.id === ruleId);
-                      if (found) setSelectedGstRate(Number(found.ratePercentage));
-                    }}
-                    className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
-                  >
-                    {gstRules.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.ratePercentage}% GST {r.description ? `(${r.description})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Override Reason (Optional):
-                  </label>
-                  <input
-                    type="text"
-                    value={gstOverrideReason}
-                    onChange={(e) => setGstOverrideReason(e.target.value)}
-                    placeholder="e.g. Verified tax breakdown on invoice"
-                    className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
+              <div className="pt-2 border-t border-slate-200">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Applicable GST Rule (Configured by Operations Administrator):
+                </label>
+                <select
+                  value={selectedGstRuleId}
+                  onChange={(e) => {
+                    const ruleId = e.target.value;
+                    setSelectedGstRuleId(ruleId);
+                    const found = gstRules.find((r) => r.id === ruleId);
+                    if (found) setSelectedGstRate(Number(found.ratePercentage));
+                  }}
+                  className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                >
+                  {gstRules.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.ratePercentage}% GST {r.description ? `(${r.description})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-[10px] text-slate-400 mt-1 block">
+                  Select the tax rule applicable to this invoice. Manual custom GST rate overrides are disabled to maintain accounting integrity.
+                </span>
               </div>
             )}
 

@@ -201,4 +201,24 @@ router.delete('/device-token', async (req: AuthenticatedRequest, res: Response) 
   }
 });
 
+/**
+ * POST /api/notifications/device-token/deactivate
+ * Deactivates a device push token passed in body.
+ */
+router.post('/device-token/deactivate', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Device token is required.' });
+    }
+
+    await NotificationService.deactivateDeviceToken(userId, token);
+    res.json({ success: true, message: 'Device token deactivated.' });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
 export default router;

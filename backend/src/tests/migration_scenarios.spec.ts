@@ -1,6 +1,7 @@
 import { execSync } from 'child_process';
 import { prisma } from '../db';
 import { PrismaClient } from '@prisma/client';
+import { resetAdmins } from './test_helpers';
 
 describe('Phase 19 — Database Migrations Verification', () => {
   it('Scenario A: verifies migration deployment on a fresh database', async () => {
@@ -89,108 +90,62 @@ describe('Phase 19 — Database Migrations Verification', () => {
     expect(Array.isArray(rules)).toBe(true);
   });
 
-  it('Scenario C: verifies fail-closed legacy admin migration and dry-run mode', async () => {
+  it('Scenario C: verifies safe removal of legacy ADMIN role and role constraints', async () => {
     const { migrateLegacyAdminAccounts } = await import('../scripts/migrate-legacy-admin');
-    const { config } = await import('../config');
 
-    // Configure test admin mobiles
-    const origBill = config.admin.billAdminMobile;
-    const origOps = config.admin.operationsAdminMobile;
-    config.admin.billAdminMobile = '9876543210';
-    config.admin.operationsAdminMobile = '9876543211';
+    // 1. Verify UserRole PostgreSQL enum values
+    const enumRows: any[] = await prisma.$queryRaw`
+      SELECT enumlabel FROM pg_enum JOIN pg_type ON pg_enum.enumtypid = pg_type.oid WHERE pg_type.typname = 'UserRole' ORDER BY enumlabel;
+    `;
+    const enumLabels = enumRows.map((r: any) => r.enumlabel);
+    expect(enumLabels).toContain('USER');
+    expect(enumLabels).toContain('BILL_ADMIN');
+    expect(enumLabels).toContain('OPERATIONS_ADMIN');
+    expect(enumLabels).not.toContain('ADMIN');
 
-    const testMobiles = ['9876543210', '9876543211', '9876543299'];
-    await prisma.auditLog.deleteMany({ where: { admin: { mobile: { in: testMobiles } } } });
-    await prisma.user.deleteMany({ where: { mobile: { in: testMobiles } } });
+    // 2. Verify that attempting to set role = 'ADMIN' fails PostgreSQL enum constraint
+    await expect(
+      prisma.$executeRawUnsafe(`
+        INSERT INTO "User" ("id", "mobile", "fullName", "passwordHash", "role", "status", "createdAt", "updatedAt")
+        VALUES (gen_random_uuid(), '9876543999', 'Invalid Admin', 'hash', 'ADMIN'::"UserRole", 'ACTIVE', NOW(), NOW())
+      `)
+    ).rejects.toThrow();
 
-    // Temporarily park existing BILL_ADMIN / OPERATIONS_ADMIN roles so they don't block migration
-    const existingAdmins = await prisma.user.findMany({
-      where: { role: { in: ['BILL_ADMIN', 'OPERATIONS_ADMIN'] } },
-    });
-    for (const ea of existingAdmins) {
-      await prisma.user.update({
-        where: { id: ea.id },
-        data: { role: 'USER' },
-      });
-    }
+    // 3. Verify migrateLegacyAdminAccounts cleanly processes database with 0 legacy admins
+    const summary = await migrateLegacyAdminAccounts(prisma, { dryRun: true });
+    expect(summary.totalFound).toBe(0);
+    expect(summary.failed).toBe(0);
 
-    const initialAdminCount = await prisma.user.count({ where: { role: 'ADMIN' } });
+    // 4. Verify partial unique indexes enforce the two-admin invariant
+    const testOpsMobile1 = '9876543111';
+    const testOpsMobile2 = '9876543222';
+    await resetAdmins(prisma);
+    await prisma.user.deleteMany({ where: { mobile: { in: [testOpsMobile1, testOpsMobile2] } } });
 
-    // Create 3 legacy ADMIN accounts
-    const userBill = await prisma.user.create({
+    await prisma.user.create({
       data: {
-        mobile: '9876543210',
-        fullName: 'Legacy Bill Admin',
-        passwordHash: 'hash_legacy_1',
-        role: 'ADMIN',
+        mobile: testOpsMobile1,
+        fullName: 'Ops Admin One',
+        passwordHash: 'hash1',
+        role: 'OPERATIONS_ADMIN',
         status: 'ACTIVE',
       },
     });
 
-    const userOps = await prisma.user.create({
-      data: {
-        mobile: '9876543211',
-        fullName: 'Legacy Ops Admin',
-        passwordHash: 'hash_legacy_2',
-        role: 'ADMIN',
-        status: 'ACTIVE',
-      },
-    });
+    // Attempting to create a second OPERATIONS_ADMIN must fail partial unique index
+    await expect(
+      prisma.user.create({
+        data: {
+          mobile: testOpsMobile2,
+          fullName: 'Ops Admin Two',
+          passwordHash: 'hash2',
+          role: 'OPERATIONS_ADMIN',
+          status: 'ACTIVE',
+        },
+      })
+    ).rejects.toThrow();
 
-    const userUnmapped = await prisma.user.create({
-      data: {
-        mobile: '9876543299',
-        fullName: 'Unmapped Admin',
-        passwordHash: 'hash_legacy_3',
-        role: 'ADMIN',
-        status: 'ACTIVE',
-      },
-    });
-
-    try {
-      // 1. Dry run
-      const drySummary = await migrateLegacyAdminAccounts(prisma, { dryRun: true });
-      expect(drySummary.totalFound).toBe(initialAdminCount + 3);
-      expect(drySummary.migratedToBillAdmin).toBe(1);
-      expect(drySummary.migratedToOperations).toBe(1);
-      expect(drySummary.failed).toBe(initialAdminCount + 1);
-      expect(drySummary.errors.some((e) => e.userId === userUnmapped.id)).toBe(true);
-
-      // In database, roles must still be ADMIN after dry run
-      const checkDry1 = await prisma.user.findUnique({ where: { id: userBill.id } });
-      const checkDry2 = await prisma.user.findUnique({ where: { id: userOps.id } });
-      const checkDry3 = await prisma.user.findUnique({ where: { id: userUnmapped.id } });
-      expect(checkDry1?.role).toBe('ADMIN');
-      expect(checkDry2?.role).toBe('ADMIN');
-      expect(checkDry3?.role).toBe('ADMIN');
-
-      // 2. Real migration (fail closed)
-      const liveSummary = await migrateLegacyAdminAccounts(prisma, { dryRun: false });
-      expect(liveSummary.totalFound).toBe(initialAdminCount + 3);
-      expect(liveSummary.migratedToBillAdmin).toBe(1);
-      expect(liveSummary.migratedToOperations).toBe(1);
-      expect(liveSummary.failed).toBe(initialAdminCount + 1);
-
-      // In database: mapped ones change, unmapped one remains ADMIN
-      const checkLive1 = await prisma.user.findUnique({ where: { id: userBill.id } });
-      const checkLive2 = await prisma.user.findUnique({ where: { id: userOps.id } });
-      const checkLive3 = await prisma.user.findUnique({ where: { id: userUnmapped.id } });
-      expect(checkLive1?.role).toBe('BILL_ADMIN');
-      expect(checkLive2?.role).toBe('OPERATIONS_ADMIN');
-      expect(checkLive3?.role).toBe('ADMIN');
-    } finally {
-      config.admin.billAdminMobile = origBill;
-      config.admin.operationsAdminMobile = origOps;
-      await prisma.auditLog.deleteMany({ where: { admin: { mobile: { in: testMobiles } } } });
-      await prisma.user.deleteMany({ where: { mobile: { in: testMobiles } } });
-
-      // Restore parked admins
-      for (const ea of existingAdmins) {
-        await prisma.user.update({
-          where: { id: ea.id },
-          data: { role: ea.role },
-        });
-      }
-    }
+    // Cleanup
+    await prisma.user.deleteMany({ where: { mobile: { in: [testOpsMobile1, testOpsMobile2] } } });
   });
 });

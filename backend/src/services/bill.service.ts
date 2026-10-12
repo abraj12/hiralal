@@ -359,40 +359,9 @@ export class BillService {
           }
         }
       } else if (isGstIncluded) {
-        const hasManualOverrideRate =
-          typeof options?.gstRate === 'number' &&
-          Number.isFinite(options.gstRate) &&
-          options.gstRate >= 0 &&
-          options.gstRate <= 100;
-        const trimmedReason =
-          typeof options?.gstOverrideReason === 'string'
-            ? options.gstOverrideReason.trim()
-            : '';
-
-        if (hasManualOverrideRate && trimmedReason.length > 0) {
-          effectiveGstRate = options!.gstRate!;
-          selectedGstRuleId = null;
-
-          await tx.auditLog.create({
-            data: {
-              adminId,
-              action: 'BILL_GST_MANUAL_OVERRIDE',
-              entityType: 'Bill',
-              entityId: bill.id,
-              newValue: JSON.stringify({
-                billId: bill.id,
-                invoiceDate: bill.invoiceDate,
-                manualGstRate: effectiveGstRate,
-                gstOverrideReason: trimmedReason,
-                grossAmount: gross,
-              }),
-            },
-          });
-        } else {
-          throw new Error(
-            'A valid applicable GST rule or deliberate manual override with reason is required for GST-included bills.'
-          );
-        }
+        throw new Error(
+          'A valid applicable GST rule is required when GST is included. Bill Review Administrators cannot manually override GST rates; rates are determined strictly by Operations Administrator rules.'
+        );
       }
 
       const gstCalc = GstService.calculateGstAndEligibleAmount(gross, isGstIncluded, effectiveGstRate);

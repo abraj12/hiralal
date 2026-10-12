@@ -104,6 +104,31 @@ export function buildCanonicalAccountDeletionPayload(
   };
 }
 
+export interface CanonicalBeneficiaryPayload {
+  version: 1;
+  action: 'BENEFICIARY_VERIFY';
+  accountType: 'UPI' | 'BANK';
+  identifier: string;
+  ifscCode?: string;
+  accountHolderName?: string;
+}
+
+export function buildCanonicalBeneficiaryPayload(
+  accountType: 'UPI' | 'BANK',
+  identifier: string,
+  ifscCode?: string,
+  accountHolderName?: string
+): CanonicalBeneficiaryPayload {
+  return {
+    version: 1,
+    action: 'BENEFICIARY_VERIFY',
+    accountType,
+    identifier: String(identifier || '').trim(),
+    ...(ifscCode ? { ifscCode: String(ifscCode).trim().toUpperCase() } : {}),
+    ...(accountHolderName ? { accountHolderName: String(accountHolderName).trim() } : {}),
+  };
+}
+
 /**
  * Computes canonical SHA-256 request hash from the actual received Express request.
  */
@@ -155,12 +180,32 @@ export function computeIntegrityRequestHash(
       return computeSha256Json(payload);
     }
 
+    case 'BENEFICIARY_VERIFY': {
+      const isUpi = Boolean(req.body?.upiId);
+      const payload = isUpi
+        ? buildCanonicalBeneficiaryPayload(
+            'UPI',
+            req.body?.upiId,
+            undefined,
+            req.body?.accountHolderName
+          )
+        : buildCanonicalBeneficiaryPayload(
+            'BANK',
+            req.body?.accountNumber,
+            req.body?.ifscCode,
+            req.body?.accountHolderName
+          );
+      return computeSha256Json(payload);
+    }
+
     case 'ACCOUNT_DELETION': {
       const payload = buildCanonicalAccountDeletionPayload(req.body?.otpCode);
       return computeSha256Json(payload);
     }
 
     case 'AUTH':
+    case 'REGISTRATION':
+    case 'FORGOT_PASSWORD':
     case 'GENERAL': {
       const payload = {
         version: 1,

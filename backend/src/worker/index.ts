@@ -1,9 +1,10 @@
 import { PayoutWorker } from './payout.worker';
 import { ReconciliationWorker } from './reconciliation.worker';
+import { AccountDeletionWorker } from './account-deletion.worker';
 import { checkDatabaseConnection } from '../db';
 import { checkRedisConnection } from '../redis';
 
-export { PayoutWorker, ReconciliationWorker };
+export { PayoutWorker, ReconciliationWorker, AccountDeletionWorker };
 
 /**
  * Worker Daemon entrypoint for background processing container.
@@ -25,10 +26,15 @@ export async function startWorkerDaemon(): Promise<void> {
   ReconciliationWorker.startReconciliation(180000);
   console.log('✅ Gateway reconciliation worker started (180s interval)');
 
+  // Start account deletion worker (checks every 60 seconds)
+  AccountDeletionWorker.startAccountDeletionWorker(60000);
+  console.log('✅ Account deletion lifecycle worker started (60s interval)');
+
   const shutdown = () => {
     console.log('🛑 Shutting down background workers gracefully...');
     PayoutWorker.stopOutboxPolling();
     ReconciliationWorker.stopReconciliation();
+    AccountDeletionWorker.stopAccountDeletionWorker();
     process.exit(0);
   };
 

@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import path from 'path';
 import crypto from 'crypto';
 import { config } from './config';
-import { checkDatabaseConnection } from './db';
+import { checkDatabaseConnection, checkAdminRoleIntegrity } from './db';
 import { checkRedisConnection } from './redis';
 
 // Route imports
@@ -18,6 +18,7 @@ import payoutRoutes from './routes/payout.routes';
 import webhookRoutes from './routes/webhook.routes';
 import adminRoutes from './routes/admin.routes';
 import notificationRoutes from './routes/notification.routes';
+import pushTokenRoutes from './routes/push-token.routes';
 
 const app = express();
 
@@ -63,6 +64,10 @@ const corsOptions: cors.CorsOptions = {
     'Content-Type',
     'Authorization',
     'X-Request-Id',
+    'x-integrity-token',
+    'x-integrity-nonce',
+    'X-Integrity-Token',
+    'X-Integrity-Nonce',
     'x-razorpay-signature',
     'x-razorpay-event-id',
     'x-test-rate-limit',
@@ -137,6 +142,7 @@ app.use('/api/payouts', payoutRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/push-token', pushTokenRoutes);
 
 // 404 Handler
 app.use((req: any, res: Response) => {
@@ -197,6 +203,7 @@ if (process.env.NODE_ENV !== 'test') {
     console.log(`   Environment: ${config.nodeEnv}`);
     console.log(`====================================================`);
     await checkDatabaseConnection();
+    await checkAdminRoleIntegrity();
     await checkRedisConnection();
   });
 }

@@ -77,13 +77,19 @@ export class RewardRuleService {
       throw new Error('Valid worker profession (PLUMBER or TILE_INSTALLER) is required.');
     }
 
-    // 2. Validation: Percentage (strict finite number between 0.01% and 100.00%)
+    // 2. Validation: Percentage (strict finite decimal number with paise/2-decimal precision)
     if (typeof rewardPercentage !== 'number' || !Number.isFinite(rewardPercentage) || Number.isNaN(rewardPercentage)) {
       throw new Error('Reward percentage must be a valid, finite number.');
     }
 
-    if (rewardPercentage < 0.01 || rewardPercentage > 10.00) {
-      throw new Error('Reward percentage must be between 0.01% and 10.00%.');
+    if (rewardPercentage <= 0 || rewardPercentage > 100.00) {
+      throw new Error('Reward percentage must be a positive finite number up to 100.00%.');
+    }
+
+    const decimalStr = rewardPercentage.toString();
+    const decimalPlaces = decimalStr.includes('.') ? (decimalStr.split('.')[1] || '').length : 0;
+    if (decimalPlaces > 2) {
+      throw new Error('Reward percentage must not exceed two decimal places (paise precision).');
     }
 
     // 3. Validation: Effective Date (Asia/Kolkata Business Calendar)

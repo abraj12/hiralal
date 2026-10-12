@@ -247,13 +247,29 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
         .send({ profession: 'PLUMBER', rewardPercentage: 0 });
       expect(resZero.status).toBe(400);
 
-      // Percentage = 15.0 (above max 10.00)
+      // Percentage = 15.0 (previously capped at 10%, now accepted as valid positive decimal)
+      const res15 = await request(app)
+        .post('/api/admin/settings/reward-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ profession: 'PLUMBER', rewardPercentage: 15.0, effectiveFrom: '2028-01-01' });
+      expect(res15.status).toBe(201);
+      expect(res15.body.rule.rewardPercentage).toBe(15.0);
+
+      // Percentage = 150.0 (above max 100.00)
       const resHigh = await request(app)
         .post('/api/admin/settings/reward-rules')
         .set('Authorization', `Bearer ${opsAdminToken}`)
-        .send({ profession: 'PLUMBER', rewardPercentage: 15.0 });
+        .send({ profession: 'PLUMBER', rewardPercentage: 150.0 });
       expect(resHigh.status).toBe(400);
-      expect(resHigh.body.message).toContain('0.01% and 10.00%');
+      expect(resHigh.body.message).toContain('positive finite number up to 100.00%');
+
+      // Percentage = 0.555 (more than 2 decimal places / paise precision)
+      const resPrecision = await request(app)
+        .post('/api/admin/settings/reward-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ profession: 'PLUMBER', rewardPercentage: 0.555 });
+      expect(resPrecision.status).toBe(400);
+      expect(resPrecision.body.message).toContain('two decimal places');
 
       // Percentage = -0.5 (negative)
       const resNeg = await request(app)

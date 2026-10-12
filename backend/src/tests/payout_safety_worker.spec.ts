@@ -7,6 +7,7 @@ import { ReconciliationWorker } from '../worker/reconciliation.worker';
 import { KycService } from '../services/kyc.service';
 import { PaymentService } from '../services/payment.service';
 import { config } from '../config';
+import { getOrCreateOpsAdmin } from './test_helpers';
 
 describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
   let user: any;
@@ -48,16 +49,7 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
       include: { wallet: true },
     });
 
-    adminUser = await prisma.user.create({
-      data: {
-        mobile: '9888888889',
-        fullName: 'Disbursement Approver Admin',
-        passwordHash: 'hash',
-        role: 'ADMIN',
-        status: 'ACTIVE',
-        isVerified: true,
-      },
-    });
+    adminUser = await getOrCreateOpsAdmin(prisma, '9888888889');
 
     await KycService.submitPan(user.id, 'ABCDE9876K', 'Disbursement Craftsman');
     paymentAccount = await PaymentService.addUpiAccount(user.id, 'disbursementsafety@upi');

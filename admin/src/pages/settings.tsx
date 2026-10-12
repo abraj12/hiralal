@@ -338,7 +338,7 @@ export default function AdminSettingsPage() {
                       type="number"
                       step="0.01"
                       min="0.01"
-                      max="10.0"
+                      max="100.0"
                       value={activeTab === 'PLUMBER' ? plumberForm.rewardPercentage : tileForm.rewardPercentage}
                       onChange={(e) =>
                         activeTab === 'PLUMBER'
@@ -348,7 +348,7 @@ export default function AdminSettingsPage() {
                       className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
                     />
                     <span className="text-[10px] text-slate-400 mt-1 block">
-                      Internal calculation rate applied to verified eligible bill amount (0.01% - 10.00%)
+                      Internal calculation rate applied to verified eligible bill amount (positive decimal, 2 decimal precision)
                     </span>
                   </div>
 

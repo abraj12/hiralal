@@ -152,12 +152,13 @@ async function main() {
       );
     }
 
-    const legacyAdmins = await prisma.user.findMany({
-      where: { role: 'ADMIN' },
-    });
-    if (legacyAdmins.length > 0) {
-      console.warn(
-        `⚠️  [SEED-WARNING] Detected ${legacyAdmins.length} unresolved legacy ADMIN account(s). Run npm run admin:migrate-legacy to resolve them before role removal.`
+    const legacyAdminRows: Array<{ count: bigint | number }> = await prisma.$queryRaw`
+      SELECT COUNT(*) as count FROM "User" WHERE "role"::text = 'ADMIN';
+    `;
+    const legacyAdminCount = Number(legacyAdminRows[0]?.count || 0);
+    if (legacyAdminCount > 0) {
+      throw new Error(
+        `[FATAL] Detected ${legacyAdminCount} unresolved legacy ADMIN account(s). All administrative accounts must be resolved to BILL_ADMIN or OPERATIONS_ADMIN.`
       );
     }
 

@@ -10,6 +10,7 @@ import { prisma } from '../db';
 import crypto from 'crypto';
 
 import { generateBlindIndex } from '../utils/crypto.utils';
+import { getOrCreateOpsAdmin } from './test_helpers';
 
 describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
   let testUserId: string;
@@ -42,18 +43,7 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
 
 
     // Provision admin user for audit log foreign keys
-    const admin = await prisma.user.upsert({
-      where: { mobile: '9999999999' },
-      update: { role: 'ADMIN' },
-      create: {
-        mobile: '9999999999',
-        fullName: 'Admin User',
-        passwordHash: 'adminhash',
-        role: 'ADMIN',
-        status: 'ACTIVE',
-        isVerified: true,
-      },
-    });
+    const admin = await getOrCreateOpsAdmin(prisma);
     testAdminId = admin.id;
 
     // Create a real test plumber

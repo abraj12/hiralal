@@ -5,6 +5,7 @@ import { KycService } from '../services/kyc.service';
 import { PaymentService } from '../services/payment.service';
 import { prisma } from '../db';
 import { getIstYearAndMonth } from '../utils/timezone.utils';
+import { getOrCreateOpsAdmin } from './test_helpers';
 
 describe('Concurrency & Financial Integrity Tests', () => {
   let craftsmanUser: any;
@@ -40,18 +41,7 @@ describe('Concurrency & Financial Integrity Tests', () => {
     });
 
     // Create Admin
-    adminUser = await prisma.user.upsert({
-      where: { mobile: '9999999999' },
-      update: { role: 'ADMIN' },
-      create: {
-        mobile: '9999999999',
-        fullName: 'Admin User',
-        passwordHash: 'hash',
-        role: 'ADMIN',
-        status: 'ACTIVE',
-        isVerified: true,
-      },
-    });
+    adminUser = await getOrCreateOpsAdmin(prisma);
 
     // Enable redemption window
     await prisma.redemptionSettings.upsert({
@@ -226,10 +216,12 @@ describe('Concurrency & Financial Integrity Tests', () => {
       where: { referenceId: bill.id, type: 'REWARD_CREDIT' },
     });
     expect(txs.length).toBe(1);
+    const creditedAmount = Number(txs[0].amount);
+    expect(creditedAmount).toBeGreaterThan(0);
 
-    // Verify wallet balance increased by exactly ₹50
+    // Verify wallet balance increased by exactly the single credited reward
     const finalWallet = await prisma.wallet.findUnique({ where: { userId: craftsmanUser.id } });
-    expect(Number(finalWallet?.availableBalance)).toBe(initialBal + 50);
+    expect(Number(finalWallet?.availableBalance)).toBe(initialBal + creditedAmount);
   });
 
   test('5. Bill Approval vs Rejection Race: Concurrently approving and rejecting same bill allows exactly one terminal transition', async () => {

@@ -500,21 +500,42 @@ export class MobileApiClient {
     });
   }
 
+  // Public Admin Discovery
+  static getAdminPrefixes(): Promise<{ success: boolean; prefixes: { billAdmin: string; operationsAdmin: string } }> {
+    return this.request('/auth/admin-prefixes');
+  }
+
   // Payment Accounts
-  static verifyUpi(upiId: string) {
+  static verifyUpi(upiId: string, accountHolderName?: string, attestation?: RequiredActionAttestation) {
+    const extraHeaders: Record<string, string> = {};
+    if (attestation && attestation.integrityToken && attestation.integrityNonce) {
+      extraHeaders['x-integrity-token'] = attestation.integrityToken.trim();
+      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce.trim();
+    }
     return this.request('/payment-account/upi/verify', {
       method: 'POST',
-      body: JSON.stringify({ upiId }),
+      headers: extraHeaders,
+      body: JSON.stringify({ upiId, accountHolderName }),
     });
   }
 
-  static verifyBankAccount(data: {
-    accountHolderName: string;
-    accountNumber: string;
-    ifscCode: string;
-  }) {
+  static verifyBankAccount(
+    data: {
+      accountHolderName: string;
+      accountNumber: string;
+      ifscCode: string;
+      bankName?: string;
+    },
+    attestation?: RequiredActionAttestation
+  ) {
+    const extraHeaders: Record<string, string> = {};
+    if (attestation && attestation.integrityToken && attestation.integrityNonce) {
+      extraHeaders['x-integrity-token'] = attestation.integrityToken.trim();
+      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce.trim();
+    }
     return this.request('/payment-account/bank/verify', {
       method: 'POST',
+      headers: extraHeaders,
       body: JSON.stringify(data),
     });
   }

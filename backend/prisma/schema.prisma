@@ -17,7 +17,6 @@ enum UserRole {
   USER
   BILL_ADMIN
   OPERATIONS_ADMIN
-  ADMIN
 }
 
 enum UserStatus {

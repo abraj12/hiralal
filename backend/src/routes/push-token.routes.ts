@@ -1,0 +1,68 @@
+import { Router, Response } from 'express';
+import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
+import { NotificationService } from '../services/notification.service';
+
+const router = Router();
+router.use(authenticate);
+
+/**
+ * POST /api/push-token/register
+ * Registers or reactivates a device push token for the authenticated user.
+ */
+router.post('/register', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { token, platform } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Device token is required.' });
+    }
+
+    const deviceToken = await NotificationService.registerDeviceToken(userId, { token, platform });
+    res.status(201).json({ success: true, deviceToken });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * POST /api/push-token/deactivate
+ * Deactivates a device push token for the authenticated user.
+ */
+router.post('/deactivate', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Device token is required.' });
+    }
+
+    await NotificationService.deactivateDeviceToken(userId, token);
+    res.json({ success: true, message: 'Device token deactivated.' });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * DELETE /api/push-token
+ * Deactivates a device push token for the authenticated user.
+ */
+router.delete('/', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const token = (req.body?.token || req.query?.token) as string;
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Device token is required.' });
+    }
+
+    await NotificationService.deactivateDeviceToken(userId, token);
+    res.json({ success: true, message: 'Device token deactivated.' });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+export default router;

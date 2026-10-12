@@ -6,6 +6,7 @@ import { PayoutService } from '../services/payout.service';
 import { getIstYearAndMonth } from '../utils/timezone.utils';
 import { prisma } from '../db';
 import crypto from 'crypto';
+import { getOrCreateOpsAdmin } from './test_helpers';
 
 describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests', () => {
   let plumberUserId: string;
@@ -38,18 +39,7 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     });
 
     // 2. Ensure Admin User
-    const admin = await prisma.user.upsert({
-      where: { mobile: '9999999999' },
-      update: { role: 'ADMIN' },
-      create: {
-        mobile: '9999999999',
-        fullName: 'Executive Admin',
-        passwordHash: 'adminhash',
-        role: 'ADMIN',
-        status: 'ACTIVE',
-        isVerified: true,
-      },
-    });
+    const admin = await getOrCreateOpsAdmin(prisma);
     adminUserId = admin.id;
 
     // 3. Create Plumber User
@@ -488,9 +478,9 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
   });
 
   // -------------------------------------------------------------
-  // Test 10: Admin GST Override and Audit Logging
+  // Test 10: Manual GST Override Rejection & Configured Rule Approval
   // -------------------------------------------------------------
-  it('Scenario 10: Admin GST override stores justification and audit log', async () => {
+  it('Scenario 10: Disallows manual GST override and requires configured GST rule', async () => {
     const bill = await BillService.submitBill({
       userId: plumberUserId,
       invoiceNumber: `INV-OVERRIDE-${Date.now()}`,
@@ -501,25 +491,34 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
       mimeType: 'application/pdf',
     });
 
+    // 1. Manual override attempt without gstRuleId fails closed
+    await expect(
+      BillService.approveBill({
+        billId: bill.id,
+        adminId: adminUserId,
+        gstIncluded: true,
+        gstRate: 18.0,
+        gstOverrideReason: 'Special tax rate verification approved by Director',
+      })
+    ).rejects.toThrow(/A valid applicable GST rule is required when GST is included/i);
+
+    // 2. Approval with valid configured gstRuleId succeeds
     const res = await BillService.approveBill({
       billId: bill.id,
       adminId: adminUserId,
       gstIncluded: true,
-      gstRate: 18.0,
-      gstOverrideReason: 'Special tax rate verification approved by Director',
+      gstRuleId: defaultGstRuleId,
     });
     const approved = res.bill;
 
     expect(approved.status).toBe('APPROVED');
     expect(Number(approved.calculatedReward)).toBeGreaterThan(0);
-    expect(approved.gstOverrideReason).toBe('Special tax rate verification approved by Director');
 
     // Verify audit log entry exists
     const auditLogs = await prisma.auditLog.findMany({
       where: { entityId: bill.id, action: 'BILL_APPROVED' },
     });
     expect(auditLogs.length).toBeGreaterThan(0);
-    expect(auditLogs[0].newValue).toContain('Special tax rate verification');
   });
 
   // -------------------------------------------------------------

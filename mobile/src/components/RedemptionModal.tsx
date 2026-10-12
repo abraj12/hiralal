@@ -17,6 +17,7 @@ import { MobileIntegrityService } from '../services/integrity.service';
 import {
   createPanVerificationRequestHash,
   createPayoutRedemptionRequestHash,
+  createBeneficiaryVerificationRequestHash,
 } from '../services/integrityRequestHash';
 
 interface RedemptionModalProps {
@@ -180,18 +181,41 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
         if (!upiId.trim() || !upiId.includes('@')) {
           throw new Error('Please enter a valid UPI ID (e.g. yourname@bank).');
         }
-        const res = await MobileApiClient.verifyUpi(upiId.trim());
+        const requestHash = await createBeneficiaryVerificationRequestHash({
+          accountType: 'UPI',
+          identifier: upiId.trim(),
+          accountHolderName: user?.fullName || undefined,
+        });
+        const attestation = await MobileIntegrityService.performActionAttestation(
+          'BENEFICIARY_VERIFY',
+          requestHash
+        );
+        const res = await MobileApiClient.verifyUpi(upiId.trim(), user?.fullName || undefined, attestation);
         setPaymentVerified(true);
         setMaskedPayment(res.paymentAccount?.maskedInfo || upiId.trim());
       } else {
         if (!accountHolder.trim() || !accountNumber.trim() || !ifscCode.trim()) {
           throw new Error('Please fill in Account Name, Account Number, and IFSC Code.');
         }
-        const res = await MobileApiClient.verifyBankAccount({
-          accountHolderName: accountHolder.trim(),
-          accountNumber: accountNumber.trim(),
+        const requestHash = await createBeneficiaryVerificationRequestHash({
+          accountType: 'BANK',
+          identifier: accountNumber.trim(),
           ifscCode: ifscCode.trim().toUpperCase(),
+          accountHolderName: accountHolder.trim(),
         });
+        const attestation = await MobileIntegrityService.performActionAttestation(
+          'BENEFICIARY_VERIFY',
+          requestHash
+        );
+        const res = await MobileApiClient.verifyBankAccount(
+          {
+            accountHolderName: accountHolder.trim(),
+            accountNumber: accountNumber.trim(),
+            ifscCode: ifscCode.trim().toUpperCase(),
+            bankName: bankName.trim() || undefined,
+          },
+          attestation
+        );
         setPaymentVerified(true);
         setMaskedPayment(res.paymentAccount?.maskedInfo || `${bankName || 'Bank'} ••••••${accountNumber.slice(-4)}`);
       }
