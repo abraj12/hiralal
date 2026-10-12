@@ -9,6 +9,8 @@ import { getIstYearAndMonth } from '../utils/timezone.utils';
 import { prisma } from '../db';
 import crypto from 'crypto';
 
+import { generateBlindIndex } from '../utils/crypto.utils';
+
 describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
   let testUserId: string;
   let testAdminId: string;
@@ -17,12 +19,25 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
     // Clean up test records
     await prisma.payout.deleteMany({ where: { user: { mobile: '9888888888' } } });
     await prisma.bill.deleteMany({ where: { user: { mobile: '9888888888' } } });
-    await prisma.kycRecord.deleteMany({ where: { user: { mobile: '9888888888' } } });
+    await prisma.kycRecord.deleteMany({
+      where: {
+        OR: [
+          { user: { mobile: '9888888888' } },
+          { panNumber: 'ABCDE1234F' },
+          { panBlindIndex: generateBlindIndex('ABCDE1234F') },
+        ],
+      },
+    });
     await prisma.paymentAccount.deleteMany({ where: { user: { mobile: '9888888888' } } });
     await prisma.wallet.deleteMany({ where: { user: { mobile: '9888888888' } } });
     await prisma.user.deleteMany({ where: { mobile: '9888888888' } });
     await prisma.rewardRule.deleteMany({
-      where: { id: { in: ['test_rule_plumber', 'test_rule_tile', 'rule_plumber_test', 'rule_tile_test'] } },
+      where: {
+        OR: [
+          { id: { in: ['test_rule_plumber', 'test_rule_tile', 'rule_plumber_test', 'rule_tile_test'] } },
+          { profession: 'PLUMBER', version: { gt: 1 } },
+        ],
+      },
     });
 
 

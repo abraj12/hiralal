@@ -253,6 +253,16 @@ export class PlayIntegrityService {
   static async generateNonce(
     context?: Partial<ActionNonceContext>
   ): Promise<{ nonce: string; expiresAt: string; action: IntegrityAction }> {
+    const isProdOrStaging =
+      (config.isProduction || process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') &&
+      process.env.NODE_ENV !== 'test';
+
+    if (isProdOrStaging && !isRedisReady()) {
+      throw new Error(
+        'Shared Redis storage is required for integrity nonces in production and staging environments.'
+      );
+    }
+
     const rawBytes = crypto.randomBytes(32);
     const nonce = rawBytes.toString('base64url');
     const expiresAtMs = Date.now() + this.NONCE_TTL_SECONDS * 1000;
@@ -264,7 +274,7 @@ export class PlayIntegrityService {
       userId: context?.userId,
       sessionId: context?.sessionId,
       action,
-      requestHash: context?.requestHash,
+      requestHash: context?.requestHash ? context.requestHash.toLowerCase() : undefined,
       expiresAt: expiresAtMs,
     };
 
@@ -275,7 +285,10 @@ export class PlayIntegrityService {
       try {
         const redis = getRedisClient();
         await redis.set(key, value, 'EX', this.NONCE_TTL_SECONDS);
-      } catch (err) {
+      } catch (err: any) {
+        if (isProdOrStaging) {
+          throw new Error(`Failed to store integrity nonce in Redis: ${err.message}`);
+        }
         memoryNonceStore.set(nonce, metadata);
       }
     } else {
@@ -291,7 +304,7 @@ export class PlayIntegrityService {
 
   /**
    * Validates and atomically consumes a single-use nonce to prevent replay attacks,
-   * verifying bound user, session, and action context.
+   * verifying bound user, session, action, and request-hash context.
    */
   static async consumeNonce(
     nonce: string,
@@ -301,6 +314,10 @@ export class PlayIntegrityService {
       return { valid: false, error: 'Nonce is required and must be at least 16 characters.' };
     }
 
+    const isProdOrStaging =
+      (config.isProduction || process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') &&
+      process.env.NODE_ENV !== 'test';
+
     const key = `integrity:nonce:${nonce}`;
     let rawMetadata: string | null = null;
     let memoryEntry: NonceMetadata | null = null;
@@ -308,17 +325,34 @@ export class PlayIntegrityService {
     if (isRedisReady()) {
       try {
         const redis = getRedisClient();
-        const fetched = await redis.get(key);
-        if (fetched) {
-          await redis.del(key);
-          rawMetadata = fetched;
+        // Atomic fetch and delete via Lua script: exactly one concurrent request can consume the nonce
+        const atomicGetAndDelete = `
+          local value = redis.call('GET', KEYS[1])
+          if value then
+            redis.call('DEL', KEYS[1])
+          end
+          return value
+        `;
+        const fetched = await redis.eval(atomicGetAndDelete, 1, key);
+        rawMetadata = typeof fetched === 'string' ? fetched : null;
+      } catch (err: any) {
+        if (isProdOrStaging) {
+          return {
+            valid: false,
+            error: `Shared Redis error during nonce consumption: ${err.message}`,
+          };
         }
-      } catch {
-        // Fallback to memory
       }
+    } else if (isProdOrStaging) {
+      // In production/staging, memory fallback is strictly prohibited
+      return {
+        valid: false,
+        error: 'Shared Redis storage is required for integrity nonces in production and staging environments.',
+      };
     }
 
-    if (!rawMetadata && memoryNonceStore.has(nonce)) {
+    // In non-production environments only, check memory fallback if Redis was not used/available
+    if (!isProdOrStaging && !rawMetadata && memoryNonceStore.has(nonce)) {
       memoryEntry = memoryNonceStore.get(nonce)!;
       memoryNonceStore.delete(nonce);
     }
@@ -341,8 +375,9 @@ export class PlayIntegrityService {
       return { valid: false, error: 'Integrity nonce has expired.' };
     }
 
-    // Action binding check
-    if (expectedContext?.action && metadata.action !== 'GENERAL') {
+    // Action binding check - strictly compare whenever expected action is provided
+    // (a GENERAL nonce must NEVER pass as a protected action like BILL_UPLOAD, KYC_SUBMIT, PAYOUT_REDEEM)
+    if (expectedContext?.action) {
       if (metadata.action !== expectedContext.action) {
         return {
           valid: false,
@@ -351,9 +386,13 @@ export class PlayIntegrityService {
       }
     }
 
+    const isProtectedAction =
+      expectedContext?.action &&
+      ['BILL_UPLOAD', 'KYC_SUBMIT', 'PAYOUT_REDEEM'].includes(expectedContext.action);
+
     // User binding check
-    if (expectedContext?.userId && metadata.userId) {
-      if (metadata.userId !== expectedContext.userId) {
+    if (expectedContext?.userId) {
+      if (!metadata.userId || metadata.userId !== expectedContext.userId) {
         return {
           valid: false,
           error: 'Integrity nonce was issued for a different user.',
@@ -362,8 +401,8 @@ export class PlayIntegrityService {
     }
 
     // Session binding check
-    if (expectedContext?.sessionId && metadata.sessionId) {
-      if (metadata.sessionId !== expectedContext.sessionId) {
+    if (expectedContext?.sessionId) {
+      if (!metadata.sessionId || metadata.sessionId !== expectedContext.sessionId) {
         return {
           valid: false,
           error: 'Integrity nonce was issued for a different user session.',
@@ -371,9 +410,26 @@ export class PlayIntegrityService {
       }
     }
 
-    // Request hash binding check
-    if (expectedContext?.requestHash && metadata.requestHash) {
-      if (metadata.requestHash !== expectedContext.requestHash) {
+    // Request hash binding check: mandatory for protected actions
+    if (isProtectedAction) {
+      if (!expectedContext?.requestHash || !metadata.requestHash) {
+        return {
+          valid: false,
+          error: 'Integrity nonce request hash is required for protected actions.',
+        };
+      }
+      if (expectedContext.requestHash.toLowerCase() !== metadata.requestHash.toLowerCase()) {
+        return {
+          valid: false,
+          error: 'Integrity nonce requestHash mismatch.',
+        };
+      }
+    } else if (expectedContext?.requestHash || metadata.requestHash) {
+      if (
+        !expectedContext?.requestHash ||
+        !metadata.requestHash ||
+        expectedContext.requestHash.toLowerCase() !== metadata.requestHash.toLowerCase()
+      ) {
         return {
           valid: false,
           error: 'Integrity nonce requestHash mismatch.',

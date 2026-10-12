@@ -13,6 +13,11 @@ import {
 import { X, CheckCircle2, ShieldCheck, ArrowRight, CreditCard, AlertCircle } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
+import { MobileIntegrityService } from '../services/integrity.service';
+import {
+  createPanVerificationRequestHash,
+  createPayoutRedemptionRequestHash,
+} from '../services/integrityRequestHash';
 
 interface RedemptionModalProps {
   visible: boolean;
@@ -130,11 +135,25 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
     setErrorMsg(null);
     setIsSubmitting(true);
     try {
+      const consentText = 'I provide consent to verify my PAN identity for rewards payout compliance.';
+      const requestHash = await createPanVerificationRequestHash({
+        panNumber: panNumber.trim().toUpperCase(),
+        panName: panName.trim(),
+        consent: true,
+        consentText,
+      });
+
+      const attestation = await MobileIntegrityService.performActionAttestation(
+        'KYC_SUBMIT',
+        requestHash
+      );
+
       const res = await MobileApiClient.verifyPan(
         panNumber.trim().toUpperCase(),
         panName.trim(),
         true,
-        'I provide consent to verify my PAN identity for rewards payout compliance.'
+        consentText,
+        attestation
       );
       setPanVerified(true);
       setMaskedPan(res.kyc?.maskedPan || 'ABCDE••••F');
@@ -190,9 +209,21 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
     }
 
     try {
-      const res = await MobileApiClient.redeemRewards({
+      const requestHash = await createPayoutRedemptionRequestHash({
         idempotencyKey: currentKey,
       });
+
+      const attestation = await MobileIntegrityService.performActionAttestation(
+        'PAYOUT_REDEEM',
+        requestHash
+      );
+
+      const res = await MobileApiClient.redeemRewards(
+        {
+          idempotencyKey: currentKey,
+        },
+        attestation
+      );
       if (res.payout) {
         setPayoutResult({
           id: res.payout.id,

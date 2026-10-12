@@ -599,100 +599,124 @@ router.patch('/me', authenticate, requireUser, async (req: AuthenticatedRequest,
 // 8. PLAY INTEGRITY NONCE & VERIFICATION
 // ==========================================
 
-router.get('/integrity/nonce', integrityNonceLimiter, async (req: Request, res: Response) => {
-  try {
-    const action = (req.query.action as any) || 'GENERAL';
-    const result = await PlayIntegrityService.generateNonce({ action });
-    res.json({ success: true, ...result });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
+router.post(
+  '/integrity/nonce',
+  authenticate,
+  requireUser,
+  integrityNonceLimiter,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { action, requestHash } = req.body ?? {};
 
-router.post('/integrity/nonce', integrityNonceLimiter, async (req: Request, res: Response) => {
-  try {
-    const authHeader = req.headers.authorization;
-    let userId: string | undefined;
-    let sessionId: string | undefined;
+      const allowedActions = [
+        'BILL_UPLOAD',
+        'KYC_SUBMIT',
+        'PAYOUT_REDEEM',
+      ] as const;
 
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      try {
-        const token = authHeader.substring(7);
-        const decoded = jwt.decode(token) as any;
-        if (decoded?.id || decoded?.userId) {
-          userId = decoded.id || decoded.userId;
-          sessionId = decoded.sessionId;
-        }
-      } catch {
-        // Unauthenticated fallback
+      if (!action || !allowedActions.includes(action)) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_ACTION',
+          message: 'A valid protected integrity action is required (BILL_UPLOAD, KYC_SUBMIT, PAYOUT_REDEEM).',
+        });
       }
-    }
 
-    const action = req.body?.action || 'GENERAL';
-    const requestHash = req.body?.requestHash;
-
-    const result = await PlayIntegrityService.generateNonce({
-      userId,
-      sessionId,
-      action,
-      requestHash,
-    });
-    res.json({ success: true, ...result });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-router.post('/integrity/verify', integrityVerifyLimiter, async (req: Request, res: Response) => {
-  try {
-    const { nonce, integrityToken, action, requestHash } = req.body;
-    if (!nonce || !integrityToken) {
-      return res.status(400).json({
-        success: false,
-        message: 'Both nonce and integrityToken are required.',
-      });
-    }
-
-    const authHeader = req.headers.authorization;
-    let userId: string | undefined;
-    let sessionId: string | undefined;
-
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      try {
-        const token = authHeader.substring(7);
-        const decoded = jwt.decode(token) as any;
-        if (decoded?.id || decoded?.userId) {
-          userId = decoded.id || decoded.userId;
-          sessionId = decoded.sessionId;
-        }
-      } catch {
-        // Ignore token decoding failure for standalone verify
+      if (
+        typeof requestHash !== 'string' ||
+        !/^[a-f0-9]{64}$/i.test(requestHash)
+      ) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_REQUEST_HASH',
+          message: 'A valid SHA-256 request hash is required.',
+        });
       }
-    }
 
-    const verdict = await PlayIntegrityService.verifyActionToken({
-      nonce,
-      integrityToken,
-      expectedContext: {
-        userId,
-        sessionId,
+      const user = req.user!;
+
+      const result = await PlayIntegrityService.generateNonce({
+        userId: user.id,
+        sessionId: user.activeSessionId ?? undefined,
         action,
-        requestHash,
-      },
-    });
-
-    if (!verdict.success) {
-      return res.status(400).json({
-        success: false,
-        message: verdict.error || 'Integrity verification failed.',
-        verdict,
+        requestHash: requestHash.toLowerCase(),
       });
-    }
 
-    res.json({ success: true, verdict });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
   }
-});
+);
+
+router.post(
+  '/integrity/verify',
+  authenticate,
+  requireUser,
+  integrityVerifyLimiter,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { nonce, integrityToken, action, requestHash } = req.body ?? {};
+      if (!nonce || !integrityToken) {
+        return res.status(400).json({
+          success: false,
+          code: 'MISSING_PARAMETERS',
+          message: 'Both nonce and integrityToken are required.',
+        });
+      }
+
+      const allowedActions = [
+        'BILL_UPLOAD',
+        'KYC_SUBMIT',
+        'PAYOUT_REDEEM',
+      ] as const;
+
+      if (!action || !allowedActions.includes(action)) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_ACTION',
+          message: 'A valid protected integrity action is required.',
+        });
+      }
+
+      if (
+        typeof requestHash !== 'string' ||
+        !/^[a-f0-9]{64}$/i.test(requestHash)
+      ) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_REQUEST_HASH',
+          message: 'A valid SHA-256 request hash is required.',
+        });
+      }
+
+      const user = req.user!;
+
+      const verdict = await PlayIntegrityService.verifyActionToken({
+        nonce,
+        integrityToken,
+        expectedContext: {
+          userId: user.id,
+          sessionId: user.activeSessionId ?? undefined,
+          action,
+          requestHash: requestHash.toLowerCase(),
+        },
+      });
+
+      if (!verdict.success) {
+        return res.status(400).json({
+          success: false,
+          code: 'VERIFICATION_FAILED',
+          message: verdict.error || 'Integrity verification failed.',
+          verdict,
+        });
+      }
+
+      return res.json({ success: true, verdict });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  }
+);
 
 export default router;

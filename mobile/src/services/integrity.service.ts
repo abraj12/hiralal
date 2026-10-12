@@ -52,16 +52,24 @@ export class MobileIntegrityService {
 
   /**
    * Performs complete action attestation flow:
-   * 1. Requests action-bound single-use nonce from the backend
-   * 2. Requests genuine device token from Google Play Integrity API on device
-   * 3. Returns { integrityToken, integrityNonce } to be passed to the protected action API
+   * 1. Validates the 64-character hexadecimal SHA-256 request hash
+   * 2. Requests authenticated, action-bound single-use nonce from the backend
+   * 3. Requests genuine device token from Google Play Integrity API on device
+   * 4. Returns { integrityToken, integrityNonce } to be passed to the protected action API
    */
   static async performActionAttestation(
     action: ProtectedAction,
-    requestHash?: string
+    requestHash: string
   ): Promise<ActionAttestation> {
+    if (!requestHash || typeof requestHash !== 'string' || !/^[a-f0-9]{64}$/i.test(requestHash)) {
+      throw new Error('A valid 64-character hexadecimal SHA-256 requestHash is required for action attestation.');
+    }
+
     // 1. Obtain action-bound server nonce
-    const nonceRes = await MobileApiClient.getIntegrityNonce({ action, requestHash });
+    const nonceRes = await MobileApiClient.getIntegrityNonce({
+      action,
+      requestHash: requestHash.toLowerCase(),
+    });
     if (!nonceRes?.success || !nonceRes?.nonce) {
       throw new Error(nonceRes?.message || 'Failed to acquire integrity nonce from server.');
     }

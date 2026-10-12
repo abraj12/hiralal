@@ -2,6 +2,11 @@ import Constants from 'expo-constants';
 import { Platform, NativeModules } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
+export interface RequiredActionAttestation {
+  integrityToken: string;
+  integrityNonce: string;
+}
+
 const getBaseUrl = () => {
   // 1. In production builds, explicit HTTPS EXPO_PUBLIC_API_URL takes absolute precedence
   const isProduction = process.env.NODE_ENV === 'production' || (typeof __DEV__ !== 'undefined' && !__DEV__);
@@ -403,15 +408,16 @@ export class MobileApiClient {
       fileName?: string;
       mimeType?: string;
     },
-    attestation?: { integrityToken?: string; integrityNonce?: string }
+    attestation: RequiredActionAttestation
   ) {
-    const extraHeaders: Record<string, string> = {};
-    if (attestation?.integrityToken) {
-      extraHeaders['x-integrity-token'] = attestation.integrityToken;
+    if (!attestation || !attestation.integrityToken?.trim() || !attestation.integrityNonce?.trim()) {
+      throw new Error('Play Integrity attestation (integrityToken and integrityNonce) is required for bill upload.');
     }
-    if (attestation?.integrityNonce) {
-      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce;
-    }
+
+    const extraHeaders: Record<string, string> = {
+      'x-integrity-token': attestation.integrityToken.trim(),
+      'x-integrity-nonce': attestation.integrityNonce.trim(),
+    };
 
     if (data.file) {
       const formData = new FormData();
@@ -474,17 +480,18 @@ export class MobileApiClient {
   static verifyPan(
     panNumber: string,
     panName: string,
-    consent = true,
-    consentText?: string,
-    attestation?: { integrityToken?: string; integrityNonce?: string }
+    consent: boolean,
+    consentText: string | undefined,
+    attestation: RequiredActionAttestation
   ) {
-    const extraHeaders: Record<string, string> = {};
-    if (attestation?.integrityToken) {
-      extraHeaders['x-integrity-token'] = attestation.integrityToken;
+    if (!attestation || !attestation.integrityToken?.trim() || !attestation.integrityNonce?.trim()) {
+      throw new Error('Play Integrity attestation (integrityToken and integrityNonce) is required for PAN verification.');
     }
-    if (attestation?.integrityNonce) {
-      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce;
-    }
+
+    const extraHeaders: Record<string, string> = {
+      'x-integrity-token': attestation.integrityToken.trim(),
+      'x-integrity-nonce': attestation.integrityNonce.trim(),
+    };
 
     return this.request('/kyc/pan/verify', {
       method: 'POST',
@@ -523,15 +530,16 @@ export class MobileApiClient {
       paymentAccountId?: string;
       amount?: number;
     },
-    attestation?: { integrityToken?: string; integrityNonce?: string }
+    attestation: RequiredActionAttestation
   ) {
-    const extraHeaders: Record<string, string> = {};
-    if (attestation?.integrityToken) {
-      extraHeaders['x-integrity-token'] = attestation.integrityToken;
+    if (!attestation || !attestation.integrityToken?.trim() || !attestation.integrityNonce?.trim()) {
+      throw new Error('Play Integrity attestation (integrityToken and integrityNonce) is required for payout redemption.');
     }
-    if (attestation?.integrityNonce) {
-      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce;
-    }
+
+    const extraHeaders: Record<string, string> = {
+      'x-integrity-token': attestation.integrityToken.trim(),
+      'x-integrity-nonce': attestation.integrityNonce.trim(),
+    };
 
     return this.request('/payouts/redeem', {
       method: 'POST',
@@ -686,17 +694,17 @@ export class MobileApiClient {
   }
 
   // Play Integrity API
-  static getIntegrityNonce(options?: { action?: string; requestHash?: string }) {
-    return this.request('/auth/integrity/nonce', {
+  static getIntegrityNonce(options: { action: string; requestHash: string }) {
+    return this.request<{ success: boolean; nonce: string; message?: string }>('/auth/integrity/nonce', {
       method: 'POST',
-      body: JSON.stringify(options || {}),
+      body: JSON.stringify(options),
     });
   }
 
   static verifyIntegrityToken(
     nonce: string,
     integrityToken: string,
-    options?: { action?: string; requestHash?: string }
+    options: { action: string; requestHash: string }
   ) {
     return this.request('/auth/integrity/verify', {
       method: 'POST',

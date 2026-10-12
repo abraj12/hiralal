@@ -520,8 +520,23 @@ describe('Task L & N — Notification System, In-App Center, Operations Broadcas
       PlayIntegrityService.overrideConfig(null);
     });
 
-    test('GET and POST /api/auth/integrity/nonce returns cryptographically secure nonce', async () => {
-      const res = await request(app).post('/api/auth/integrity/nonce');
+    test('GET /api/auth/integrity/nonce returns 404 and POST requires authentication', async () => {
+      const getRes = await request(app).get('/api/auth/integrity/nonce');
+      expect(getRes.status).toBe(404);
+
+      const unauthRes = await request(app).post('/api/auth/integrity/nonce');
+      expect(unauthRes.status).toBe(401);
+    });
+
+    test('POST /api/auth/integrity/nonce returns cryptographically secure nonce with authenticated action context', async () => {
+      const validHash = crypto.createHash('sha256').update('test_payload').digest('hex');
+      const res = await request(app)
+        .post('/api/auth/integrity/nonce')
+        .set('Authorization', `Bearer ${plumberToken}`)
+        .send({
+          action: 'BILL_UPLOAD',
+          requestHash: validHash,
+        });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -534,11 +549,15 @@ describe('Task L & N — Notification System, In-App Center, Operations Broadcas
     });
 
     test('POST /api/auth/integrity/verify verifies token and consumes nonce (single-use anti-replay)', async () => {
+      const validHash = crypto.createHash('sha256').update('test_payload').digest('hex');
       const verifyRes = await request(app)
         .post('/api/auth/integrity/verify')
+        .set('Authorization', `Bearer ${plumberToken}`)
         .send({
           nonce: testNonce,
           integrityToken: 'sample_jwt_integrity_token_from_play_store',
+          action: 'BILL_UPLOAD',
+          requestHash: validHash,
         });
 
       expect(verifyRes.status).toBe(200);
@@ -549,9 +568,12 @@ describe('Task L & N — Notification System, In-App Center, Operations Broadcas
       // Replay attempt with same nonce MUST be rejected
       const replayRes = await request(app)
         .post('/api/auth/integrity/verify')
+        .set('Authorization', `Bearer ${plumberToken}`)
         .send({
           nonce: testNonce,
           integrityToken: 'sample_jwt_integrity_token_from_play_store',
+          action: 'BILL_UPLOAD',
+          requestHash: validHash,
         });
 
       expect(replayRes.status).toBe(400);

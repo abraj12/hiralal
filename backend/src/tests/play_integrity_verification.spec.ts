@@ -2,18 +2,21 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import request from 'supertest';
 import { app } from '../server';
+import { prisma } from '../db';
 import { PlayIntegrityService, PlayIntegrityVerdict } from '../services/integrity/playIntegrity.service';
 import { config } from '../config';
 
 describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', () => {
   let validRsaPrivateKey: string;
   let validRsaPublicKey: string;
+  let testUserToken: string;
+  let testUserId: string;
 
   const TEST_PACKAGE_NAME = 'com.hiralal.rewards';
   const TEST_CLIENT_EMAIL = 'play-integrity@hiralal-rewards.iam.gserviceaccount.com';
   const TEST_CERT_DIGEST = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
 
-  beforeAll(() => {
+  beforeAll(async () => {
     // Generate real 2048-bit RSA keypair for RS256 JWT signing tests
     const keyPair = crypto.generateKeyPairSync('rsa', {
       modulusLength: 2048,
@@ -22,6 +25,25 @@ describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', (
     });
     validRsaPrivateKey = keyPair.privateKey;
     validRsaPublicKey = keyPair.publicKey;
+
+    // Create active test user for route tests
+    const testUser = await prisma.user.upsert({
+      where: { mobile: '9876500099' },
+      update: { status: 'ACTIVE' },
+      create: {
+        mobile: '9876500099',
+        fullName: 'Integrity Route Test User',
+        passwordHash: 'hashed',
+        profession: 'PLUMBER',
+        status: 'ACTIVE',
+      },
+    });
+    testUserId = testUser.id;
+    testUserToken = jwt.sign(
+      { id: testUser.id, role: testUser.role, mobile: testUser.mobile },
+      config.jwt.accessSecret,
+      { expiresIn: '1h' }
+    );
   });
 
   beforeEach(() => {
@@ -31,10 +53,13 @@ describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', (
     PlayIntegrityService.clearMemoryNonces();
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     PlayIntegrityService.overrideConfig(null);
     PlayIntegrityService.setFetchClient(null);
     PlayIntegrityService.resetTokenCache();
+    await prisma.user.deleteMany({
+      where: { mobile: '9876500099' },
+    });
   });
 
   // =========================================================================
@@ -149,12 +174,16 @@ describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', (
       expect(verdict.error).toContain('Integrity nonce was issued for a different user session');
     });
 
-    it('action-bound nonces succeed when all context parameters match', async () => {
+    it('action-bound nonces reject mismatched requestHash attempts', async () => {
       PlayIntegrityService.overrideConfig({ allowMock: true });
+      const hash1 = crypto.createHash('sha256').update('payload_1').digest('hex');
+      const hash2 = crypto.createHash('sha256').update('payload_2').digest('hex');
+
       const nonceObj = await PlayIntegrityService.generateNonce({
         action: 'KYC_SUBMIT',
         userId: 'user_123',
         sessionId: 'session_abc',
+        requestHash: hash1,
       });
 
       const verdict = await PlayIntegrityService.verifyActionToken({
@@ -164,6 +193,32 @@ describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', (
           action: 'KYC_SUBMIT',
           userId: 'user_123',
           sessionId: 'session_abc',
+          requestHash: hash2,
+        },
+      });
+
+      expect(verdict.success).toBe(false);
+      expect(verdict.error).toContain('requestHash mismatch');
+    });
+
+    it('action-bound nonces succeed when all context parameters match', async () => {
+      PlayIntegrityService.overrideConfig({ allowMock: true });
+      const validHash = crypto.createHash('sha256').update('canonical_payload').digest('hex');
+      const nonceObj = await PlayIntegrityService.generateNonce({
+        action: 'KYC_SUBMIT',
+        userId: 'user_123',
+        sessionId: 'session_abc',
+        requestHash: validHash,
+      });
+
+      const verdict = await PlayIntegrityService.verifyActionToken({
+        nonce: nonceObj.nonce,
+        integrityToken: 'dummy_token',
+        expectedContext: {
+          action: 'KYC_SUBMIT',
+          userId: 'user_123',
+          sessionId: 'session_abc',
+          requestHash: validHash,
         },
       });
 
@@ -1092,20 +1147,59 @@ describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', (
   // 7. Route Endpoints & Rate Limiting Integration
   // =========================================================================
   describe('7. API Route Endpoints & Rate Limiting', () => {
-    it('GET and POST /api/auth/integrity/nonce both return 200 with nonce', async () => {
-      const getRes = await request(app).get('/api/auth/integrity/nonce');
-      expect(getRes.status).toBe(200);
-      expect(getRes.body.success).toBe(true);
-      expect(getRes.body.nonce).toBeDefined();
+    const validHash = crypto.createHash('sha256').update('test_canonical_payload').digest('hex');
 
-      const postRes = await request(app).post('/api/auth/integrity/nonce');
+    it('GET /api/auth/integrity/nonce returns 404 and POST requires authentication', async () => {
+      const getRes = await request(app).get('/api/auth/integrity/nonce');
+      expect(getRes.status).toBe(404);
+
+      const unauthRes = await request(app).post('/api/auth/integrity/nonce');
+      expect(unauthRes.status).toBe(401);
+    });
+
+    it('POST /api/auth/integrity/nonce rejects invalid action or missing/malformed requestHash', async () => {
+      // Missing action and requestHash
+      const res1 = await request(app)
+        .post('/api/auth/integrity/nonce')
+        .set('Authorization', `Bearer ${testUserToken}`)
+        .send({});
+      expect(res1.status).toBe(400);
+
+      // Disallowed action (GENERAL)
+      const res2 = await request(app)
+        .post('/api/auth/integrity/nonce')
+        .set('Authorization', `Bearer ${testUserToken}`)
+        .send({ action: 'GENERAL', requestHash: validHash });
+      expect(res2.status).toBe(400);
+
+      // Malformed requestHash (not 64-hex)
+      const res3 = await request(app)
+        .post('/api/auth/integrity/nonce')
+        .set('Authorization', `Bearer ${testUserToken}`)
+        .send({ action: 'BILL_UPLOAD', requestHash: 'not_a_valid_64_char_hex_hash' });
+      expect(res3.status).toBe(400);
+    });
+
+    it('POST /api/auth/integrity/nonce returns 200 with nonce on valid authenticated request', async () => {
+      const postRes = await request(app)
+        .post('/api/auth/integrity/nonce')
+        .set('Authorization', `Bearer ${testUserToken}`)
+        .send({ action: 'BILL_UPLOAD', requestHash: validHash });
+
       expect(postRes.status).toBe(200);
       expect(postRes.body.success).toBe(true);
       expect(postRes.body.nonce).toBeDefined();
+      expect(typeof postRes.body.nonce).toBe('string');
     });
 
-    it('POST /api/auth/integrity/verify returns 400 when body is missing nonce or token', async () => {
-      const res = await request(app).post('/api/auth/integrity/verify').send({});
+    it('POST /api/auth/integrity/verify returns 401 when unauthenticated and 400 when body is missing nonce or token', async () => {
+      const unauthRes = await request(app).post('/api/auth/integrity/verify').send({});
+      expect(unauthRes.status).toBe(401);
+
+      const res = await request(app)
+        .post('/api/auth/integrity/verify')
+        .set('Authorization', `Bearer ${testUserToken}`)
+        .send({});
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
       expect(res.body.message).toContain('Both nonce and integrityToken are required');
@@ -1114,12 +1208,21 @@ describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', (
     it('POST /api/auth/integrity/verify returns 200 with verdict on valid verification', async () => {
       PlayIntegrityService.overrideConfig({ allowMock: true });
 
-      const nonceRes = await request(app).post('/api/auth/integrity/nonce');
+      const nonceRes = await request(app)
+        .post('/api/auth/integrity/nonce')
+        .set('Authorization', `Bearer ${testUserToken}`)
+        .send({ action: 'BILL_UPLOAD', requestHash: validHash });
       const nonce = nonceRes.body.nonce;
 
       const verifyRes = await request(app)
         .post('/api/auth/integrity/verify')
-        .send({ nonce, integrityToken: 'valid_mock_token' });
+        .set('Authorization', `Bearer ${testUserToken}`)
+        .send({
+          nonce,
+          integrityToken: 'valid_mock_token',
+          action: 'BILL_UPLOAD',
+          requestHash: validHash,
+        });
 
       expect(verifyRes.status).toBe(200);
       expect(verifyRes.body.success).toBe(true);
@@ -1134,7 +1237,9 @@ describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', (
       for (let i = 0; i < limit + 5; i++) {
         const res = await request(app)
           .post('/api/auth/integrity/nonce')
-          .set('x-test-rate-limit', 'true');
+          .set('Authorization', `Bearer ${testUserToken}`)
+          .set('x-test-rate-limit', 'true')
+          .send({ action: 'BILL_UPLOAD', requestHash: validHash });
 
         if (res.status === 429) {
           rateLimited = true;

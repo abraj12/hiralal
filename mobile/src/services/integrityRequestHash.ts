@@ -1,0 +1,115 @@
+import * as Crypto from 'expo-crypto';
+
+export function normalizeAmountTwoDecimals(amount: number | string): string {
+  const num = typeof amount === 'number' ? amount : parseFloat(String(amount).trim());
+  if (!Number.isFinite(num) || num <= 0) {
+    throw new Error('Invalid amount for integrity request hash calculation.');
+  }
+  return num.toFixed(2);
+}
+
+export async function sha256Bytes(bytes: Uint8Array): Promise<string> {
+  const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, bytes as any);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+export async function sha256Json(value: unknown): Promise<string> {
+  return Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    JSON.stringify(value),
+    { encoding: Crypto.CryptoEncoding.HEX }
+  );
+}
+
+export async function readFileBytes(fileOrUri: any): Promise<Uint8Array> {
+  if (fileOrUri instanceof Uint8Array) {
+    return fileOrUri;
+  }
+  if (typeof Blob !== 'undefined' && fileOrUri instanceof Blob) {
+    const arrayBuffer = await fileOrUri.arrayBuffer();
+    return new Uint8Array(arrayBuffer);
+  }
+  if (fileOrUri && typeof fileOrUri.file !== 'undefined' && typeof Blob !== 'undefined' && fileOrUri.file instanceof Blob) {
+    const arrayBuffer = await fileOrUri.file.arrayBuffer();
+    return new Uint8Array(arrayBuffer);
+  }
+  const uri = typeof fileOrUri === 'string' ? fileOrUri : fileOrUri?.uri;
+  if (typeof uri === 'string') {
+    const response = await fetch(uri);
+    if (!response.ok) {
+      throw new Error(`Failed to read file from URI: ${uri}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    return new Uint8Array(arrayBuffer);
+  }
+  throw new Error('Unsupported file input for reading invoice bytes.');
+}
+
+/**
+ * Computes canonical request hash for bill invoice upload.
+ */
+export async function createBillUploadRequestHash(
+  data: {
+    invoiceNumber: string;
+    invoiceDate: string;
+    billAmount: number | string;
+    remarks?: string;
+  },
+  fileOrUri: any
+): Promise<string> {
+  const bytes = await readFileBytes(fileOrUri);
+  if (!bytes || bytes.length === 0) {
+    throw new Error('Invoice file content is required to calculate request hash.');
+  }
+  const fileSha256 = await sha256Bytes(bytes);
+
+  const canonicalPayload = {
+    version: 1,
+    action: 'BILL_UPLOAD',
+    invoiceNumber: String(data.invoiceNumber || '').trim(),
+    invoiceDate: String(data.invoiceDate || '').trim(),
+    billAmount: normalizeAmountTwoDecimals(data.billAmount),
+    remarks: String(data.remarks || '').trim(),
+    fileSha256,
+  };
+
+  return sha256Json(canonicalPayload);
+}
+
+/**
+ * Computes canonical request hash for KYC PAN verification.
+ */
+export async function createPanVerificationRequestHash(data: {
+  panNumber: string;
+  panName: string;
+  consent: boolean;
+  consentText: string;
+}): Promise<string> {
+  const canonicalPayload = {
+    version: 1,
+    action: 'KYC_SUBMIT',
+    panNumber: String(data.panNumber || '').trim().toUpperCase(),
+    panName: String(data.panName || '').trim(),
+    consent: Boolean(data.consent),
+    consentText: String(data.consentText || '').trim(),
+  };
+
+  return sha256Json(canonicalPayload);
+}
+
+/**
+ * Computes canonical request hash for payout redemption.
+ */
+export async function createPayoutRedemptionRequestHash(data: {
+  idempotencyKey: string;
+}): Promise<string> {
+  const canonicalPayload = {
+    version: 1,
+    action: 'PAYOUT_REDEEM',
+    idempotencyKey: String(data.idempotencyKey || '').trim(),
+  };
+
+  return sha256Json(canonicalPayload);
+}

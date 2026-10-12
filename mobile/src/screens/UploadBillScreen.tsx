@@ -14,6 +14,8 @@ import * as DocumentPicker from 'expo-document-picker';
 import { Camera, Image as ImageIcon, ArrowLeft, CheckCircle2, AlertCircle, FileText, X } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
+import { MobileIntegrityService } from '../services/integrity.service';
+import { createBillUploadRequestHash } from '../services/integrityRequestHash';
 
 interface SelectedFileInfo {
   uri: string;
@@ -157,13 +159,31 @@ export default function UploadBillScreen() {
     setErrorMsg(null);
 
     try {
-      await MobileApiClient.uploadBill({
-        invoiceNumber: invoiceNumber.trim(),
-        invoiceDate,
-        billAmount: amount,
-        remarks: remarks.trim() || undefined,
-        file: selectedFile,
-      });
+      const requestHash = await createBillUploadRequestHash(
+        {
+          invoiceNumber: invoiceNumber.trim(),
+          invoiceDate,
+          billAmount: amount,
+          remarks: remarks.trim() || undefined,
+        },
+        selectedFile
+      );
+
+      const attestation = await MobileIntegrityService.performActionAttestation(
+        'BILL_UPLOAD',
+        requestHash
+      );
+
+      await MobileApiClient.uploadBill(
+        {
+          invoiceNumber: invoiceNumber.trim(),
+          invoiceDate,
+          billAmount: amount,
+          remarks: remarks.trim() || undefined,
+          file: selectedFile,
+        },
+        attestation
+      );
       setIsSuccess(true);
       refreshData();
     } catch (e: any) {

@@ -25,7 +25,7 @@ const upload = multer({
 /**
  * Upload Bill Invoice
  */
-router.post('/', authenticate, requireUser, requireActionIntegrity('BILL_UPLOAD'), upload.single('invoiceFile'), async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', authenticate, requireUser, upload.single('invoiceFile'), requireActionIntegrity('BILL_UPLOAD'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const { invoiceNumber, invoiceDate, billAmount, remarks } = req.body;

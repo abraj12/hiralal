@@ -5,6 +5,13 @@ import { prisma } from '../db';
 import { closeRedis } from '../redis';
 import { PlayIntegrityService } from '../services/integrity/playIntegrity.service';
 import { config } from '../config';
+import {
+  buildCanonicalBillUploadPayload,
+  buildCanonicalKycSubmitPayload,
+  buildCanonicalPayoutRedeemPayload,
+  computeSha256Bytes,
+  computeSha256Json,
+} from '../utils/integrityRequestHash';
 
 describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', () => {
   let userToken: string;
@@ -66,7 +73,8 @@ describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', ()
       .post('/api/auth/login')
       .send({ mobile: '9888877771', password: 'Password@123' });
     userToken = loginRes.body.token;
-    userSessionId = loginRes.body.user?.activeSessionId;
+    const dbUser = await prisma.user.findUnique({ where: { id: testUserId } });
+    userSessionId = loginRes.body.sessionId || dbUser?.activeSessionId || '';
 
     // Login secondary user
     const otherLoginRes = await request(app)
@@ -74,8 +82,11 @@ describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', ()
       .send({ mobile: '9888877772', password: 'Password@123' });
     otherUserToken = otherLoginRes.body.token;
 
-    // Clean up any residual bills from previous runs
+    // Clean up any residual bills and KYC records from previous runs
     await prisma.bill.deleteMany({
+      where: { userId: { in: [testUserId, otherUserId] } },
+    });
+    await prisma.kycRecord.deleteMany({
       where: { userId: { in: [testUserId, otherUserId] } },
     });
   });
@@ -97,6 +108,9 @@ describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', ()
     PlayIntegrityService.overrideConfig(null);
     try {
       await prisma.bill.deleteMany({
+        where: { userId: { in: [testUserId, otherUserId] } },
+      });
+      await prisma.kycRecord.deleteMany({
         where: { userId: { in: [testUserId, otherUserId] } },
       });
     } catch {}
@@ -187,9 +201,19 @@ describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', ()
     });
 
     it('rejects replay of previously consumed nonce on bill upload', async () => {
+      const invNum1 = `INV-FIRST-${Date.now()}`;
+      const invDate = '2026-10-05';
+      const billAmt = '1000.00';
+      const fileBuf1 = createDummyPdf('first');
+      const fileSha256_1 = computeSha256Bytes(fileBuf1);
+      const payload1 = buildCanonicalBillUploadPayload(invNum1, invDate, billAmt, undefined, fileSha256_1);
+      const reqHash1 = computeSha256Json(payload1);
+
       const nonceObj = await PlayIntegrityService.generateNonce({
         action: 'BILL_UPLOAD',
         userId: testUserId,
+        sessionId: userSessionId,
+        requestHash: reqHash1,
       });
 
       // Legitimate first upload consumes nonce
@@ -198,24 +222,26 @@ describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', ()
         .set('Authorization', `Bearer ${userToken}`)
         .set('x-integrity-token', 'valid_mock_token')
         .set('x-integrity-nonce', nonceObj.nonce)
-        .field('invoiceNumber', `INV-FIRST-${Date.now()}`)
-        .field('invoiceDate', '2026-10-05')
-        .field('billAmount', '1000.00')
-        .attach('invoiceFile', createDummyPdf('first'), 'invoice.pdf');
+        .field('invoiceNumber', invNum1)
+        .field('invoiceDate', invDate)
+        .field('billAmount', billAmt)
+        .attach('invoiceFile', fileBuf1, 'invoice.pdf');
 
       expect(res1.status).toBe(201);
       expect(res1.body.success).toBe(true);
 
       // Replay attempt with same nonce MUST be rejected
+      const invNum2 = `INV-REPLAY-${Date.now()}`;
+      const fileBuf2 = createDummyPdf('replay');
       const res2 = await request(app)
         .post('/api/bills')
         .set('Authorization', `Bearer ${userToken}`)
         .set('x-integrity-token', 'valid_mock_token')
         .set('x-integrity-nonce', nonceObj.nonce)
-        .field('invoiceNumber', `INV-REPLAY-${Date.now()}`)
-        .field('invoiceDate', '2026-10-05')
-        .field('billAmount', '1000.00')
-        .attach('invoiceFile', createDummyPdf('replay'), 'invoice.pdf');
+        .field('invoiceNumber', invNum2)
+        .field('invoiceDate', invDate)
+        .field('billAmount', billAmt)
+        .attach('invoiceFile', fileBuf2, 'invoice.pdf');
 
       expect(res2.status).toBe(403);
       expect(res2.body.success).toBe(false);
@@ -224,25 +250,67 @@ describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', ()
     });
 
     it('accepts legitimate bill upload when action-bound attestation is valid', async () => {
+      const invNum = `INV-LEGIT-${Date.now()}`;
+      const invDate = '2026-10-05';
+      const billAmt = '1500.00';
+      const fileBuf = createDummyPdf('legit');
+      const fileSha256 = computeSha256Bytes(fileBuf);
+      const payload = buildCanonicalBillUploadPayload(invNum, invDate, billAmt, undefined, fileSha256);
+      const reqHash = computeSha256Json(payload);
+
       const nonceObj = await PlayIntegrityService.generateNonce({
         action: 'BILL_UPLOAD',
         userId: testUserId,
+        sessionId: userSessionId,
+        requestHash: reqHash,
       });
 
-      const invNum = `INV-LEGIT-${Date.now()}`;
       const res = await request(app)
         .post('/api/bills')
         .set('Authorization', `Bearer ${userToken}`)
         .set('x-integrity-token', 'valid_mock_token')
         .set('x-integrity-nonce', nonceObj.nonce)
         .field('invoiceNumber', invNum)
-        .field('invoiceDate', '2026-10-05')
-        .field('billAmount', '1500.00')
-        .attach('invoiceFile', createDummyPdf('legit'), 'invoice.pdf');
+        .field('invoiceDate', invDate)
+        .field('billAmount', billAmt)
+        .attach('invoiceFile', fileBuf, 'invoice.pdf');
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
       expect(res.body.bill.invoiceNumber).toBe(invNum);
+    });
+
+    it('strictly rejects bill upload when request payload is tampered after nonce generation', async () => {
+      const invNum = `INV-TAMPER-${Date.now()}`;
+      const invDate = '2026-10-05';
+      const billAmt = '1500.00';
+      const fileBuf = createDummyPdf('legit');
+      const fileSha256 = computeSha256Bytes(fileBuf);
+      const payload = buildCanonicalBillUploadPayload(invNum, invDate, billAmt, undefined, fileSha256);
+      const reqHash = computeSha256Json(payload);
+
+      const nonceObj = await PlayIntegrityService.generateNonce({
+        action: 'BILL_UPLOAD',
+        userId: testUserId,
+        sessionId: userSessionId,
+        requestHash: reqHash,
+      });
+
+      // Tamper: post a different bill amount than was bound into requestHash
+      const res = await request(app)
+        .post('/api/bills')
+        .set('Authorization', `Bearer ${userToken}`)
+        .set('x-integrity-token', 'valid_mock_token')
+        .set('x-integrity-nonce', nonceObj.nonce)
+        .field('invoiceNumber', invNum)
+        .field('invoiceDate', invDate)
+        .field('billAmount', '9999.00')
+        .attach('invoiceFile', fileBuf, 'invoice.pdf');
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('INTEGRITY_FAILED');
+      expect(res.body.message).toContain('requestHash mismatch');
     });
   });
 
@@ -266,6 +334,8 @@ describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', ()
       const nonceObj = await PlayIntegrityService.generateNonce({
         action: 'BILL_UPLOAD',
         userId: testUserId,
+        sessionId: userSessionId,
+        requestHash: computeSha256Json({ test: 'dummy' }),
       });
 
       const res = await request(app)
@@ -282,9 +352,15 @@ describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', ()
     });
 
     it('processes redemption verification when action-bound attestation is valid', async () => {
+      const idempotencyKey = `redeem_legit_key_${Date.now()}`;
+      const payload = buildCanonicalPayoutRedeemPayload(idempotencyKey);
+      const reqHash = computeSha256Json(payload);
+
       const nonceObj = await PlayIntegrityService.generateNonce({
         action: 'PAYOUT_REDEEM',
         userId: testUserId,
+        sessionId: userSessionId,
+        requestHash: reqHash,
       });
 
       const res = await request(app)
@@ -292,11 +368,37 @@ describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', ()
         .set('Authorization', `Bearer ${userToken}`)
         .set('x-integrity-token', 'valid_mock_token')
         .set('x-integrity-nonce', nonceObj.nonce)
-        .send({ idempotencyKey: `redeem_legit_key_${Date.now()}` });
+        .send({ idempotencyKey });
 
       // If redemption conditions (KYC or bank account or window) fail, it returns 400 with business error,
       // NOT 403 INTEGRITY_REQUIRED or INTEGRITY_FAILED! That proves integrity attestation passed!
       expect(res.status).not.toBe(403);
+    });
+
+    it('strictly rejects redemption when idempotencyKey is tampered after nonce generation', async () => {
+      const idempotencyKey = `redeem_legit_key_${Date.now()}`;
+      const payload = buildCanonicalPayoutRedeemPayload(idempotencyKey);
+      const reqHash = computeSha256Json(payload);
+
+      const nonceObj = await PlayIntegrityService.generateNonce({
+        action: 'PAYOUT_REDEEM',
+        userId: testUserId,
+        sessionId: userSessionId,
+        requestHash: reqHash,
+      });
+
+      // Tamper: present different idempotencyKey than was hashed
+      const res = await request(app)
+        .post('/api/payouts/redeem')
+        .set('Authorization', `Bearer ${userToken}`)
+        .set('x-integrity-token', 'valid_mock_token')
+        .set('x-integrity-nonce', nonceObj.nonce)
+        .send({ idempotencyKey: `tampered_key_${Date.now()}` });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('INTEGRITY_FAILED');
+      expect(res.body.message).toContain('requestHash mismatch');
     });
   });
 
@@ -323,6 +425,8 @@ describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', ()
       const nonceObj = await PlayIntegrityService.generateNonce({
         action: 'BILL_UPLOAD',
         userId: testUserId,
+        sessionId: userSessionId,
+        requestHash: computeSha256Json({ test: 'dummy' }),
       });
 
       const res = await request(app)
@@ -331,7 +435,7 @@ describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', ()
         .set('x-integrity-token', 'valid_mock_token')
         .set('x-integrity-nonce', nonceObj.nonce)
         .send({
-          panNumber: 'ABCDE1234F',
+          panNumber: 'INTGR1234F',
           panName: 'Test Craftsman',
           consent: true,
         });
@@ -340,6 +444,71 @@ describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', ()
       expect(res.body.success).toBe(false);
       expect(res.body.code).toBe('INTEGRITY_FAILED');
       expect(res.body.message).toContain('Integrity nonce was issued for action BILL_UPLOAD, but presented for KYC_SUBMIT');
+    });
+
+    it('accepts KYC submission when action-bound attestation is valid', async () => {
+      const panNumber = 'INTGR1234F';
+      const panName = 'Test Craftsman';
+      const consent = true;
+      const consentText = 'I provide consent to verify my PAN identity for rewards payout compliance.';
+      const payload = buildCanonicalKycSubmitPayload(panNumber, panName, consent, consentText);
+      const reqHash = computeSha256Json(payload);
+
+      const nonceObj = await PlayIntegrityService.generateNonce({
+        action: 'KYC_SUBMIT',
+        userId: testUserId,
+        sessionId: userSessionId,
+        requestHash: reqHash,
+      });
+
+      const res = await request(app)
+        .post('/api/kyc/pan/verify')
+        .set('Authorization', `Bearer ${userToken}`)
+        .set('x-integrity-token', 'valid_mock_token')
+        .set('x-integrity-nonce', nonceObj.nonce)
+        .send({
+          panNumber,
+          panName,
+          consent,
+          consentText,
+        });
+
+      // Integrity verification succeeded (returns 200 or business status, not 403)
+      expect(res.status).not.toBe(403);
+    });
+
+    it('strictly rejects KYC submission when request payload is tampered after nonce generation', async () => {
+      const panNumber = 'INTGR1234F';
+      const panName = 'Test Craftsman';
+      const consent = true;
+      const consentText = 'I provide consent to verify my PAN identity for rewards payout compliance.';
+      const payload = buildCanonicalKycSubmitPayload(panNumber, panName, consent, consentText);
+      const reqHash = computeSha256Json(payload);
+
+      const nonceObj = await PlayIntegrityService.generateNonce({
+        action: 'KYC_SUBMIT',
+        userId: testUserId,
+        sessionId: userSessionId,
+        requestHash: reqHash,
+      });
+
+      // Tamper: send a different PAN number
+      const res = await request(app)
+        .post('/api/kyc/pan/verify')
+        .set('Authorization', `Bearer ${userToken}`)
+        .set('x-integrity-token', 'valid_mock_token')
+        .set('x-integrity-nonce', nonceObj.nonce)
+        .send({
+          panNumber: 'XXXXX9999Y',
+          panName,
+          consent,
+          consentText,
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('INTEGRITY_FAILED');
+      expect(res.body.message).toContain('requestHash mismatch');
     });
   });
 });

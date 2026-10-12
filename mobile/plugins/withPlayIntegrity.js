@@ -8,6 +8,78 @@ const path = require('path');
 
 const INTEGRITY_DEPENDENCY = "implementation 'com.google.android.play:integrity:1.4.0'";
 
+function insertImportAfterPackageDeclaration(contents, qualifiedName, isKotlin) {
+  const importLine = `import ${qualifiedName}${isKotlin ? '' : ';'}`;
+
+  if (contents.split(/\r?\n/).some((line) => line.trim() === importLine)) {
+    return contents;
+  }
+
+  const packageMatch = contents.match(
+    /^[ \t]*package[ \t]+[A-Za-z0-9_.]+;?[ \t]*\r?\n/m
+  );
+
+  if (!packageMatch || packageMatch.index === undefined) {
+    throw new Error(
+      'Cannot register Play Integrity: MainApplication has no recognizable package declaration.'
+    );
+  }
+
+  const insertAt = packageMatch.index + packageMatch[0].length;
+
+  return (
+    contents.slice(0, insertAt) +
+    `${importLine}\n` +
+    contents.slice(insertAt)
+  );
+}
+
+function registerPlayIntegrityPackage(contents, isKotlin) {
+  if (contents.includes('PlayIntegrityPackage()') || contents.includes('new PlayIntegrityPackage()')) {
+    return contents;
+  }
+
+  if (isKotlin) {
+    if (contents.includes('PackageList(this).packages.apply {')) {
+      return contents.replace(
+        'PackageList(this).packages.apply {',
+        'PackageList(this).packages.apply {\n              add(PlayIntegrityPackage())'
+      );
+    }
+    if (contents.includes('PackageList(this).packages')) {
+      return contents.replace(
+        'PackageList(this).packages',
+        'PackageList(this).packages.apply {\n              add(PlayIntegrityPackage())\n            }'
+      );
+    }
+    throw new Error(
+      'Cannot register Play Integrity: MainApplication.kt does not match any recognized Kotlin package registration pattern.'
+    );
+  } else {
+    if (contents.includes('List<ReactPackage> packages = new PackageList(this).getPackages();')) {
+      return contents.replace(
+        'List<ReactPackage> packages = new PackageList(this).getPackages();',
+        'List<ReactPackage> packages = new PackageList(this).getPackages();\n      packages.add(new PlayIntegrityPackage());'
+      );
+    }
+    if (contents.includes('new PackageList(this).getPackages();')) {
+      return contents.replace(
+        'new PackageList(this).getPackages();',
+        'new PackageList(this).getPackages();\n      packages.add(new PlayIntegrityPackage());'
+      );
+    }
+    if (contents.includes('new PackageList(this).getPackages()')) {
+      return contents.replace(
+        'new PackageList(this).getPackages()',
+        'new PackageList(this).getPackages();\n      packages.add(new PlayIntegrityPackage())'
+      );
+    }
+    throw new Error(
+      'Cannot register Play Integrity: MainApplication.java does not match any recognized Java package registration pattern.'
+    );
+  }
+}
+
 function withPlayIntegrityBuildGradle(config) {
   return withAppBuildGradle(config, (gradleConfig) => {
     if (!gradleConfig.modResults.contents.includes(INTEGRITY_DEPENDENCY)) {
@@ -32,11 +104,10 @@ function withPlayIntegrityNativeFiles(config) {
       'integrity'
     );
 
-    try {
-      fs.mkdirSync(targetDir, { recursive: true });
+    fs.mkdirSync(targetDir, { recursive: true });
 
-      // 1. PlayIntegrityModule.java
-      const moduleJava = `package ${androidPackage}.integrity;
+    // 1. PlayIntegrityModule.java
+    const moduleJava = `package ${androidPackage}.integrity;
 
 import android.content.Context;
 import androidx.annotation.NonNull;
@@ -97,10 +168,10 @@ public class PlayIntegrityModule extends ReactContextBaseJavaModule {
     }
 }
 `;
-      fs.writeFileSync(path.join(targetDir, 'PlayIntegrityModule.java'), moduleJava, 'utf8');
+    fs.writeFileSync(path.join(targetDir, 'PlayIntegrityModule.java'), moduleJava, 'utf8');
 
-      // 2. PlayIntegrityPackage.java
-      const packageJava = `package ${androidPackage}.integrity;
+    // 2. PlayIntegrityPackage.java
+    const packageJava = `package ${androidPackage}.integrity;
 
 import androidx.annotation.NonNull;
 import com.facebook.react.ReactPackage;
@@ -127,38 +198,27 @@ public class PlayIntegrityPackage implements ReactPackage {
     }
 }
 `;
-      fs.writeFileSync(path.join(targetDir, 'PlayIntegrityPackage.java'), packageJava, 'utf8');
+    fs.writeFileSync(path.join(targetDir, 'PlayIntegrityPackage.java'), packageJava, 'utf8');
 
-      // 3. Register package in MainApplication.kt or MainApplication.java
-      let contents = mainAppConfig.modResults.contents;
-      const packageImport = `import ${androidPackage}.integrity.PlayIntegrityPackage;\n`;
-      if (!contents.includes(packageImport) && !contents.includes(`${androidPackage}.integrity.PlayIntegrityPackage`)) {
-        contents = packageImport + contents;
-      }
+    // 3. Register package in MainApplication.kt or MainApplication.java
+    let contents = mainAppConfig.modResults.contents;
+    const isKotlin =
+      mainAppConfig.modResults.language === 'kt' ||
+      mainAppConfig.modRequest?.mainApplicationPath?.endsWith('.kt') ||
+      contents.includes('class MainApplication :') ||
+      contents.includes('fun getPackages');
 
-      if (!contents.includes('PlayIntegrityPackage()') && !contents.includes('new PlayIntegrityPackage()')) {
-        if (contents.includes('PackageList(this).packages.apply {')) {
-          contents = contents.replace(
-            'PackageList(this).packages.apply {',
-            'PackageList(this).packages.apply {\n      add(PlayIntegrityPackage())'
-          );
-        } else if (contents.includes('override val reactNativeHost: ReactNativeHost =')) {
-          contents = contents.replace(
-            'PackageList(this).packages',
-            'PackageList(this).packages.also { it.add(PlayIntegrityPackage()) }'
-          );
-        } else if (contents.includes('new PackageList(this).getPackages();')) {
-          contents = contents.replace(
-            'List<ReactPackage> packages = new PackageList(this).getPackages();',
-            'List<ReactPackage> packages = new PackageList(this).getPackages();\n      packages.add(new PlayIntegrityPackage());'
-          );
-        }
-      }
+    // Safe import insertion after package declaration
+    contents = insertImportAfterPackageDeclaration(
+      contents,
+      `${androidPackage}.integrity.PlayIntegrityPackage`,
+      isKotlin
+    );
 
-      mainAppConfig.modResults.contents = contents;
-    } catch (e) {
-      // In non-native environments, file write errors are safely ignored
-    }
+    // Register package in package list
+    contents = registerPlayIntegrityPackage(contents, isKotlin);
+
+    mainAppConfig.modResults.contents = contents;
     return mainAppConfig;
   });
 }
@@ -169,4 +229,10 @@ function withPlayIntegrity(config) {
   return config;
 }
 
-module.exports = createRunOncePlugin(withPlayIntegrity, 'withPlayIntegrity', '1.0.0');
+const plugin = createRunOncePlugin(withPlayIntegrity, 'withPlayIntegrity', '1.0.0');
+plugin.insertImportAfterPackageDeclaration = insertImportAfterPackageDeclaration;
+plugin.registerPlayIntegrityPackage = registerPlayIntegrityPackage;
+plugin.withPlayIntegrityBuildGradle = withPlayIntegrityBuildGradle;
+plugin.withPlayIntegrityNativeFiles = withPlayIntegrityNativeFiles;
+
+module.exports = plugin;
