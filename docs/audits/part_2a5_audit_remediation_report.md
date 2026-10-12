@@ -1,12 +1,49 @@
 # Hiralal Rewards Platform — Part 2A.5 Remediation & Verification Report
 
-**Audit Phase:** Part 2A.5 — Final Remediation & Independent Verification  
-**Repository:** `https://github.com/abraj12/hiralal`  
-**Working Branch:** `audit/deploy-workflow-investigation`  
-**Base Release Candidate:** `fix/release-readiness-2026-10-11`  
-**Starting Commit:** `584326eca0504a39c4f711aa742f986ba4df22e7`  
-**Parent Commit:** `cb2b6b35e8503fe5522f5968712ce0ecafba7e94`  
-**Branch URL:** [GitHub Branch](https://github.com/abraj12/hiralal/tree/audit/deploy-workflow-investigation)  
+**Audit Phase:** Part 2A.5 — Final Remediation & Independent Verification<br/>
+**Repository:** `abraj12/hiralal` (`https://github.com/abraj12/hiralal`)<br/>
+**Working Branch:** `audit/deploy-workflow-investigation`<br/>
+**Base Release Candidate:** `fix/release-readiness-2026-10-11` (`b5d84d7e341ddfe7fb2ea2261cafe4eb323fd929`)<br/>
+**Verified Implementation Commit:** `d738f1222da6053668f90c525599847f15b07318`<br/>
+**Direct Parent Commit:** `584326eca0504a39c4f711aa742f986ba4df22e7`<br/>
+**Earlier Part 2A.4 Ancestor:** `cb2b6b35e8503fe5522f5968712ce0ecafba7e94`<br/>
+**Branch URL:** [GitHub Branch](https://github.com/abraj12/hiralal/tree/audit/deploy-workflow-investigation)<br/>
+**Verified Implementation CI Run:** [Run 38207512642](https://github.com/abraj12/hiralal/actions/runs/38207512642) (Conclusion: `success`)<br/>
+**Report Artifact:** `part-2a5-audit-remediation-report`
+
+---
+
+## Implementation Commit and CI Verification Record
+
+This authoritative verification record documents the remote CI pipeline execution and test metrics that independently validated implementation commit `d738f1222da6053668f90c525599847f15b07318`:
+
+- **Repository:** `abraj12/hiralal`
+- **Branch:** `audit/deploy-workflow-investigation`
+- **Verified Implementation Commit:** `d738f1222da6053668f90c525599847f15b07318`
+- **Direct Parent:** `584326eca0504a39c4f711aa742f986ba4df22e7`
+- **Historical Part 2A.4 Ancestor:** `cb2b6b35e8503fe5522f5968712ce0ecafba7e94`
+- **CI Run ID:** `38207512642`
+- **CI Run URL:** https://github.com/abraj12/hiralal/actions/runs/38207512642
+- **Overall CI Conclusion:** `success`
+- **CI Workflow Jobs (6 of 6 completed successfully):**
+  1. `GitHub Actions Workflow Lint (actionlint)` — `success`
+  2. `Admin Date Helper Tests` — `success`
+  3. `Mobile App Typecheck Verification` — `success`
+  4. `Backend Lint, Typecheck, Migrations & Test Suite` — `success`
+  5. `Docker ARM64 Build Verification (AWS Graviton2)` — `success`
+  6. `Full 6-Container Docker Compose Stack Smoke Test` — `success`
+- **Backend Test Results (from CI logs):** 24 suites passed, 346 tests passed (0 failed)
+- **Admin Date-Helper Results (from CI logs):** 9 tests passed, 0 failed
+- **Deployment-Health Validation:** 14 tests executed in the successful workflow job (`test_verify_deployment_health.py`)
+- **Report Artifact Uploaded:** `part-2a5-audit-remediation-report` (verified present on Run 38207512642)
+- **Backend Test Coverage (from verified CI test execution):**
+  - **Statements:** 68.69%
+  - **Branches:** 54.26%
+  - **Functions:** 67.19%
+  - **Lines:** 69.65%
+
+> [!NOTE]
+> **Commit Distinction Notice:** The CI run and coverage metrics above record the verification of implementation commit `d738f1222da6053668f90c525599847f15b07318`. Any subsequent documentation-only commit (such as metadata reconciliation) generates its own independent CI execution on push and must be tracked separately from the implementation commit's verification run.
 
 ---
 
@@ -14,12 +51,12 @@
 
 This report documents the completion and verification of the remaining remediation findings for **Part 2A.5: Final Remediation & Verification** of the Hiralal & Sons Rewards Platform.
 
-Following the initial Part 2A.5 commit (`584326eca0504a39c4f711aa742f986ba4df22e7`), independent inspection identified three residual gaps requiring remediation:
+Following the initial Part 2A.5 baseline commit (`584326eca0504a39c4f711aa742f986ba4df22e7`, parent `cb2b6b35e8503fe5522f5968712ce0ecafba7e94`), independent inspection identified three residual gaps requiring remediation:
 1. **Concurrent Seeding Race Condition & Advisory Lock Alignment:** `RewardRuleService.createRule` acquired PostgreSQL transaction-scoped advisory locks (`pg_advisory_xact_lock`), but baseline seed provisioning in `backend/src/prisma/seed.ts` performed checks and inserts outside of a lock and transaction, leaving a window for concurrent executions to create duplicate baseline versions.
 2. **Database-Level Defense in Depth:** The `RewardRule` table lacked an explicit unique constraint on `(profession, version)`, meaning that duplicate versions were only prevented by application-level logic rather than enforced at the database level.
 3. **Admin Test Isolation in CI:** Standalone unit tests for admin date utility functions (`admin/src/lib/date-utils.test.ts`) were executed only indirectly via a backend test import rather than via a dedicated, first-class CI job.
 
-All three gaps have been resolved with complete multi-tier safeguards, comprehensive regression tests, workflow updates, and local and remote verification.
+All three gaps were remediated in verified implementation commit `d738f1222da6053668f90c525599847f15b07318` with complete multi-tier safeguards, comprehensive regression tests, workflow updates, and local and remote verification across all 6 CI workflow jobs.
 
 ---
 
@@ -32,7 +69,7 @@ await trx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'reward_rule_' + p
 ```
 This guaranteed that concurrent administrative requests creating reward rules for the same profession were serialized.
 
-However, `provisionRewardRules()` in `backend/src/prisma/seed.ts` executed raw `count` and `create` queries across multiple un-synchronized round-trips:
+However, `provisionRewardRules()` in `backend/src/prisma/seed.ts` previously executed raw `count` and `create` queries across multiple un-synchronized round-trips:
 ```typescript
 // Previous implementation in seed.ts (Vulnerable to concurrency races)
 for (const prof of ['PLUMBER', 'TILE_INSTALLER'] as const) {
@@ -237,7 +274,7 @@ In Part 2A.4, calendar date and time validation tests (`admin/src/lib/date-utils
    ```yaml
    needs: [backend-test, admin-date-tests]
    ```
-5. Added artifact upload step to publish this report as a build artifact named `part-2a5-audit-remediation-report`.
+5. Added artifact upload step in `backend-test` to publish this report as a build artifact named `part-2a5-audit-remediation-report`.
 
 ---
 
@@ -250,13 +287,17 @@ In Part 2A.4, calendar date and time validation tests (`admin/src/lib/date-utils
 | **Prisma Client Generation** | `npx prisma generate` | **PASS** | Generated Prisma Client v6.4.1 |
 | **Database Migrations** | `npx prisma migrate deploy` | **PASS** | Applied `20261012110000_reward_rule_profession_version_unique` |
 | **Backend TypeScript Check** | `npx tsc --noEmit` | **PASS** | 0 type errors |
-| **Part 2A.4/2A.5 Regressions** | `npm test -- src/tests/part2a4_hardening.spec.ts` | **PASS (39/39)** | 39 passed (including 3 new concurrency/DB tests) |
-| **Backend Full Test Suite** | `npm test` in `backend/` | **PASS (346/346)** | 24 suites passed, 346 tests passed |
+| **Part 2A.4/2A.5 Regressions** | `npm test -- src/tests/part2a4_hardening.spec.ts` | **PASS (39/39)** | 39 passed (including 3 concurrency & DB constraint tests) |
+| **Backend Full Test Suite** | `npm test` in `backend/` | **PASS (346/346)** | 24 suites passed, 346 tests passed (0 failed) |
 | **GitHub Actions Lint** | `actionlint` | **PASS** | 0 lint errors across all workflows |
-| **Deployment Health Probe** | `python scripts/test_verify_deployment_health.py` | **PASS** | 12/12 validation assertions passed |
+| **Deployment Health Probe** | `python scripts/test_verify_deployment_health.py` | **PASS** | 14 tests executed in the successful workflow job |
 
 ---
 
-## 7. Conclusion
+## 7. Operational Boundaries & Audit Limitations
 
-All requirements for **Part 2A.5: Final Remediation & Independent Verification** are completely implemented, verified with actual concurrency executions against PostgreSQL, protected by database-level constraints, and wired into the GitHub Actions CI pipeline.
+While implementation commit `d738f1222da6053668f90c525599847f15b07318` successfully passed all 6 GitHub Actions CI jobs, the following operational boundaries remain strictly enforced:
+- **No Production Deployment:** This verification establishes release readiness in automated testing; it does not deploy code to AWS EC2 or alter live production systems.
+- **No Production Database Mutation:** Migrations and seeds have run only in isolated test/CI environments. No production database migrations have been executed.
+- **Live External Integrations Not Exercised:** Automated tests utilize mock and test mode configurations for external payment gateways (RazorpayX), SMS aggregators (MSG91), KYC identity providers (SignCare), mobile push servers (FCM), and cloud storage (Cloudflare R2). Real financial payouts or production SMS messages were not dispatched.
+- **Branch Isolation:** All changes remain strictly on the `audit/deploy-workflow-investigation` branch and have not been merged into `main`.
