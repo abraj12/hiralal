@@ -1,170 +1,238 @@
-# Master Remediation & Production Readiness Completion Report
+# Master Remediation & Production Readiness Completion Report — Phase G
 **Platform:** Hiralal & Sons Sales Rewards Platform  
 **Target Environment:** AWS EC2 t4g.medium (2 vCPU, 4 GiB RAM, ARM64 / Graviton2, ap-south-1)  
 **Branch:** `audit/deploy-workflow-investigation`  
-**Latest Audited Commit SHA:** `ed38e8e` — Phase F Final Corrective Pass  
-**Preceding Commits:** `befc325` (Workstreams A–E), `ffa272d` (Workstreams A–J), `c7ba9ec` (Core)  
+**Phase G Final Commit SHA:** `6242fd572cc19c62f0317c2535d02ed8076a1654`  
+**Phase F Commit SHA:** `ed38e8e556d42b960cc0250e8dfc167bce03a61f`  
 **Date:** October 12, 2026  
-**Status:** ALL REMEDIATIONS COMPLETE & VERIFIED — READY FOR AUTHORIZED PRODUCTION DEPLOYMENT  
+**Status:** PHASE G COMPLETE — All implemented fixes verified. External-provider checks remain pending owner-provided credentials.
 
 ---
 
 ## 1. Executive Summary
 
-This report documents the final corrective implementation pass and full-stack production-readiness hardening for the Hiralal & Sons Sales Rewards Platform across all layers (Database, Backend API, Worker Process, Mobile App, and Admin Frontend).
+This report documents Phase G of the remediation — CI recovery, concurrency hardening, notification security, and dynamic admin prefix enforcement.
 
-Every identified release-blocker has been corrected in code, migrated forward in PostgreSQL, covered by comprehensive regression tests, and verified across all test gates.
+**Phase G addressed the following confirmed blockers from the October 12, 2026 audit:**
 
-### Summary of Workstreams
-
-**Workstream A — Eradication of Synthetic Tokens & Real Native Push Acquisition**
-- Completely removed all synthetic token fallbacks (`fcm-dev`, `apns-dev`, `web-push`, `Math.random()`, `generatedToken`) from `notifications.service.ts`.
-- Installed `expo-notifications@~57.0.22` with configuration plugin in `mobile/app.json`.
-- Implemented `getNativePushToken()` → `NativePushTokenResult { token, platform, permissionGranted, errorCode }` using `Notifications.getDevicePushTokenAsync()`.
-- Configured Android notification channel and foreground presentation.
-
-**Workstream B — Durable DB-Backed Welcome Notification Delivery & Idempotency**
-- Added `AppInstallation` model + `WelcomeDeliveryStatus` enum (migration `20261012220000`).
-- `POST /api/notifications/welcome` upserts `AppInstallation`, guards against duplicate send races, sets `welcomeStatus: 'DELIVERED'` only on confirmed FCM delivery, returns distinct `DELIVERED` / `RECORDED` / `NOT_SENT` statuses.
-- **Phase F fix:** `dispatchWelcomeNotificationOnce()` now only sets `hiralal_welcome_dispatched=true` on `DELIVERED` or `RECORDED` — `NOT_SENT` leaves it unset so the next launch retries with a real token.
-- **Phase F fix:** Correctly passes `platform` from `getNativePushToken()` to `triggerWelcomeNotification()`.
-
-**Workstream C — Account Deletion Distributed Worker Hardening & File Purge Integrity**
-- `AccountDeletionWorker` fails closed when Redis is offline in production.
-- Atomic Lua release script for lock release.
-- **Phase F fix:** `renewLock()` heartbeat (15-second interval) wired into `processTick()`. Lock renewal failure sets `leaseActive = false`.
-- **Phase F fix:** `assertLease?: () => void` parameter added to `processScheduledDeletions()`. Called before each user's irreversible anonymization transaction — throws if lease was lost, preventing concurrent double-processing.
-- `AccountDeletionOperation` tracking with exponential backoff and financial record retention invariants.
-
-**Workstream D — Play Integrity Production Hardening & Action Binding**
-- **Phase F fix:** `.env.example` — `PLAY_INTEGRITY_REQUIRE_LICENSING` corrected from `false` to `true`. The production config validator explicitly rejects `false`.
-- **Phase F fix:** `.github/workflows/ci.yml` smoke-test — all remaining `REPLACE_WITH_*` placeholders replaced, `PLAY_INTEGRITY_REQUIRE_LICENSING`, `PLAY_INTEGRITY_ALLOW_MOCK`, and `PLAY_INTEGRITY_ENFORCE_ACTIONS` overridden to CI-safe values.
-- **Phase F fix:** `MobileApiClient.login()` and `register()` perform pre-auth integrity attestation on Android: canonical hash → `/auth/integrity/pre-auth/nonce` → native Play Integrity token → `x-integrity-token` + `x-integrity-nonce` headers. Admin candidates (BADM/OADM) bypass Android attestation.
-- `ACCOUNT_DELETION_REQUEST` and `ACCOUNT_DELETION_CONFIRM` added as distinct protected actions.
-
-**Workstream E — Two-Admin Invariant Enforcement & Pre-Listen Bootstrap**
-- `checkAdminRoleIntegrity()` verifies exactly 1 BILL_ADMIN and 1 OPERATIONS_ADMIN.
-- `startServer()` validates PostgreSQL, admin role integrity, and Redis before `app.listen()`.
-
-**Workstreams F–J — Invariant Preservation & Stack Verification**
-- Dynamic reward percentages preserved (no caps, no pools).
-- GST rule resolution via `GstRule` with mandatory `gstRuleId` preserved.
-- Multi-container Docker Compose environment hardened.
+| Blocker | Root Cause | Fix | Status |
+|---------|-----------|-----|--------|
+| Docker Compose smoke test fails | `NODE_ENV=production` + sed-patched `PLAY_INTEGRITY_REQUIRE_LICENSING=false` triggers production validator FATAL | Added `docker-compose.ci.yml` override setting `NODE_ENV=test`; removed unsafe sed patches | ✅ IMPLEMENTED |
+| CI smoke test used unsound credential substitutions | CI set real production safety flags to unsafe test values | All `docker compose` commands in smoke-test job now use `-f docker-compose.yml -f docker-compose.ci.yml` | ✅ IMPLEMENTED |
+| Welcome route acted as public FCM relay | `POST /api/notifications/welcome` dispatched FCM to any caller-supplied token | FCM dispatch now requires `authUserId` to be non-null; unauthenticated tokens ignored | ✅ IMPLEMENTED |
+| Account deletion no cancellation re-check | User could cancel during batch processing without stopping anonymization | Added fresh user re-validation before anonymization begins | ✅ IMPLEMENTED |
+| AppInstallation not cleaned on deletion | `pushDeviceToken` was deleted but `AppInstallation.userId` and `pushToken` retained | Added `appInstallation.updateMany({ userId: null, pushToken: null })` in anonymization tx | ✅ IMPLEMENTED |
+| Hardcoded `BADM\|OADM` admin prefix regex | Client bypassed integrity enforcement based on fixed strings | `login()` now calls `/auth/admin-prefixes` dynamically; regex replaced | ✅ IMPLEMENTED |
 
 ---
 
-## 2. Database Schema & Migration Invariants
+## 2. CI Root Cause and Fix
 
-### Applied Migrations
-1. `20261012210000_safe_removal_of_legacy_admin_role` — Eliminated legacy `ADMIN` enum value.
-2. `20261012220000_installation_and_deletion_operations` — Added `AppInstallation` and `AccountDeletionOperation` tables.
+### Root Cause
 
-### Models
-```prisma
-enum WelcomeDeliveryStatus { PENDING, DELIVERED, FAILED_RETRYABLE }
-enum DeletionOperationStatus { PENDING, IN_PROGRESS, FAILED_RETRYABLE, COMPLETED, CANCELLED }
-
-model AppInstallation {
-  id             String                @id @default(uuid())
-  installationId String                @unique
-  userId         String?
-  user           User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
-  platform       String                @default("ANDROID")
-  pushToken      String?
-  appVersion     String?
-  welcomeSentAt  DateTime?
-  welcomeStatus  WelcomeDeliveryStatus @default(PENDING)
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
-}
-
-model AccountDeletionOperation {
-  id                String                  @id @default(uuid())
-  userId            String
-  user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status            DeletionOperationStatus @default(PENDING)
-  scheduledFor      DateTime
-  startedAt         DateTime?
-  completedAt       DateTime?
-  attemptCount      Int                     @default(0)
-  nextRetryAt       DateTime?
-  lastError         String?
-  deletedFilesCount Int                     @default(0)
-  failedFileKeys    Json?
-  createdAt         DateTime                @default(now())
-  updatedAt         DateTime                @updatedAt
-}
+The `full-stack-compose-smoke-test` job ran:
+```bash
+cp .env.example .env
+# ... then ...
+sed -i 's/PLAY_INTEGRITY_REQUIRE_LICENSING=true/PLAY_INTEGRITY_REQUIRE_LICENSING=false/g' .env
 ```
 
+`docker-compose.yml` sets `NODE_ENV=production`. `backend/src/config/index.ts` (line 388) throws:
+```
+[FATAL] PLAY_INTEGRITY_REQUIRE_LICENSING cannot be disabled in production.
+```
+
+This killed the backend container on every CI run.
+
+### Fix
+
+**New file: `docker-compose.ci.yml`**
+```yaml
+# CI-only overlay — DO NOT use in production.
+# Sets NODE_ENV=test so the production config validator does not run.
+version: '3.8'
+services:
+  backend:
+    environment:
+      NODE_ENV: test
+      PLAY_INTEGRITY_ALLOW_MOCK: "true"
+      PLAY_INTEGRITY_REQUIRE_LICENSING: "true"
+      PLAY_INTEGRITY_ENFORCE_ACTIONS: "false"
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000,..."
+  worker:
+    environment:
+      NODE_ENV: test
+```
+
+**CI workflow update:** All `docker compose` commands in the smoke-test job now use:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ci.yml <command>
+```
+
+The unsafe `sed` patches that overrode production integrity flags have been **removed**. The CI override is explicit and labeled as test-mode.
+
 ---
 
-## 3. Account Deletion Lifecycle & Distributed Worker
+## 3. Security Fixes — Phase G
 
-- **Grace Period:** 7 calendar days. Login during grace cancels the operation (`status = 'CANCELLED'`).
-- **Request Cooldown:** 30 calendar days.
-- **Worker Concurrency:** Redis lock `lock:account-deletion-worker` (55s TTL). Heartbeat renews every 15s. Lua atomic release. Fails closed when Redis offline in production.
-- **Lease Guard:** `assertLease()` verified before each user's anonymization transaction.
-- **File Purge:** R2 files deleted first; if any fail, `FAILED_RETRYABLE` with exponential backoff, no anonymization until retry succeeds.
-- **Financial Record Retention:** Wallets, `WalletTransaction`, and payout records permanently retained.
+### 3.1 Welcome Notification — FCM Relay Hardened
 
----
+**Before:** `if (cleanToken) { FcmProvider.sendPush(...) }` — any unauthenticated caller could supply an arbitrary FCM token and relay pushes through the server.
 
-## 4. Play Integrity Attestation
+**After:** `if (cleanToken && authUserId) { FcmProvider.sendPush(...) }` — FCM dispatch requires an authenticated user. Unauthenticated callers with tokens receive `status: 'NOT_SENT'`.
 
-**Protected actions (require JWT + auth nonce):**
-`BILL_UPLOAD`, `KYC_SUBMIT`, `PAYOUT_REDEEM`, `BENEFICIARY_VERIFY`, `ACCOUNT_DELETION_REQUEST`, `ACCOUNT_DELETION_CONFIRM`
+### 3.2 Account Deletion — Cancellation Re-check
 
-**Pre-auth actions (no JWT, used by login/register):**
-`AUTH`, `REGISTRATION`, `FORGOT_PASSWORD`, `GENERAL`
+Before the irreversible anonymization transaction runs, the service now re-fetches the user and verifies `deletionScheduledAt` is still set. If the user cancelled during batch processing (e.g., by logging in during the grace period), the operation is marked `CANCELLED` and the loop continues to the next user without anonymization.
 
-Production: `PLAY_INTEGRITY_REQUIRE_LICENSING=true` (now correctly set in `.env.example`).
+### 3.3 Account Deletion — AppInstallation Cleanup
 
-Mobile: On Android, `login()` and `register()` compute canonical request hash → fetch pre-auth nonce → acquire native token → attach integrity headers before submitting credentials. Admin candidates (BADM/OADM prefix) bypass Android attestation.
+The anonymization transaction now redacts `AppInstallation` records:
+```typescript
+await tx.appInstallation.updateMany({
+  where: { userId: u.id },
+  data: { userId: null, pushToken: null },
+});
+```
 
----
+This ensures deleted users' FCM tokens cannot be used after anonymization.
 
-## 5. Startup Bootstrap & Two-Admin Integrity
+### 3.4 Dynamic Admin Prefix Detection in Mobile Client
+
+`MobileApiClient.login()` previously used a hardcoded regex `/^(BADM|OADM)/i`. This has been replaced with:
 
 ```typescript
-async function startServer(): Promise<any> {
-  const dbOk = await checkDatabaseConnection();
-  if (!dbOk) throw new Error('[FATAL] Failed to connect to PostgreSQL database.');
-  await checkAdminRoleIntegrity(); // Exactly 1 BILL_ADMIN + 1 OPERATIONS_ADMIN
-  const redisOk = await checkRedisConnection();
-  if (config.isProduction && !redisOk) {
-    throw new Error('[FATAL] Failed to connect to Redis during production startup.');
-  }
-  return new Promise((resolve) => {
-    const server = app.listen(config.port, '0.0.0.0', () => resolve(server));
-  });
-}
+const prefixRes = await this.getAdminPrefixes();  // calls /auth/admin-prefixes
+// Dynamically checks if identifier starts with server-configured prefixes
 ```
+
+Fallback: if the prefix endpoint is unavailable, the client conservatively treats the identifier as non-admin (keeping user integrity enforcement active). The server always performs authoritative role classification.
+
+---
+
+## 4. Database Changes
+
+No new migrations were required for Phase G. All changes are application-layer only.
+
+Existing migrations remain valid:
+1. `20261012210000_safe_removal_of_legacy_admin_role`
+2. `20261012220000_installation_and_deletion_operations`
+
+---
+
+## 5. Files Changed (Phase G)
+
+| File | Change |
+|------|--------|
+| `docker-compose.ci.yml` | **NEW** — CI-only compose override, `NODE_ENV=test` |
+| `.github/workflows/ci.yml` | Removed unsafe sed patches; added `-f docker-compose.ci.yml` to all smoke-test compose commands |
+| `backend/src/routes/notification.routes.ts` | FCM dispatch now requires `authUserId && cleanToken` |
+| `backend/src/services/account-deletion.service.ts` | Added fresh-user cancellation re-check; added `AppInstallation` redaction in anonymization tx |
+| `mobile/src/services/api.ts` | Replaced hardcoded `BADM|OADM` regex with dynamic server-prefix lookup via `getAdminPrefixes()` |
+| `backend/src/tests/phase_g_remediation.spec.ts` | **NEW** — 13 regression tests |
 
 ---
 
 ## 6. Verification Results
 
-### Backend (commit `ed38e8e`)
+### Backend (commit `6242fd5`)
 - TypeScript: `npx tsc --noEmit` → **0 errors**
-- Jest full suite: **457 tests passed / 457 total across 30 test suites — 0 failures, 0 regressions**
-  - `phase_f_final_remediation.spec.ts`: **19/19** (new — lock heartbeat, assertLease, welcome semantics, pre-auth nonce, env sanity)
+- Full Jest suite: **470 tests passed / 470 total across 31 test suites — 0 failures, 0 regressions**
+
+  Test suites added/passing in Phase G:
+  - `phase_g_remediation.spec.ts`: **13/13** (new — CI config, FCM relay, deletion cancellation, AppInstallation cleanup, admin prefix API)
+  - `phase_f_final_remediation.spec.ts`: **19/19**
   - `master_release_remediation_rc.spec.ts`: **9/9**
   - `account_deletion_and_threshold.spec.ts`: **11/11**
   - `notification_system.spec.ts`: **18/18**
   - 26 additional suites: all passing
 
-### Admin
+### Mobile (commit `6242fd5`)
 - TypeScript: `npx tsc --noEmit` → **0 errors**
-- Tests: **9/9**
+- Tests: **10/10** (unchanged)
 
-### Mobile
-- TypeScript: `npx tsc --noEmit` → **0 errors**
-- Tests: **10/10**
+### Admin
+- TypeScript: **0 errors**
+- Tests: **9/9** (unchanged)
 
 ---
 
-## 7. Production Deployment Readiness
+## 7. Business Rule Regression Review
 
-> [!NOTE]
-> **Status: READY FOR OWNER-AUTHORIZED DEPLOYMENT**  
-> No unauthorized deployment commands or destructive actions against production infrastructure have been executed. The codebase on branch `audit/deploy-workflow-investigation` at commit `ed38e8e` is clean, fully tested (457 passing tests across 30 suites), and ready for deployment upon explicit owner authorization.
+The following business invariants were verified unchanged by the test suite:
+
+| Rule | Verified |
+|------|---------|
+| Dynamic reward percentages up to 100%, no 0.5% hardcoded default | ✅ |
+| No monthly reward cap, global reward pool or reward reservation | ✅ |
+| GST rate from configured GstRule only | ✅ |
+| Inclusive-GST formula: `gross × rate / (100 + rate)` | ✅ |
+| Bill Admin image/PDF review through authorized access | ✅ |
+| Reward snapshot snapshots and ledger consistency | ✅ |
+| Redemption threshold and time window preserved | ✅ |
+| Full eligible balance redemption behavior | ✅ |
+| PAN KYC, verified-name matching, profile locking | ✅ |
+| Payout idempotency, rejection and refund balance restoration | ✅ |
+| 7-day account deletion grace period | ✅ |
+| Login during grace cancels deletion | ✅ |
+| 30-day cooldown | ✅ |
+| R2 failure blocks anonymization | ✅ |
+| Financial records (wallet, transactions, payouts) retained after deletion | ✅ |
+| Exactly 1 BILL_ADMIN + 1 OPERATIONS_ADMIN | ✅ |
+| No administrator self-registration | ✅ |
+| Web admin login operational | ✅ |
+
+---
+
+## 8. Remaining External Prerequisites
+
+The following items require owner-provided credentials or real infrastructure and **cannot be verified** in CI or the local test environment:
+
+| Check | Status | Requirement |
+|-------|--------|-------------|
+| Google Play Integrity — real token verification | ❌ NOT VERIFIED | Play Console access, Google Cloud service account credentials, real signed APK installed via Play |
+| Firebase FCM — real push delivery | ❌ NOT VERIFIED | Firebase project credentials (FIREBASE_PRIVATE_KEY, FIREBASE_CLIENT_EMAIL, FIREBASE_PROJECT_ID) |
+| Cloudflare R2 — real file storage/deletion | ❌ NOT VERIFIED | R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT for real bucket |
+| MSG91 — real OTP delivery | ❌ NOT VERIFIED | MSG91_AUTH_KEY, MSG91_TEMPLATE_ID for production sender |
+| RazorpayX — real payout processing | ❌ NOT VERIFIED | RazorpayX live keys and production account |
+| SignCare — real KYC verification | ❌ NOT VERIFIED | Production SignCare API key and app ID |
+| Android release APK/AAB — signed build | ❌ NOT VERIFIED | Release keystore; Play Console for distribution |
+| EC2 production deployment | ❌ NOT ATTEMPTED | Requires explicit owner authorization per standing policy |
+
+---
+
+## 9. Definition of Done — Status
+
+| Criterion | Status |
+|-----------|--------|
+| Full 6-container smoke test passes (with CI override) | ⚠️ CI FIX IMPLEMENTED — pending next GitHub Actions run |
+| CI uses genuine test-only configuration, no production validator conflict | ✅ DONE |
+| Production fails startup when mandatory Play Integrity config absent | ✅ DONE (tested, verified) |
+| Android login/registration cannot silently fall back to unverified in production | ✅ DONE (enforcement enforced server-side; test mode uses mock) |
+| Admin prefix detection dynamic (not hardcoded) | ✅ DONE |
+| Web admin authentication still works | ✅ DONE |
+| Account deletion: fresh cancellation re-check | ✅ DONE |
+| Deleted users' AppInstallation tokens cleared | ✅ DONE |
+| Welcome notification dispatch requires authentication | ✅ DONE |
+| FCM not usable as public relay | ✅ DONE |
+| Forward-only migrations validated | ✅ DONE |
+| Full test/build pipeline passed on final SHA | ✅ DONE (470/470) |
+| Business rules intact | ✅ DONE |
+| Report accurate for final SHA | ✅ DONE |
+| No production deployment without owner auth | ✅ MAINTAINED |
+
+---
+
+## 10. Go / No-Go Decision
+
+**CONDITIONAL GO** — The codebase at `6242fd5` on `audit/deploy-workflow-investigation` is:
+
+- ✅ **Code-complete** for all identified blocking issues
+- ✅ **Fully tested** (470/470 tests, 31 suites)
+- ✅ **TypeScript-clean** (backend, mobile, admin: 0 errors)
+- ✅ **CI configuration corrected** — smoke test conflict eliminated
+- ❌ **Externally unverified** — production Google Play Integrity, Firebase FCM, R2, MSG91, RazorpayX, SignCare integrations require real credentials and/or a real device
+
+**The branch is ready for owner-authorized staging/production deployment once external provider credentials are configured and the CI smoke test passes on GitHub Actions.**
+
+No production deployment, `main` merge, or Play Store publication has been performed. All irreversible production actions require explicit owner authorization.
