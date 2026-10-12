@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 import request from 'supertest';
 import { app } from '../server';
 import { PlayIntegrityService, PlayIntegrityVerdict } from '../services/integrity/playIntegrity.service';
@@ -94,6 +95,80 @@ describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', (
       });
       expect(replayVerdict.success).toBe(false);
       expect(replayVerdict.error).toContain('Invalid, expired, or replayed');
+    });
+
+    it('action-bound nonces reject mismatched action attempts', async () => {
+      PlayIntegrityService.overrideConfig({ allowMock: true });
+      const nonceObj = await PlayIntegrityService.generateNonce({ action: 'BILL_UPLOAD' });
+      expect(nonceObj.action).toBe('BILL_UPLOAD');
+
+      // Attempt verification for different action (e.g. PAYOUT_REDEEM)
+      const verdict = await PlayIntegrityService.verifyActionToken({
+        nonce: nonceObj.nonce,
+        integrityToken: 'dummy_token',
+        expectedContext: { action: 'PAYOUT_REDEEM' },
+      });
+
+      expect(verdict.success).toBe(false);
+      expect(verdict.error).toContain('Integrity nonce was issued for action BILL_UPLOAD, but presented for PAYOUT_REDEEM');
+    });
+
+    it('action-bound nonces reject mismatched user attempts', async () => {
+      PlayIntegrityService.overrideConfig({ allowMock: true });
+      const nonceObj = await PlayIntegrityService.generateNonce({
+        action: 'BILL_UPLOAD',
+        userId: 'user_123',
+      });
+
+      // Attempt verification by different user
+      const verdict = await PlayIntegrityService.verifyActionToken({
+        nonce: nonceObj.nonce,
+        integrityToken: 'dummy_token',
+        expectedContext: { action: 'BILL_UPLOAD', userId: 'user_456' },
+      });
+
+      expect(verdict.success).toBe(false);
+      expect(verdict.error).toContain('Integrity nonce was issued for a different user');
+    });
+
+    it('action-bound nonces reject mismatched session attempts', async () => {
+      PlayIntegrityService.overrideConfig({ allowMock: true });
+      const nonceObj = await PlayIntegrityService.generateNonce({
+        action: 'PAYOUT_REDEEM',
+        sessionId: 'session_abc',
+      });
+
+      // Attempt verification by different session
+      const verdict = await PlayIntegrityService.verifyActionToken({
+        nonce: nonceObj.nonce,
+        integrityToken: 'dummy_token',
+        expectedContext: { action: 'PAYOUT_REDEEM', sessionId: 'session_xyz' },
+      });
+
+      expect(verdict.success).toBe(false);
+      expect(verdict.error).toContain('Integrity nonce was issued for a different user session');
+    });
+
+    it('action-bound nonces succeed when all context parameters match', async () => {
+      PlayIntegrityService.overrideConfig({ allowMock: true });
+      const nonceObj = await PlayIntegrityService.generateNonce({
+        action: 'KYC_SUBMIT',
+        userId: 'user_123',
+        sessionId: 'session_abc',
+      });
+
+      const verdict = await PlayIntegrityService.verifyActionToken({
+        nonce: nonceObj.nonce,
+        integrityToken: 'dummy_token',
+        expectedContext: {
+          action: 'KYC_SUBMIT',
+          userId: 'user_123',
+          sessionId: 'session_abc',
+        },
+      });
+
+      expect(verdict.success).toBe(true);
+      expect(verdict.isRealDevice).toBe(true);
     });
   });
 
@@ -295,6 +370,75 @@ describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', (
       });
       expect(PlayIntegrityService.isConfigured()).toBe(true);
     });
+
+    it('validates syntax of SHA-256 certificate digests correctly', () => {
+      // 64 hex characters
+      expect(PlayIntegrityService.isValidSha256Fingerprint('a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2')).toBe(true);
+      // Colon-separated 32 bytes
+      expect(PlayIntegrityService.isValidSha256Fingerprint('AA:BB:CC:DD:EE:FF:11:22:33:44:55:66:77:88:99:00:AA:BB:CC:DD:EE:FF:11:22:33:44:55:66:77:88:99:00')).toBe(true);
+      // Malformed: too short
+      expect(PlayIntegrityService.isValidSha256Fingerprint('a1b2c3d4e5f6')).toBe(false);
+      // Malformed: non-hex characters
+      expect(PlayIntegrityService.isValidSha256Fingerprint('zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz')).toBe(false);
+      // Empty
+      expect(PlayIntegrityService.isValidSha256Fingerprint('')).toBe(false);
+    });
+
+    it('enforces production certificate pinning and fails closed when digest allowlist is missing or malformed', () => {
+      const savedEnv = process.env.NODE_ENV;
+      const savedProd = config.isProduction;
+
+      try {
+        (config as any).isProduction = true;
+        process.env.NODE_ENV = 'production';
+
+        // 1. Missing digests in production => fails closed
+        const missingRes = PlayIntegrityService.validateProductionConfiguration({
+          clientEmail: TEST_CLIENT_EMAIL,
+          privateKey: validRsaPrivateKey,
+          packageName: TEST_PACKAGE_NAME,
+          allowedCertificateDigests: [],
+          allowMock: false,
+        });
+        expect(missingRes.valid).toBe(false);
+        expect(missingRes.error).toContain('must contain at least one valid SHA-256 certificate digest');
+
+        // 2. Malformed digest in production => fails closed
+        const malformedRes = PlayIntegrityService.validateProductionConfiguration({
+          clientEmail: TEST_CLIENT_EMAIL,
+          privateKey: validRsaPrivateKey,
+          packageName: TEST_PACKAGE_NAME,
+          allowedCertificateDigests: ['invalid_fingerprint_not_sha256'],
+          allowMock: false,
+        });
+        expect(malformedRes.valid).toBe(false);
+        expect(malformedRes.error).toContain('Malformed SHA-256 certificate digest');
+
+        // 3. Mock enabled in production => fails closed
+        const mockRes = PlayIntegrityService.validateProductionConfiguration({
+          clientEmail: TEST_CLIENT_EMAIL,
+          privateKey: validRsaPrivateKey,
+          packageName: TEST_PACKAGE_NAME,
+          allowedCertificateDigests: ['a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'],
+          allowMock: true,
+        });
+        expect(mockRes.valid).toBe(false);
+        expect(mockRes.error).toContain('Mock mode (PLAY_INTEGRITY_ALLOW_MOCK) is strictly forbidden in production');
+
+        // 4. Fully valid production configuration
+        const validRes = PlayIntegrityService.validateProductionConfiguration({
+          clientEmail: TEST_CLIENT_EMAIL,
+          privateKey: validRsaPrivateKey,
+          packageName: TEST_PACKAGE_NAME,
+          allowedCertificateDigests: ['a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'],
+          allowMock: false,
+        });
+        expect(validRes.valid).toBe(true);
+      } finally {
+        (config as any).isProduction = savedProd;
+        process.env.NODE_ENV = savedEnv;
+      }
+    });
   });
 
   // =========================================================================
@@ -413,6 +557,57 @@ describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', (
       // OAuth endpoint MUST NOT be called again; token was cached!
       expect(oauthRequestCount).toBe(1);
       expect(decodeRequestCount).toBe(2);
+    });
+
+    it('signs RS256 assertion without sub claim to prevent accidental domain-wide delegation', async () => {
+      let capturedAssertion = '';
+
+      const mockFetch: typeof fetch = async (_input: any, init?: any) => {
+        const body = init?.body ? String(init.body) : '';
+        const params = new URLSearchParams(body);
+        capturedAssertion = params.get('assertion') || '';
+
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: 'mock_token', expires_in: 3600 }),
+        } as any;
+      };
+
+      PlayIntegrityService.overrideConfig({
+        clientEmail: TEST_CLIENT_EMAIL,
+        privateKey: validRsaPrivateKey,
+        packageName: TEST_PACKAGE_NAME,
+      });
+      PlayIntegrityService.setFetchClient(mockFetch);
+
+      const token = await PlayIntegrityService.getAccessToken();
+      expect(token).toBe('mock_token');
+      expect(capturedAssertion).toBeTruthy();
+
+      // Decode the captured assertion JWT and verify claims
+      const decoded: any = jwt.decode(capturedAssertion, { complete: true });
+      expect(decoded).toBeTruthy();
+      expect(decoded.header.alg).toBe('RS256');
+
+      const claims = decoded.payload;
+      expect(claims.iss).toBe(TEST_CLIENT_EMAIL);
+      expect(claims.aud).toBe('https://oauth2.googleapis.com/token');
+      expect(claims.scope).toBe('https://www.googleapis.com/auth/playintegrity');
+      expect(typeof claims.iat).toBe('number');
+      expect(claims.exp).toBe(claims.iat + 3600);
+
+      // CRITICAL: sub claim MUST NOT be present for normal service account OAuth!
+      expect(claims.sub).toBeUndefined();
+      expect(claims).not.toHaveProperty('sub');
+
+      // Also verify createAssertionPayload directly
+      const payload = PlayIntegrityService.createAssertionPayload(TEST_CLIENT_EMAIL, claims.iat);
+      expect(payload.sub).toBeUndefined();
+      expect(payload).not.toHaveProperty('sub');
+      expect(payload.iss).toBe(TEST_CLIENT_EMAIL);
+      expect(payload.aud).toBe('https://oauth2.googleapis.com/token');
+      expect(payload.scope).toBe('https://www.googleapis.com/auth/playintegrity');
     });
   });
 

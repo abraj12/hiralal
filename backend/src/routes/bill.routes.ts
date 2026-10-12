@@ -7,6 +7,7 @@ import { StorageService } from '../services/storage.service';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { BillStatus } from '@prisma/client';
 import { parseIndiaBusinessDate } from '../utils/timezone.utils';
+import { requireActionIntegrity } from '../middleware/integrity.middleware';
 
 const router = Router();
 const upload = multer({
@@ -24,7 +25,7 @@ const upload = multer({
 /**
  * Upload Bill Invoice
  */
-router.post('/', authenticate, requireUser, upload.single('invoiceFile'), async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', authenticate, requireUser, requireActionIntegrity('BILL_UPLOAD'), upload.single('invoiceFile'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const { invoiceNumber, invoiceDate, billAmount, remarks } = req.body;

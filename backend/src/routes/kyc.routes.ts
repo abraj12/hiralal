@@ -2,10 +2,11 @@ import { Router, Response } from 'express';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { KycService } from '../services/kyc.service';
 import { kycLimiter } from '../middleware/rateLimit.middleware';
+import { requireActionIntegrity } from '../middleware/integrity.middleware';
 
 const router = Router();
 
-router.post('/pan/verify', authenticate, requireUser, kycLimiter, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/pan/verify', authenticate, requireUser, kycLimiter, requireActionIntegrity('KYC_SUBMIT'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const { panNumber, panName, consent, consentText } = req.body;

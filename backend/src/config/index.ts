@@ -79,6 +79,7 @@ export interface AppConfig {
     allowedCertificateDigests: string[];
     allowMock: boolean;
     requireLicensing: boolean;
+    enforceActions: boolean;
   };
   timezone: string;
 }
@@ -374,6 +375,18 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     ) {
       throw new Error('[FATAL] BILL_ADMIN_INITIAL_PASSWORD and OPERATIONS_ADMIN_INITIAL_PASSWORD must be distinct passwords.');
     }
+
+    if (env.PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS) {
+      const digests = env.PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS.split(',')
+        .map((d) => d.trim().toLowerCase())
+        .filter(Boolean);
+      for (const d of digests) {
+        const normalized = d.replace(/[: -]/g, '');
+        if (!/^[a-f0-9]{64}$/.test(normalized)) {
+          throw new Error(`[FATAL] PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS contains invalid SHA-256 fingerprint: "${d}".`);
+        }
+      }
+    }
   }
 }
 
@@ -542,6 +555,7 @@ export const config: AppConfig = {
       .filter(Boolean),
     allowMock: process.env.PLAY_INTEGRITY_ALLOW_MOCK === 'true',
     requireLicensing: process.env.PLAY_INTEGRITY_REQUIRE_LICENSING === 'true',
+    enforceActions: process.env.PLAY_INTEGRITY_ENFORCE_ACTIONS === 'true',
   },
 
   timezone: 'Asia/Kolkata',

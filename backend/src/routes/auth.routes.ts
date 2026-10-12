@@ -599,18 +599,44 @@ router.patch('/me', authenticate, requireUser, async (req: AuthenticatedRequest,
 // 8. PLAY INTEGRITY NONCE & VERIFICATION
 // ==========================================
 
-router.get('/integrity/nonce', integrityNonceLimiter, async (_req: Request, res: Response) => {
+router.get('/integrity/nonce', integrityNonceLimiter, async (req: Request, res: Response) => {
   try {
-    const result = await PlayIntegrityService.generateNonce();
+    const action = (req.query.action as any) || 'GENERAL';
+    const result = await PlayIntegrityService.generateNonce({ action });
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-router.post('/integrity/nonce', integrityNonceLimiter, async (_req: Request, res: Response) => {
+router.post('/integrity/nonce', integrityNonceLimiter, async (req: Request, res: Response) => {
   try {
-    const result = await PlayIntegrityService.generateNonce();
+    const authHeader = req.headers.authorization;
+    let userId: string | undefined;
+    let sessionId: string | undefined;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.substring(7);
+        const decoded = jwt.decode(token) as any;
+        if (decoded?.id || decoded?.userId) {
+          userId = decoded.id || decoded.userId;
+          sessionId = decoded.sessionId;
+        }
+      } catch {
+        // Unauthenticated fallback
+      }
+    }
+
+    const action = req.body?.action || 'GENERAL';
+    const requestHash = req.body?.requestHash;
+
+    const result = await PlayIntegrityService.generateNonce({
+      userId,
+      sessionId,
+      action,
+      requestHash,
+    });
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
@@ -619,7 +645,7 @@ router.post('/integrity/nonce', integrityNonceLimiter, async (_req: Request, res
 
 router.post('/integrity/verify', integrityVerifyLimiter, async (req: Request, res: Response) => {
   try {
-    const { nonce, integrityToken } = req.body;
+    const { nonce, integrityToken, action, requestHash } = req.body;
     if (!nonce || !integrityToken) {
       return res.status(400).json({
         success: false,
@@ -627,7 +653,34 @@ router.post('/integrity/verify', integrityVerifyLimiter, async (req: Request, re
       });
     }
 
-    const verdict = await PlayIntegrityService.verifyToken({ nonce, integrityToken });
+    const authHeader = req.headers.authorization;
+    let userId: string | undefined;
+    let sessionId: string | undefined;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.substring(7);
+        const decoded = jwt.decode(token) as any;
+        if (decoded?.id || decoded?.userId) {
+          userId = decoded.id || decoded.userId;
+          sessionId = decoded.sessionId;
+        }
+      } catch {
+        // Ignore token decoding failure for standalone verify
+      }
+    }
+
+    const verdict = await PlayIntegrityService.verifyActionToken({
+      nonce,
+      integrityToken,
+      expectedContext: {
+        userId,
+        sessionId,
+        action,
+        requestHash,
+      },
+    });
+
     if (!verdict.success) {
       return res.status(400).json({
         success: false,

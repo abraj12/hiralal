@@ -13,14 +13,28 @@ import jwt from 'jsonwebtoken';
 import { config, isPlaceholderCredential } from '../../config';
 import { getRedisClient, isRedisReady } from '../../redis';
 
+export type IntegrityAction = 'BILL_UPLOAD' | 'PAYOUT_REDEEM' | 'KYC_SUBMIT' | 'AUTH' | 'GENERAL';
+
+export interface ActionNonceContext {
+  userId?: string;
+  sessionId?: string | null;
+  action: IntegrityAction;
+  requestHash?: string;
+}
+
+export interface NonceMetadata extends ActionNonceContext {
+  nonce: string;
+  expiresAt: number;
+}
+
 // In-memory fallback cache when Redis is unavailable
-const memoryNonceStore = new Map<string, number>();
+const memoryNonceStore = new Map<string, NonceMetadata>();
 
 // Clean up expired memory nonces every 60 seconds
 setInterval(() => {
   const now = Date.now();
-  for (const [nonce, expiresAt] of memoryNonceStore.entries()) {
-    if (expiresAt <= now) {
+  for (const [nonce, metadata] of memoryNonceStore.entries()) {
+    if (metadata.expiresAt <= now) {
       memoryNonceStore.delete(nonce);
     }
   }
@@ -44,6 +58,7 @@ export interface PlayIntegrityConfigOverride {
   allowedCertificateDigests?: string[];
   allowMock?: boolean;
   requireLicensing?: boolean;
+  enforceActions?: boolean;
 }
 
 interface TokenCache {
@@ -57,6 +72,7 @@ export class PlayIntegrityService {
   private static inFlightTokenPromise: Promise<string> | null = null;
   private static fetchClient: typeof fetch = globalThis.fetch;
   private static configOverride: PlayIntegrityConfigOverride | null = null;
+  private static enforceActionsOverride: boolean | null = null;
 
   /**
    * Injects custom fetch client for unit and integration testing.
@@ -75,6 +91,42 @@ export class PlayIntegrityService {
   }
 
   /**
+   * Controls whether action integrity attestation is strictly enforced.
+   * In production or staging, enforcement is permanently active and cannot be disabled.
+   */
+  static setEnforceActions(enforce: boolean | null): void {
+    const isProdOrStaging =
+      (config.isProduction || process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') &&
+      process.env.NODE_ENV !== 'test';
+
+    if (isProdOrStaging && enforce === false) {
+      throw new Error('Integrity action enforcement cannot be disabled in production or staging.');
+    }
+    this.enforceActionsOverride = enforce;
+  }
+
+  /**
+   * Checks whether integrity action enforcement is currently active.
+   */
+  static isEnforcingActions(): boolean {
+    const isProdOrStaging =
+      (config.isProduction || process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') &&
+      process.env.NODE_ENV !== 'test';
+
+    if (isProdOrStaging) {
+      return true;
+    }
+    if (this.enforceActionsOverride !== null) {
+      return this.enforceActionsOverride;
+    }
+    return (
+      this.configOverride?.enforceActions ??
+      config.playIntegrity?.enforceActions ??
+      process.env.PLAY_INTEGRITY_ENFORCE_ACTIONS === 'true'
+    );
+  }
+
+  /**
    * Clears the cached OAuth2 access token.
    */
   static resetTokenCache(): void {
@@ -90,6 +142,60 @@ export class PlayIntegrityService {
   }
 
   /**
+   * Validates whether a given string is a syntactically valid SHA-256 hex digest.
+   * Supports standard 64-hex format or colon-delimited fingerprints.
+   */
+  static isValidSha256Fingerprint(fingerprint: string): boolean {
+    if (!fingerprint || typeof fingerprint !== 'string') return false;
+    const normalized = fingerprint.replace(/[: -]/g, '').trim().toLowerCase();
+    return /^[a-f0-9]{64}$/.test(normalized);
+  }
+
+  /**
+   * Validates production configuration for certificate digests and fail-closed policies.
+   */
+  static validateProductionConfiguration(configToCheck: {
+    clientEmail: string;
+    privateKey: string;
+    packageName: string;
+    allowedCertificateDigests: string[];
+    allowMock: boolean;
+  }): { valid: boolean; error?: string } {
+    const isProdOrStaging =
+      config.isProduction || process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging';
+
+    if (isProdOrStaging) {
+      // Mock mode is strictly forbidden in production and staging
+      if (configToCheck.allowMock) {
+        return {
+          valid: false,
+          error: 'Mock mode (PLAY_INTEGRITY_ALLOW_MOCK) is strictly forbidden in production and staging environments.',
+        };
+      }
+
+      // Certificate allowlist is required in production
+      if (!configToCheck.allowedCertificateDigests || configToCheck.allowedCertificateDigests.length === 0) {
+        return {
+          valid: false,
+          error:
+            'Production configuration error: PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS must contain at least one valid SHA-256 certificate digest in production.',
+        };
+      }
+
+      for (const digest of configToCheck.allowedCertificateDigests) {
+        if (!this.isValidSha256Fingerprint(digest)) {
+          return {
+            valid: false,
+            error: `Production configuration error: Malformed SHA-256 certificate digest "${digest}". Expected 64 hex characters.`,
+          };
+        }
+      }
+    }
+
+    return { valid: true };
+  }
+
+  /**
    * Resolves effective Play Integrity configuration (override or application config).
    */
   static getEffectiveConfig(): {
@@ -99,7 +205,19 @@ export class PlayIntegrityService {
     allowedCertificateDigests: string[];
     allowMock: boolean;
     requireLicensing: boolean;
+    enforceActions: boolean;
   } {
+    const isProdOrStaging =
+      config.isProduction || process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging';
+
+    const rawAllowMock =
+      this.configOverride?.allowMock ??
+      config.playIntegrity?.allowMock ??
+      (process.env.PLAY_INTEGRITY_ALLOW_MOCK === 'true');
+
+    // In production or staging, mock mode is strictly forced to false
+    const allowMock = isProdOrStaging ? false : rawAllowMock;
+
     return {
       clientEmail:
         this.configOverride?.clientEmail ??
@@ -120,69 +238,150 @@ export class PlayIntegrityService {
           .split(',')
           .map((d) => d.trim().toLowerCase())
           .filter(Boolean),
-      allowMock:
-        this.configOverride?.allowMock ??
-        config.playIntegrity?.allowMock ??
-        (process.env.PLAY_INTEGRITY_ALLOW_MOCK === 'true'),
+      allowMock,
       requireLicensing:
         this.configOverride?.requireLicensing ??
         config.playIntegrity?.requireLicensing ??
         (process.env.PLAY_INTEGRITY_REQUIRE_LICENSING === 'true'),
+      enforceActions: this.isEnforcingActions(),
     };
   }
 
   /**
-   * Generates a cryptographically secure, single-use, URL-safe Base64 nonce.
+   * Generates a cryptographically secure, single-use, URL-safe Base64 nonce bound to optional action and session context.
    */
-  static async generateNonce(): Promise<{ nonce: string; expiresAt: string }> {
+  static async generateNonce(
+    context?: Partial<ActionNonceContext>
+  ): Promise<{ nonce: string; expiresAt: string; action: IntegrityAction }> {
     const rawBytes = crypto.randomBytes(32);
     const nonce = rawBytes.toString('base64url');
-    const expiresAt = new Date(Date.now() + this.NONCE_TTL_SECONDS * 1000);
+    const expiresAtMs = Date.now() + this.NONCE_TTL_SECONDS * 1000;
+    const expiresAt = new Date(expiresAtMs);
+    const action: IntegrityAction = context?.action || 'GENERAL';
+
+    const metadata: NonceMetadata = {
+      nonce,
+      userId: context?.userId,
+      sessionId: context?.sessionId,
+      action,
+      requestHash: context?.requestHash,
+      expiresAt: expiresAtMs,
+    };
 
     const key = `integrity:nonce:${nonce}`;
+    const value = JSON.stringify(metadata);
+
     if (isRedisReady()) {
       try {
         const redis = getRedisClient();
-        await redis.set(key, '1', 'EX', this.NONCE_TTL_SECONDS);
+        await redis.set(key, value, 'EX', this.NONCE_TTL_SECONDS);
       } catch (err) {
-        memoryNonceStore.set(nonce, expiresAt.getTime());
+        memoryNonceStore.set(nonce, metadata);
       }
     } else {
-      memoryNonceStore.set(nonce, expiresAt.getTime());
+      memoryNonceStore.set(nonce, metadata);
     }
 
     return {
       nonce,
       expiresAt: expiresAt.toISOString(),
+      action,
     };
   }
 
   /**
-   * Validates and consumes a single-use nonce to prevent replay attacks.
+   * Validates and atomically consumes a single-use nonce to prevent replay attacks,
+   * verifying bound user, session, and action context.
    */
-  private static async consumeNonce(nonce: string): Promise<boolean> {
+  static async consumeNonce(
+    nonce: string,
+    expectedContext?: Partial<ActionNonceContext>
+  ): Promise<{ valid: boolean; metadata?: NonceMetadata; error?: string }> {
     if (!nonce || typeof nonce !== 'string' || nonce.length < 16) {
-      return false;
+      return { valid: false, error: 'Nonce is required and must be at least 16 characters.' };
     }
 
     const key = `integrity:nonce:${nonce}`;
+    let rawMetadata: string | null = null;
+    let memoryEntry: NonceMetadata | null = null;
+
     if (isRedisReady()) {
       try {
         const redis = getRedisClient();
-        const deleted = await redis.del(key);
-        if (deleted === 1) return true;
+        const fetched = await redis.get(key);
+        if (fetched) {
+          await redis.del(key);
+          rawMetadata = fetched;
+        }
       } catch {
         // Fallback to memory
       }
     }
 
-    if (memoryNonceStore.has(nonce)) {
-      const expiresAt = memoryNonceStore.get(nonce)!;
+    if (!rawMetadata && memoryNonceStore.has(nonce)) {
+      memoryEntry = memoryNonceStore.get(nonce)!;
       memoryNonceStore.delete(nonce);
-      return expiresAt > Date.now();
     }
 
-    return false;
+    let metadata: NonceMetadata;
+    if (rawMetadata) {
+      try {
+        metadata = JSON.parse(rawMetadata);
+      } catch {
+        return { valid: false, error: 'Corrupted nonce metadata.' };
+      }
+    } else if (memoryEntry) {
+      metadata = memoryEntry;
+    } else {
+      return { valid: false, error: 'Invalid, expired, or replayed integrity nonce.' };
+    }
+
+    // Expiry check
+    if (metadata.expiresAt <= Date.now()) {
+      return { valid: false, error: 'Integrity nonce has expired.' };
+    }
+
+    // Action binding check
+    if (expectedContext?.action && metadata.action !== 'GENERAL') {
+      if (metadata.action !== expectedContext.action) {
+        return {
+          valid: false,
+          error: `Integrity nonce was issued for action ${metadata.action}, but presented for ${expectedContext.action}.`,
+        };
+      }
+    }
+
+    // User binding check
+    if (expectedContext?.userId && metadata.userId) {
+      if (metadata.userId !== expectedContext.userId) {
+        return {
+          valid: false,
+          error: 'Integrity nonce was issued for a different user.',
+        };
+      }
+    }
+
+    // Session binding check
+    if (expectedContext?.sessionId && metadata.sessionId) {
+      if (metadata.sessionId !== expectedContext.sessionId) {
+        return {
+          valid: false,
+          error: 'Integrity nonce was issued for a different user session.',
+        };
+      }
+    }
+
+    // Request hash binding check
+    if (expectedContext?.requestHash && metadata.requestHash) {
+      if (metadata.requestHash !== expectedContext.requestHash) {
+        return {
+          valid: false,
+          error: 'Integrity nonce requestHash mismatch.',
+        };
+      }
+    }
+
+    return { valid: true, metadata };
   }
 
   /**
@@ -190,7 +389,8 @@ export class PlayIntegrityService {
    * Rejects empty strings, partial configurations, and placeholder/example values.
    */
   static isConfigured(): boolean {
-    const { clientEmail, privateKey, packageName } = this.getEffectiveConfig();
+    const effectiveConfig = this.getEffectiveConfig();
+    const { clientEmail, privateKey, packageName } = effectiveConfig;
     if (!clientEmail || !privateKey || !packageName) return false;
     if (
       isPlaceholderCredential(clientEmail) ||
@@ -201,6 +401,7 @@ export class PlayIntegrityService {
     }
     if (!clientEmail.includes('@')) return false;
     if (!privateKey.includes('PRIVATE KEY')) return false;
+
     return true;
   }
 
@@ -231,19 +432,26 @@ export class PlayIntegrityService {
   }
 
   /**
-   * Exchanges RS256-signed JWT assertion against Google OAuth2 token endpoint.
+   * Constructs standard Google Service Account OAuth2 JWT assertion claims.
+   * NOTE: The `sub` claim is strictly omitted for normal server-to-server authentication
+   * to prevent accidental domain-wide delegation requests.
    */
-  private static async requestNewAccessToken(clientEmail: string, privateKey: string): Promise<string> {
-    const now = Math.floor(Date.now() / 1000);
-
-    const payload = {
+  static createAssertionPayload(clientEmail: string, now: number = Math.floor(Date.now() / 1000)): Record<string, any> {
+    return {
       iss: clientEmail,
-      sub: clientEmail,
       aud: 'https://oauth2.googleapis.com/token',
       iat: now,
       exp: now + 3600,
       scope: 'https://www.googleapis.com/auth/playintegrity',
     };
+  }
+
+  /**
+   * Exchanges RS256-signed JWT assertion against Google OAuth2 token endpoint.
+   */
+  private static async requestNewAccessToken(clientEmail: string, privateKey: string): Promise<string> {
+    const now = Math.floor(Date.now() / 1000);
+    const payload = this.createAssertionPayload(clientEmail, now);
 
     let signedAssertion: string;
     try {
@@ -434,10 +642,10 @@ export class PlayIntegrityService {
         ? appIntegrity.certificateSha256Digest
         : [];
       const normalizedPayloadDigests = rawPayloadDigests.map((d: string) =>
-        d.trim().toLowerCase().replace(/:/g, '')
+        d.trim().toLowerCase().replace(/[: -]/g, '')
       );
       const normalizedAllowed = effectiveConfig.allowedCertificateDigests.map((d) =>
-        d.trim().toLowerCase().replace(/:/g, '')
+        d.trim().toLowerCase().replace(/[: -]/g, '')
       );
 
       const hasMatchingCert = normalizedPayloadDigests.some((d: string) => normalizedAllowed.includes(d));
@@ -493,13 +701,15 @@ export class PlayIntegrityService {
   }
 
   /**
-   * Verifies an integrity token from the mobile app against the consumed single-use nonce.
+   * Verifies an integrity token from the mobile app against the consumed single-use nonce,
+   * validating bound action and user context.
    */
-  static async verifyToken(params: {
+  static async verifyActionToken(params: {
     nonce: string;
     integrityToken: string;
+    expectedContext?: Partial<ActionNonceContext>;
   }): Promise<PlayIntegrityVerdict> {
-    const { nonce, integrityToken } = params;
+    const { nonce, integrityToken, expectedContext } = params;
 
     if (!nonce) {
       return {
@@ -523,16 +733,16 @@ export class PlayIntegrityService {
       };
     }
 
-    // 1. Consume nonce atomically (single-use anti-replay)
-    const isValidNonce = await this.consumeNonce(nonce);
-    if (!isValidNonce) {
+    // 1. Consume nonce atomically with action and session context check
+    const consumption = await this.consumeNonce(nonce, expectedContext);
+    if (!consumption.valid) {
       return {
         success: false,
         isRealDevice: false,
         isLicensed: false,
         appRecognitionVerdict: 'UNEVALUATED',
         deviceRecognitionVerdict: [],
-        error: 'Invalid, expired, or replayed integrity nonce.',
+        error: consumption.error || 'Invalid, expired, or replayed integrity nonce.',
       };
     }
 
@@ -540,19 +750,21 @@ export class PlayIntegrityService {
 
     // 2. Behavior when credentials are unset / incomplete
     if (!this.isConfigured()) {
-      // Production MUST always fail closed
-      if (config.isProduction || process.env.NODE_ENV === 'production') {
+      const isProdOrStaging =
+        config.isProduction || process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging';
+
+      if (isProdOrStaging) {
         return {
           success: false,
           isRealDevice: false,
           isLicensed: false,
           appRecognitionVerdict: 'UNEVALUATED',
           deviceRecognitionVerdict: [],
-          error: 'Play Integrity credentials are not configured on the production server. Mobile integrity validation failed closed.',
+          error:
+            'Play Integrity credentials are not configured on the production server. Mobile integrity validation failed closed.',
         };
       }
 
-      // Non-production allows mock ONLY if explicitly enabled
       if (effectiveConfig.allowMock) {
         if (process.env.NODE_ENV !== 'test') {
           console.log(
@@ -579,8 +791,20 @@ export class PlayIntegrityService {
       };
     }
 
-    // 3. Genuine Google Play Integrity Verification
-    // Calls Google OAuth + decodeIntegrityToken
+    // 3. Validate production configuration when credentials are configured
+    const prodConfigCheck = this.validateProductionConfiguration(effectiveConfig);
+    if (!prodConfigCheck.valid) {
+      return {
+        success: false,
+        isRealDevice: false,
+        isLicensed: false,
+        appRecognitionVerdict: 'UNEVALUATED',
+        deviceRecognitionVerdict: [],
+        error: prodConfigCheck.error,
+      };
+    }
+
+    // 4. Genuine Google Play Integrity Verification
     try {
       const accessToken = await this.getAccessToken();
       const payload = await this.decodeIntegrityToken(
@@ -600,5 +824,15 @@ export class PlayIntegrityService {
         error: `Play Integrity verification failed: ${err.message}`,
       };
     }
+  }
+
+  /**
+   * Verifies an integrity token from the mobile app against the consumed single-use nonce.
+   */
+  static async verifyToken(params: {
+    nonce: string;
+    integrityToken: string;
+  }): Promise<PlayIntegrityVerdict> {
+    return this.verifyActionToken(params);
   }
 }

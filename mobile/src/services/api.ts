@@ -387,21 +387,32 @@ export class MobileApiClient {
     return this.request(`/bills?status=${status}`);
   }
 
-  static async uploadBill(data: {
-    invoiceNumber: string;
-    invoiceDate: string;
-    billAmount: number;
-    remarks?: string;
-    file?: {
-      uri: string;
-      name: string;
-      type: string;
-      file?: any;
-    };
-    fileBase64?: string;
-    fileName?: string;
-    mimeType?: string;
-  }) {
+  static async uploadBill(
+    data: {
+      invoiceNumber: string;
+      invoiceDate: string;
+      billAmount: number;
+      remarks?: string;
+      file?: {
+        uri: string;
+        name: string;
+        type: string;
+        file?: any;
+      };
+      fileBase64?: string;
+      fileName?: string;
+      mimeType?: string;
+    },
+    attestation?: { integrityToken?: string; integrityNonce?: string }
+  ) {
+    const extraHeaders: Record<string, string> = {};
+    if (attestation?.integrityToken) {
+      extraHeaders['x-integrity-token'] = attestation.integrityToken;
+    }
+    if (attestation?.integrityNonce) {
+      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce;
+    }
+
     if (data.file) {
       const formData = new FormData();
       formData.append('invoiceNumber', data.invoiceNumber);
@@ -437,12 +448,14 @@ export class MobileApiClient {
 
       return this.request('/bills', {
         method: 'POST',
+        headers: extraHeaders,
         body: formData,
       });
     }
 
     return this.request('/bills', {
       method: 'POST',
+      headers: extraHeaders,
       body: JSON.stringify(data),
     });
   }
@@ -458,9 +471,24 @@ export class MobileApiClient {
   }
 
   // KYC (PAN)
-  static verifyPan(panNumber: string, panName: string, consent = true, consentText?: string) {
+  static verifyPan(
+    panNumber: string,
+    panName: string,
+    consent = true,
+    consentText?: string,
+    attestation?: { integrityToken?: string; integrityNonce?: string }
+  ) {
+    const extraHeaders: Record<string, string> = {};
+    if (attestation?.integrityToken) {
+      extraHeaders['x-integrity-token'] = attestation.integrityToken;
+    }
+    if (attestation?.integrityNonce) {
+      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce;
+    }
+
     return this.request('/kyc/pan/verify', {
       method: 'POST',
+      headers: extraHeaders,
       body: JSON.stringify({ panNumber, panName, consent, consentText }),
     });
   }
@@ -489,13 +517,25 @@ export class MobileApiClient {
   }
 
   // Payouts
-  static redeemRewards(data: {
-    idempotencyKey: string;
-    paymentAccountId?: string;
-    amount?: number;
-  }) {
+  static redeemRewards(
+    data: {
+      idempotencyKey: string;
+      paymentAccountId?: string;
+      amount?: number;
+    },
+    attestation?: { integrityToken?: string; integrityNonce?: string }
+  ) {
+    const extraHeaders: Record<string, string> = {};
+    if (attestation?.integrityToken) {
+      extraHeaders['x-integrity-token'] = attestation.integrityToken;
+    }
+    if (attestation?.integrityNonce) {
+      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce;
+    }
+
     return this.request('/payouts/redeem', {
       method: 'POST',
+      headers: extraHeaders,
       body: JSON.stringify(data),
     });
   }
@@ -646,14 +686,21 @@ export class MobileApiClient {
   }
 
   // Play Integrity API
-  static getIntegrityNonce() {
-    return this.request('/auth/integrity/nonce', { method: 'POST' });
+  static getIntegrityNonce(options?: { action?: string; requestHash?: string }) {
+    return this.request('/auth/integrity/nonce', {
+      method: 'POST',
+      body: JSON.stringify(options || {}),
+    });
   }
 
-  static verifyIntegrityToken(nonce: string, integrityToken: string) {
+  static verifyIntegrityToken(
+    nonce: string,
+    integrityToken: string,
+    options?: { action?: string; requestHash?: string }
+  ) {
     return this.request('/auth/integrity/verify', {
       method: 'POST',
-      body: JSON.stringify({ nonce, integrityToken }),
+      body: JSON.stringify({ nonce, integrityToken, ...options }),
     });
   }
 }

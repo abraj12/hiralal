@@ -15,6 +15,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.hiralal.rewards",
       "adaptiveIcon": {
         "foregroundImage": "./assets/brand_logo.png",
         "backgroundColor": "#ffffff"
@@ -24,7 +25,8 @@
       "favicon": "./assets/brand_logo.png"
     },
     "plugins": [
-      "expo-asset"
+      "expo-asset",
+      "./plugins/withPlayIntegrity"
     ]
   }
 }

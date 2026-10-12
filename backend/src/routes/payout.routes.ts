@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { PayoutService } from '../services/payout.service';
 import { payoutRedeemLimiter } from '../middleware/rateLimit.middleware';
+import { requireActionIntegrity } from '../middleware/integrity.middleware';
 import { prisma } from '../db';
 
 const router = Router();
@@ -24,7 +25,7 @@ router.get('/eligibility', authenticate, requireUser, async (req: AuthenticatedR
  * Enforces 100% full-balance redemption computed from database available balance.
  * Awaiting admin approval before dispatch.
  */
-router.post('/redeem', authenticate, requireUser, payoutRedeemLimiter, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/redeem', authenticate, requireUser, payoutRedeemLimiter, requireActionIntegrity('PAYOUT_REDEEM'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const idempotencyRaw: unknown = req.body?.idempotencyKey;
