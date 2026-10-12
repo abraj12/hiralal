@@ -3,6 +3,7 @@
 **Target Environment:** AWS EC2 t4g.medium (2 vCPU, 4 GiB RAM, ARM64 / Graviton2, ap-south-1)  
 **Branch:** `audit/deploy-workflow-investigation`  
 **Baseline Commit:** `03fb8ef07f8cd1d9615c99658646fc50d9c696b7`  
+**Final Commit SHA:** `01f0a868f5259de5434f4d5bb1b092aa9a3321f6`  
 **Date:** October 13, 2026  
 **Status:** PHASE G.1 COMPLETE — All remediation workstreams implemented, verified and regression-tested. External-provider live credentials remain pending owner provisioning.
 
