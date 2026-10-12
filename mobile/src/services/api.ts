@@ -376,10 +376,28 @@ export class MobileApiClient {
   static async login(identifier: string, password: string) {
     const extraHeaders: Record<string, string> = {};
 
-    // Admin candidates use prefixed identifiers (BADM..., OADM...) — they authenticate
-    // via the web admin panel or the admin OTP flow, not Android Play Integrity.
-    // Only attempt Play Integrity for standard 10-digit mobile numbers on Android.
-    const isAdminCandidate = /^(BADM|OADM)/i.test(identifier.trim());
+    // Admin candidates use prefixed identifiers — they authenticate via the web admin
+    // panel or admin OTP flow, not Android Play Integrity.
+    // Detect admin candidates dynamically using server-configured prefixes, so that
+    // changing server prefix configuration doesn't require a client update.
+    // The server is the authority for role classification.
+    let isAdminCandidate = false;
+    try {
+      const prefixRes = await this.getAdminPrefixes();
+      if (prefixRes?.success && prefixRes?.prefixes) {
+        const cleanId = identifier.trim().toUpperCase();
+        const billP = (prefixRes.prefixes.billAdmin || '').toUpperCase();
+        const opsP = (prefixRes.prefixes.operationsAdmin || '').toUpperCase();
+        isAdminCandidate =
+          (billP.length > 0 && cleanId.startsWith(billP)) ||
+          (opsP.length > 0 && cleanId.startsWith(opsP));
+      }
+    } catch {
+      // Prefix endpoint unavailable — conservatively treat as non-admin so that the
+      // user integrity path remains active. The server will reject admin-prefixed IDs
+      // through the standard user auth flow regardless.
+      isAdminCandidate = false;
+    }
 
     if (Platform.OS === 'android' && !isAdminCandidate) {
       try {

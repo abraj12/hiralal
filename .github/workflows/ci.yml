@@ -342,8 +342,8 @@ jobs:
             STARTING=$(docker ps --filter "health=starting" -q)
             if [ -n "$UNHEALTHY" ]; then
               echo "Error: Containers reported unhealthy status!"
-              docker compose ps
-              docker compose logs
+              docker compose -f docker-compose.yml -f docker-compose.ci.yml ps
+              docker compose -f docker-compose.yml -f docker-compose.ci.yml logs
               exit 1
             fi
             if [ -z "$STARTING" ]; then
@@ -353,6 +353,7 @@ jobs:
             echo "Waiting for containers to initialize ($i/30)..."
             sleep 5
           done
+
 
       - name: Verify All 6 Stack Containers Running
         run: |
