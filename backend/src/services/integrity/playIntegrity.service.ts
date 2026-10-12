@@ -8,6 +8,7 @@
  * Status: NOT VERIFIED in live environment until production Google Service Account is configured.
  */
 import crypto from 'crypto';
+import { config } from '../../config';
 import { getRedisClient, isRedisReady } from '../../redis';
 
 // In-memory fallback cache when Redis is unavailable
@@ -146,6 +147,17 @@ export class PlayIntegrityService {
 
     // 2. Fallback / Mock behavior when credentials are unset
     if (!this.isConfigured()) {
+      if (config.isProduction || process.env.NODE_ENV === 'production') {
+        return {
+          success: false,
+          isRealDevice: false,
+          isLicensed: false,
+          appRecognitionVerdict: 'UNEVALUATED',
+          deviceRecognitionVerdict: [],
+          error: 'Play Integrity credentials are not configured on the production server. Mobile integrity validation failed closed.',
+        };
+      }
+
       if (process.env.NODE_ENV !== 'test') {
         console.log(
           '[PLAY-INTEGRITY] [MOCK] Verification succeeded in mock mode (credentials unconfigured). Status: NOT VERIFIED.'

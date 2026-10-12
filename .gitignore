@@ -73,4 +73,8 @@ nginx/ssl/*.pem
 nginx/ssl/*.key
 nginx/ssl/*.crt
 !nginx/ssl/.gitkeep
-
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+scripts/__pycache__/

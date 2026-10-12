@@ -164,6 +164,15 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Upload Part 2 Master Remediation Report Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: part-2-master-remediation-report
+          path: docs/audits/part_2_master_remediation_report.md
+          if-no-files-found: error
+          retention-days: 30
+
   admin-date-tests:
     name: Admin Date Helper Tests
     runs-on: ubuntu-latest
@@ -181,6 +190,10 @@ jobs:
       - name: Install Admin Dependencies
         working-directory: admin
         run: npm ci
+
+      - name: TypeScript Typecheck
+        working-directory: admin
+        run: npx tsc --noEmit
 
       - name: Run Admin Date Helper Tests
         working-directory: admin
