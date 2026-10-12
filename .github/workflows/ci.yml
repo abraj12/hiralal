@@ -428,8 +428,15 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Configure Android SDK
+        run: |
+          echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+          if command -v sdkmanager >/dev/null 2>&1; then
+            yes | sdkmanager --licenses || true
+          elif [ -x "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          fi
 
       - name: Install Mobile Dependencies
         working-directory: mobile
@@ -442,5 +449,16 @@ jobs:
       - name: Build Android Debug APK
         working-directory: mobile/android
         run: |
+          echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
           chmod +x ./gradlew
-          ./gradlew :app:assembleDebug --no-daemon
+          ./gradlew :app:assembleDebug --no-daemon -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=512m"
+
+      - name: Upload Debug APK Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-debug-apk
+          path: mobile/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
+          retention-days: 7
+
