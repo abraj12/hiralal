@@ -115,15 +115,31 @@ export async function createPayoutRedemptionRequestHash(data: {
 }
 
 /**
- * Computes canonical request hash for account deletion.
+ * Computes canonical request hash for account deletion request.
  */
 export async function createAccountDeletionRequestHash(data?: {
+  password?: string;
   otpCode?: string;
 }): Promise<string> {
   const canonicalPayload = {
     version: 1,
-    action: 'ACCOUNT_DELETION',
-    ...(data?.otpCode ? { otpCode: String(data.otpCode).trim() } : {}),
+    action: 'ACCOUNT_DELETION_REQUEST',
+    ...(data?.password ? { password: String(data.password).trim() } : {}),
+  };
+
+  return sha256Json(canonicalPayload);
+}
+
+/**
+ * Computes canonical request hash for account deletion confirmation.
+ */
+export async function createAccountDeletionConfirmRequestHash(data: {
+  otpCode: string;
+}): Promise<string> {
+  const canonicalPayload = {
+    version: 1,
+    action: 'ACCOUNT_DELETION_CONFIRM',
+    otpCode: String(data.otpCode).trim(),
   };
 
   return sha256Json(canonicalPayload);

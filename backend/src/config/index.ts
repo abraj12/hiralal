@@ -384,6 +384,10 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
         }
       }
     }
+
+    if (env.PLAY_INTEGRITY_REQUIRE_LICENSING === 'false') {
+      throw new Error('[FATAL] PLAY_INTEGRITY_REQUIRE_LICENSING cannot be disabled in production.');
+    }
   }
 }
 
@@ -547,7 +551,9 @@ export const config: AppConfig = {
       .map((d) => d.trim().toLowerCase())
       .filter(Boolean),
     allowMock: process.env.PLAY_INTEGRITY_ALLOW_MOCK === 'true',
-    requireLicensing: process.env.PLAY_INTEGRITY_REQUIRE_LICENSING === 'true',
+    requireLicensing: isProduction
+      ? process.env.PLAY_INTEGRITY_REQUIRE_LICENSING !== 'false'
+      : process.env.PLAY_INTEGRITY_REQUIRE_LICENSING === 'true',
     enforceActions: process.env.PLAY_INTEGRITY_ENFORCE_ACTIONS === 'true',
   },
 

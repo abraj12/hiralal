@@ -1063,6 +1063,11 @@ export class AuthService {
           },
         });
 
+        await tx.accountDeletionOperation.updateMany({
+          where: { userId: user.id, status: { in: ['PENDING', 'FAILED_RETRYABLE', 'IN_PROGRESS'] } },
+          data: { status: 'CANCELLED' },
+        });
+
         // Audit log for cancellation
         await tx.auditLog.create({
           data: {

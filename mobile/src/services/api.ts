@@ -772,10 +772,14 @@ export class MobileApiClient {
   }
 
   // Idempotent Welcome Notification API
-  static triggerWelcomeNotification(installationId: string) {
+  static triggerWelcomeNotification(
+    installationId: string,
+    token?: string,
+    platform = Platform.OS.toUpperCase()
+  ) {
     return this.request('/notifications/welcome', {
       method: 'POST',
-      body: JSON.stringify({ installationId }),
+      body: JSON.stringify({ installationId, token, platform }),
     });
   }
 }

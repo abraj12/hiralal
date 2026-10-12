@@ -22,6 +22,8 @@ import { config } from '../config';
 import { generateSecureToken, sha256Hash } from '../utils/crypto.utils';
 import { PlayIntegrityService } from '../services/integrity/playIntegrity.service';
 import { AccountDeletionService } from '../services/account-deletion.service';
+import { requireActionIntegrity } from '../middleware/integrity.middleware';
+import { computeIntegrityRequestHash } from '../utils/integrityRequestHash';
 
 const router = Router();
 
@@ -122,6 +124,38 @@ router.post('/register', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Verification token is required. Please verify OTP first.' });
     }
 
+    // Pre-auth integrity check for mobile registration
+    const isEnforcing = PlayIntegrityService.isEnforcingActions();
+    const integrityToken = (req.headers['x-integrity-token'] as string) || (req.body?.integrityToken as string);
+    const integrityNonce = (req.headers['x-integrity-nonce'] as string) || (req.body?.integrityNonce as string);
+
+    if (integrityToken && integrityNonce) {
+      const requestHash = computeIntegrityRequestHash('REGISTRATION', req);
+      const verdict = await PlayIntegrityService.verifyActionToken({
+        nonce: integrityNonce,
+        integrityToken,
+        expectedContext: {
+          action: 'REGISTRATION',
+          requestHash,
+        },
+      });
+
+      if (!verdict.success) {
+        return res.status(403).json({
+          success: false,
+          code: 'INTEGRITY_FAILED',
+          message: verdict.error || 'Device integrity verification failed.',
+          verdict,
+        });
+      }
+    } else if (isEnforcing) {
+      return res.status(403).json({
+        success: false,
+        code: 'INTEGRITY_REQUIRED',
+        message: 'Device integrity attestation is required for mobile registration.',
+      });
+    }
+
     const ipAddress = req.ip || req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'];
 
@@ -154,6 +188,42 @@ router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Re
 
   if (!rawIdentifier || !password) {
     return res.status(400).json({ success: false, message: 'Mobile number and password are required.' });
+  }
+
+  // Pre-auth integrity check for craftsman mobile logins (non-admin candidates only)
+  const isEnforcing = PlayIntegrityService.isEnforcingActions();
+  const isAdminCandidate = AuthService.isConfiguredAdminPrefix(rawIdentifier);
+
+  const integrityToken = (req.headers['x-integrity-token'] as string) || (req.body?.integrityToken as string);
+  const integrityNonce = (req.headers['x-integrity-nonce'] as string) || (req.body?.integrityNonce as string);
+
+  if (!isAdminCandidate) {
+    if (integrityToken && integrityNonce) {
+      const requestHash = computeIntegrityRequestHash('AUTH', req);
+      const verdict = await PlayIntegrityService.verifyActionToken({
+        nonce: integrityNonce,
+        integrityToken,
+        expectedContext: {
+          action: 'AUTH',
+          requestHash,
+        },
+      });
+
+      if (!verdict.success) {
+        return res.status(403).json({
+          success: false,
+          code: 'INTEGRITY_FAILED',
+          message: verdict.error || 'Device integrity verification failed.',
+          verdict,
+        });
+      }
+    } else if (isEnforcing) {
+      return res.status(403).json({
+        success: false,
+        code: 'INTEGRITY_REQUIRED',
+        message: 'Device integrity attestation is required for mobile login.',
+      });
+    }
   }
 
   const ipAddress = req.ip || req.socket.remoteAddress;
@@ -654,13 +724,15 @@ router.post(
         'PAYOUT_REDEEM',
         'BENEFICIARY_VERIFY',
         'ACCOUNT_DELETION',
+        'ACCOUNT_DELETION_REQUEST',
+        'ACCOUNT_DELETION_CONFIRM',
       ] as const;
 
       if (!action || !allowedActions.includes(action)) {
         return res.status(400).json({
           success: false,
           code: 'INVALID_ACTION',
-          message: 'A valid protected integrity action is required (BILL_UPLOAD, KYC_SUBMIT, PAYOUT_REDEEM, BENEFICIARY_VERIFY, ACCOUNT_DELETION).',
+          message: 'A valid protected integrity action is required (BILL_UPLOAD, KYC_SUBMIT, PAYOUT_REDEEM, BENEFICIARY_VERIFY, ACCOUNT_DELETION, ACCOUNT_DELETION_REQUEST, ACCOUNT_DELETION_CONFIRM).',
         });
       }
 
@@ -750,7 +822,10 @@ router.post(
         'BILL_UPLOAD',
         'KYC_SUBMIT',
         'PAYOUT_REDEEM',
+        'BENEFICIARY_VERIFY',
         'ACCOUNT_DELETION',
+        'ACCOUNT_DELETION_REQUEST',
+        'ACCOUNT_DELETION_CONFIRM',
       ] as const;
 
       if (!action || !allowedActions.includes(action)) {
@@ -809,6 +884,7 @@ router.post(
   '/account-deletion/request',
   authenticate,
   requireUser,
+  requireActionIntegrity('ACCOUNT_DELETION_REQUEST'),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const user = req.user!;
@@ -827,6 +903,7 @@ router.post(
   '/account-deletion/confirm',
   authenticate,
   requireUser,
+  requireActionIntegrity('ACCOUNT_DELETION_CONFIRM'),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const user = req.user!;

@@ -42,22 +42,55 @@ export async function checkAdminRoleIntegrity(client: PrismaClient = prisma): Pr
       );
     }
 
-    const billAdminCount = await client.user.count({
+    const billAdmins = await client.user.findMany({
       where: { role: 'BILL_ADMIN' },
+      select: { id: true, mobile: true },
     });
-    if (billAdminCount > 1) {
+    if (billAdmins.length > 1) {
       throw new Error(
-        `[FATAL] Multiple BILL_ADMIN identities detected (${billAdminCount}). Exactly one provisioned BILL_ADMIN is permitted.`
+        `[FATAL] Multiple BILL_ADMIN identities detected (${billAdmins.length}). Exactly one provisioned BILL_ADMIN is permitted.`
       );
     }
 
-    const opsAdminCount = await client.user.count({
+    const opsAdmins = await client.user.findMany({
       where: { role: 'OPERATIONS_ADMIN' },
+      select: { id: true, mobile: true },
     });
-    if (opsAdminCount > 1) {
+    if (opsAdmins.length > 1) {
       throw new Error(
-        `[FATAL] Multiple OPERATIONS_ADMIN identities detected (${opsAdminCount}). Exactly one provisioned OPERATIONS_ADMIN is permitted.`
+        `[FATAL] Multiple OPERATIONS_ADMIN identities detected (${opsAdmins.length}). Exactly one provisioned OPERATIONS_ADMIN is permitted.`
       );
+    }
+
+    if (config.isProduction) {
+      if (billAdmins.length !== 1) {
+        throw new Error(
+          `[FATAL] Production startup halted: Exactly one provisioned BILL_ADMIN identity is required, found ${billAdmins.length}.`
+        );
+      }
+      if (opsAdmins.length !== 1) {
+        throw new Error(
+          `[FATAL] Production startup halted: Exactly one provisioned OPERATIONS_ADMIN identity is required, found ${opsAdmins.length}.`
+        );
+      }
+
+      if (config.admin.billAdminMobile) {
+        const expectedBillMobile = config.admin.billAdminMobile.replace(/\D/g, '').slice(-10);
+        if (billAdmins[0].mobile !== expectedBillMobile) {
+          throw new Error(
+            `[FATAL] Provisioned BILL_ADMIN mobile (${billAdmins[0].mobile}) does not match configured BILL_ADMIN_MOBILE (${expectedBillMobile}).`
+          );
+        }
+      }
+
+      if (config.admin.operationsAdminMobile) {
+        const expectedOpsMobile = config.admin.operationsAdminMobile.replace(/\D/g, '').slice(-10);
+        if (opsAdmins[0].mobile !== expectedOpsMobile) {
+          throw new Error(
+            `[FATAL] Provisioned OPERATIONS_ADMIN mobile (${opsAdmins[0].mobile}) does not match configured OPERATIONS_ADMIN_MOBILE (${expectedOpsMobile}).`
+          );
+        }
+      }
     }
 
     return true;

@@ -22,7 +22,9 @@ export type IntegrityAction =
   | 'FORGOT_PASSWORD'
   | 'BENEFICIARY_VERIFY'
   | 'GENERAL'
-  | 'ACCOUNT_DELETION';
+  | 'ACCOUNT_DELETION'
+  | 'ACCOUNT_DELETION_REQUEST'
+  | 'ACCOUNT_DELETION_CONFIRM';
 
 export interface ActionNonceContext {
   userId?: string;

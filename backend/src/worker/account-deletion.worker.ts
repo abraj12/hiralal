@@ -1,6 +1,7 @@
 import { prisma } from '../db';
 import { getRedisClient, isRedisReady } from '../redis';
 import { AccountDeletionService } from '../services/account-deletion.service';
+import { config } from '../config';
 
 export class AccountDeletionWorker {
   private static isRunning = false;
@@ -8,13 +9,34 @@ export class AccountDeletionWorker {
   private static readonly LOCK_KEY = 'lock:account-deletion-worker';
   private static readonly LOCK_TTL_SECONDS = 55;
 
+  private static readonly LUA_RELEASE_SCRIPT = `
+    if redis.call("GET", KEYS[1]) == ARGV[1] then
+      return redis.call("DEL", KEYS[1])
+    else
+      return 0
+    end
+  `;
+
+  private static readonly LUA_RENEW_SCRIPT = `
+    if redis.call("GET", KEYS[1]) == ARGV[1] then
+      return redis.call("EXPIRE", KEYS[1], ARGV[2])
+    else
+      return 0
+    end
+  `;
+
   /**
    * Attempts to acquire a distributed lock in Redis to ensure single-instance execution
    * across multiple worker replicas.
+   * Fails closed if Redis is offline in production or if an unexpected error occurs.
    */
   private static async acquireLock(workerInstanceId: string): Promise<boolean> {
     if (!isRedisReady()) {
-      return true; // Fallback to local execution if Redis is not connected (e.g. non-clustered dev)
+      if (config.nodeEnv === 'production') {
+        console.warn('[ACCOUNT-DELETION-WORKER] Redis is offline in production; failing closed to prevent concurrent execution.');
+        return false;
+      }
+      return false; // Fail closed by default
     }
 
     try {
@@ -29,21 +51,42 @@ export class AccountDeletionWorker {
       return acquired === 'OK';
     } catch (err: any) {
       console.warn('[ACCOUNT-DELETION-LOCK-WARN] Redis lock error:', err.message);
-      return true;
+      return false; // Fail closed on error
     }
   }
 
+  /**
+   * Releases distributed lock atomically using Lua script.
+   */
   private static async releaseLock(workerInstanceId: string): Promise<void> {
     if (!isRedisReady()) return;
 
     try {
       const redis = getRedisClient();
-      const currentHolder = await redis.get(this.LOCK_KEY);
-      if (currentHolder === workerInstanceId) {
-        await redis.del(this.LOCK_KEY);
-      }
+      await redis.eval(this.LUA_RELEASE_SCRIPT, 1, this.LOCK_KEY, workerInstanceId);
+    } catch (err: any) {
+      console.warn('[ACCOUNT-DELETION-LOCK-RELEASE-WARN] Lua release error:', err.message);
+    }
+  }
+
+  /**
+   * Renews the lock TTL periodically for long-running batches.
+   */
+  static async renewLock(workerInstanceId: string): Promise<boolean> {
+    if (!isRedisReady()) return false;
+
+    try {
+      const redis = getRedisClient();
+      const result = await redis.eval(
+        this.LUA_RENEW_SCRIPT,
+        1,
+        this.LOCK_KEY,
+        workerInstanceId,
+        this.LOCK_TTL_SECONDS
+      );
+      return result === 1;
     } catch {
-      // Ignore release error, will expire via TTL
+      return false;
     }
   }
 

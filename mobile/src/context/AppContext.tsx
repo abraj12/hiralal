@@ -6,6 +6,7 @@ import { MobileApiClient } from '../services/api';
 import { NotificationsService } from '../services/notifications.service';
 
 const INSTALLATION_KEY = 'hiralal_installation_id';
+const WELCOME_DISPATCHED_KEY = 'hiralal_welcome_dispatched';
 
 async function getOrCreateInstallationId(): Promise<string> {
   try {
@@ -31,6 +32,46 @@ async function getOrCreateInstallationId(): Promise<string> {
     return id;
   } catch {
     return `inst-fallback-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+  }
+}
+
+async function dispatchWelcomeNotificationOnce(): Promise<void> {
+  try {
+    let alreadyDispatched = false;
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        alreadyDispatched = window.localStorage.getItem(WELCOME_DISPATCHED_KEY) === 'true';
+      }
+    } else {
+      const val = await SecureStore.getItemAsync(WELCOME_DISPATCHED_KEY);
+      alreadyDispatched = val === 'true';
+    }
+
+    if (alreadyDispatched) {
+      return;
+    }
+
+    const instId = await getOrCreateInstallationId();
+    let nativeToken: string | undefined = undefined;
+    try {
+      const tokenResult = await NotificationsService.getNativePushToken();
+      if (tokenResult.token) {
+        nativeToken = tokenResult.token;
+      }
+    } catch {}
+
+    const res: any = await MobileApiClient.triggerWelcomeNotification(instId, nativeToken);
+    if (res && res.success) {
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.setItem(WELCOME_DISPATCHED_KEY, 'true');
+        }
+      } else {
+        await SecureStore.setItemAsync(WELCOME_DISPATCHED_KEY, 'true');
+      }
+    }
+  } catch {
+    // Non-blocking
   }
 }
 
@@ -140,9 +181,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
             setCurrentScreen('MAIN');
             NotificationsService.registerDeviceToken().catch(() => {});
-            getOrCreateInstallationId()
-              .then(instId => MobileApiClient.triggerWelcomeNotification(instId))
-              .catch(() => {});
+            dispatchWelcomeNotificationOnce().catch(() => {});
           } else {
             // Server responded but user profile was not returned
             await MobileApiClient.clearAllTokens();
@@ -192,9 +231,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentScreen('MAIN');
     setActiveTab('HOME');
     NotificationsService.registerDeviceToken().catch(() => {});
-    getOrCreateInstallationId()
-      .then(instId => MobileApiClient.triggerWelcomeNotification(instId))
-      .catch(() => {});
+    dispatchWelcomeNotificationOnce().catch(() => {});
     refreshData().catch(e => console.warn('Background sync failed:', e));
     return res;
   };

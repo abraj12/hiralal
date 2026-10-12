@@ -6,6 +6,8 @@ export type ProtectedAction =
   | 'PAYOUT_REDEEM'
   | 'KYC_SUBMIT'
   | 'ACCOUNT_DELETION'
+  | 'ACCOUNT_DELETION_REQUEST'
+  | 'ACCOUNT_DELETION_CONFIRM'
   | 'BENEFICIARY_VERIFY';
 
 export interface ActionAttestation {

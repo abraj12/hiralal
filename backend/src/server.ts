@@ -192,18 +192,44 @@ app.use((err: any, req: any, res: Response, _next: NextFunction) => {
   });
 });
 
-export { app };
+/**
+ * Boots the server after performing mandatory preflight integrity checks.
+ * In production, PostgreSQL, Redis, and Two-Admin role invariants must succeed BEFORE app.listen().
+ */
+async function startServer(): Promise<any> {
+  // 1. PostgreSQL connectivity check
+  const dbOk = await checkDatabaseConnection();
+  if (!dbOk) {
+    throw new Error('[FATAL] Failed to connect to PostgreSQL database during startup preflight.');
+  }
+
+  // 2. Administrator role integrity & invariant checks
+  await checkAdminRoleIntegrity();
+
+  // 3. Redis connectivity check
+  const redisOk = await checkRedisConnection();
+  if (config.isProduction && !redisOk) {
+    throw new Error('[FATAL] Failed to connect to Redis during production startup preflight.');
+  }
+
+  return new Promise((resolve) => {
+    const server = app.listen(config.port, '0.0.0.0', () => {
+      console.log(`====================================================`);
+      console.log(`🚀 Hiralal & Sons Rewards API running on port ${config.port}`);
+      console.log(`   URL: http://localhost:${config.port}`);
+      console.log(`   LAN/Emulator URL: http://0.0.0.0:${config.port}`);
+      console.log(`   Environment: ${config.nodeEnv}`);
+      console.log(`====================================================`);
+      resolve(server);
+    });
+  });
+}
+
+export { app, startServer };
 
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(config.port, '0.0.0.0', async () => {
-    console.log(`====================================================`);
-    console.log(`🚀 Hiralal & Sons Rewards API running on port ${config.port}`);
-    console.log(`   URL: http://localhost:${config.port}`);
-    console.log(`   LAN/Emulator URL: http://0.0.0.0:${config.port}`);
-    console.log(`   Environment: ${config.nodeEnv}`);
-    console.log(`====================================================`);
-    await checkDatabaseConnection();
-    await checkAdminRoleIntegrity();
-    await checkRedisConnection();
+  startServer().catch((err) => {
+    console.error('❌ [FATAL] Server startup failed:', err.message);
+    process.exit(1);
   });
 }

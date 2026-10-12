@@ -130,7 +130,16 @@ export class AccountDeletionService {
         data: { isActive: false },
       });
 
-      // 4. Audit Log
+      // 4. Record AccountDeletionOperation
+      await tx.accountDeletionOperation.create({
+        data: {
+          userId: user.id,
+          status: 'PENDING',
+          scheduledFor: scheduledAt,
+        },
+      });
+
+      // 5. Audit Log
       await tx.auditLog.create({
         data: {
           action: 'ACCOUNT_DELETION_SCHEDULED',
@@ -227,23 +236,80 @@ export class AccountDeletionService {
 
     for (const u of dueUsers) {
       try {
-        // 1. Delete private invoice files from Cloudflare R2 storage
+        // 1. Claim or retrieve AccountDeletionOperation
+        let operation = await prismaClient.accountDeletionOperation.findFirst({
+          where: { userId: u.id, status: { in: ['PENDING', 'FAILED_RETRYABLE', 'IN_PROGRESS'] } },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        if (!operation) {
+          operation = await prismaClient.accountDeletionOperation.create({
+            data: {
+              userId: u.id,
+              status: 'IN_PROGRESS',
+              scheduledFor: u.deletionScheduledAt || now,
+              startedAt: now,
+            },
+          });
+        } else {
+          // If in retry backoff window, skip until nextRetryAt
+          if (operation.nextRetryAt && operation.nextRetryAt > now) {
+            continue;
+          }
+          operation = await prismaClient.accountDeletionOperation.update({
+            where: { id: operation.id },
+            data: { status: 'IN_PROGRESS', startedAt: now },
+          });
+        }
+
+        // 2. Delete private invoice files from Cloudflare R2 storage
+        const failedFileKeys: string[] = [];
+        let deletedFilesCount = 0;
+
         for (const bill of u.bills) {
           if (bill.fileKey) {
             try {
               await StorageService.getProvider().delete(bill.fileKey);
+              deletedFilesCount++;
             } catch (storageErr: any) {
               console.warn(`[ACCOUNT-DELETION] Failed to delete file ${bill.fileKey} for bill ${bill.id}:`, storageErr.message);
+              failedFileKeys.push(bill.fileKey);
             }
           }
         }
 
-        // 2. Anonymize personal profile and purge credentials atomically
+        // If any R2 delete fails: record failed file keys, increment attemptCount,
+        // set status = 'FAILED_RETRYABLE' with exponential backoff, DO NOT anonymize user or mark complete.
+        if (failedFileKeys.length > 0) {
+          const attemptCount = (operation.attemptCount || 0) + 1;
+          const backoffMs = Math.min(5 * 60 * 1000 * Math.pow(2, attemptCount - 1), 24 * 60 * 60 * 1000);
+          const nextRetryAt = new Date(now.getTime() + backoffMs);
+
+          await prismaClient.accountDeletionOperation.update({
+            where: { id: operation.id },
+            data: {
+              status: 'FAILED_RETRYABLE',
+              attemptCount,
+              nextRetryAt,
+              lastError: `Failed to delete ${failedFileKeys.length} invoice file(s) from storage: ${failedFileKeys.join(', ')}`,
+              failedFileKeys: failedFileKeys,
+              deletedFilesCount,
+            },
+          });
+
+          errors.push({
+            userId: u.id,
+            error: `Storage file deletion failed for ${failedFileKeys.length} file(s); scheduled for retry at ${nextRetryAt.toISOString()}`,
+          });
+          continue;
+        }
+
+        // 3. All files verified deleted. Anonymize personal profile and purge credentials atomically
         await prismaClient.$transaction(async (tx: any) => {
           // Delete active tokens and sessions
           await tx.pushDeviceToken.deleteMany({ where: { userId: u.id } });
           await tx.authSession.deleteMany({ where: { userId: u.id } });
-          await tx.verificationToken.deleteMany({ where: { mobile: u.mobile } });
+          await tx.otpRequest.deleteMany({ where: { mobile: u.mobile } });
 
           // Purge sensitive KYC records while retaining anonymous status
           await tx.kycRecord.updateMany({
@@ -293,6 +359,17 @@ export class AccountDeletionService {
             },
           });
 
+          // Complete the tracking operation
+          await tx.accountDeletionOperation.update({
+            where: { id: operation.id },
+            data: {
+              status: 'COMPLETED',
+              completedAt: now,
+              deletedFilesCount,
+              failedFileKeys: null,
+            },
+          });
+
           // Audit Log
           await tx.auditLog.create({
             data: {
@@ -301,7 +378,9 @@ export class AccountDeletionService {
               entityId: u.id,
               newValue: JSON.stringify({
                 userId: u.id,
+                operationId: operation.id,
                 executedAt: now,
+                deletedFilesCount,
                 policy: 'PERSONAL_DATA_ANONYMIZED_FINANCIAL_RECORDS_RETAINED',
               }),
             },

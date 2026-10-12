@@ -203,6 +203,24 @@ export function computeIntegrityRequestHash(
       return computeSha256Json(payload);
     }
 
+    case 'ACCOUNT_DELETION_REQUEST': {
+      const payload = {
+        version: 1,
+        action: 'ACCOUNT_DELETION_REQUEST',
+        password: String(req.body?.password || '').trim(),
+      };
+      return computeSha256Json(payload);
+    }
+
+    case 'ACCOUNT_DELETION_CONFIRM': {
+      const payload = {
+        version: 1,
+        action: 'ACCOUNT_DELETION_CONFIRM',
+        otpCode: String(req.body?.otpCode || '').trim(),
+      };
+      return computeSha256Json(payload);
+    }
+
     case 'AUTH':
     case 'REGISTRATION':
     case 'FORGOT_PASSWORD':

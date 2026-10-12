@@ -70,6 +70,20 @@ enum OtpPurpose {
   ACCOUNT_DELETION
 }
 
+enum WelcomeDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED_RETRYABLE
+}
+
+enum DeletionOperationStatus {
+  PENDING
+  IN_PROGRESS
+  FAILED_RETRYABLE
+  COMPLETED
+  CANCELLED
+}
+
 model User {
   id                    String           @id @default(uuid())
   mobile                String           @unique
@@ -101,6 +115,8 @@ model User {
   notificationCampaigns NotificationCampaign[]
   auditLogs       AuditLog[]
   sessions        AuthSession[]
+  appInstallations AppInstallation[]
+  accountDeletionOperations AccountDeletionOperation[]
 
   @@index([mobile])
   @@index([profession])
@@ -459,4 +475,43 @@ model NotificationCampaign {
 
   @@index([createdByAdminId])
   @@index([createdAt])
+}
+
+model AppInstallation {
+  id             String                @id @default(uuid())
+  installationId String                @unique
+  userId         String?
+  user           User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  platform       String                @default("ANDROID")
+  pushToken      String?
+  appVersion     String?
+  welcomeSentAt  DateTime?
+  welcomeStatus  WelcomeDeliveryStatus @default(PENDING)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@index([userId])
+  @@index([installationId])
+}
+
+model AccountDeletionOperation {
+  id                String                  @id @default(uuid())
+  userId            String
+  user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status            DeletionOperationStatus @default(PENDING)
+  scheduledFor      DateTime
+  startedAt         DateTime?
+  completedAt       DateTime?
+  attemptCount      Int                     @default(0)
+  nextRetryAt       DateTime?
+  lastError         String?
+  deletedFilesCount Int                     @default(0)
+  failedFileKeys    Json?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([scheduledFor])
+  @@index([nextRetryAt])
 }

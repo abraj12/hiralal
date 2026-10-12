@@ -34,7 +34,10 @@ import Header from '../components/Header';
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
 import { MobileIntegrityService } from '../services/integrity.service';
-import { createAccountDeletionRequestHash } from '../services/integrityRequestHash';
+import {
+  createAccountDeletionRequestHash,
+  createAccountDeletionConfirmRequestHash,
+} from '../services/integrityRequestHash';
 
 export default function ProfileScreen() {
   const { user, theme, logout, refreshData } = useApp();
@@ -81,8 +84,8 @@ export default function ProfileScreen() {
     try {
       let attestation;
       try {
-        const requestHash = await createAccountDeletionRequestHash();
-        attestation = await MobileIntegrityService.performActionAttestation('ACCOUNT_DELETION', requestHash);
+        const requestHash = await createAccountDeletionRequestHash({ password: deletePassword });
+        attestation = await MobileIntegrityService.performActionAttestation('ACCOUNT_DELETION_REQUEST', requestHash);
       } catch (attErr) {
         // Fallback for dev environments where Play Integrity is not configured
       }
@@ -109,8 +112,8 @@ export default function ProfileScreen() {
     try {
       let attestation;
       try {
-        const requestHash = await createAccountDeletionRequestHash({ otpCode: deleteOtp.trim() });
-        attestation = await MobileIntegrityService.performActionAttestation('ACCOUNT_DELETION', requestHash);
+        const requestHash = await createAccountDeletionConfirmRequestHash({ otpCode: deleteOtp.trim() });
+        attestation = await MobileIntegrityService.performActionAttestation('ACCOUNT_DELETION_CONFIRM', requestHash);
       } catch (attErr) {
         // Fallback for dev environments
       }
