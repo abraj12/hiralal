@@ -175,6 +175,16 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Upload Part 2 Play Integrity Hardening Report Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: part-2-play-integrity-hardening-report
+          path: docs/audits/part_2_play_integrity_hardening_report.md
+          if-no-files-found: error
+          retention-days: 30
+
+
   admin-date-tests:
     name: Admin Date Helper Tests
     runs-on: ubuntu-latest
