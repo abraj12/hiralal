@@ -40,42 +40,61 @@ export async function provisionRewardRules(
   };
 
   for (const prof of ['PLUMBER', 'TILE_INSTALLER'] as const) {
-    const totalCount = await prismaClient.rewardRule.count({
-      where: { profession: prof },
+    const postCommitLogs: Array<() => void> = [];
+
+    await prismaClient.$transaction(async (trx: any) => {
+      // Concurrency lock: acquire transaction-scoped PostgreSQL advisory lock per profession.
+      // Prevents race conditions during concurrent seed execution or simultaneous admin operations.
+      await trx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'reward_rule_' + prof})::bigint)`;
+
+      const totalCount = await trx.rewardRule.count({
+        where: { profession: prof },
+      });
+
+      if (totalCount === 0) {
+        // Completely empty profession: safe to create initial v1 baseline
+        await trx.rewardRule.create({
+          data: {
+            profession: prof,
+            rewardPercentage: 0.50,
+            effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+            version: 1,
+            isActive: true,
+          },
+        });
+        result.provisioned.push(prof);
+        postCommitLogs.push(() => {
+          console.log(`✅ [SEED] Initial baseline reward rule created for ${prof} (0.50%, v1, 2020-01-01 IST)`);
+        });
+      } else {
+        // Historical records exist: preserve all rows immutable
+        const activeRule = await trx.rewardRule.findFirst({
+          where: { profession: prof, isActive: true },
+          orderBy: { version: 'desc' },
+        });
+
+        if (activeRule) {
+          result.preserved.push(prof);
+          postCommitLogs.push(() => {
+            console.log(
+              `ℹ️  [SEED] Active ${prof} rule already exists (v${activeRule.version}, effectiveFrom: ${activeRule.effectiveFrom.toISOString()}). Preserving as-is. If effectiveFrom is incorrect, correct it via a separately reviewed migration, not via seed.`
+            );
+          });
+        } else {
+          // Historical rows exist but NONE is currently active: halt baseline provisioning
+          const warning = `⚠️  [SEED-WARNING] Profession ${prof} has ${totalCount} existing historical reward rule(s), but none is currently active. Preserving existing records without modification. Baseline provisioning halted for ${prof}. An authorized Operations Admin must review history and create a new rule version via administrative workflow if reactivation is required.`;
+          result.warnings.push(warning);
+          result.preserved.push(prof);
+          postCommitLogs.push(() => {
+            console.warn(warning);
+          });
+        }
+      }
     });
 
-    if (totalCount === 0) {
-      // Completely empty profession: safe to create initial v1 baseline
-      await prismaClient.rewardRule.create({
-        data: {
-          profession: prof,
-          rewardPercentage: 0.50,
-          effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
-          version: 1,
-          isActive: true,
-        },
-      });
-      result.provisioned.push(prof);
-      console.log(`✅ [SEED] Initial baseline reward rule created for ${prof} (0.50%, v1, 2020-01-01 IST)`);
-    } else {
-      // Historical records exist: preserve all rows immutable
-      const activeRule = await prismaClient.rewardRule.findFirst({
-        where: { profession: prof, isActive: true },
-        orderBy: { version: 'desc' },
-      });
-
-      if (activeRule) {
-        console.log(
-          `ℹ️  [SEED] Active ${prof} rule already exists (v${activeRule.version}, effectiveFrom: ${activeRule.effectiveFrom.toISOString()}). Preserving as-is. If effectiveFrom is incorrect, correct it via a separately reviewed migration, not via seed.`
-        );
-        result.preserved.push(prof);
-      } else {
-        // Historical rows exist but NONE is currently active: halt baseline provisioning
-        const warning = `⚠️  [SEED-WARNING] Profession ${prof} has ${totalCount} existing historical reward rule(s), but none is currently active. Preserving existing records without modification. Baseline provisioning halted for ${prof}. An authorized Operations Admin must review history and create a new rule version via administrative workflow if reactivation is required.`;
-        console.warn(warning);
-        result.warnings.push(warning);
-        result.preserved.push(prof);
-      }
+    // Execute logging after transaction has committed so aborted transactions do not emit misleading logs
+    for (const emitLog of postCommitLogs) {
+      emitLog();
     }
   }
 

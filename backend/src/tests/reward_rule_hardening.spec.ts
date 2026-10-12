@@ -84,10 +84,11 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
 
     // Ensure deterministic baseline rules exist for both professions
     for (const prof of ['PLUMBER', 'TILE_INSTALLER'] as const) {
-      const count = await prisma.rewardRule.count({
-        where: { profession: prof, isActive: true, effectiveFrom: { lte: new Date('2026-10-10') } },
+      const activeRule = await prisma.rewardRule.findFirst({
+        where: { profession: prof, isActive: true },
       });
-      if (count === 0) {
+      if (!activeRule) {
+        await prisma.rewardRule.deleteMany({ where: { profession: prof } });
         await prisma.rewardRule.create({
           data: {
             profession: prof,

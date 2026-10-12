@@ -225,7 +225,7 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
       await prisma.rewardRule.upsert({
         where: { id: 'test_rule_plumber' },
         update: { rewardPercentage: 0.50, isActive: true },
-        create: { id: 'test_rule_plumber', profession: 'PLUMBER', rewardPercentage: 0.50 },
+        create: { id: 'test_rule_plumber', profession: 'PLUMBER', rewardPercentage: 0.50, version: 999, isActive: true },
       });
 
       await prisma.redemptionSettings.upsert({
@@ -315,6 +315,7 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
     });
 
     afterAll(async () => {
+      await prisma.rewardRule.deleteMany({ where: { id: 'test_rule_plumber' } });
       await prisma.walletTransaction.deleteMany({ where: { wallet: { user: { mobile: '9777788888' } } } });
       await prisma.payout.deleteMany({ where: { user: { mobile: '9777788888' } } });
       await prisma.bill.deleteMany({ where: { user: { mobile: '9777788888' } } });

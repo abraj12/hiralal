@@ -226,6 +226,7 @@ model RewardRule {
 
   bills            Bill[]
 
+  @@unique([profession, version])
   @@index([profession, isActive])
   @@index([effectiveFrom, effectiveUntil])
 }

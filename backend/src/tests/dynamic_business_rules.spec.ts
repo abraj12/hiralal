@@ -163,16 +163,25 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     });
 
     // Restore baseline rules
-    await prisma.rewardRule.updateMany({
-      where: { profession: 'PLUMBER' },
-      data: { isActive: false },
+    await prisma.rewardRule.deleteMany({
+      where: { profession: { in: ['PLUMBER', 'TILE_INSTALLER'] } },
     });
     await prisma.rewardRule.create({
       data: {
         profession: 'PLUMBER',
         rewardPercentage: 0.50,
-        effectiveFrom: new Date('2020-01-01'),
+        effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
         isActive: true,
+        version: 1,
+      },
+    });
+    await prisma.rewardRule.create({
+      data: {
+        profession: 'TILE_INSTALLER',
+        rewardPercentage: 0.50,
+        effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+        isActive: true,
+        version: 1,
       },
     });
 

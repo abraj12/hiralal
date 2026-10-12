@@ -15,18 +15,21 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
   let testAdminId: string;
 
   beforeAll(async () => {
-    await prisma.rewardRule.updateMany({
+    const activePlumberRule = await prisma.rewardRule.findFirst({
       where: { profession: 'PLUMBER', isActive: true },
-      data: { isActive: false },
     });
-    await prisma.rewardRule.create({
-      data: {
-        profession: 'PLUMBER',
-        rewardPercentage: 0.50,
-        effectiveFrom: new Date('2020-01-01'),
-        isActive: true,
-      },
-    });
+    if (!activePlumberRule) {
+      await prisma.rewardRule.deleteMany({ where: { profession: 'PLUMBER' } });
+      await prisma.rewardRule.create({
+        data: {
+          profession: 'PLUMBER',
+          rewardPercentage: 0.50,
+          effectiveFrom: new Date('2020-01-01'),
+          isActive: true,
+          version: 1,
+        },
+      });
+    }
 
     // 1. Provision Test Operations Admin in PostgreSQL
     const adminPasswordHash = await bcrypt.hash('Admin@123', 10);

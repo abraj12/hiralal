@@ -85,18 +85,21 @@ describe('Concurrency & Financial Integrity Tests', () => {
 
   test('1. Parallel Bill Approvals: All concurrent valid bill approvals are credited reliably without pool restriction', async () => {
     // Ensure active rule for PLUMBER is 0.50%
-    await prisma.rewardRule.updateMany({
+    const activePlumberRule = await prisma.rewardRule.findFirst({
       where: { profession: 'PLUMBER', isActive: true },
-      data: { isActive: false },
     });
-    await prisma.rewardRule.create({
-      data: {
-        profession: 'PLUMBER',
-        rewardPercentage: 0.50,
-        effectiveFrom: new Date('2020-01-01'),
-        isActive: true,
-      },
-    });
+    if (!activePlumberRule) {
+      await prisma.rewardRule.deleteMany({ where: { profession: 'PLUMBER' } });
+      await prisma.rewardRule.create({
+        data: {
+          profession: 'PLUMBER',
+          rewardPercentage: 0.50,
+          effectiveFrom: new Date('2020-01-01'),
+          isActive: true,
+          version: 1,
+        },
+      });
+    }
 
     // Create 6 bills, each with calculatedReward = ₹100
     const bills = [];

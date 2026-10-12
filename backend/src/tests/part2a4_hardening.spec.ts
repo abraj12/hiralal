@@ -287,6 +287,125 @@ describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', (
       expect(reloadedV2!.updatedAt.getTime()).toBe(v2.updatedAt.getTime());
       expect(reloadedV2!.isActive).toBe(true);
     });
+
+    test('5. Concurrent seed execution: Promise.all creates exactly 1 baseline per profession without duplicate versions', async () => {
+      // Clean slate for both professions
+      await prisma.rewardRule.deleteMany({
+        where: { profession: { in: ['PLUMBER', 'TILE_INSTALLER'] } },
+      });
+      const countPlumberBefore = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
+      const countTileBefore = await prisma.rewardRule.count({ where: { profession: 'TILE_INSTALLER' } });
+      expect(countPlumberBefore).toBe(0);
+      expect(countTileBefore).toBe(0);
+
+      // Concurrently invoke provisionRewardRules 3 times simultaneously
+      const results = await Promise.all([
+        provisionRewardRules(prisma),
+        provisionRewardRules(prisma),
+        provisionRewardRules(prisma),
+      ]);
+
+      // Exactly one baseline created per profession
+      const countPlumberAfter = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
+      const countTileAfter = await prisma.rewardRule.count({ where: { profession: 'TILE_INSTALLER' } });
+      expect(countPlumberAfter).toBe(1);
+      expect(countTileAfter).toBe(1);
+
+      // Across the 3 results, exactly 1 must have provisioned PLUMBER, and 2 must have preserved it
+      const plumberProvisionedCount = results.filter((r) => r.provisioned.includes('PLUMBER')).length;
+      const plumberPreservedCount = results.filter((r) => r.preserved.includes('PLUMBER')).length;
+      expect(plumberProvisionedCount).toBe(1);
+      expect(plumberPreservedCount).toBe(2);
+
+      const tileProvisionedCount = results.filter((r) => r.provisioned.includes('TILE_INSTALLER')).length;
+      const tilePreservedCount = results.filter((r) => r.preserved.includes('TILE_INSTALLER')).length;
+      expect(tileProvisionedCount).toBe(1);
+      expect(tilePreservedCount).toBe(2);
+
+      // Both created rules must be version 1 and active
+      const plumberRule = await prisma.rewardRule.findFirst({ where: { profession: 'PLUMBER' } });
+      const tileRule = await prisma.rewardRule.findFirst({ where: { profession: 'TILE_INSTALLER' } });
+      expect(plumberRule!.version).toBe(1);
+      expect(plumberRule!.isActive).toBe(true);
+      expect(tileRule!.version).toBe(1);
+      expect(tileRule!.isActive).toBe(true);
+
+      // Assert zero duplicate (profession, version) records in the database
+      const duplicates = await prisma.$queryRaw<Array<{ profession: string; version: number; count: bigint }>>`
+        SELECT profession, version, COUNT(*) as count
+        FROM "RewardRule"
+        GROUP BY profession, version
+        HAVING COUNT(*) > 1
+      `;
+      expect(duplicates.length).toBe(0);
+
+      // Subsequent sequential invocation still preserves rules and creates 0 additional records
+      const sequentialResult = await provisionRewardRules(prisma);
+      expect(sequentialResult.provisioned).toHaveLength(0);
+      expect(sequentialResult.preserved).toContain('PLUMBER');
+      expect(sequentialResult.preserved).toContain('TILE_INSTALLER');
+
+      const countPlumberFinal = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
+      const countTileFinal = await prisma.rewardRule.count({ where: { profession: 'TILE_INSTALLER' } });
+      expect(countPlumberFinal).toBe(1);
+      expect(countTileFinal).toBe(1);
+    });
+
+    test('6. Concurrent seed execution with existing inactive history preserves records without reactivation', async () => {
+      // Clear TILE_INSTALLER and set up inactive historical version
+      await prisma.rewardRule.deleteMany({ where: { profession: 'TILE_INSTALLER' } });
+      const inactiveRule = await prisma.rewardRule.create({
+        data: {
+          profession: 'TILE_INSTALLER',
+          rewardPercentage: 0.70,
+          effectiveFrom: new Date('2025-01-01T00:00:00+05:30'),
+          isActive: false,
+          version: 3,
+        },
+      });
+
+      // Concurrently invoke 3 times
+      const results = await Promise.all([
+        provisionRewardRules(prisma),
+        provisionRewardRules(prisma),
+        provisionRewardRules(prisma),
+      ]);
+
+      // All 3 executions must preserve TILE_INSTALLER and issue warnings; none should provision
+      for (const res of results) {
+        expect(res.provisioned).not.toContain('TILE_INSTALLER');
+        expect(res.preserved).toContain('TILE_INSTALLER');
+        expect(res.warnings.some((w) => w.includes('TILE_INSTALLER') && w.includes('none is currently active'))).toBe(true);
+      }
+
+      // Total count remains 1
+      const countTile = await prisma.rewardRule.count({ where: { profession: 'TILE_INSTALLER' } });
+      expect(countTile).toBe(1);
+
+      // Record remains inactive and version unchanged
+      const reloaded = await prisma.rewardRule.findUnique({ where: { id: inactiveRule.id } });
+      expect(reloaded!.isActive).toBe(false);
+      expect(reloaded!.version).toBe(3);
+    });
+
+    test('7. DB unique constraint defense-in-depth: inserting duplicate (profession, version) rejects at DB level', async () => {
+      // PLUMBER already has version 1 from test 5
+      const existing = await prisma.rewardRule.findFirst({ where: { profession: 'PLUMBER', version: 1 } });
+      expect(existing).not.toBeNull();
+
+      // Attempting to directly insert another PLUMBER version 1 must reject with unique constraint violation
+      await expect(
+        prisma.rewardRule.create({
+          data: {
+            profession: 'PLUMBER',
+            rewardPercentage: 0.99,
+            effectiveFrom: new Date('2026-05-01T00:00:00+05:30'),
+            isActive: true,
+            version: 1, // Duplicate version for PLUMBER
+          },
+        })
+      ).rejects.toThrow();
+    });
   });
 
   // ---------------------------------------------------------------

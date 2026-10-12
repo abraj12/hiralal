@@ -155,10 +155,53 @@ jobs:
           path: backend/test_output.log
           retention-days: 7
 
+      - name: Upload Part 2A.5 Audit Remediation Report Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: part-2a5-audit-remediation-report
+          path: docs/audits/part_2a5_audit_remediation_report.md
+          if-no-files-found: error
+          retention-days: 30
+
+  admin-date-tests:
+    name: Admin Date Helper Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install Admin Dependencies
+        working-directory: admin
+        run: npm ci
+
+      - name: Run Admin Date Helper Tests
+        working-directory: admin
+        run: |
+          npm test 2>&1 | tee admin_test_output.log
+
+      - name: Publish Admin Test Summary
+        if: always()
+        working-directory: admin
+        run: |
+          if [ -f admin_test_output.log ]; then
+            echo "### Admin Date Helper Test Results" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat admin_test_output.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
   docker-arm64-check:
     name: Docker ARM64 Build Verification (AWS Graviton2)
     runs-on: ubuntu-latest
-    needs: backend-test
+    needs: [backend-test, admin-date-tests]
 
     steps:
       - name: Checkout Code
@@ -193,7 +236,7 @@ jobs:
   full-stack-compose-smoke-test:
     name: Full 6-Container Docker Compose Stack Smoke Test
     runs-on: ubuntu-latest
-    needs: backend-test
+    needs: [backend-test, admin-date-tests]
 
     steps:
       - name: Checkout Code
