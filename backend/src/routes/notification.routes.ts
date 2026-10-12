@@ -121,7 +121,7 @@ router.post('/welcome', welcomeRateLimiter, async (req: Request, res: Response) 
 
     // 2. Dispatch push via FCM only if genuine token provided
     let finalStatus: 'DELIVERED' | 'RECORDED' | 'NOT_SENT' = 'NOT_SENT';
-    if (cleanToken) {
+    if (cleanToken && authUserId) {
       try {
         const pushResult = await FcmProvider.sendPush({
           token: cleanToken,

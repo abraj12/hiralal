@@ -1,0 +1,17 @@
+# docker-compose.ci.yml — CI-only Compose override for isolated integration testing.
+# DO NOT use in production. Sets NODE_ENV=test so production config validator does not run.
+# Apply with: docker compose -f docker-compose.yml -f docker-compose.ci.yml up
+version: '3.8'
+
+services:
+  backend:
+    environment:
+      NODE_ENV: test
+      PLAY_INTEGRITY_ALLOW_MOCK: "true"
+      PLAY_INTEGRITY_REQUIRE_LICENSING: "true"
+      PLAY_INTEGRITY_ENFORCE_ACTIONS: "false"
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:8081,http://localhost,https://localhost"
+
+  worker:
+    environment:
+      NODE_ENV: test

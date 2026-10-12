@@ -310,29 +310,25 @@ jobs:
           sed -i 's/REPLACE_WITH_FIREBASE_PROJECT_ID/ci-hiralal-firebase-stub/g' .env
           sed -i 's/REPLACE_WITH_FIREBASE_CLIENT_EMAIL/ci-firebase@ci-hiralal-firebase-stub.iam.gserviceaccount.com/g' .env
           sed -i 's/REPLACE_WITH_FIREBASE_PRIVATE_KEY/CI_STUB_FIREBASE_KEY/g' .env
-          # Override production-safety flags to allow CI stack to start without real credentials
-          sed -i 's/PLAY_INTEGRITY_REQUIRE_LICENSING=true/PLAY_INTEGRITY_REQUIRE_LICENSING=false/g' .env
-          sed -i 's/PLAY_INTEGRITY_ALLOW_MOCK=false/PLAY_INTEGRITY_ALLOW_MOCK=true/g' .env
-          sed -i 's/PLAY_INTEGRITY_ENFORCE_ACTIONS=true/PLAY_INTEGRITY_ENFORCE_ACTIONS=false/g' .env
 
       - name: Validate Docker Compose Configuration
         run: |
-          docker compose config
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml config
 
-      - name: Build and Start Full Multi-Container Production Stack
+      - name: Build and Start Full Multi-Container CI Test Stack
         run: |
-          docker compose up -d --build 2>&1 | tee compose_up.log || {
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --build 2>&1 | tee compose_up.log || {
             echo "### Docker Compose Up Failed" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             cat compose_up.log >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "### Container Status" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            docker compose ps >> $GITHUB_STEP_SUMMARY 2>&1 || true
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml ps >> $GITHUB_STEP_SUMMARY 2>&1 || true
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "### Container Logs" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            docker compose logs --tail=100 >> $GITHUB_STEP_SUMMARY 2>&1 || true
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --tail=100 >> $GITHUB_STEP_SUMMARY 2>&1 || true
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit 1
           }
@@ -360,12 +356,12 @@ jobs:
 
       - name: Verify All 6 Stack Containers Running
         run: |
-          docker compose ps
-          RUNNING_COUNT=$(docker compose ps --services --filter "status=running" | wc -l)
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml ps
+          RUNNING_COUNT=$(docker compose -f docker-compose.yml -f docker-compose.ci.yml ps --services --filter "status=running" | wc -l)
           echo "Running services count: $RUNNING_COUNT / 6"
           if [ "$RUNNING_COUNT" -lt 6 ]; then
             echo "Error: Not all 6 services are running!"
-            docker compose logs
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml logs
             exit 1
           fi
 
@@ -388,7 +384,7 @@ jobs:
           echo "HTTP Response Payload: $HTTP_RESPONSE"
           if [ "$HTTP_STATUS" -ne 400 ] && [ "$HTTP_STATUS" -ne 401 ]; then
             echo "Unexpected HTTP status: $HTTP_STATUS"
-            docker compose logs backend
+            docker compose -f docker-compose.yml -f docker-compose.ci.yml logs backend
             exit 1
           fi
 
@@ -400,7 +396,7 @@ jobs:
       - name: Compose Stack Teardown
         if: always()
         run: |
-          docker compose down -v || true
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v || true
 
   mobile-check:
     name: Mobile App Typecheck & Plugin Unit Tests

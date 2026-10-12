@@ -307,10 +307,26 @@ export class AccountDeletionService {
         // 3. All files verified deleted. Verify lease ownership before irreversible anonymization.
         assertLease?.();
 
+        // Re-validate: cancellation check - user may have logged in during processing
+        const freshUser = await prismaClient.user.findUnique({ where: { id: u.id } });
+        if (!freshUser || !freshUser.deletionScheduledAt) {
+          // Deletion was cancelled (user logged in during grace period)
+          await prismaClient.accountDeletionOperation.updateMany({
+            where: { id: operation.id, status: { in: ['IN_PROGRESS', 'PENDING'] } },
+            data: { status: 'CANCELLED', completedAt: new Date() },
+          });
+          continue;
+        }
+
         // Anonymize personal profile and purge credentials atomically
         await prismaClient.$transaction(async (tx: any) => {
           // Delete active tokens and sessions
           await tx.pushDeviceToken.deleteMany({ where: { userId: u.id } });
+          // Redact AppInstallation records: remove userId link and stored push token
+          await tx.appInstallation.updateMany({
+            where: { userId: u.id },
+            data: { userId: null, pushToken: null },
+          });
           await tx.authSession.deleteMany({ where: { userId: u.id } });
           await tx.otpRequest.deleteMany({ where: { mobile: u.mobile } });
 
