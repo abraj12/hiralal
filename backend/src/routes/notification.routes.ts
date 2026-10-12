@@ -1,10 +1,83 @@
-import { Router, Response } from 'express';
+import { Router, Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
 import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { NotificationService } from '../services/notification.service';
+import { FcmProvider } from '../services/push/fcm.provider';
+import { config } from '../config';
+import { createRateLimiter } from '../middleware/rateLimit.middleware';
 
 const router = Router();
 
-// Protect all notification endpoints with authentication
+const welcomeRateLimiter = createRateLimiter({
+  keyPrefix: 'rl:notif:welcome',
+  limit: 10,
+  windowSeconds: 60,
+  message: 'Too many welcome notification requests. Please try again later.',
+});
+
+/**
+ * POST /api/notifications/welcome
+ * Delivers welcome notification for first-launch / device installation.
+ * Idempotent: uses installationId/dedupeKey so welcome is never duplicated.
+ * Accessible pre-registration or authenticated.
+ */
+router.post('/welcome', welcomeRateLimiter, async (req: Request, res: Response) => {
+  try {
+    const { installationId, token, platform } = req.body ?? {};
+    if (!installationId || typeof installationId !== 'string') {
+      return res.status(400).json({ success: false, message: 'A valid installationId is required.' });
+    }
+
+    const cleanInstallId = installationId.trim();
+    const dedupeKey = `welcome_install_${cleanInstallId}`;
+
+    const authHeader = req.headers.authorization;
+    let authUserId: string | null = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const decoded: any = jwt.verify(authHeader.split(' ')[1], config.jwt.accessSecret);
+        authUserId = decoded?.userId || decoded?.id || null;
+      } catch {
+        // Continue as anonymous installation
+      }
+    }
+
+    const title = 'Welcome to Hiralal and Sons!';
+    const message = 'Welcome to Hiralal and Sons Sales Rewards Program. Register and upload your bills to get your rewards.';
+
+    let notification: any = null;
+    if (authUserId) {
+      notification = await NotificationService.createForUser({
+        userId: authUserId,
+        title,
+        message,
+        type: 'WELCOME',
+        dedupeKey,
+      });
+
+      if (token) {
+        await NotificationService.registerDeviceToken(authUserId, { token, platform });
+      }
+    } else if (token) {
+      try {
+        await FcmProvider.sendMulticast([token], title, message, { type: 'WELCOME', installId: cleanInstallId });
+      } catch (e: any) {
+        console.warn('[WELCOME-PUSH-DEFERRED]', e?.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      delivered: Boolean(authUserId || token),
+      notification,
+      message: 'Welcome message processed successfully.',
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Protect remaining notification endpoints with authentication
 router.use(authenticate);
 
 /**

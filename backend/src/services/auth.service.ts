@@ -1042,6 +1042,8 @@ export class AuthService {
     const refreshTokenHash = sha256Hash(refreshToken);
     const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000);
 
+    const deletionPending = Boolean(user.deletionScheduledAt && user.deletionScheduledAt > new Date());
+
     await prisma.$transaction(async (tx) => {
       // Invalidate all existing sessions for this user
       await tx.authSession.updateMany({
@@ -1049,11 +1051,38 @@ export class AuthService {
         data: { revokedAt: new Date() },
       });
 
-      // Update activeSessionId on user
-      await tx.user.update({
-        where: { id: user.id },
-        data: { activeSessionId: sessionId },
-      });
+      // Update activeSessionId on user and cancel pending deletion if active
+      if (deletionPending) {
+        await tx.user.update({
+          where: { id: user.id },
+          data: {
+            activeSessionId: sessionId,
+            deletionRequestedAt: null,
+            deletionScheduledAt: null,
+            status: 'ACTIVE',
+          },
+        });
+
+        // Audit log for cancellation
+        await tx.auditLog.create({
+          data: {
+            action: 'ACCOUNT_DELETION_CANCELLED_BY_LOGIN',
+            entityType: 'User',
+            entityId: user.id,
+            newValue: JSON.stringify({
+              reason: 'User authenticated during 7-day grace period',
+              cancelledAt: new Date(),
+            }),
+            ipAddress,
+            userAgent,
+          },
+        });
+      } else {
+        await tx.user.update({
+          where: { id: user.id },
+          data: { activeSessionId: sessionId },
+        });
+      }
 
       // Create new session
       await tx.authSession.create({
@@ -1067,7 +1096,7 @@ export class AuthService {
         },
       });
 
-      // Audit log
+      // Audit log for login
       await tx.auditLog.create({
         data: {
           action: 'USER_LOGIN',
@@ -1082,6 +1111,8 @@ export class AuthService {
     const accessToken = this.generateAccessToken(user.id, user.role, user.mobile, sessionId);
 
     return {
+      deletionCancelled: deletionPending,
+      message: deletionPending ? 'Your scheduled account deletion has been cancelled.' : undefined,
       user: {
         id: user.id,
         mobile: user.mobile,

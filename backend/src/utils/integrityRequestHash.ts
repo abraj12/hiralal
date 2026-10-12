@@ -88,6 +88,22 @@ export function buildCanonicalPayoutRedeemPayload(
   };
 }
 
+export interface CanonicalAccountDeletionPayload {
+  version: 1;
+  action: 'ACCOUNT_DELETION';
+  otpCode?: string;
+}
+
+export function buildCanonicalAccountDeletionPayload(
+  otpCode?: string
+): CanonicalAccountDeletionPayload {
+  return {
+    version: 1,
+    action: 'ACCOUNT_DELETION',
+    ...(otpCode ? { otpCode: String(otpCode).trim() } : {}),
+  };
+}
+
 /**
  * Computes canonical SHA-256 request hash from the actual received Express request.
  */
@@ -136,6 +152,21 @@ export function computeIntegrityRequestHash(
         req.body?.idempotencyKey
       );
 
+      return computeSha256Json(payload);
+    }
+
+    case 'ACCOUNT_DELETION': {
+      const payload = buildCanonicalAccountDeletionPayload(req.body?.otpCode);
+      return computeSha256Json(payload);
+    }
+
+    case 'AUTH':
+    case 'GENERAL': {
+      const payload = {
+        version: 1,
+        action,
+        mobile: String(req.body?.mobile || '').trim(),
+      };
       return computeSha256Json(payload);
     }
 

@@ -733,7 +733,7 @@ router.get('/settings/redemption', requireOperationsAdmin, async (req: Authentic
 router.put('/settings/redemption', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const admin = req.user!;
-    const { isEnabled, startAt, endAt, message, profession } = req.body;
+    const { isEnabled, startAt, endAt, message, profession, minimumRedemptionAmount } = req.body;
 
     let startDate: Date | null = null;
     let endDate: Date | null = null;
@@ -758,6 +758,25 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
       return res.status(400).json({ success: false, message: 'End date and time must be after the start date.' });
     }
 
+    let minRedemption: number | null | undefined = undefined;
+    if (minimumRedemptionAmount !== undefined) {
+      if (minimumRedemptionAmount === null || minimumRedemptionAmount === '') {
+        minRedemption = null;
+      } else {
+        const parsed =
+          typeof minimumRedemptionAmount === 'number'
+            ? minimumRedemptionAmount
+            : parseFloat(String(minimumRedemptionAmount));
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Minimum redemption amount must be a valid positive number.',
+          });
+        }
+        minRedemption = Math.round(parsed * 100) / 100;
+      }
+    }
+
     const prof: Profession | null = profession && profession !== 'ALL' ? (profession as Profession) : null;
     const settingId = prof ? `setting_${prof}` : 'default';
 
@@ -771,6 +790,7 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
         isEnabled: Boolean(isEnabled),
         startAt: startDate,
         endAt: endDate,
+        ...(minRedemption !== undefined && { minimumRedemptionAmount: minRedemption }),
         message: message || 'Rewards redemption window is open for verified craftsmen.',
         updatedByAdminId: admin.id,
       },
@@ -780,6 +800,7 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
         isEnabled: Boolean(isEnabled),
         startAt: startDate,
         endAt: endDate,
+        minimumRedemptionAmount: minRedemption !== undefined ? minRedemption : null,
         message: message || 'Rewards redemption window is open for verified craftsmen.',
         updatedByAdminId: admin.id,
       },

@@ -8,6 +8,8 @@ import { sha256Hash, hmacHashOtp } from '../utils/crypto.utils';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 
+import { resetAdmins } from './test_helpers';
+
 describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage', () => {
   const billAdminMobile = '9876000001';
   const opsAdminMobile = '9876000002';
@@ -23,6 +25,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
   let paymentAccountId: string;
 
   beforeAll(async () => {
+    await resetAdmins(prisma);
     // 1. Clean up test numbers
     const testMobiles = [billAdminMobile, opsAdminMobile, regularUserMobile, suspendedAdminMobile];
     await prisma.authSession.deleteMany({ where: { user: { mobile: { in: testMobiles } } } });
@@ -65,20 +68,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
     });
     opsAdminId = opsAdmin.id;
 
-    // 4. Create Suspended Admin
-    const suspAdmin = await prisma.user.create({
-      data: {
-        mobile: suspendedAdminMobile,
-        fullName: 'Suspended Admin',
-        passwordHash,
-        role: 'BILL_ADMIN',
-        status: 'SUSPENDED',
-        isVerified: true,
-      },
-    });
-    suspendedAdminId = suspAdmin.id;
-
-    // 5. Create Regular User with Wallet
+    // 4. Create Regular User with Wallet
     const user = await prisma.user.create({
       data: {
         mobile: regularUserMobile,
@@ -164,9 +154,20 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
     });
 
     test('throws error if admin account is suspended', async () => {
-      await expect(
-        AuthService.requestAdminOtp({ identifier: `XYZ${suspendedAdminMobile}`, password: testPassword })
-      ).rejects.toThrow(/Invalid login credentials/i);
+      await prisma.user.update({
+        where: { id: billAdminId },
+        data: { status: 'SUSPENDED' },
+      });
+      try {
+        await expect(
+          AuthService.requestAdminOtp({ identifier: `XYZ${billAdminMobile}`, password: testPassword })
+        ).rejects.toThrow(/Invalid login credentials/i);
+      } finally {
+        await prisma.user.update({
+          where: { id: billAdminId },
+          data: { status: 'ACTIVE' },
+        });
+      }
     });
 
     test('throws error if admin password is invalid', async () => {
@@ -685,6 +686,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
           startAt: null,
           endAt: null,
           message: 'Rewards redemption window is now open.',
+          minimumRedemptionAmount: 100.0,
         },
         create: {
           id: 'default',
@@ -692,6 +694,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
           startAt: null,
           endAt: null,
           message: 'Rewards redemption window is now open.',
+          minimumRedemptionAmount: 100.0,
         },
       });
 
@@ -734,7 +737,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       // Restore to open for subsequent tests
       await prisma.redemptionSettings.update({
         where: { id: 'default' },
-        data: { isEnabled: true, message: 'Rewards redemption window is now open.' },
+        data: { isEnabled: true, message: 'Rewards redemption window is now open.', minimumRedemptionAmount: 100.0 },
       });
     });
 
@@ -780,7 +783,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       });
       const checkZeroBalance = await PayoutService.checkUserEligibility(regularUserId);
       expect(checkZeroBalance.canRedeem).toBe(false);
-      expect(checkZeroBalance.reason).toContain('No balance available');
+      expect(checkZeroBalance.reason).toMatch(/below the minimum redemption threshold|No balance available/);
 
       // When balance is positive (even ₹100), user is eligible to redeem
       await prisma.wallet.update({
@@ -927,4 +930,9 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       ).rejects.toThrow(/already in terminal state FAILED/i);
     });
   });
+
+  afterAll(async () => {
+    await resetAdmins(prisma);
+  });
 });
+

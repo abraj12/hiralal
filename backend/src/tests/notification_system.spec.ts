@@ -108,19 +108,28 @@ describe('Task L & N — Notification System, In-App Center, Operations Broadcas
       { expiresIn: '1h' }
     );
 
-    // Create Operations Admin
+    // Find or create Operations Admin
     const opsSessionId = crypto.randomUUID();
-    opsAdminUser = await prisma.user.create({
-      data: {
-        mobile: opsAdminMobile,
-        fullName: 'Operations Admin User',
-        passwordHash: 'hashed_password',
-        role: 'OPERATIONS_ADMIN',
-        status: 'ACTIVE',
-        isVerified: true,
-        activeSessionId: opsSessionId,
-      },
-    });
+    const existingOps = await prisma.user.findFirst({ where: { role: 'OPERATIONS_ADMIN' } });
+    if (existingOps) {
+      opsAdminUser = existingOps;
+      await prisma.user.update({
+        where: { id: opsAdminUser.id },
+        data: { activeSessionId: opsSessionId, status: 'ACTIVE' },
+      });
+    } else {
+      opsAdminUser = await prisma.user.create({
+        data: {
+          mobile: opsAdminMobile,
+          fullName: 'Operations Admin User',
+          passwordHash: 'hashed_password',
+          role: 'OPERATIONS_ADMIN',
+          status: 'ACTIVE',
+          isVerified: true,
+          activeSessionId: opsSessionId,
+        },
+      });
+    }
     await prisma.authSession.create({
       data: {
         userId: opsAdminUser.id,
@@ -130,24 +139,33 @@ describe('Task L & N — Notification System, In-App Center, Operations Broadcas
       },
     });
     opsAdminToken = jwt.sign(
-      { userId: opsAdminUser.id, role: 'OPERATIONS_ADMIN', mobile: opsAdminMobile, sessionId: opsSessionId },
+      { userId: opsAdminUser.id, role: 'OPERATIONS_ADMIN', mobile: opsAdminUser.mobile, sessionId: opsSessionId },
       config.admin.accessSecret,
       { expiresIn: '1h' }
     );
 
-    // Create Bill Admin
+    // Find or create Bill Admin
     const billSessionId = crypto.randomUUID();
-    billAdminUser = await prisma.user.create({
-      data: {
-        mobile: billAdminMobile,
-        fullName: 'Bill Admin User',
-        passwordHash: 'hashed_password',
-        role: 'BILL_ADMIN',
-        status: 'ACTIVE',
-        isVerified: true,
-        activeSessionId: billSessionId,
-      },
-    });
+    const existingBill = await prisma.user.findFirst({ where: { role: 'BILL_ADMIN' } });
+    if (existingBill) {
+      billAdminUser = existingBill;
+      await prisma.user.update({
+        where: { id: billAdminUser.id },
+        data: { activeSessionId: billSessionId, status: 'ACTIVE' },
+      });
+    } else {
+      billAdminUser = await prisma.user.create({
+        data: {
+          mobile: billAdminMobile,
+          fullName: 'Bill Admin User',
+          passwordHash: 'hashed_password',
+          role: 'BILL_ADMIN',
+          status: 'ACTIVE',
+          isVerified: true,
+          activeSessionId: billSessionId,
+        },
+      });
+    }
     await prisma.authSession.create({
       data: {
         userId: billAdminUser.id,
@@ -157,7 +175,7 @@ describe('Task L & N — Notification System, In-App Center, Operations Broadcas
       },
     });
     billAdminToken = jwt.sign(
-      { userId: billAdminUser.id, role: 'BILL_ADMIN', mobile: billAdminMobile, sessionId: billSessionId },
+      { userId: billAdminUser.id, role: 'BILL_ADMIN', mobile: billAdminUser.mobile, sessionId: billSessionId },
       config.admin.accessSecret,
       { expiresIn: '1h' }
     );
@@ -183,7 +201,7 @@ describe('Task L & N — Notification System, In-App Center, Operations Broadcas
       where: { user: { mobile: { in: [plumberMobile, tileWorkerMobile, opsAdminMobile, billAdminMobile] } } },
     });
     await prisma.user.deleteMany({
-      where: { mobile: { in: [plumberMobile, tileWorkerMobile, opsAdminMobile, billAdminMobile] } },
+      where: { mobile: { in: [plumberMobile, tileWorkerMobile] } },
     });
     await prisma.$disconnect();
     await closeRedis();

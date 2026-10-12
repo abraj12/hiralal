@@ -58,6 +58,7 @@ export default function AdminSettingsPage() {
   const [endDate, setEndDate] = useState('');
   const [endTime, setEndTime] = useState('23:59');
   const [userMessage, setUserMessage] = useState('Rewards redemption is currently open for verified craftsmen.');
+  const [minimumRedemptionAmount, setMinimumRedemptionAmount] = useState('500');
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -102,6 +103,9 @@ export default function AdminSettingsPage() {
         const s = redRes.settings;
         setIsRedemptionEnabled(Boolean(s.isEnabled));
         if (s.message) setUserMessage(s.message);
+        if (s.minimumRedemptionAmount !== undefined && s.minimumRedemptionAmount !== null) {
+          setMinimumRedemptionAmount(s.minimumRedemptionAmount.toString());
+        }
 
         if (s.startAt) {
           const d = new Date(s.startAt);
@@ -201,11 +205,17 @@ export default function AdminSettingsPage() {
         throw new Error('End date and time must be after the start date and time.');
       }
 
+      const parsedMin = minimumRedemptionAmount.trim() ? parseFloat(minimumRedemptionAmount) : null;
+      if (parsedMin !== null && (isNaN(parsedMin) || parsedMin <= 0)) {
+        throw new Error('Minimum redemption threshold must be a valid positive number (e.g. 500).');
+      }
+
       await AdminApiClient.updateRedemptionSettings({
         isEnabled: isRedemptionEnabled,
         startAt,
         endAt,
         message: userMessage,
+        minimumRedemptionAmount: parsedMin,
       });
 
       setSuccessMsg('Redemption window settings saved and enforced for mobile workers!');
@@ -679,26 +689,53 @@ export default function AdminSettingsPage() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Minimum Redemption Threshold (₹)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-2.5 text-xs font-bold text-slate-400">₹</span>
+                    <input
+                      type="number"
+                      step="1"
+                      min="1"
+                      value={minimumRedemptionAmount}
+                      onChange={(e) => setMinimumRedemptionAmount(e.target.value)}
+                      placeholder="e.g. 500"
+                      className="w-full pl-8 pr-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800"
+                      required
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Workers must have at least this available balance before redemption illuminates
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    User-Facing Redemption Status Message
+                  </label>
+                  <input
+                    type="text"
+                    value={userMessage}
+                    onChange={(e) => setUserMessage(e.target.value)}
+                    placeholder="e.g. Rewards redemption is open from 20 Oct to 25 Oct 2026."
+                    className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Displayed on worker mobile wallet & rewards dashboard
+                  </span>
+                </div>
+              </div>
+
               <div className="p-4 bg-amber-50/60 border border-amber-200/80 rounded-2xl">
                 <p className="text-xs font-bold text-amber-900 mb-1">
                   100% Full-Balance Redemption Policy Enforced
                 </p>
                 <p className="text-[11px] text-amber-800 leading-relaxed">
-                  Mobile workers automatically redeem their entire wallet available balance in full when the window is open. No minimum payout threshold or maximum transaction ceiling is imposed.
+                  Mobile workers must accumulate at least ₹{minimumRedemptionAmount || '0'} to initiate redemption during an active window. When redeemed, their entire available balance is transferred in full — no partial amounts, no pool restrictions, and no ₹50,000 monthly rewards caps.
                 </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  User-Facing Redemption Status Message
-                </label>
-                <input
-                  type="text"
-                  value={userMessage}
-                  onChange={(e) => setUserMessage(e.target.value)}
-                  placeholder="e.g. Rewards redemption is open from 20 Oct to 25 Oct 2026."
-                  className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800"
-                />
               </div>
 
               <div className="flex justify-end pt-2">

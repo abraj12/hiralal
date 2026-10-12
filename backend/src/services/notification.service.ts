@@ -13,7 +13,7 @@ export interface CreateNotificationInput {
 export interface BroadcastInput {
   title: string;
   message: string;
-  targetAudience?: 'ALL' | 'PLUMBER' | 'TILE_WORKER' | 'TILE_INSTALLER';
+  targetAudience?: 'ALL' | 'PLUMBER' | 'TILE_INSTALLER';
   idempotencyKey?: string;
   metadata?: any;
 }
@@ -224,9 +224,9 @@ export class NotificationService {
     }
 
     const audience = input.targetAudience || 'ALL';
-    const allowedAudiences = ['ALL', 'PLUMBER', 'TILE_WORKER', 'TILE_INSTALLER'];
+    const allowedAudiences = ['ALL', 'PLUMBER', 'TILE_INSTALLER'];
     if (!allowedAudiences.includes(audience)) {
-      throw new Error(`Invalid target audience "${audience}". Allowed: ALL, PLUMBER, TILE_WORKER, TILE_INSTALLER.`);
+      throw new Error(`Invalid target audience "${audience}". Allowed: ALL, PLUMBER, TILE_INSTALLER.`);
     }
 
     // Check idempotencyKey to prevent duplicate broadcasts
@@ -247,7 +247,7 @@ export class NotificationService {
 
     if (audience === 'PLUMBER') {
       userWhere.profession = 'PLUMBER';
-    } else if (audience === 'TILE_WORKER' || audience === 'TILE_INSTALLER') {
+    } else if (audience === 'TILE_INSTALLER') {
       userWhere.profession = 'TILE_INSTALLER';
     }
 

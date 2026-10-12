@@ -36,28 +36,10 @@ export class RewardRuleService {
     });
 
     if (rules.length === 0) {
-      if (!config.isProduction) {
-        // Documented test fixture bootstrap: only when the database contains zero rule history for this profession
-        const totalRules = await tx.rewardRule.count({
-          where: { profession },
-        });
-
-        if (totalRules === 0) {
-          return await tx.rewardRule.create({
-            data: {
-              profession,
-              rewardPercentage: 0.50,
-              effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
-              isActive: true,
-              version: 1,
-            },
-          });
-        }
-      }
-
-      // Fail closed: past invoice must never receive a future-scheduled rate or fabricate missing rules
+      // Fail closed: invoice must never receive a future-scheduled rate or fabricate missing rules.
+      // Operations Admin must configure a reward rule before rewards can be calculated.
       throw new Error(
-        `[REWARD-RULE] No active reward rule found for profession ${profession} at effective date ${effectiveAt.toISOString()}. Operation halted (fail closed).`
+        `[NO_APPLICABLE_REWARD_RULE] No active reward rule found for profession ${profession} at effective date ${effectiveAt.toISOString()}. Operations Admin must create an applicable reward rule before rewards can be calculated (fail closed).`
       );
     }
 
@@ -95,7 +77,7 @@ export class RewardRuleService {
       throw new Error('Valid worker profession (PLUMBER or TILE_INSTALLER) is required.');
     }
 
-    // 2. Validation: Percentage (strict finite number between 0.01% and 10.00%)
+    // 2. Validation: Percentage (strict finite number between 0.01% and 100.00%)
     if (typeof rewardPercentage !== 'number' || !Number.isFinite(rewardPercentage) || Number.isNaN(rewardPercentage)) {
       throw new Error('Reward percentage must be a valid, finite number.');
     }

@@ -41,6 +41,7 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
 
   // Step 2: Payment Account state
   const [paymentType, setPaymentType] = useState<'UPI' | 'BANK'>('UPI');
+  const [accountChoice, setAccountChoice] = useState<'SAVED' | 'NEW'>('SAVED');
   const [upiId, setUpiId] = useState('');
   const [bankName, setBankName] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
@@ -92,9 +93,11 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
         if (hasAccount) {
           setPaymentVerified(true);
           setMaskedPayment(res.verifiedAccount.maskedInfo || 'VERIFIED');
+          setAccountChoice('SAVED');
         } else {
           setPaymentVerified(false);
           setAccountHolder(user?.fullName || '');
+          setAccountChoice('NEW');
         }
 
         // Auto-navigate to first incomplete step
@@ -366,109 +369,186 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
                 </View>
               )}
 
-              {/* STEP 2: PAYMENT METHOD (UPI / BANK) */}
+              {/* STEP 2: PAYMENT METHOD (UPI / BANK / SAVED) */}
               {step === 2 && (
                 <View style={styles.stepContent}>
                   <Text style={styles.stepTitle}>Where would you like to receive rewards?</Text>
                   <Text style={styles.stepDescription}>
-                    Choose instant UPI payout or direct bank transfer.
+                    Choose your saved account or configure a new payout destination.
                   </Text>
 
-                  <View style={styles.tabsRow}>
-                    <TouchableOpacity
-                      style={[
-                        styles.tabOption,
-                        paymentType === 'UPI' && { borderColor: theme.primaryColor, backgroundColor: theme.primaryLight },
-                      ]}
-                      onPress={() => setPaymentType('UPI')}
-                    >
-                      <Text
+                  {eligibility?.verifiedAccount && (
+                    <View style={styles.tabsRow}>
+                      <TouchableOpacity
                         style={[
-                          styles.tabOptionText,
-                          paymentType === 'UPI' && { color: theme.primaryColor, fontWeight: '800' },
+                          styles.tabOption,
+                          accountChoice === 'SAVED' && { borderColor: theme.primaryColor, backgroundColor: theme.primaryLight },
                         ]}
+                        onPress={() => setAccountChoice('SAVED')}
                       >
-                        UPI ID (Instant)
-                      </Text>
-                    </TouchableOpacity>
+                        <Text
+                          style={[
+                            styles.tabOptionText,
+                            accountChoice === 'SAVED' && { color: theme.primaryColor, fontWeight: '800' },
+                          ]}
+                        >
+                          Use Saved Account
+                        </Text>
+                      </TouchableOpacity>
 
-                    <TouchableOpacity
-                      style={[
-                        styles.tabOption,
-                        paymentType === 'BANK' && { borderColor: theme.primaryColor, backgroundColor: theme.primaryLight },
-                      ]}
-                      onPress={() => setPaymentType('BANK')}
-                    >
-                      <Text
+                      <TouchableOpacity
                         style={[
-                          styles.tabOptionText,
-                          paymentType === 'BANK' && { color: theme.primaryColor, fontWeight: '800' },
+                          styles.tabOption,
+                          accountChoice === 'NEW' && { borderColor: theme.primaryColor, backgroundColor: theme.primaryLight },
                         ]}
+                        onPress={() => setAccountChoice('NEW')}
                       >
-                        Bank Account
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
+                        <Text
+                          style={[
+                            styles.tabOptionText,
+                            accountChoice === 'NEW' && { color: theme.primaryColor, fontWeight: '800' },
+                          ]}
+                        >
+                          + New Payout Account
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
 
-                  {paymentType === 'UPI' ? (
-                    <View style={styles.inputGroup}>
-                      <Text style={styles.inputLabel}>UPI ID / VPA</Text>
-                      <TextInput
-                        style={styles.input}
-                        value={upiId}
-                        onChangeText={setUpiId}
-                        placeholder="e.g. yourname@oksbi or 9876543210@paytm"
-                        autoCapitalize="none"
-                      />
+                  {eligibility?.verifiedAccount && accountChoice === 'SAVED' ? (
+                    <View>
+                      <View style={styles.reviewCard}>
+                        <View style={styles.reviewRow}>
+                          <Text style={styles.reviewLabel}>Account Type</Text>
+                          <Text style={styles.reviewValue}>{eligibility.verifiedAccount.accountType}</Text>
+                        </View>
+                        <View style={styles.divider} />
+                        <View style={styles.reviewRow}>
+                          <Text style={styles.reviewLabel}>Account Details</Text>
+                          <Text style={styles.reviewValue}>{eligibility.verifiedAccount.maskedInfo}</Text>
+                        </View>
+                        {eligibility.verifiedAccount.bankName ? (
+                          <>
+                            <View style={styles.divider} />
+                            <View style={styles.reviewRow}>
+                              <Text style={styles.reviewLabel}>Bank Name</Text>
+                              <Text style={styles.reviewValue}>{eligibility.verifiedAccount.bankName}</Text>
+                            </View>
+                          </>
+                        ) : null}
+                      </View>
+
+                      <TouchableOpacity
+                        style={[styles.primaryButton, { backgroundColor: theme.primaryColor, marginTop: 14 }]}
+                        onPress={() => {
+                          setPaymentVerified(true);
+                          setMaskedPayment(eligibility.verifiedAccount.maskedInfo || 'VERIFIED');
+                          setStep(3);
+                        }}
+                      >
+                        <Text style={styles.primaryButtonText}>Continue with Saved Account</Text>
+                        <ArrowRight size={16} color="#ffffff" style={{ marginLeft: 6 }} />
+                      </TouchableOpacity>
                     </View>
                   ) : (
                     <>
-                      <View style={styles.inputGroup}>
-                        <Text style={styles.inputLabel}>Account Holder Name</Text>
-                        <TextInput
-                          style={styles.input}
-                          value={accountHolder}
-                          onChangeText={setAccountHolder}
-                          placeholder="Name as printed in bank passbook"
-                        />
+                      <View style={styles.tabsRow}>
+                        <TouchableOpacity
+                          style={[
+                            styles.tabOption,
+                            paymentType === 'UPI' && { borderColor: theme.primaryColor, backgroundColor: theme.primaryLight },
+                          ]}
+                          onPress={() => setPaymentType('UPI')}
+                        >
+                          <Text
+                            style={[
+                              styles.tabOptionText,
+                              paymentType === 'UPI' && { color: theme.primaryColor, fontWeight: '800' },
+                            ]}
+                          >
+                            UPI ID (Instant)
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[
+                            styles.tabOption,
+                            paymentType === 'BANK' && { borderColor: theme.primaryColor, backgroundColor: theme.primaryLight },
+                          ]}
+                          onPress={() => setPaymentType('BANK')}
+                        >
+                          <Text
+                            style={[
+                              styles.tabOptionText,
+                              paymentType === 'BANK' && { color: theme.primaryColor, fontWeight: '800' },
+                            ]}
+                          >
+                            Bank Account
+                          </Text>
+                        </TouchableOpacity>
                       </View>
-                      <View style={styles.inputGroup}>
-                        <Text style={styles.inputLabel}>Account Number</Text>
-                        <TextInput
-                          style={styles.input}
-                          value={accountNumber}
-                          onChangeText={setAccountNumber}
-                          placeholder="Bank account number"
-                          keyboardType="numeric"
-                        />
-                      </View>
-                      <View style={styles.inputGroup}>
-                        <Text style={styles.inputLabel}>IFSC Code</Text>
-                        <TextInput
-                          style={styles.input}
-                          value={ifscCode}
-                          onChangeText={t => setIfscCode(t.toUpperCase())}
-                          placeholder="e.g. SBIN0001234"
-                          autoCapitalize="characters"
-                        />
-                      </View>
+
+                      {paymentType === 'UPI' ? (
+                        <View style={styles.inputGroup}>
+                          <Text style={styles.inputLabel}>UPI ID / VPA</Text>
+                          <TextInput
+                            style={styles.input}
+                            value={upiId}
+                            onChangeText={setUpiId}
+                            placeholder="e.g. yourname@oksbi or 9876543210@paytm"
+                            autoCapitalize="none"
+                          />
+                        </View>
+                      ) : (
+                        <>
+                          <View style={styles.inputGroup}>
+                            <Text style={styles.inputLabel}>Account Holder Name</Text>
+                            <TextInput
+                              style={styles.input}
+                              value={accountHolder}
+                              onChangeText={setAccountHolder}
+                              placeholder="Name as printed in bank passbook"
+                            />
+                          </View>
+                          <View style={styles.inputGroup}>
+                            <Text style={styles.inputLabel}>Account Number</Text>
+                            <TextInput
+                              style={styles.input}
+                              value={accountNumber}
+                              onChangeText={setAccountNumber}
+                              placeholder="Bank account number"
+                              keyboardType="numeric"
+                            />
+                          </View>
+                          <View style={styles.inputGroup}>
+                            <Text style={styles.inputLabel}>IFSC Code</Text>
+                            <TextInput
+                              style={styles.input}
+                              value={ifscCode}
+                              onChangeText={t => setIfscCode(t.toUpperCase())}
+                              placeholder="e.g. SBIN0001234"
+                              autoCapitalize="characters"
+                            />
+                          </View>
+                        </>
+                      )}
+
+                      <TouchableOpacity
+                        style={[styles.primaryButton, { backgroundColor: theme.primaryColor }]}
+                        onPress={handleVerifyPayment}
+                        disabled={isSubmitting}
+                      >
+                        {isSubmitting ? (
+                          <ActivityIndicator color="#ffffff" />
+                        ) : (
+                          <>
+                            <Text style={styles.primaryButtonText}>Verify Account & Continue</Text>
+                            <ArrowRight size={16} color="#ffffff" style={{ marginLeft: 6 }} />
+                          </>
+                        )}
+                      </TouchableOpacity>
                     </>
                   )}
-
-                  <TouchableOpacity
-                    style={[styles.primaryButton, { backgroundColor: theme.primaryColor }]}
-                    onPress={handleVerifyPayment}
-                    disabled={isSubmitting}
-                  >
-                    {isSubmitting ? (
-                      <ActivityIndicator color="#ffffff" />
-                    ) : (
-                      <>
-                        <Text style={styles.primaryButtonText}>Verify Account & Continue</Text>
-                        <ArrowRight size={16} color="#ffffff" style={{ marginLeft: 6 }} />
-                      </>
-                    )}
-                  </TouchableOpacity>
                 </View>
               )}
 
@@ -499,7 +579,14 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
                     <View style={styles.divider} />
 
                     <View style={styles.reviewRow}>
-                      <Text style={styles.reviewLabel}>Disbursement Account</Text>
+                      <View>
+                        <Text style={styles.reviewLabel}>Disbursement Account</Text>
+                        <TouchableOpacity onPress={() => { setAccountChoice('NEW'); setStep(2); }}>
+                          <Text style={{ color: theme.primaryColor, fontSize: 11, fontWeight: '700', marginTop: 2 }}>
+                            Change Account
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
                       <View style={styles.verifiedRow}>
                         <CreditCard size={14} color="#16A34A" />
                         <Text style={styles.verifiedText}>{maskedPayment}</Text>
@@ -757,6 +844,11 @@ const styles = StyleSheet.create({
   reviewValueLarge: {
     fontSize: 20,
     fontWeight: '900',
+    color: '#0F172A',
+  },
+  reviewValue: {
+    fontSize: 13,
+    fontWeight: '700',
     color: '#0F172A',
   },
   divider: {

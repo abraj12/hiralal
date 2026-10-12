@@ -32,7 +32,10 @@ export default function WalletScreen() {
   };
 
   const isWindowOpen = eligibility?.isWindowOpen ?? false;
+  const isEligible = eligibility?.isEligible ?? false;
   const canRedeem = eligibility?.canRedeem ?? false;
+  const canInitiateKyc = eligibility?.canInitiateKyc ?? false;
+  const canAct = isEligible || canRedeem;
 
   return (
     <View style={styles.container}>
@@ -100,18 +103,20 @@ export default function WalletScreen() {
             style={[
               styles.redeemBtn,
               { backgroundColor: theme.primaryColor },
-              (!canRedeem || wallet.availableBalance <= 0) && { opacity: 0.5 },
+              (!canAct || wallet.availableBalance <= 0) && { opacity: 0.5 },
             ]}
             onPress={() => setShowRedeemModal(true)}
-            disabled={!canRedeem || wallet.availableBalance <= 0}
+            disabled={!canAct || wallet.availableBalance <= 0}
             activeOpacity={0.85}
           >
             <Text style={styles.redeemBtnText}>
-              Redeem Cashback ₹{wallet.availableBalance.toLocaleString('en-IN')}
+              {canInitiateKyc
+                ? `Verify KYC & Redeem ₹${wallet.availableBalance.toLocaleString('en-IN')}`
+                : `Redeem Cashback ₹${wallet.availableBalance.toLocaleString('en-IN')}`}
             </Text>
           </TouchableOpacity>
 
-          {(!canRedeem || wallet.availableBalance <= 0) && (
+          {(!canAct || wallet.availableBalance <= 0) && (
             <Text style={styles.minRedeemNotice}>
               {eligibility?.reason ||
                 (!isWindowOpen

@@ -21,6 +21,7 @@ import { prisma } from '../db';
 import { config } from '../config';
 import { generateSecureToken, sha256Hash } from '../utils/crypto.utils';
 import { PlayIntegrityService } from '../services/integrity/playIntegrity.service';
+import { AccountDeletionService } from '../services/account-deletion.service';
 
 const router = Router();
 
@@ -537,16 +538,41 @@ router.patch('/me', authenticate, requireUser, async (req: AuthenticatedRequest,
     const user = req.user!;
     const { fullName, profession } = req.body;
 
+    const currentUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      include: {
+        kycRecords: { where: { panStatus: 'VERIFIED' } },
+      },
+    });
+
+    if (!currentUser) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    const isLocked = currentUser.isNameLocked || (currentUser.kycRecords.length > 0 && currentUser.kycRecords[0].nameMatched);
+
     const dataToUpdate: any = {};
 
     if (profession !== undefined) {
-      if (!['PLUMBER', 'TILE_WORKER'].includes(profession)) {
-        return res.status(400).json({ success: false, message: 'Invalid profession. Must be PLUMBER or TILE_WORKER.' });
+      if (isLocked) {
+        return res.status(403).json({
+          success: false,
+          message: 'Profile is locked following KYC verification. Profession cannot be altered.',
+        });
+      }
+      if (!['PLUMBER', 'TILE_INSTALLER'].includes(profession)) {
+        return res.status(400).json({ success: false, message: 'Invalid profession. Must be PLUMBER or TILE_INSTALLER.' });
       }
       dataToUpdate.profession = profession;
     }
 
     if (fullName !== undefined) {
+      if (isLocked) {
+        return res.status(403).json({
+          success: false,
+          message: 'Profile is locked following identity verification. Contact Operations Admin for corrections.',
+        });
+      }
       await AuthService.updateUserName(user.id, { fullName });
     }
 
@@ -612,13 +638,14 @@ router.post(
         'BILL_UPLOAD',
         'KYC_SUBMIT',
         'PAYOUT_REDEEM',
+        'ACCOUNT_DELETION',
       ] as const;
 
       if (!action || !allowedActions.includes(action)) {
         return res.status(400).json({
           success: false,
           code: 'INVALID_ACTION',
-          message: 'A valid protected integrity action is required (BILL_UPLOAD, KYC_SUBMIT, PAYOUT_REDEEM).',
+          message: 'A valid protected integrity action is required (BILL_UPLOAD, KYC_SUBMIT, PAYOUT_REDEEM, ACCOUNT_DELETION).',
         });
       }
 
@@ -650,6 +677,45 @@ router.post(
 );
 
 router.post(
+  '/integrity/pre-auth/nonce',
+  integrityNonceLimiter,
+  async (req: Request, res: Response) => {
+    try {
+      const { action = 'AUTH', requestHash } = req.body ?? {};
+      const allowedPreAuthActions = ['AUTH', 'GENERAL'] as const;
+
+      if (!action || !allowedPreAuthActions.includes(action)) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_ACTION',
+          message: 'Pre-auth integrity action must be AUTH or GENERAL.',
+        });
+      }
+
+      if (
+        typeof requestHash !== 'string' ||
+        !/^[a-f0-9]{64}$/i.test(requestHash)
+      ) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_REQUEST_HASH',
+          message: 'A valid SHA-256 request hash is required.',
+        });
+      }
+
+      const result = await PlayIntegrityService.generateNonce({
+        action,
+        requestHash: requestHash.toLowerCase(),
+      });
+
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  }
+);
+
+router.post(
   '/integrity/verify',
   authenticate,
   requireUser,
@@ -669,6 +735,7 @@ router.post(
         'BILL_UPLOAD',
         'KYC_SUBMIT',
         'PAYOUT_REDEEM',
+        'ACCOUNT_DELETION',
       ] as const;
 
       if (!action || !allowedActions.includes(action)) {
@@ -715,6 +782,61 @@ router.post(
       return res.json({ success: true, verdict });
     } catch (err: any) {
       return res.status(500).json({ success: false, message: err.message });
+    }
+  }
+);
+
+// ==========================================
+// 9. ACCOUNT DELETION LIFECYCLE (Password + OTP + 7-Day Grace Period)
+// ==========================================
+
+router.post(
+  '/account-deletion/request',
+  authenticate,
+  requireUser,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = req.user!;
+      const { password } = req.body;
+      const ipAddress = req.ip || req.socket.remoteAddress;
+
+      const result = await AccountDeletionService.requestDeletion(user.id, password, ipAddress);
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message });
+    }
+  }
+);
+
+router.post(
+  '/account-deletion/confirm',
+  authenticate,
+  requireUser,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = req.user!;
+      const { otpCode } = req.body;
+      const ipAddress = req.ip || req.socket.remoteAddress;
+
+      const result = await AccountDeletionService.confirmDeletion(user.id, otpCode, ipAddress);
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message });
+    }
+  }
+);
+
+router.get(
+  '/account-deletion/status',
+  authenticate,
+  requireUser,
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = req.user!;
+      const result = await AccountDeletionService.getDeletionStatus(user.id);
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
     }
   }
 );

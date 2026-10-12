@@ -105,16 +105,21 @@ describe('Hiralal Rewards Platform — Part 2 Master Remediation Suite', () => {
     );
 
     // 3. Bill Admin
-    billAdminUser = await prisma.user.create({
-      data: {
-        mobile: billAdminMobile,
-        fullName: 'Master Bill Admin',
-        passwordHash: 'dummy_hash_bill_admin',
-        role: 'BILL_ADMIN',
-        status: 'ACTIVE',
-        isVerified: true,
-      },
-    });
+    const existingBill = await prisma.user.findFirst({ where: { role: 'BILL_ADMIN' } });
+    if (existingBill) {
+      billAdminUser = existingBill;
+    } else {
+      billAdminUser = await prisma.user.create({
+        data: {
+          mobile: billAdminMobile,
+          fullName: 'Master Bill Admin',
+          passwordHash: 'dummy_hash_bill_admin',
+          role: 'BILL_ADMIN',
+          status: 'ACTIVE',
+          isVerified: true,
+        },
+      });
+    }
 
     billAdminToken = jwt.sign(
       { userId: billAdminUser.id, role: 'BILL_ADMIN' },
@@ -123,16 +128,21 @@ describe('Hiralal Rewards Platform — Part 2 Master Remediation Suite', () => {
     );
 
     // 4. Operations Admin
-    opsAdminUser = await prisma.user.create({
-      data: {
-        mobile: opsAdminMobile,
-        fullName: 'Master Ops Admin',
-        passwordHash: 'dummy_hash_ops_admin',
-        role: 'OPERATIONS_ADMIN',
-        status: 'ACTIVE',
-        isVerified: true,
-      },
-    });
+    const existingOps = await prisma.user.findFirst({ where: { role: 'OPERATIONS_ADMIN' } });
+    if (existingOps) {
+      opsAdminUser = existingOps;
+    } else {
+      opsAdminUser = await prisma.user.create({
+        data: {
+          mobile: opsAdminMobile,
+          fullName: 'Master Ops Admin',
+          passwordHash: 'dummy_hash_ops_admin',
+          role: 'OPERATIONS_ADMIN',
+          status: 'ACTIVE',
+          isVerified: true,
+        },
+      });
+    }
 
     opsAdminToken = jwt.sign(
       { userId: opsAdminUser.id, role: 'OPERATIONS_ADMIN' },
@@ -182,8 +192,6 @@ describe('Hiralal Rewards Platform — Part 2 Master Remediation Suite', () => {
     const mobiles = [
       testWorkerMobile,
       otherWorkerMobile,
-      billAdminMobile,
-      opsAdminMobile,
       suspendedWorkerMobile,
     ];
 
@@ -456,6 +464,8 @@ describe('Hiralal Rewards Platform — Part 2 Master Remediation Suite', () => {
     });
 
     it('prevents administrators from approving their own submitted bills', async () => {
+      // Clean up previous test bill if any
+      await prisma.bill.deleteMany({ where: { invoiceNumber: 'INV-ADMIN-SELF-001' } });
       // Create bill submitted by billAdmin
       const adminBill = await prisma.bill.create({
         data: {

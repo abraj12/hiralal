@@ -135,6 +135,13 @@ export class AdminApiClient {
     return this.request(`/admin/users/${id}`);
   }
 
+  static updateUserName(id: string, data: { fullName: string; reason: string; firstName?: string; middleName?: string; lastName?: string }) {
+    return this.request(`/admin/users/${id}/name`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
   // Bills Management & Verification
   static getBills(status = 'ALL', profession = 'ALL', search = '') {
     const params = new URLSearchParams({ status, profession });
@@ -237,6 +244,7 @@ export class AdminApiClient {
     startAt?: string | null;
     endAt?: string | null;
     message?: string;
+    minimumRedemptionAmount?: number | null;
   }) {
     return this.request('/admin/settings/redemption', {
       method: 'PUT',
@@ -253,7 +261,7 @@ export class AdminApiClient {
   static broadcastNotification(data: {
     title: string;
     message: string;
-    targetAudience?: 'ALL' | 'PLUMBER' | 'TILE_WORKER';
+    targetAudience?: 'ALL' | 'PLUMBER' | 'TILE_INSTALLER';
     idempotencyKey?: string;
   }) {
     return this.request('/admin/notifications/broadcast', {

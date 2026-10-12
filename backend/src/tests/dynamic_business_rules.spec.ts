@@ -564,7 +564,7 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
   // -------------------------------------------------------------
   // Test 12: Historical Rule Versions Authoritative Across Time Windows
   // -------------------------------------------------------------
-  it('Scenario 12: Historical effective-dated rule versions are authoritative based on invoiceDate', async () => {
+  it('Scenario 12: Historical effective-dated rule versions are authoritative based on submission timestamp (Bill.createdAt)', async () => {
     // Create an explicit historical rule for 2025: 0.75%
     const histRule = await prisma.rewardRule.create({
       data: {
@@ -587,6 +587,12 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
         fileBuffer: createDummyPdfBuffer('hist'),
         fileName: 'hist.pdf',
         mimeType: 'application/pdf',
+      });
+
+      // Server-recorded submission timestamp is authoritative
+      await prisma.bill.update({
+        where: { id: histBill.id },
+        data: { createdAt: new Date('2025-06-15T12:00:00Z') },
       });
 
       const resHist = await BillService.approveBill({
@@ -627,11 +633,11 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
   // Test 13: Full Balance Redemption (100% Reserved, No Caps or Thresholds)
   // -------------------------------------------------------------
   it('Scenario 13: Full balance redemption reserves 100% available balance without monthly caps or thresholds', async () => {
-    // 1. Open redemption window
+    // 1. Open redemption window with required minimum redemption amount
     await prisma.redemptionSettings.upsert({
       where: { id: 'default' },
-      update: { isEnabled: true, startAt: null, endAt: null },
-      create: { id: 'default', isEnabled: true, startAt: null, endAt: null },
+      update: { isEnabled: true, startAt: null, endAt: null, minimumRedemptionAmount: 500.0 },
+      create: { id: 'default', isEnabled: true, startAt: null, endAt: null, minimumRedemptionAmount: 500.0 },
     });
 
     // 2. Set user wallet balance to ₹1,250.75

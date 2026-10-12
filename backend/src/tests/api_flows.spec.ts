@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import { config } from '../config';
 import { getIstYearAndMonth } from '../utils/timezone.utils';
 import { closeRedis } from '../redis';
+import { resetAdmins } from './test_helpers';
 
 describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
   let userToken: string;
@@ -15,6 +16,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
   let testAdminId: string;
 
   beforeAll(async () => {
+    await resetAdmins(prisma);
     const activePlumberRule = await prisma.rewardRule.findFirst({
       where: { profession: 'PLUMBER', isActive: true },
     });
@@ -354,4 +356,9 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     expect(res.status).toBe(400);
     expect(res.body.message).toContain('Invalid action. Must be APPROVE or REJECT');
   });
+
+  afterAll(async () => {
+    await resetAdmins(prisma);
+  });
 });
+

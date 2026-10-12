@@ -6,6 +6,7 @@ import { prisma } from '../db';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import crypto from 'crypto';
+import { resetAdmins } from './test_helpers';
 
 describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective Dating', () => {
   let opsAdmin: any;
@@ -20,6 +21,7 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
   ]);
 
   beforeAll(async () => {
+    await resetAdmins(prisma);
     // Clean up test users
     await prisma.walletTransaction.deleteMany({
       where: { wallet: { user: { mobile: { in: ['9899900001', '9899900002', '9899900003'] } } } },
@@ -337,6 +339,11 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
         mimeType: 'application/pdf',
       });
 
+      await prisma.bill.update({
+        where: { id: bill.id },
+        data: { createdAt: new Date('2026-11-02T10:00:00.000Z') },
+      });
+
       const approvedRes = await BillService.approveBill(bill.id, billAdmin.id);
       expect(approvedRes.bill.status).toBe('APPROVED');
       expect(Number(approvedRes.bill.calculatedReward)).toBe(85.0); // 10000 * 0.85% = 85.0
@@ -533,6 +540,11 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
         fileBuffer: createDummyPdf(),
         fileName: 'calendar.pdf',
         mimeType: 'application/pdf',
+      });
+
+      await prisma.bill.update({
+        where: { id: bill.id },
+        data: { createdAt: new Date('2026-10-15T12:00:00.000Z') },
       });
 
       const approved = await BillService.approveBill(bill.id, billAdmin.id);
@@ -775,19 +787,18 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
       // Attempting to resolve rate for an invoice dated 2026-10-11 MUST fail closed
       await expect(
         RewardRuleService.getApplicableRule('TILE_INSTALLER', '2026-10-11')
-      ).rejects.toThrow('[REWARD-RULE] No active reward rule found for profession TILE_INSTALLER');
+      ).rejects.toThrow(/No active reward rule found for profession TILE_INSTALLER/);
     });
 
-    test('test fixture baseline bootstrap ONLY triggers when zero total rules exist in database', async () => {
+    test('fails closed when zero total rules exist in database (no automatic 0.50% bootstrap fallback)', async () => {
       await prisma.rewardRule.deleteMany({ where: { profession: 'TILE_INSTALLER' } });
       const initialCount = await prisma.rewardRule.count({ where: { profession: 'TILE_INSTALLER' } });
       expect(initialCount).toBe(0);
 
-      // In development/test with zero rows, baseline bootstrap creates 0.50% starting 2020-01-01
-      const bootstrapped = await RewardRuleService.getApplicableRule('TILE_INSTALLER', '2026-10-11');
-      expect(bootstrapped).toBeDefined();
-      expect(Number(bootstrapped.rewardPercentage)).toBe(0.50);
-      expect(bootstrapped.effectiveFrom.toISOString()).toBe(new Date('2020-01-01T00:00:00+05:30').toISOString());
+      // Must fail closed: Operations Admin must configure a rule before calculations
+      await expect(
+        RewardRuleService.getApplicableRule('TILE_INSTALLER', '2026-10-11')
+      ).rejects.toThrow(/NO_APPLICABLE_REWARD_RULE/);
     });
   });
 
@@ -832,5 +843,6 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
         },
       });
     }
+    await resetAdmins(prisma);
   });
 });

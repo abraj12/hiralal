@@ -31,16 +31,21 @@ describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', (
     await prisma.wallet.deleteMany({ where: { user: { mobile: '9877700001' } } });
     await prisma.user.deleteMany({ where: { mobile: '9877700001' } });
 
-    opsAdmin = await prisma.user.create({
-      data: {
-        mobile: '9877700001',
-        fullName: 'Part 2A4 Ops Admin',
-        passwordHash: 'dummy_hash_2a4',
-        role: 'OPERATIONS_ADMIN',
-        status: 'ACTIVE',
-        isVerified: true,
-      },
-    });
+    const existingOpsAdmin = await prisma.user.findFirst({ where: { role: 'OPERATIONS_ADMIN' } });
+    if (existingOpsAdmin) {
+      opsAdmin = existingOpsAdmin;
+    } else {
+      opsAdmin = await prisma.user.create({
+        data: {
+          mobile: '9877700001',
+          fullName: 'Part 2A4 Ops Admin',
+          passwordHash: 'dummy_hash_2a4',
+          role: 'OPERATIONS_ADMIN',
+          status: 'ACTIVE',
+          isVerified: true,
+        },
+      });
+    }
     opsAdminToken = jwt.sign(
       { userId: opsAdmin.id, role: 'OPERATIONS_ADMIN' },
       config.admin.accessSecret || config.jwt.accessSecret,
@@ -161,6 +166,20 @@ describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', (
   // Task 2 — Seed provisioning is strictly non-mutating
   // ---------------------------------------------------------------
   describe('Task 2 — Safe Baseline Seeding for All Historical States (Actual Implementation)', () => {
+    let origEnv: string | undefined;
+    beforeAll(() => {
+      origEnv = process.env.ENABLE_DEV_REWARD_RULES;
+      process.env.ENABLE_DEV_REWARD_RULES = 'true';
+    });
+
+    afterAll(() => {
+      if (origEnv !== undefined) {
+        process.env.ENABLE_DEV_REWARD_RULES = origEnv;
+      } else {
+        delete process.env.ENABLE_DEV_REWARD_RULES;
+      }
+    });
+
     test('1. Completely empty profession: one initial baseline is created', async () => {
       // Remove all PLUMBER rules to simulate a fresh database with 0 historical rows
       await prisma.rewardRule.deleteMany({ where: { profession: 'PLUMBER' } });

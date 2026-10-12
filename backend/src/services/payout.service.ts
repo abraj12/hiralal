@@ -126,10 +126,6 @@ export class PayoutService {
 
     const beneficiaryCheck = this.validateBeneficiaryMatch(verifiedKycRecord, verifiedAccount);
 
-    let canRedeem = true;
-    let reason = '';
-
-    // Check active payout in flight
     const activePayout = await prisma.payout.findFirst({
       where: {
         userId,
@@ -137,27 +133,52 @@ export class PayoutService {
       },
     });
 
+    const minThreshold =
+      settings.minimumRedemptionAmount !== null && settings.minimumRedemptionAmount !== undefined
+        ? Number(settings.minimumRedemptionAmount)
+        : null;
+
+    const isThresholdConfigured = minThreshold !== null && minThreshold > 0;
+    const isThresholdMet = isThresholdConfigured && availableBalance >= minThreshold;
+    const hasActivePayout = Boolean(activePayout);
+
+    // Authoritative eligibility requires both configured minimum threshold and active time window, without pending payout
+    const isEligible = isWindowOpen && isThresholdConfigured && isThresholdMet && !hasActivePayout;
+    const canRedeem = isEligible && beneficiaryCheck.isValid;
+    const canInitiateKyc = isEligible && !beneficiaryCheck.isValid;
+
+    let reason = '';
     if (!isWindowOpen) {
-      canRedeem = false;
       reason = settings.message || 'Rewards redemption window is currently closed by administration.';
-    } else if (activePayout) {
-      canRedeem = false;
+    } else if (!isThresholdConfigured) {
+      reason = 'Rewards redemption minimum threshold is not configured by administration.';
+    } else if (hasActivePayout) {
       reason = 'You have a redemption request currently in progress. Please wait until it completes.';
     } else if (availableBalance <= 0) {
-      canRedeem = false;
       reason = 'No balance available for redemption.';
+    } else if (!isThresholdMet) {
+      reason = `Available balance (₹${availableBalance.toFixed(2)}) is below the minimum redemption threshold of ₹${minThreshold.toFixed(2)}.`;
     } else if (!beneficiaryCheck.isValid) {
-      canRedeem = false;
-      reason = beneficiaryCheck.reason || 'Beneficiary verification failed.';
+      reason = beneficiaryCheck.reason || 'Please complete PAN and payment account verification to proceed.';
     }
 
     return {
+      isEligible,
       canRedeem,
+      canInitiateKyc,
+      hasActivePayout,
+      isWindowOpen,
+      isThresholdConfigured,
+      isThresholdMet,
+      minimumRedemptionAmount: minThreshold,
       reason,
       availableBalance,
       verifiedKyc: verifiedKycRecord,
       verifiedAccount,
-      windowSettings: settings,
+      windowSettings: {
+        ...settings,
+        minimumRedemptionAmount: minThreshold,
+      },
     };
   }
 
@@ -235,18 +256,31 @@ export class PayoutService {
           throw new Error('User account is suspended or inactive.');
         }
 
+        const verifiedKycRecord = user.kycRecords.length > 0 ? user.kycRecords[0] : null;
+        const verifiedAccount = user.paymentAccounts[0] || null;
+
         const { settings, isWindowOpen } = await this.getRedemptionSettings(user.profession || undefined, tx);
         if (!isWindowOpen) {
           throw new Error(settings.message || 'Rewards redemption window is currently closed by administration.');
         }
 
-        const hasVerifiedKyc = user.kycRecords.length > 0;
-        const verifiedKycRecord = hasVerifiedKyc ? user.kycRecords[0] : null;
-        const isNameMatched = Boolean(verifiedKycRecord?.nameMatched || user.isNameLocked);
-        const verifiedAccount = user.paymentAccounts[0] || null;
+        const minThreshold =
+          settings.minimumRedemptionAmount !== null && settings.minimumRedemptionAmount !== undefined
+            ? Number(settings.minimumRedemptionAmount)
+            : null;
+
+        if (minThreshold === null || minThreshold <= 0) {
+          throw new Error('Rewards redemption minimum threshold is not configured by administration.');
+        }
 
         if (currentAvailable <= 0) {
           throw new Error('No balance available for redemption.');
+        }
+
+        if (currentAvailable < minThreshold) {
+          throw new Error(
+            `Available balance (₹${currentAvailable.toFixed(2)}) is below the minimum redemption threshold of ₹${minThreshold.toFixed(2)}.`
+          );
         }
 
         const beneficiaryCheck = PayoutService.validateBeneficiaryMatch(verifiedKycRecord, verifiedAccount);

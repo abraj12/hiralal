@@ -21,7 +21,7 @@ export default function AdminNotificationsPage() {
   const [activeTab, setActiveTab] = useState<'broadcast' | 'direct'>('broadcast');
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
-  const [targetAudience, setTargetAudience] = useState<'ALL' | 'PLUMBER' | 'TILE_WORKER'>('ALL');
+  const [targetAudience, setTargetAudience] = useState<'ALL' | 'PLUMBER' | 'TILE_INSTALLER'>('ALL');
   const [directUserId, setDirectUserId] = useState('');
 
   // UI state
@@ -187,9 +187,9 @@ export default function AdminNotificationsPage() {
                 </label>
                 <div className="grid grid-cols-3 gap-3">
                   {[
-                    { id: 'ALL', label: 'All Craftsmen (Plumbers & Tiles)' },
+                    { id: 'ALL', label: 'All Craftsmen (Plumbers & Tile Installers)' },
                     { id: 'PLUMBER', label: 'Plumbers Only' },
-                    { id: 'TILE_WORKER', label: 'Tile Workers Only' },
+                    { id: 'TILE_INSTALLER', label: 'Tile Installers Only' },
                   ].map((aud) => (
                     <label
                       key={aud.id}
@@ -366,7 +366,7 @@ export default function AdminNotificationsPage() {
                       <span className={`inline-block px-2 py-0.5 rounded font-mono text-[10px] font-bold ${
                         c.targetAudience === 'PLUMBER'
                           ? 'bg-blue-50 text-blue-700'
-                          : c.targetAudience === 'TILE_WORKER'
+                          : c.targetAudience === 'TILE_INSTALLER' || c.targetAudience === 'TILE_WORKER'
                           ? 'bg-amber-50 text-amber-700'
                           : 'bg-purple-50 text-purple-700'
                       }`}>

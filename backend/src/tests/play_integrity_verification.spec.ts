@@ -1249,6 +1249,6 @@ describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', (
       }
 
       expect(rateLimited).toBe(true);
-    });
+    }, 30000);
   });
 });

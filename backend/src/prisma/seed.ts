@@ -52,20 +52,34 @@ export async function provisionRewardRules(
       });
 
       if (totalCount === 0) {
-        // Completely empty profession: safe to create initial v1 baseline
-        await trx.rewardRule.create({
-          data: {
-            profession: prof,
-            rewardPercentage: 0.50,
-            effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
-            version: 1,
-            isActive: true,
-          },
-        });
-        result.provisioned.push(prof);
-        postCommitLogs.push(() => {
-          console.log(`✅ [SEED] Initial baseline reward rule created for ${prof} (0.50%, v1, 2020-01-01 IST)`);
-        });
+        if (process.env.NODE_ENV === 'production') {
+          // Requirement: In production, do NOT silently create 0.5% baseline rules. Operations Admin must create the first rule.
+          const msg = `ℹ️ [SEED] Production mode: Automatic 0.50% reward rule creation disabled for ${prof}. Operations Admin must configure reward rules via the administration interface before rewards can be calculated.`;
+          result.warnings.push(msg);
+          postCommitLogs.push(() => {
+            console.log(msg);
+          });
+        } else if (process.env.ENABLE_DEMO_SEED === 'true' || process.env.ENABLE_DEV_REWARD_RULES === 'true') {
+          await trx.rewardRule.create({
+            data: {
+              profession: prof,
+              rewardPercentage: 0.50,
+              effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+              version: 1,
+              isActive: true,
+            },
+          });
+          result.provisioned.push(prof);
+          postCommitLogs.push(() => {
+            console.log(`✅ [SEED] Initial demo reward rule created for ${prof} (0.50%, v1, 2020-01-01 IST)`);
+          });
+        } else {
+          const msg = `ℹ️ [SEED] Profession ${prof} has zero reward rules. Operations Admin must configure reward rules via the administrative portal before rewards can be calculated.`;
+          result.warnings.push(msg);
+          postCommitLogs.push(() => {
+            console.log(msg);
+          });
+        }
       } else {
         // Historical records exist: preserve all rows immutable
         const activeRule = await trx.rewardRule.findFirst({
@@ -119,14 +133,40 @@ async function main() {
       }
     }
 
+    // Pre-check for multiple admin identities to enforce the Two-Admin invariant
+    const existingBillAdmins = await prisma.user.findMany({
+      where: { role: 'BILL_ADMIN' },
+    });
+    if (existingBillAdmins.length > 1) {
+      throw new Error(
+        `[FATAL] Multiple BILL_ADMIN identities detected (${existingBillAdmins.length}). Exactly one provisioned BILL_ADMIN is permitted.`
+      );
+    }
+
+    const existingOpsAdmins = await prisma.user.findMany({
+      where: { role: 'OPERATIONS_ADMIN' },
+    });
+    if (existingOpsAdmins.length > 1) {
+      throw new Error(
+        `[FATAL] Multiple OPERATIONS_ADMIN identities detected (${existingOpsAdmins.length}). Exactly one provisioned OPERATIONS_ADMIN is permitted.`
+      );
+    }
+
+    const legacyAdmins = await prisma.user.findMany({
+      where: { role: 'ADMIN' },
+    });
+    if (legacyAdmins.length > 0) {
+      console.warn(
+        `⚠️  [SEED-WARNING] Detected ${legacyAdmins.length} unresolved legacy ADMIN account(s). Run npm run admin:migrate-legacy to resolve them before role removal.`
+      );
+    }
+
     const billAdminMobile = process.env.BILL_ADMIN_MOBILE || '9999999991';
     const billAdminPassword =
       process.env.BILL_ADMIN_INITIAL_PASSWORD ||
       (process.env.NODE_ENV === 'production' ? '' : 'BillAdmin@123');
 
-    let billAdmin = await prisma.user.findFirst({
-      where: { role: 'BILL_ADMIN' },
-    });
+    let billAdmin = existingBillAdmins[0] || null;
 
     if (!billAdmin) {
       if (!billAdminPassword) {
@@ -176,9 +216,7 @@ async function main() {
       process.env.OPERATIONS_ADMIN_INITIAL_PASSWORD ||
       (process.env.NODE_ENV === 'production' ? '' : 'OpsAdmin@123');
 
-    let opsAdmin = await prisma.user.findFirst({
-      where: { role: 'OPERATIONS_ADMIN' },
-    });
+    let opsAdmin = existingOpsAdmins[0] || null;
 
     if (!opsAdmin) {
       if (!opsAdminPassword) {
@@ -204,7 +242,7 @@ async function main() {
 
     // 2. Provision Reward Rules for Plumber & Tile Installer
     await provisionRewardRules(prisma);
-    console.log('✅ Profession reward rules provisioned: 0.50% Plumber, 0.50% Tile Installer (verified safe)');
+    console.log('✅ Profession reward rules initialization verified.');
 
     // 4. Provision GST Tax Rules
     const existingGstRules = await prisma.gstRule.findMany();

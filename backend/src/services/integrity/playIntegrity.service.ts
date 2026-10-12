@@ -13,7 +13,7 @@ import jwt from 'jsonwebtoken';
 import { config, isPlaceholderCredential } from '../../config';
 import { getRedisClient, isRedisReady } from '../../redis';
 
-export type IntegrityAction = 'BILL_UPLOAD' | 'PAYOUT_REDEEM' | 'KYC_SUBMIT' | 'AUTH' | 'GENERAL';
+export type IntegrityAction = 'BILL_UPLOAD' | 'PAYOUT_REDEEM' | 'KYC_SUBMIT' | 'AUTH' | 'GENERAL' | 'ACCOUNT_DELETION';
 
 export interface ActionNonceContext {
   userId?: string;

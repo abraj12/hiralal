@@ -68,25 +68,29 @@ enum OtpPurpose {
   FORGOT_PASSWORD
   LOGIN
   ADMIN_LOGIN
+  ACCOUNT_DELETION
 }
 
 model User {
-  id              String           @id @default(uuid())
-  mobile          String           @unique
-  fullName        String
-  firstName       String?
-  middleName      String?
-  lastName        String?
-  isNameLocked    Boolean          @default(false)
-  nameLockedAt    DateTime?
-  passwordHash    String
-  profession      Profession?
-  role            UserRole         @default(USER)
-  status          UserStatus       @default(ACTIVE)
-  isVerified      Boolean          @default(false)
-  activeSessionId String?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  id                    String           @id @default(uuid())
+  mobile                String           @unique
+  fullName              String
+  firstName             String?
+  middleName            String?
+  lastName              String?
+  isNameLocked          Boolean          @default(false)
+  nameLockedAt          DateTime?
+  passwordHash          String
+  profession            Profession?
+  role                  UserRole         @default(USER)
+  status                UserStatus       @default(ACTIVE)
+  isVerified            Boolean          @default(false)
+  activeSessionId       String?
+  deletionRequestedAt   DateTime?
+  deletionScheduledAt   DateTime?
+  lastDeletionRequestAt DateTime?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
 
   wallet          Wallet?
   bills           Bill[]
@@ -213,8 +217,8 @@ model Bill {
 
 model RewardRule {
   id               String      @id @default(uuid())
-  profession       Profession  @default(PLUMBER)
-  rewardPercentage Decimal     @default(0.50) @db.Decimal(5, 2)
+  profession       Profession
+  rewardPercentage Decimal     @db.Decimal(5, 2)
   effectiveFrom    DateTime    @default(now())
   effectiveUntil   DateTime?
   isActive         Boolean     @default(true)
@@ -250,14 +254,15 @@ model GstRule {
 }
 
 model RedemptionSettings {
-  id               String      @id @default("default")
-  profession       Profession? @unique
-  isEnabled        Boolean     @default(false)
-  startAt          DateTime?
-  endAt            DateTime?
-  message          String      @default("Rewards redemption is currently unavailable.")
-  updatedByAdminId String?
-  updatedAt        DateTime    @updatedAt
+  id                     String      @id @default("default")
+  profession             Profession? @unique
+  isEnabled              Boolean     @default(false)
+  minimumRedemptionAmount Decimal?   @db.Decimal(12, 2)
+  startAt                DateTime?
+  endAt                  DateTime?
+  message                String      @default("Rewards redemption is currently unavailable.")
+  updatedByAdminId       String?
+  updatedAt              DateTime    @updatedAt
 }
 
 model KycRecord {

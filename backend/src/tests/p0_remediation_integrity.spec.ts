@@ -31,17 +31,22 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
     await prisma.authSession.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
     await prisma.user.deleteMany({ where: { mobile: { in: mobiles } } });
 
-    // Create Admin User with BILL_ADMIN role
-    adminUser = await prisma.user.create({
-      data: {
-        mobile: adminMobile,
-        fullName: 'P0 Lead Admin',
-        passwordHash: 'hash',
-        role: 'BILL_ADMIN',
-        status: 'ACTIVE',
-        isVerified: true,
-      },
-    });
+    // Find or create Admin User with BILL_ADMIN role
+    const existingBillAdmin = await prisma.user.findFirst({ where: { role: 'BILL_ADMIN' } });
+    if (existingBillAdmin) {
+      adminUser = existingBillAdmin;
+    } else {
+      adminUser = await prisma.user.create({
+        data: {
+          mobile: adminMobile,
+          fullName: 'P0 Lead Admin',
+          passwordHash: 'hash',
+          role: 'BILL_ADMIN',
+          status: 'ACTIVE',
+          isVerified: true,
+        },
+      });
+    }
 
     adminToken = jwt.sign(
       { userId: adminUser.id, role: adminUser.role },
@@ -465,6 +470,14 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
   });
 
   describe('4. Full-Balance Redemption & Complete Elimination of Min/Max Caps', () => {
+    beforeAll(async () => {
+      await prisma.redemptionSettings.upsert({
+        where: { id: 'default' },
+        update: { isEnabled: true, minimumRedemptionAmount: 0.01, startAt: null, endAt: null },
+        create: { id: 'default', isEnabled: true, minimumRedemptionAmount: 0.01, startAt: null, endAt: null },
+      });
+    });
+
     test('4.1 Worker with ₹100 eligible balance can request redemption of ₹100 without being blocked (below former ₹500 min)', async () => {
       // Ensure wallet balance is ₹100
       await prisma.wallet.update({

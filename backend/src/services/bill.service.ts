@@ -325,11 +325,12 @@ export class BillService {
       if (!bill.user.profession) {
         throw new Error('User has no registered profession. Cannot resolve reward rule.');
       }
-      const profession: Profession = bill.user.profession;
-      const invoiceDate = bill.invoiceDate || new Date();
+      const profession = bill.user.profession;
+      // Authoritative server-recorded bill-submission timestamp determines applicable reward & GST rules
+      const submissionTimestamp = bill.createdAt || new Date();
 
-      // 2. Resolve applicable active reward rule for this profession and date
-      const rule = await RewardRuleService.getApplicableRule(profession, invoiceDate, tx);
+      // 2. Resolve applicable active reward rule for this profession and submission timestamp
+      const rule = await RewardRuleService.getApplicableRule(profession, submissionTimestamp, tx);
       const rulePercentage = Number(rule.rewardPercentage);
 
       // 3. Resolve GST calculation
@@ -340,12 +341,11 @@ export class BillService {
 
       if (options?.gstRuleId) {
         const gstRule = await tx.gstRule.findUnique({ where: { id: options.gstRuleId } });
-        const invoiceDateTime = parseIndiaBusinessDate(bill.invoiceDate);
         if (
           !gstRule ||
           !gstRule.isActive ||
-          invoiceDateTime < gstRule.effectiveFrom ||
-          (gstRule.effectiveUntil !== null && invoiceDateTime >= gstRule.effectiveUntil)
+          submissionTimestamp < gstRule.effectiveFrom ||
+          (gstRule.effectiveUntil !== null && submissionTimestamp >= gstRule.effectiveUntil)
         ) {
           throw new Error('The selected GST rule is invalid or not applicable to this bill');
         }
@@ -480,7 +480,10 @@ export class BillService {
             eligibleRewardAmount: gstCalc.eligibleRewardAmount,
             rewardRate: rulePercentage,
             rewardRuleId: rule.id,
+            rewardRuleVersion: rule.version,
             rewardCredited: finalReward,
+            calculationTimestamp: new Date().toISOString(),
+            submissionTimestamp: submissionTimestamp.toISOString(),
             gstOverrideReason: options?.gstOverrideReason || null,
           }),
         },

@@ -701,6 +701,13 @@ export class MobileApiClient {
     });
   }
 
+  static getPreAuthIntegrityNonce(options: { requestHash: string }) {
+    return this.request<{ success: boolean; nonce: string; message?: string }>('/auth/integrity/pre-auth/nonce', {
+      method: 'POST',
+      body: JSON.stringify(options),
+    });
+  }
+
   static verifyIntegrityToken(
     nonce: string,
     integrityToken: string,
@@ -709,6 +716,45 @@ export class MobileApiClient {
     return this.request('/auth/integrity/verify', {
       method: 'POST',
       body: JSON.stringify({ nonce, integrityToken, ...options }),
+    });
+  }
+
+  // Account Deletion API (Password + OTP + 7-Day Grace Period)
+  static requestAccountDeletion(password: string, attestation?: RequiredActionAttestation) {
+    const extraHeaders: Record<string, string> = {};
+    if (attestation && attestation.integrityToken?.trim()) {
+      extraHeaders['x-integrity-token'] = attestation.integrityToken.trim();
+      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce?.trim() || '';
+    }
+    return this.request('/auth/account-deletion/request', {
+      method: 'POST',
+      headers: extraHeaders,
+      body: JSON.stringify({ password }),
+    });
+  }
+
+  static confirmAccountDeletion(otpCode: string, attestation?: RequiredActionAttestation) {
+    const extraHeaders: Record<string, string> = {};
+    if (attestation && attestation.integrityToken?.trim()) {
+      extraHeaders['x-integrity-token'] = attestation.integrityToken.trim();
+      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce?.trim() || '';
+    }
+    return this.request('/auth/account-deletion/confirm', {
+      method: 'POST',
+      headers: extraHeaders,
+      body: JSON.stringify({ otpCode }),
+    });
+  }
+
+  static getAccountDeletionStatus() {
+    return this.request('/auth/account-deletion/status');
+  }
+
+  // Idempotent Welcome Notification API
+  static triggerWelcomeNotification(installationId: string) {
+    return this.request('/notifications/welcome', {
+      method: 'POST',
+      body: JSON.stringify({ installationId }),
     });
   }
 }

@@ -1,6 +1,37 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { Platform } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { THEMES, ThemeConfig, ProfessionType } from '../theme/professionTheme';
 import { MobileApiClient } from '../services/api';
+
+const INSTALLATION_KEY = 'hiralal_installation_id';
+
+async function getOrCreateInstallationId(): Promise<string> {
+  try {
+    let id: string | null = null;
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        id = window.localStorage.getItem(INSTALLATION_KEY);
+      }
+    } else {
+      id = await SecureStore.getItemAsync(INSTALLATION_KEY);
+    }
+
+    if (!id || id.length < 8) {
+      id = `inst-${Date.now()}-${Math.random().toString(36).substring(2, 12)}-${Math.random().toString(36).substring(2, 12)}`;
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.setItem(INSTALLATION_KEY, id);
+        }
+      } else {
+        await SecureStore.setItemAsync(INSTALLATION_KEY, id);
+      }
+    }
+    return id;
+  } catch {
+    return `inst-fallback-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+  }
+}
 
 interface AppContextType {
   user: any;
@@ -107,6 +138,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               setBills(billsRes.bills);
             }
             setCurrentScreen('MAIN');
+            getOrCreateInstallationId()
+              .then(instId => MobileApiClient.triggerWelcomeNotification(instId))
+              .catch(() => {});
           } else {
             // Server responded but user profile was not returned
             await MobileApiClient.clearAllTokens();
@@ -155,6 +189,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setCurrentScreen('MAIN');
     setActiveTab('HOME');
+    getOrCreateInstallationId()
+      .then(instId => MobileApiClient.triggerWelcomeNotification(instId))
+      .catch(() => {});
     refreshData().catch(e => console.warn('Background sync failed:', e));
     return res;
   };

@@ -11,6 +11,7 @@ import { PaymentService } from '../services/payment.service';
 import { AuthService } from '../services/auth.service';
 import { config } from '../config';
 import jwt from 'jsonwebtoken';
+import { resetAdmins } from './test_helpers';
 
 describe('Production Hardening & Financial Integrity Release Candidate Tests', () => {
   const adminMobile = '9876549901';
@@ -26,6 +27,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
   let expiredGstRule: any;
 
   beforeAll(async () => {
+    await resetAdmins(prisma);
     // Clean up test data
     const mobiles = [adminMobile, plumberMobile, billAdminMobile];
     await prisma.bill.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
@@ -143,6 +145,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
     await prisma.user.deleteMany({ where: { mobile: { in: mobiles } } });
     if (activeGstRule) await prisma.gstRule.delete({ where: { id: activeGstRule.id } }).catch(() => {});
     if (expiredGstRule) await prisma.gstRule.delete({ where: { id: expiredGstRule.id } }).catch(() => {});
+    await resetAdmins(prisma);
   });
 
   describe('1. File Upload & Magic-Byte Validation', () => {

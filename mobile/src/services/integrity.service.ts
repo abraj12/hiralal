@@ -1,7 +1,7 @@
 import { NativeModules, Platform } from 'react-native';
 import { MobileApiClient } from './api';
 
-export type ProtectedAction = 'BILL_UPLOAD' | 'PAYOUT_REDEEM' | 'KYC_SUBMIT';
+export type ProtectedAction = 'BILL_UPLOAD' | 'PAYOUT_REDEEM' | 'KYC_SUBMIT' | 'ACCOUNT_DELETION';
 
 export interface ActionAttestation {
   integrityToken: string;

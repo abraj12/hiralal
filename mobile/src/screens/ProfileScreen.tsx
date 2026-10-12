@@ -27,10 +27,14 @@ import {
   Mail,
   AlertCircle,
   CheckCircle2,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react-native';
 import Header from '../components/Header';
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
+import { MobileIntegrityService } from '../services/integrity.service';
+import { createAccountDeletionRequestHash } from '../services/integrityRequestHash';
 
 export default function ProfileScreen() {
   const { user, theme, logout, refreshData } = useApp();
@@ -50,6 +54,83 @@ export default function ProfileScreen() {
   const [lastName, setLastName] = useState('');
   const [savingName, setSavingName] = useState(false);
   const [nameError, setNameError] = useState('');
+
+  // Account Deletion State
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [deleteStep, setDeleteStep] = useState<'PASSWORD' | 'OTP'>('PASSWORD');
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteOtp, setDeleteOtp] = useState('');
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const openAccountDeletionModal = () => {
+    setDeleteStep('PASSWORD');
+    setDeletePassword('');
+    setDeleteOtp('');
+    setDeleteError(null);
+    setDeleteModalVisible(true);
+  };
+
+  const handleRequestDeletion = async () => {
+    if (!deletePassword) {
+      setDeleteError('Please enter your account password.');
+      return;
+    }
+    setDeleteLoading(true);
+    setDeleteError(null);
+    try {
+      let attestation;
+      try {
+        const requestHash = await createAccountDeletionRequestHash();
+        attestation = await MobileIntegrityService.performActionAttestation('ACCOUNT_DELETION', requestHash);
+      } catch (attErr) {
+        // Fallback for dev environments where Play Integrity is not configured
+      }
+      const res = await MobileApiClient.requestAccountDeletion(deletePassword, attestation);
+      if (res.success) {
+        setDeleteStep('OTP');
+      } else {
+        setDeleteError(res.message || 'Failed to request account deletion.');
+      }
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to request account deletion.');
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const handleConfirmDeletion = async () => {
+    if (!deleteOtp || deleteOtp.trim().length !== 6) {
+      setDeleteError('Please enter the 6-digit OTP code.');
+      return;
+    }
+    setDeleteLoading(true);
+    setDeleteError(null);
+    try {
+      let attestation;
+      try {
+        const requestHash = await createAccountDeletionRequestHash({ otpCode: deleteOtp.trim() });
+        attestation = await MobileIntegrityService.performActionAttestation('ACCOUNT_DELETION', requestHash);
+      } catch (attErr) {
+        // Fallback for dev environments
+      }
+      const res = await MobileApiClient.confirmAccountDeletion(deleteOtp.trim(), attestation);
+      if (res.success) {
+        setDeleteModalVisible(false);
+        Alert.alert(
+          'Account Deletion Scheduled',
+          res.message || 'Your account has been scheduled for deletion in 7 days. You have been logged out. If you wish to cancel, simply log back into the app within 7 days.',
+          [{ text: 'OK', onPress: logout }]
+        );
+      } else {
+        setDeleteError(res.message || 'Invalid or expired OTP.');
+      }
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to confirm account deletion.');
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
 
   const fetchEligibility = () => {
     MobileApiClient.getPayoutEligibility()
@@ -366,6 +447,19 @@ export default function ProfileScreen() {
             <ChevronRight size={16} color="#CBD5E1" />
           </TouchableOpacity>
 
+          {/* 8. Account Deletion (GDPR/DPDP Right to Erasure) */}
+          <TouchableOpacity
+            style={styles.menuItem}
+            activeOpacity={0.7}
+            onPress={openAccountDeletionModal}
+          >
+            <View style={styles.menuItemLeft}>
+              <Trash2 size={18} color="#DC2626" />
+              <Text style={[styles.menuItemLabel, { color: '#DC2626' }]}>Delete Account</Text>
+            </View>
+            <ChevronRight size={16} color="#CBD5E1" />
+          </TouchableOpacity>
+
           <TouchableOpacity style={styles.logoutBtn} onPress={logout} activeOpacity={0.7}>
             <LogOut size={18} color="#DC2626" />
             <Text style={styles.logoutText}>Log Out from Account</Text>
@@ -571,6 +665,91 @@ export default function ProfileScreen() {
             >
               <Text style={styles.modalActionBtnText}>Understood</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* MODAL 5: Account Deletion Flow (Password + OTP + 7-Day Grace Period) */}
+      <Modal visible={deleteModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalBox, { maxHeight: '90%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Trash2 size={20} color="#DC2626" style={{ marginRight: 8 }} />
+                <Text style={[styles.modalTitle, { color: '#DC2626' }]}>Delete Account</Text>
+              </View>
+              <TouchableOpacity onPress={() => setDeleteModalVisible(false)}>
+                <X size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={styles.deleteNoticeBox}>
+                <AlertTriangle size={18} color="#B45309" style={{ marginRight: 8, marginTop: 2 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.deleteNoticeTitle}>Important Deletion Policy</Text>
+                  <Text style={styles.deleteNoticeText}>
+                    • 7-Day Grace Period: Your account will be scheduled for permanent anonymization in 7 days. You can cancel this request anytime by logging back into your account before the grace period ends.{'\n'}
+                    • Statutory Financial Records: In compliance with Indian tax laws and financial regulations, your financial ledgers and transaction history remain permanently preserved with anonymized identifiers. Private bill documents will be purged from storage.{'\n'}
+                    • 30-Day Cooldown: You cannot request deletion more than once every 30 days.
+                  </Text>
+                </View>
+              </View>
+
+              {deleteError ? (
+                <View style={styles.deleteErrorBox}>
+                  <AlertCircle size={14} color="#B91C1C" style={{ marginRight: 6 }} />
+                  <Text style={styles.deleteErrorText}>{deleteError}</Text>
+                </View>
+              ) : null}
+
+              {deleteStep === 'PASSWORD' ? (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={styles.deleteInputLabel}>Enter account password to verify identity:</Text>
+                  <TextInput
+                    style={styles.deleteInput}
+                    value={deletePassword}
+                    onChangeText={setDeletePassword}
+                    placeholder="Enter password"
+                    secureTextEntry
+                  />
+                  <TouchableOpacity
+                    style={[styles.modalActionBtn, { backgroundColor: '#DC2626', marginTop: 16 }]}
+                    onPress={handleRequestDeletion}
+                    disabled={deleteLoading}
+                  >
+                    {deleteLoading ? (
+                      <ActivityIndicator color="#ffffff" />
+                    ) : (
+                      <Text style={styles.modalActionBtnText}>Verify Password & Send OTP</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={styles.deleteInputLabel}>Enter 6-digit OTP sent to +91 {user?.mobile}:</Text>
+                  <TextInput
+                    style={styles.deleteInput}
+                    value={deleteOtp}
+                    onChangeText={setDeleteOtp}
+                    placeholder="e.g. 123456"
+                    keyboardType="numeric"
+                    maxLength={6}
+                  />
+                  <TouchableOpacity
+                    style={[styles.modalActionBtn, { backgroundColor: '#DC2626', marginTop: 16 }]}
+                    onPress={handleConfirmDeletion}
+                    disabled={deleteLoading}
+                  >
+                    {deleteLoading ? (
+                      <ActivityIndicator color="#ffffff" />
+                    ) : (
+                      <Text style={styles.modalActionBtnText}>Confirm & Schedule Deletion</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -842,4 +1021,58 @@ const styles = StyleSheet.create({
     color: '#334155',
     lineHeight: 18,
   },
+  deleteNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FFFBEB',
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    marginBottom: 12,
+  },
+  deleteNoticeTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#92400E',
+    marginBottom: 4,
+  },
+  deleteNoticeText: {
+    fontSize: 11,
+    color: '#B45309',
+    lineHeight: 16,
+  },
+  deleteErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    marginBottom: 12,
+  },
+  deleteErrorText: {
+    fontSize: 12,
+    color: '#DC2626',
+    fontWeight: '600',
+    flex: 1,
+  },
+  deleteInputLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  deleteInput: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#0F172A',
+    backgroundColor: '#F8FAFC',
+  },
 });
+

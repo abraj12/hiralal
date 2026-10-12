@@ -51,9 +51,6 @@ export interface AppConfig {
   cors: {
     allowedOrigins: string[];
   };
-  rewards: {
-    defaultPercentage: number;
-  };
   admin: {
     billAdminPrefix: string;
     operationsAdminPrefix: string;
@@ -518,10 +515,6 @@ export const config: AppConfig = {
 
   cors: {
     allowedOrigins,
-  },
-
-  rewards: {
-    defaultPercentage: parseFloat(process.env.DEFAULT_REWARD_PERCENTAGE || '0.5'),
   },
 
   admin: {

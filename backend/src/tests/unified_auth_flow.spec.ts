@@ -7,6 +7,7 @@ import { closeRedis, checkRedisConnection } from '../redis';
 import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';
+import { resetAdmins } from './test_helpers';
 
 describe('Unified User/Admin Authentication, Silent Role Detection & Production Verification', () => {
   const craftsmanMobile = '9876511111';
@@ -25,6 +26,7 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
 
   beforeAll(async () => {
     await checkRedisConnection();
+    await resetAdmins(prisma);
     const testMobiles = [craftsmanMobile, billAdminMobile, opsAdminMobile, regMobile, resetMobile];
 
     // Clean up prior test data
@@ -122,6 +124,7 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
     await prisma.otpRequest.deleteMany({ where: { mobile: { in: testMobiles } } });
     await prisma.auditLog.deleteMany({ where: { admin: { mobile: { in: testMobiles } } } });
     await prisma.user.deleteMany({ where: { mobile: { in: testMobiles } } });
+    await resetAdmins(prisma);
     await prisma.$disconnect();
     await closeRedis();
   });

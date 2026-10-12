@@ -103,6 +103,17 @@ describe('Phase 19 — Database Migrations Verification', () => {
     await prisma.auditLog.deleteMany({ where: { admin: { mobile: { in: testMobiles } } } });
     await prisma.user.deleteMany({ where: { mobile: { in: testMobiles } } });
 
+    // Temporarily park existing BILL_ADMIN / OPERATIONS_ADMIN roles so they don't block migration
+    const existingAdmins = await prisma.user.findMany({
+      where: { role: { in: ['BILL_ADMIN', 'OPERATIONS_ADMIN'] } },
+    });
+    for (const ea of existingAdmins) {
+      await prisma.user.update({
+        where: { id: ea.id },
+        data: { role: 'USER' },
+      });
+    }
+
     const initialAdminCount = await prisma.user.count({ where: { role: 'ADMIN' } });
 
     // Create 3 legacy ADMIN accounts
@@ -172,6 +183,14 @@ describe('Phase 19 — Database Migrations Verification', () => {
       config.admin.operationsAdminMobile = origOps;
       await prisma.auditLog.deleteMany({ where: { admin: { mobile: { in: testMobiles } } } });
       await prisma.user.deleteMany({ where: { mobile: { in: testMobiles } } });
+
+      // Restore parked admins
+      for (const ea of existingAdmins) {
+        await prisma.user.update({
+          where: { id: ea.id },
+          data: { role: ea.role },
+        });
+      }
     }
   });
 });

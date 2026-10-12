@@ -66,17 +66,22 @@ describe('Part B & C — Pool-Free Reward Integrity, Volume Scaling, Self-Approv
       },
     });
 
-    // Create Test Bill Admin
-    testBillAdmin = await prisma.user.create({
-      data: {
-        mobile: '9811100003',
-        fullName: 'Bill Admin SelfApproval Test',
-        passwordHash: 'hash_test_admin',
-        role: 'BILL_ADMIN',
-        status: 'ACTIVE',
-        isVerified: true,
-      },
-    });
+    // Find or create Test Bill Admin
+    const existingBill = await prisma.user.findFirst({ where: { role: 'BILL_ADMIN' } });
+    if (existingBill) {
+      testBillAdmin = existingBill;
+    } else {
+      testBillAdmin = await prisma.user.create({
+        data: {
+          mobile: '9811100003',
+          fullName: 'Bill Admin SelfApproval Test',
+          passwordHash: 'hash_test_admin',
+          role: 'BILL_ADMIN',
+          status: 'ACTIVE',
+          isVerified: true,
+        },
+      });
+    }
 
     // Create Suspended User
     testSuspendedUser = await prisma.user.create({
@@ -142,7 +147,7 @@ describe('Part B & C — Pool-Free Reward Integrity, Volume Scaling, Self-Approv
       where: { user: { mobile: { in: ['9811100001', '9811100002', '9811100003', '9811100004'] } } },
     });
     await prisma.user.deleteMany({
-      where: { mobile: { in: ['9811100001', '9811100002', '9811100003', '9811100004'] } },
+      where: { mobile: { in: ['9811100001', '9811100002', '9811100004'] } },
     });
     await prisma.rewardRule.deleteMany({
       where: { profession: { in: ['PLUMBER', 'TILE_INSTALLER'] } },
@@ -346,6 +351,8 @@ describe('Part B & C — Pool-Free Reward Integrity, Volume Scaling, Self-Approv
     });
 
     it('rejects self-approval when admin attempts to approve bill submitted under their own account', async () => {
+      // Clean up previous test bill if any
+      await prisma.bill.deleteMany({ where: { invoiceNumber: 'INV-SELF-APPROVE-TEST' } });
       // Create a bill directly for testing
       const bill = await prisma.bill.create({
         data: {
