@@ -29,7 +29,7 @@ Following the iterative remediation passes (Parts 2A, 2A.1, 2A.2, 2A.3, 2A.4, an
 
 | Area | Status | Evidence Summary |
 | :--- | :--- | :--- |
-| **Backend Test Suite** | **PASSED** | 25 test suites, 365 tests passed (100% pass rate, 0 failed) |
+| **Backend Test Suite** | **PASSED** | 26 test suites, 393 tests passed (100% pass rate, 0 failed) |
 | **Admin Test Suite** | **PASSED** | 9 native node tests passed (strict calendar date & leap year verification) |
 | **Admin TypeScript** | **PASSED** | `npx tsc --noEmit` exited 0 (clean compilation with `allowImportingTsExtensions`) |
 | **Backend TypeScript** | **PASSED** | `npx tsc --noEmit` exited 0 (clean compilation across all domain services) |
@@ -47,7 +47,7 @@ The following matrix documents the complete finding inventory across Phases A th
 
 | ID | Phase / Domain | Requirement / Scope | Pre-Audit State | Remediation Implemented | Regression Test & Evidence | Final Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **SEC-01** | Phase D5: Mobile Integrity | Play Integrity must fail closed in production when unconfigured | In mock mode, returned simulated success regardless of environment | Added explicit `config.isProduction` check in `PlayIntegrityService.verifyToken` returning `success: false` and halting mock pass in production | `part_2_master_remediation.spec.ts` (test 1) | **FIXED & VERIFIED** |
+| **SEC-01** | Phase D5: Mobile Integrity | Play Integrity genuine verification & fail-closed production enforcement | Hard-coded success placeholder when credentials configured; mock allowed in dev without explicit opt-in | Removed hard-coded placeholder; implemented genuine Google Service Account OAuth assertions (RS256, in-memory caching), Google Play Integrity API decode request (`POST /v1/{packageName}:decodeIntegrityToken`), comprehensive payload checks (package name, nonce match, timestamp freshness within 5m, app recognition `PLAY_RECOGNIZED`, SHA-256 cert fingerprint, device integrity `MEETS_DEVICE_INTEGRITY`/`STRONG`, licensing verdict), explicit mock opt-in (`PLAY_INTEGRITY_ALLOW_MOCK=true`), and IP rate limiting on `/integrity/nonce` and `/integrity/verify` | `play_integrity_verification.spec.ts` (28 tests); `part_2_master_remediation.spec.ts` (test 1) | **FIXED & VERIFIED** |
 | **ADM-01** | Phase F: Admin Build | Admin TypeScript compilation with Next.js & native node tests | `admin/tsconfig.json` failed `npx tsc --noEmit` due to TS5097 error on `.ts` extension import | Configured `"allowImportingTsExtensions": true` in `admin/tsconfig.json` | `npx tsc --noEmit` in `admin` exited 0; 9/9 node tests passing | **FIXED & VERIFIED** |
 | **CI-01** | Phase I: CI Pipeline | Continuous verification of admin type safety and master audit report | Admin CI job only ran `npm test`; master audit report artifact missing from `ci.yml` | Added `TypeScript Typecheck` step in `admin-date-tests`; added `part-2-master-remediation-report` artifact upload step in `backend-test` | `actionlint` passed 0 errors; `.github/workflows/ci.yml` updated | **FIXED & VERIFIED** |
 | **AUT-01** | Phase D2: Role Separation | Negative authorization on admin and worker endpoints | Monolithic legacy `ADMIN` role could cause ambiguity; role separation must be enforced | Verified `requireRole` enforcement: `BILL_ADMIN` cannot access operations/payouts, `OPERATIONS_ADMIN` cannot verify bills, `USER` cannot access admin routes | `part_2_master_remediation.spec.ts` (tests 4-7); `admin_roles_and_coverage.spec.ts` | **VERIFIED** |
@@ -114,9 +114,20 @@ The following matrix documents the complete finding inventory across Phases A th
 - `BILL_ADMIN`: Authorized solely to inspect bills, generate signed document inspection links, and approve/reject bills. Forbidden from modifying reward rules, redemption settings, user profiles, or approving payouts (403).
 - `OPERATIONS_ADMIN`: Authorized to configure reward rules, manage redemption windows, approve/reject payout disbursements, and correct user names with audited reasons. Forbidden from approving bills (403).
 
-### 4.3 Mobile Application Integrity
-- In `backend/src/services/integrity/playIntegrity.service.ts`, `verifyToken` enforces single-use, anti-replay cryptographic nonces (5-minute TTL in Redis/memory).
-- In production mode (`config.isProduction = true` or `NODE_ENV = 'production'`), if Google Play Integrity service credentials are not configured, the service **fails closed**, returning `success: false`. Development mock bypasses are strictly prevented from operating in production environments.
+### 4.3 Mobile Application Integrity & Anti-Tampering (Google Play Integrity)
+- **Elimination of Hard-Coded Verdicts:** The previous placeholder returning hard-coded `success: true` when credentials were configured has been completely replaced with genuine server-side verification using Google's Play Integrity API (`POST https://playintegrity.googleapis.com/v1/{packageName}:decodeIntegrityToken`).
+- **Cryptographic Anti-Replay Nonce Lifecycle:** Mobile clients obtain a single-use, 32-byte cryptographically secure, URL-safe Base64 nonce (`POST /api/auth/integrity/nonce`) with a 5-minute TTL stored in Redis (with in-memory fallback). The nonce is consumed atomically before token verification; replayed, expired, or fabricated nonces are immediately rejected.
+- **Google Service Account OAuth & Token Caching:** Verification generates an RFC 7523 RS256-signed JWT assertion (`PLAY_INTEGRITY_CLIENT_EMAIL`, private key, scope `https://www.googleapis.com/auth/playintegrity`) exchanged at `https://oauth2.googleapis.com/token`. Resulting Bearer access tokens are cached in memory with a 5-minute expiry safety buffer and concurrency-safe single in-flight promise deduplication.
+- **Decoded Payload Security Rules:** Decoded `tokenPayloadExternal` responses undergo seven strict validation checks:
+  1. *Package Name Check:* `requestPackageName === config.playIntegrity.packageName`.
+  2. *Nonce Match:* `requestDetails.nonce === consumedNonce`.
+  3. *Timestamp Freshness:* `Math.abs(Date.now() - timestampMillis) <= 300,000 ms` (5-minute tolerance against clock skew and replay).
+  4. *App Recognition:* `appRecognitionVerdict === 'PLAY_RECOGNIZED'`.
+  5. *Signing Certificate Digest:* If `allowedCertificateDigests` is configured, verifies `appIntegrity.certificateSha256Digest` against authorized certificate fingerprints (case- and colon-normalized).
+  6. *Device Recognition:* Requires `MEETS_DEVICE_INTEGRITY` or `MEETS_STRONG_INTEGRITY` in `deviceRecognitionVerdict`. Rooted devices, emulators, or tampered environments are rejected.
+  7. *Account Licensing:* When `requireLicensing = true`, checks `appLicensingVerdict === 'LICENSED'`.
+- **Fail-Closed Production Policy:** In production (`config.isProduction = true` or `NODE_ENV = 'production'`), if credentials are unconfigured or incomplete, integrity validation **fails closed** (`success: false`). Mock mode is only permitted in development/test if explicitly opted into via `PLAY_INTEGRITY_ALLOW_MOCK=true`. When credentials are fully provisioned, mock mode is strictly bypassed and Google verification is always enforced.
+- **Route Rate Limiting:** IP rate limiting is enforced on `/api/auth/integrity/nonce` (30 req / 5m prod, 120 dev) and `/api/auth/integrity/verify` (15 req / 5m prod, 60 dev) via `integrityNonceLimiter` and `integrityVerifyLimiter`.
 
 ### 4.4 Webhook Cryptographic Security
 - The RazorpayX webhook handler (`/api/webhooks/razorpayx`) cryptographically verifies `x-razorpay-signature` against the preserved raw byte buffer using timing-safe comparisons.
@@ -136,7 +147,7 @@ As required by Phase E6, the verification status of each external integration is
 | **RazorpayX** | Payout Disbursements & Webhooks | Backend Adapter & Worker | **Automated Contract Tests Passed** | Verified payout creation, raw body webhook HMAC signatures, amount validation in paise, deduplication, and reversals. Live payouts blocked pending active RazorpayX current account with banking balance. |
 | **Firebase (FCM)** | Mobile Push Notifications | Backend Adapter | **Automated Contract Tests Passed** | Verified token deactivation on unregistered devices, Retry-After header parsing, and background multicast dispatch. Live push delivery blocked pending Firebase service account JSON. |
 | **Cloudflare R2** | Private Document & Backup Storage | Storage & S3 Adapter | **Automated Contract Tests Passed** | Verified HMAC signed URL generation, S3 API contract, AES-256 backup encryption, and checksum validation. Live cloud storage blocked pending production Cloudflare R2 bucket credentials. |
-| **Google Play Integrity** | Android Anti-Tampering | Mobile & Backend Adapter | **Blocked for Live Device Attestation**; **Contract Tests Passed** | Verified nonce generation, single-use consumption, and fail-closed production enforcement. Live attestation is blocked pending Google Play Console linked Cloud Project and signed release APK. |
+| **Google Play Integrity** | Android Anti-Tampering | Mobile & Backend Adapter | **Blocked for Live Device Attestation**; **Automated Contract Tests Passed** | Verified nonce generation, single-use anti-replay consumption, Google Service Account OAuth token exchange, Google Play Integrity decode endpoint integration, comprehensive payload evaluation (package, nonce, timestamp, cert fingerprints, device verdicts, licensing), and fail-closed production enforcement (28 dedicated tests). Live device attestation is blocked pending Google Play Console linked Cloud Project credentials and signed release APK. |
 
 ---
 
@@ -149,35 +160,36 @@ All project-supported verification commands were executed at HEAD:
 npm test
 ```
 - **Exit Status:** 0 (SUCCESS)
-- **Suites:** 25 passed, 25 total
-- **Tests:** 365 passed, 365 total
-- **Duration:** 54.609 s
+- **Suites:** 26 passed, 26 total
+- **Tests:** 393 passed, 393 total
+- **Duration:** 86.282 s
 - **Suites Executed:**
-  1. `src/tests/part_2_master_remediation.spec.ts` (19 tests) — **NEW MASTER SUITE**
-  2. `src/tests/admin_api_config.spec.ts`
-  3. `src/tests/admin_roles_and_coverage.spec.ts`
-  4. `src/tests/api_flows.spec.ts`
-  5. `src/tests/auth_sessions_security.spec.ts`
-  6. `src/tests/backup_restore.spec.ts`
-  7. `src/tests/concurrency_financial.spec.ts`
-  8. `src/tests/config_safety.spec.ts`
-  9. `src/tests/dynamic_business_rules.spec.ts`
-  10. `src/tests/fcm_provider.spec.ts`
-  11. `src/tests/global_reward_cap.spec.ts`
-  12. `src/tests/hardening_verification.spec.ts`
-  13. `src/tests/kyc_and_storage.spec.ts`
-  14. `src/tests/migration_scenarios.spec.ts`
-  15. `src/tests/notification_system.spec.ts`
-  16. `src/tests/p0_remediation_integrity.spec.ts`
-  17. `src/tests/pan_migration.spec.ts`
-  18. `src/tests/part2a4_hardening.spec.ts`
-  19. `src/tests/payout_restore_reconciliation.spec.ts`
-  20. `src/tests/payout_safety_worker.spec.ts`
-  21. `src/tests/production_hardening_rc.spec.ts`
-  22. `src/tests/rewards_and_rules.spec.ts`
-  23. `src/tests/reward_rule_hardening.spec.ts`
-  24. `src/tests/seed_safety.spec.ts`
-  25. `src/tests/unified_auth_flow.spec.ts`
+  1. `src/tests/part_2_master_remediation.spec.ts` (19 tests) — **MASTER REMEDIATION SUITE**
+  2. `src/tests/play_integrity_verification.spec.ts` (28 tests) — **DEDICATED PLAY INTEGRITY SUITE**
+  3. `src/tests/admin_api_config.spec.ts`
+  4. `src/tests/admin_roles_and_coverage.spec.ts`
+  5. `src/tests/api_flows.spec.ts`
+  6. `src/tests/auth_sessions_security.spec.ts`
+  7. `src/tests/backup_restore.spec.ts`
+  8. `src/tests/concurrency_financial.spec.ts`
+  9. `src/tests/config_safety.spec.ts`
+  10. `src/tests/dynamic_business_rules.spec.ts`
+  11. `src/tests/fcm_provider.spec.ts`
+  12. `src/tests/global_reward_cap.spec.ts`
+  13. `src/tests/hardening_verification.spec.ts`
+  14. `src/tests/kyc_and_storage.spec.ts`
+  15. `src/tests/migration_scenarios.spec.ts`
+  16. `src/tests/notification_system.spec.ts`
+  17. `src/tests/p0_remediation_integrity.spec.ts`
+  18. `src/tests/pan_migration.spec.ts`
+  19. `src/tests/part2a4_hardening.spec.ts`
+  20. `src/tests/payout_restore_reconciliation.spec.ts`
+  21. `src/tests/payout_safety_worker.spec.ts`
+  22. `src/tests/production_hardening_rc.spec.ts`
+  23. `src/tests/rewards_and_rules.spec.ts`
+  24. `src/tests/reward_rule_hardening.spec.ts`
+  25. `src/tests/seed_safety.spec.ts`
+  26. `src/tests/unified_auth_flow.spec.ts`
 
 ### 6.2 Admin Test Suite (Node.js Native Test Runner)
 ```bash
@@ -214,10 +226,16 @@ The following files were modified or created as part of this master remediation:
 
 | Category | File Path | Nature of Change |
 | :--- | :--- | :--- |
-| **Backend Service** | `backend/src/services/integrity/playIntegrity.service.ts` | Enforced fail-closed behavior in production when credentials are unconfigured; prevented mock bypass in production |
-| **Backend Tests** | `backend/src/tests/part_2_master_remediation.spec.ts` | New comprehensive master regression test suite covering all Phase H flows (19 tests) |
+| **Backend Service** | `backend/src/services/integrity/playIntegrity.service.ts` | Replaced placeholder with genuine Google Service Account OAuth assertions, Google Play Integrity decode endpoint (`decodeIntegrityToken`), comprehensive payload evaluation, and fail-closed production enforcement |
+| **Backend Middleware**| `backend/src/middleware/rateLimit.middleware.ts` | Added `integrityNonceLimiter` and `integrityVerifyLimiter` IP rate limiters |
+| **Backend Routes** | `backend/src/routes/auth.routes.ts` | Enforced rate limiting on `GET/POST /integrity/nonce` and `POST /integrity/verify` |
+| **Backend Config** | `backend/src/config/index.ts` | Added `playIntegrity` configuration schema and parser to `AppConfig` |
+| **Backend Tests** | `backend/src/tests/play_integrity_verification.spec.ts` | Dedicated Play Integrity verification test suite covering OAuth, caching, network failures, payload rules, and rate limits (28 tests) |
+| **Backend Tests** | `backend/src/tests/part_2_master_remediation.spec.ts` | Master regression test suite covering Phase H flows and production fail-closed integrity |
+| **Backend Tests** | `backend/src/tests/notification_system.spec.ts` | Explicit mock mode opt-in for notification integrity tests |
 | **Admin Configuration**| `admin/tsconfig.json` | Configured `allowImportingTsExtensions: true` to align `tsc --noEmit` with Next.js & native node tests |
-| **CI Workflow** | `.github/workflows/ci.yml` | Added admin TypeScript typecheck step; added `part-2-master-remediation-report` artifact upload step |
+| **CI Workflow** | `.github/workflows/ci.yml` | Added admin TypeScript typecheck step; added Play Integrity test env vars; verified report artifact upload |
+| **Environment Templates**| `.env.example`, `.env.production.example`, `backend/.env.example`, `backend/.env.production.example`, `backend/.env` | Added `PLAY_INTEGRITY_*` configuration variables across all root and backend templates |
 | **Repository Hygiene** | `.gitignore` | Added Python cache ignore patterns (`__pycache__/`, `*.py[cod]`) |
 | **Audit Documentation**| `docs/audits/part_2_master_remediation_report.md` | Authoritative Part 2 master remediation report artifact |
 

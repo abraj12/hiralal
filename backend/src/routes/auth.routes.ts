@@ -14,6 +14,8 @@ import {
   passwordResetLimiter,
   adminLoginLimiter,
   adminAccountLoginLimiter,
+  integrityNonceLimiter,
+  integrityVerifyLimiter,
 } from '../middleware/rateLimit.middleware';
 import { prisma } from '../db';
 import { config } from '../config';
@@ -597,7 +599,7 @@ router.patch('/me', authenticate, requireUser, async (req: AuthenticatedRequest,
 // 8. PLAY INTEGRITY NONCE & VERIFICATION
 // ==========================================
 
-router.get('/integrity/nonce', async (_req: Request, res: Response) => {
+router.get('/integrity/nonce', integrityNonceLimiter, async (_req: Request, res: Response) => {
   try {
     const result = await PlayIntegrityService.generateNonce();
     res.json({ success: true, ...result });
@@ -606,7 +608,7 @@ router.get('/integrity/nonce', async (_req: Request, res: Response) => {
   }
 });
 
-router.post('/integrity/nonce', async (_req: Request, res: Response) => {
+router.post('/integrity/nonce', integrityNonceLimiter, async (_req: Request, res: Response) => {
   try {
     const result = await PlayIntegrityService.generateNonce();
     res.json({ success: true, ...result });
@@ -615,7 +617,7 @@ router.post('/integrity/nonce', async (_req: Request, res: Response) => {
   }
 });
 
-router.post('/integrity/verify', async (req: Request, res: Response) => {
+router.post('/integrity/verify', integrityVerifyLimiter, async (req: Request, res: Response) => {
   try {
     const { nonce, integrityToken } = req.body;
     if (!nonce || !integrityToken) {

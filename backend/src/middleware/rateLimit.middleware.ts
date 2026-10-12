@@ -247,3 +247,19 @@ export const adminAccountLoginLimiter = createRateLimiter({
   getIdentifier: (req) => requestIdentifier(req),
   message: 'Too many admin login attempts for this account. Please wait 15 minutes.',
 });
+
+export const integrityNonceLimiter = createRateLimiter({
+  keyPrefix: 'integrity:nonce',
+  limit: config.isProduction ? 30 : 120,
+  windowSeconds: 300, // 30 requests per 5 minutes
+  getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
+  message: 'Too many integrity nonce requests. Please wait before retrying.',
+});
+
+export const integrityVerifyLimiter = createRateLimiter({
+  keyPrefix: 'integrity:verify',
+  limit: config.isProduction ? 15 : 60,
+  windowSeconds: 300, // 15 verification attempts per 5 minutes
+  getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
+  message: 'Too many integrity verification attempts. Please wait before retrying.',
+});

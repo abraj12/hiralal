@@ -203,6 +203,14 @@ describe('Hiralal Rewards Platform — Part 2 Master Remediation Suite', () => {
   // 1. Mobile Integrity Security & Fail-Closed Behavior
   // =========================================================================
   describe('1. Mobile Application Integrity (Play Integrity)', () => {
+    beforeAll(() => {
+      PlayIntegrityService.overrideConfig({ allowMock: true });
+    });
+
+    afterAll(() => {
+      PlayIntegrityService.overrideConfig(null);
+    });
+
     it('fails closed in production environment when Play Integrity credentials are unconfigured', async () => {
       const savedEnv = process.env.NODE_ENV;
       const savedProd = config.isProduction;

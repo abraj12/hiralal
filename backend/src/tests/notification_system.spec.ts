@@ -6,6 +6,7 @@ import { checkRedisConnection, closeRedis } from '../redis';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import crypto from 'crypto';
+import { PlayIntegrityService } from '../services/integrity/playIntegrity.service';
 
 describe('Task L & N — Notification System, In-App Center, Operations Broadcast & Play Integrity Tests', () => {
   const plumberMobile = '9822200001';
@@ -510,6 +511,14 @@ describe('Task L & N — Notification System, In-App Center, Operations Broadcas
 
   describe('5. Play Integrity Nonce Generation & Verification Adapter', () => {
     let testNonce: string;
+
+    beforeAll(() => {
+      PlayIntegrityService.overrideConfig({ allowMock: true });
+    });
+
+    afterAll(() => {
+      PlayIntegrityService.overrideConfig(null);
+    });
 
     test('GET and POST /api/auth/integrity/nonce returns cryptographically secure nonce', async () => {
       const res = await request(app).post('/api/auth/integrity/nonce');

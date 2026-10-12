@@ -72,6 +72,14 @@ export interface AppConfig {
     clientEmail: string;
     privateKey: string;
   };
+  playIntegrity: {
+    clientEmail: string;
+    privateKey: string;
+    packageName: string;
+    allowedCertificateDigests: string[];
+    allowMock: boolean;
+    requireLicensing: boolean;
+  };
   timezone: string;
 }
 
@@ -523,6 +531,18 @@ export const config: AppConfig = {
   },
 
   fcm: parseFcmConfig(),
+
+  playIntegrity: {
+    clientEmail: process.env.PLAY_INTEGRITY_CLIENT_EMAIL || '',
+    privateKey: (process.env.PLAY_INTEGRITY_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    packageName: process.env.PLAY_INTEGRITY_PACKAGE_NAME || 'com.hiralal.rewards',
+    allowedCertificateDigests: (process.env.PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS || '')
+      .split(',')
+      .map((d) => d.trim().toLowerCase())
+      .filter(Boolean),
+    allowMock: process.env.PLAY_INTEGRITY_ALLOW_MOCK === 'true',
+    requireLicensing: process.env.PLAY_INTEGRITY_REQUIRE_LICENSING === 'true',
+  },
 
   timezone: 'Asia/Kolkata',
 };

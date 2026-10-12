@@ -127,6 +127,8 @@ jobs:
           RAZORPAYX_KEY_SECRET: rzp_secret_hiralal2026
           RAZORPAYX_ACCOUNT_NUMBER: 2323230041123456
           RAZORPAYX_WEBHOOK_SECRET: webhook_secret_hiralal_rzpx_2026
+          PLAY_INTEGRITY_PACKAGE_NAME: com.hiralal.rewards
+          PLAY_INTEGRITY_ALLOW_MOCK: true
         shell: bash
         run: |
           set -o pipefail
