@@ -53,15 +53,22 @@ async function dispatchWelcomeNotificationOnce(): Promise<void> {
 
     const instId = await getOrCreateInstallationId();
     let nativeToken: string | undefined = undefined;
+    let nativePlatform = 'ANDROID';
     try {
       const tokenResult = await NotificationsService.getNativePushToken();
       if (tokenResult.token) {
         nativeToken = tokenResult.token;
+        nativePlatform = tokenResult.platform?.toUpperCase() || 'ANDROID';
       }
     } catch {}
 
-    const res: any = await MobileApiClient.triggerWelcomeNotification(instId, nativeToken);
-    if (res && res.success) {
+    const res: any = await MobileApiClient.triggerWelcomeNotification(instId, nativeToken, nativePlatform);
+
+    // Only mark as permanently dispatched when the server confirms actual delivery ('DELIVERED')
+    // or when the installation is recorded for an authenticated user ('RECORDED').
+    // 'NOT_SENT' means no push token was available — leave un-marked so next launch retries.
+    const permanentStatuses = ['DELIVERED', 'RECORDED'];
+    if (res && res.success && permanentStatuses.includes(res.status)) {
       if (Platform.OS === 'web') {
         if (typeof window !== 'undefined' && window.localStorage) {
           window.localStorage.setItem(WELCOME_DISPATCHED_KEY, 'true');

@@ -326,7 +326,7 @@ export class MobileApiClient {
     });
   }
 
-  static register(data: {
+  static async register(data: {
     mobile: string;
     fullName?: string;
     firstName?: string;
@@ -337,15 +337,79 @@ export class MobileApiClient {
     verificationToken?: string;
     otpCode?: string;
   }) {
+    const extraHeaders: Record<string, string> = {};
+
+    // Perform pre-auth integrity attestation on Android only
+    if (Platform.OS === 'android') {
+      try {
+        const { sha256Json } = await import('./integrityRequestHash');
+        const { MobileIntegrityService } = await import('./integrity.service');
+
+        const requestHash = await sha256Json({
+          version: 1,
+          action: 'REGISTRATION',
+          mobile: String(data.mobile || '').trim(),
+        });
+
+        // Fetch pre-auth nonce (no authentication required)
+        const nonceRes = await this.getPreAuthIntegrityNonce({ requestHash, action: 'REGISTRATION' });
+        if (nonceRes?.success && nonceRes?.nonce) {
+          // Get native device integrity token
+          const integrityToken = await MobileIntegrityService.requestDeviceIntegrityToken(nonceRes.nonce);
+          extraHeaders['x-integrity-token'] = integrityToken;
+          extraHeaders['x-integrity-nonce'] = nonceRes.nonce;
+        }
+      } catch (integrityErr: any) {
+        // If enforcement is active on the server, this request will be rejected with 403.
+        // If enforcement is off, the server accepts the request without the headers.
+        console.warn('[MOBILE-INTEGRITY] Pre-auth registration attestation failed (will proceed without headers):', integrityErr?.message);
+      }
+    }
+
     return this.request('/auth/register', {
       method: 'POST',
+      headers: extraHeaders,
       body: JSON.stringify(data),
     });
   }
 
-  static login(identifier: string, password: string) {
+  static async login(identifier: string, password: string) {
+    const extraHeaders: Record<string, string> = {};
+
+    // Admin candidates use prefixed identifiers (BADM..., OADM...) — they authenticate
+    // via the web admin panel or the admin OTP flow, not Android Play Integrity.
+    // Only attempt Play Integrity for standard 10-digit mobile numbers on Android.
+    const isAdminCandidate = /^(BADM|OADM)/i.test(identifier.trim());
+
+    if (Platform.OS === 'android' && !isAdminCandidate) {
+      try {
+        const { sha256Json } = await import('./integrityRequestHash');
+        const { MobileIntegrityService } = await import('./integrity.service');
+
+        const requestHash = await sha256Json({
+          version: 1,
+          action: 'AUTH',
+          mobile: String(identifier || '').trim(),
+        });
+
+        // Fetch pre-auth nonce (no authentication required)
+        const nonceRes = await this.getPreAuthIntegrityNonce({ requestHash });
+        if (nonceRes?.success && nonceRes?.nonce) {
+          // Get native device integrity token
+          const integrityToken = await MobileIntegrityService.requestDeviceIntegrityToken(nonceRes.nonce);
+          extraHeaders['x-integrity-token'] = integrityToken;
+          extraHeaders['x-integrity-nonce'] = nonceRes.nonce;
+        }
+      } catch (integrityErr: any) {
+        // If enforcement is active on the server, this request will be rejected with 403.
+        // If enforcement is off, the server accepts the request without the headers.
+        console.warn('[MOBILE-INTEGRITY] Pre-auth login attestation failed (will proceed without headers):', integrityErr?.message);
+      }
+    }
+
     return this.request('/auth/login', {
       method: 'POST',
+      headers: extraHeaders,
       body: JSON.stringify({ identifier, mobile: identifier, password }),
     });
   }
@@ -722,7 +786,7 @@ export class MobileApiClient {
     });
   }
 
-  static getPreAuthIntegrityNonce(options: { requestHash: string }) {
+  static getPreAuthIntegrityNonce(options: { requestHash: string; action?: string }) {
     return this.request<{ success: boolean; nonce: string; message?: string }>('/auth/integrity/pre-auth/nonce', {
       method: 'POST',
       body: JSON.stringify(options),

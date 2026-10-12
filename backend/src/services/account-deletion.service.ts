@@ -216,7 +216,7 @@ export class AccountDeletionService {
    *   for tax and financial audit integrity, attached to the anonymized user record.
    * Idempotent: repeated calls safely skip already processed accounts.
    */
-  static async processScheduledDeletions(prismaClient: any = prisma): Promise<{
+  static async processScheduledDeletions(prismaClient: any = prisma, assertLease?: () => void): Promise<{
     processedCount: number;
     errors: Array<{ userId: string; error: string }>;
   }> {
@@ -304,7 +304,10 @@ export class AccountDeletionService {
           continue;
         }
 
-        // 3. All files verified deleted. Anonymize personal profile and purge credentials atomically
+        // 3. All files verified deleted. Verify lease ownership before irreversible anonymization.
+        assertLease?.();
+
+        // Anonymize personal profile and purge credentials atomically
         await prismaClient.$transaction(async (tx: any) => {
           // Delete active tokens and sessions
           await tx.pushDeviceToken.deleteMany({ where: { userId: u.id } });

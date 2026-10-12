@@ -303,6 +303,17 @@ jobs:
           sed -i 's/REPLACE_WITH_INITIAL_BILL_ADMIN_PASSWORD/HiralalBillAdminPass2026!/g' .env
           sed -i 's/REPLACE_WITH_INITIAL_OPERATIONS_ADMIN_PASSWORD/HiralalOpsAdminPass2026!/g' .env
           sed -i 's/REPLACE_WITH_INITIAL_ADMIN_PASSWORD/HiralalInitialAdminPass2026!/g' .env
+          # CI smoke-test overrides: disable real Play Integrity and Firebase to allow container startup without secrets
+          sed -i 's/REPLACE_WITH_PLAY_INTEGRITY_CLIENT_EMAIL/ci_play_integrity_client_email@ci.iam.gserviceaccount.com/g' .env
+          sed -i 's/REPLACE_WITH_PLAY_INTEGRITY_PRIVATE_KEY/CI_STUB_PRIVATE_KEY/g' .env
+          sed -i 's/REPLACE_WITH_SHA256_CERT_DIGEST/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/g' .env
+          sed -i 's/REPLACE_WITH_FIREBASE_PROJECT_ID/ci-hiralal-firebase-stub/g' .env
+          sed -i 's/REPLACE_WITH_FIREBASE_CLIENT_EMAIL/ci-firebase@ci-hiralal-firebase-stub.iam.gserviceaccount.com/g' .env
+          sed -i 's/REPLACE_WITH_FIREBASE_PRIVATE_KEY/CI_STUB_FIREBASE_KEY/g' .env
+          # Override production-safety flags to allow CI stack to start without real credentials
+          sed -i 's/PLAY_INTEGRITY_REQUIRE_LICENSING=true/PLAY_INTEGRITY_REQUIRE_LICENSING=false/g' .env
+          sed -i 's/PLAY_INTEGRITY_ALLOW_MOCK=false/PLAY_INTEGRITY_ALLOW_MOCK=true/g' .env
+          sed -i 's/PLAY_INTEGRITY_ENFORCE_ACTIONS=true/PLAY_INTEGRITY_ENFORCE_ACTIONS=false/g' .env
 
       - name: Validate Docker Compose Configuration
         run: |

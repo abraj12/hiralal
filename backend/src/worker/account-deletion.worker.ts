@@ -92,6 +92,10 @@ export class AccountDeletionWorker {
 
   /**
    * Executes one run of scheduled account deletion processing.
+   * Renews the Redis lock every HEARTBEAT_INTERVAL_MS during the batch to
+   * prevent TTL expiry on long runs. An assertLease callback is passed into
+   * processScheduledDeletions() so each per-user operation aborts immediately
+   * if lock ownership was lost (e.g., Redis restart, network partition).
    */
   static async processTick(): Promise<{ processedCount: number; errorsCount: number }> {
     const workerInstanceId = `del-worker-${process.pid}-${Date.now()}`;
@@ -100,8 +104,27 @@ export class AccountDeletionWorker {
       return { processedCount: 0, errorsCount: 0 };
     }
 
+    // Heartbeat: renew lock every 15 seconds while batch is in flight.
+    // LOCK_TTL_SECONDS = 55, so we renew well before expiry.
+    const HEARTBEAT_INTERVAL_MS = 15_000;
+    let leaseActive = true;
+    const heartbeat = setInterval(async () => {
+      const renewed = await this.renewLock(workerInstanceId);
+      if (!renewed) {
+        leaseActive = false;
+        console.warn('[ACCOUNT-DELETION-WORKER] Failed to renew lock — lease may have been lost. Stopping after current user.');
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+
+    // assertLease is called before each per-user DB mutation inside the service.
+    const assertLease = () => {
+      if (!leaseActive) {
+        throw new Error('Account deletion worker lost its distributed lock. Aborting batch to prevent concurrent execution.');
+      }
+    };
+
     try {
-      const result = await AccountDeletionService.processScheduledDeletions(prisma);
+      const result = await AccountDeletionService.processScheduledDeletions(prisma, assertLease);
       if (result.processedCount > 0) {
         console.log(`🗑️ [ACCOUNT-DELETION-WORKER] Processed ${result.processedCount} scheduled account deletion(s).`);
       }
@@ -113,6 +136,8 @@ export class AccountDeletionWorker {
         errorsCount: result.errors.length,
       };
     } finally {
+      leaseActive = false;
+      clearInterval(heartbeat);
       await this.releaseLock(workerInstanceId);
     }
   }
