@@ -165,3 +165,72 @@ export async function createBeneficiaryVerificationRequestHash(data: {
 
   return sha256Json(canonicalPayload);
 }
+
+export function normalizeRegistrationIntegrityPayload(input: {
+  mobile: string;
+  profession: string;
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
+  fullName?: string;
+}) {
+  const mobile = String(input.mobile || '').replace(/\D/g, '').slice(-10);
+  const profession = String(input.profession || '').trim().toUpperCase();
+
+  if (!/^\d{10}$/.test(mobile)) {
+    throw new Error('A valid mobile number is required.');
+  }
+
+  if (profession !== 'PLUMBER' && profession !== 'TILE_INSTALLER') {
+    throw new Error('Invalid registration profession.');
+  }
+
+  const firstName = (input.firstName ?? '').trim().replace(/\s+/g, ' ');
+  const middleName = (input.middleName ?? '').trim().replace(/\s+/g, ' ');
+  const lastName = (input.lastName ?? '').trim().replace(/\s+/g, ' ');
+  const fullName = (input.fullName && input.fullName.trim()
+    ? input.fullName.trim()
+    : [firstName, middleName, lastName].filter(Boolean).join(' ')
+  ).replace(/\s+/g, ' ');
+
+  return {
+    version: 2 as const,
+    action: 'REGISTRATION' as const,
+    mobile,
+    profession: profession as 'PLUMBER' | 'TILE_INSTALLER',
+    firstName,
+    middleName,
+    lastName,
+    fullName,
+  };
+}
+
+/**
+ * Computes canonical request hash for user registration.
+ */
+export async function createRegistrationRequestHash(input: {
+  mobile: string;
+  profession: string;
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
+  fullName?: string;
+}): Promise<string> {
+  const payload = normalizeRegistrationIntegrityPayload(input);
+  return sha256Json(payload);
+}
+
+/**
+ * Computes canonical request hash for mobile login authentication.
+ */
+export async function createAuthRequestHash(data: {
+  identifier?: string;
+  mobile?: string;
+}): Promise<string> {
+  const canonicalPayload = {
+    version: 1,
+    action: 'AUTH',
+    mobile: String(data.identifier || data.mobile || '').trim(),
+  };
+  return sha256Json(canonicalPayload);
+}

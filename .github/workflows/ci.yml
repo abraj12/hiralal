@@ -315,6 +315,55 @@ jobs:
         run: |
           docker compose -f docker-compose.yml -f docker-compose.ci.yml config
 
+      - name: Setup Node.js 22 for Migration Runner
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install Backend Dependencies for Migration Runner
+        working-directory: backend
+        run: npm ci
+
+      - name: Start PostgreSQL and Redis Databases
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d postgres redis
+
+      - name: Wait for PostgreSQL and Redis Health
+        timeout-minutes: 2
+        run: |
+          echo "Waiting for PostgreSQL and Redis to reach healthy status..."
+          for i in {1..30}; do
+            PG_STATUS=$(docker inspect --format='{{json .State.Health.Status}}' hiralal_postgres 2>/dev/null || echo '"starting"')
+            REDIS_STATUS=$(docker inspect --format='{{json .State.Health.Status}}' hiralal_redis 2>/dev/null || echo '"starting"')
+            if [ "$PG_STATUS" = '"healthy"' ] && [ "$REDIS_STATUS" = '"healthy"' ]; then
+              echo "PostgreSQL and Redis are both healthy."
+              break
+            fi
+            echo "Waiting for DB containers ($i/30)... PG: $PG_STATUS, Redis: $REDIS_STATUS"
+            sleep 2
+          done
+
+      - name: Run Prisma Database Migrations on Clean Test Database
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:HiralalTestPostgresPass2026!@localhost:5432/hiralal_rewards?schema=public
+        run: |
+          npx prisma migrate deploy
+
+      - name: Initialize Stack Database Seed Fixtures
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:HiralalTestPostgresPass2026!@localhost:5432/hiralal_rewards?schema=public
+          NODE_ENV: development
+          BILL_ADMIN_MOBILE: '9876540001'
+          OPERATIONS_ADMIN_MOBILE: '9876540002'
+          BILL_ADMIN_INITIAL_PASSWORD: 'HiralalBillAdminPass2026!'
+          OPERATIONS_ADMIN_INITIAL_PASSWORD: 'HiralalOpsAdminPass2026!'
+        run: |
+          npm run seed
+
       - name: Build and Start Full Multi-Container CI Test Stack
         run: |
           docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --build 2>&1 | tee compose_up.log || {
@@ -393,6 +442,21 @@ jobs:
         run: |
           echo "Testing HTTPS / routing to Next.js admin frontend through Nginx..."
           curl -k -f -s https://localhost/ | grep -i "<html" || curl -k -f -s https://localhost/ | grep -i "login"
+
+      - name: Capture Diagnostic Logs on Failure
+        if: failure()
+        run: |
+          mkdir -p ci-artifacts/compose-logs
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml ps > ci-artifacts/compose-logs/ps.txt 2>&1 || true
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs > ci-artifacts/compose-logs/all-containers.log 2>&1 || true
+
+      - name: Upload Diagnostic Logs on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-smoke-test-failure-logs
+          path: ci-artifacts/compose-logs/
+          retention-days: 7
 
       - name: Compose Stack Teardown
         if: always()

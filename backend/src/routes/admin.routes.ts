@@ -465,6 +465,7 @@ router.get(
         select: {
           id: true,
           invoiceDate: true,
+          createdAt: true,
           status: true,
           user: {
             select: {
@@ -490,18 +491,22 @@ router.get(
         });
       }
 
-      // Approval uses the rule applicable to the invoice date.
+      // Bill approval resolves reward and GST rules based on server-recorded submission timestamp (Bill.createdAt).
+      // Review-config endpoint must use the exact same authoritative timestamp to prevent UI rule discrepancy.
+      const submissionTimestamp = bill.createdAt || new Date();
+
       const rewardRule = await RewardRuleService.getApplicableRule(
         bill.user.profession,
-        bill.invoiceDate
+        submissionTimestamp
       );
 
-      const gstRules = await GstService.getApplicableGstRules(bill.invoiceDate, prisma);
+      const gstRules = await GstService.getApplicableGstRules(submissionTimestamp, prisma);
 
       return res.json({
         success: true,
         billId: bill.id,
         invoiceDate: bill.invoiceDate,
+        submissionTimestamp: bill.createdAt,
         profession: bill.user.profession,
         rewardRule: {
           id: rewardRule.id,

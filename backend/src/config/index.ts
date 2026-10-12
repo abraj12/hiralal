@@ -373,21 +373,58 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
       throw new Error('[FATAL] BILL_ADMIN_INITIAL_PASSWORD and OPERATIONS_ADMIN_INITIAL_PASSWORD must be distinct passwords.');
     }
 
-    if (env.PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS) {
-      const digests = env.PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS.split(',')
-        .map((d) => d.trim().toLowerCase())
-        .filter(Boolean);
-      for (const d of digests) {
-        const normalized = d.replace(/[: -]/g, '');
-        if (!/^[a-f0-9]{64}$/.test(normalized)) {
-          throw new Error(`[FATAL] PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS contains invalid SHA-256 fingerprint: "${d}".`);
-        }
-      }
-    }
+    validateProductionPlayIntegrity(env);
+  }
+}
 
-    if (env.PLAY_INTEGRITY_REQUIRE_LICENSING === 'false') {
-      throw new Error('[FATAL] PLAY_INTEGRITY_REQUIRE_LICENSING cannot be disabled in production.');
-    }
+export function validateProductionPlayIntegrity(env: Record<string, string | undefined>): void {
+  const clientEmail = env.PLAY_INTEGRITY_CLIENT_EMAIL?.trim();
+  const privateKey = env.PLAY_INTEGRITY_PRIVATE_KEY?.trim();
+  const packageName = env.PLAY_INTEGRITY_PACKAGE_NAME?.trim();
+  const allowMock = env.PLAY_INTEGRITY_ALLOW_MOCK?.trim();
+  const requireLicensing = env.PLAY_INTEGRITY_REQUIRE_LICENSING?.trim();
+  const enforceActions = env.PLAY_INTEGRITY_ENFORCE_ACTIONS?.trim();
+
+  if (!clientEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clientEmail)) {
+    throw new Error('[FATAL] Valid Play Integrity service-account email is required.');
+  }
+
+  if (isPlaceholderCredential(clientEmail)) {
+    throw new Error('[FATAL] Play Integrity service-account email contains an insecure placeholder or example value.');
+  }
+
+  if (!privateKey || !privateKey.includes('PRIVATE KEY')) {
+    throw new Error('[FATAL] Play Integrity private key is missing or malformed.');
+  }
+
+  if (isPlaceholderCredential(privateKey)) {
+    throw new Error('[FATAL] Play Integrity private key contains an insecure placeholder or example value.');
+  }
+
+  if (packageName !== 'com.hiralal.rewards') {
+    throw new Error('[FATAL] Play Integrity package name does not match the approved Android package.');
+  }
+
+  const rawDigests = env.PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS ?? '';
+  const digests = rawDigests
+    .split(',')
+    .map((item) => item.trim().toLowerCase().replace(/[: -]/g, ''))
+    .filter(Boolean);
+
+  if (digests.length === 0 || digests.some((value) => !/^[a-f0-9]{64}$/.test(value))) {
+    throw new Error('[FATAL] A non-empty, valid SHA-256 certificate allowlist is required.');
+  }
+
+  if (allowMock !== 'false') {
+    throw new Error('[FATAL] Play Integrity mocks must be disabled in production.');
+  }
+
+  if (requireLicensing !== 'true') {
+    throw new Error('[FATAL] Play Integrity licensing enforcement must be enabled in production.');
+  }
+
+  if (enforceActions !== 'true') {
+    throw new Error('[FATAL] Play Integrity protected-action enforcement must be enabled in production.');
   }
 }
 

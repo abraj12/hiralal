@@ -21,6 +21,8 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   const [selectedGstRuleId, setSelectedGstRuleId] = useState<string>('');
 
   const [rewardPercentage, setRewardPercentage] = useState<number | null>(null);
+  const [ruleVersion, setRuleVersion] = useState<number | null>(null);
+  const [submissionTimestamp, setSubmissionTimestamp] = useState<string | null>(null);
   const [rulesUnavailable, setRulesUnavailable] = useState(false);
 
   // Document Preview & Signed URL Refresh
@@ -60,13 +62,17 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   const isPlumber = (bill.profession || bill.userProfession) === 'PLUMBER';
   const grossAmount = Number(bill.grossBillAmount || bill.billAmount || 0);
 
-  // Load bill-specific review config (Bill Admin authorized, invoice-date validated)
+  // Load bill-specific review config (Bill Admin authorized, server-recorded submission timestamp)
   useEffect(() => {
     async function loadReviewConfig() {
       try {
         setError(null);
         setRulesUnavailable(false);
         const res = await AdminApiClient.getBillReviewConfig(bill.id);
+
+        if (res && res.submissionTimestamp) {
+          setSubmissionTimestamp(res.submissionTimestamp);
+        }
 
         if (res && res.gstRules && res.gstRules.length > 0) {
           setGstRules(res.gstRules);
@@ -81,8 +87,10 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
 
         if (res && res.rewardRule && typeof res.rewardRule.rewardPercentage === 'number') {
           setRewardPercentage(Number(res.rewardRule.rewardPercentage));
+          setRuleVersion(res.rewardRule.version ?? null);
         } else {
           setRewardPercentage(null);
+          setRuleVersion(null);
           setRulesUnavailable(true);
         }
       } catch (e: any) {
@@ -201,8 +209,13 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 ₹{grossAmount.toLocaleString('en-IN')}
               </div>
               <div className="text-xs text-slate-500 mt-0.5">
-                Date: {new Date(bill.invoiceDate).toLocaleDateString('en-IN')}
+                Invoice Date: {new Date(bill.invoiceDate).toLocaleDateString('en-IN')}
               </div>
+              {submissionTimestamp && (
+                <div className="text-[11px] text-blue-600 font-medium mt-0.5">
+                  Submitted: {new Date(submissionTimestamp).toLocaleString('en-IN')}
+                </div>
+              )}
               <div className="text-[11px] text-slate-400 mt-1">
                 Status: <span className="font-semibold text-slate-700">{bill.status}</span>
               </div>
@@ -285,6 +298,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 </span>
                 <span className="text-[10px] text-emerald-700 font-medium block mt-0.5">
                   Internal Rule: {rewardPercentage !== null ? `${rewardPercentage}%` : 'Unavailable'}
+                  {ruleVersion !== null ? ` (v${ruleVersion})` : ''}
                 </span>
               </div>
             </div>

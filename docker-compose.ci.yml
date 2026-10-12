@@ -1,12 +1,22 @@
 # docker-compose.ci.yml — CI-only Compose override for isolated integration testing.
-# DO NOT use in production. Sets NODE_ENV=test so production config validator does not run.
+# DO NOT use in production. Sets NODE_ENV=development so the HTTP server listens,
+# while production config validator does not run. Exposes postgres port for migration runner.
 # Apply with: docker compose -f docker-compose.yml -f docker-compose.ci.yml up
 version: '3.8'
 
 services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
   backend:
     environment:
-      NODE_ENV: test
+      NODE_ENV: development
+      CI_INTEGRATION_MODE: "true"
       PLAY_INTEGRITY_ALLOW_MOCK: "true"
       PLAY_INTEGRITY_REQUIRE_LICENSING: "true"
       PLAY_INTEGRITY_ENFORCE_ACTIONS: "false"
@@ -14,4 +24,5 @@ services:
 
   worker:
     environment:
-      NODE_ENV: test
+      NODE_ENV: development
+      CI_INTEGRATION_MODE: "true"

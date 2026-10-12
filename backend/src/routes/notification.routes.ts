@@ -1,9 +1,8 @@
 import { Router, Request, Response } from 'express';
-import jwt from 'jsonwebtoken';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
+import crypto from 'crypto';
+import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { NotificationService } from '../services/notification.service';
 import { FcmProvider } from '../services/push/fcm.provider';
-import { config } from '../config';
 import { createRateLimiter } from '../middleware/rateLimit.middleware';
 import { prisma } from '../db';
 
@@ -19,57 +18,48 @@ const welcomeRateLimiter = createRateLimiter({
 /**
  * POST /api/notifications/welcome
  * Delivers welcome notification for first-launch / device installation.
- * Idempotent: uses installationId and durable AppInstallation table.
- * Records 'DELIVERED' only on provider success.
- * Returns distinct status ('DELIVERED', 'RECORDED', 'NOT_SENT').
+ * SECURE: Requires authenticated user identity; dispatches ONLY to registered device tokens
+ * belonging to the authenticated user. Eliminates arbitrary FCM relay vulnerabilities.
+ * Idempotent & concurrency-safe: uses atomic database claim on AppInstallation table.
+ * Returns distinct status ('ACCEPTED', 'ALREADY_ACCEPTED', 'RECORDED_PENDING_PUSH', 'FAILED_RETRYABLE').
  */
-router.post('/welcome', welcomeRateLimiter, async (req: Request, res: Response) => {
+router.post('/welcome', authenticate, requireUser, welcomeRateLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { installationId, token, platform, appVersion } = req.body ?? {};
+    const { installationId, platform, appVersion } = req.body ?? {};
     if (!installationId || typeof installationId !== 'string' || !installationId.trim()) {
       return res.status(400).json({ success: false, message: 'A valid installationId is required.' });
     }
 
     const cleanInstallId = installationId.trim();
     const cleanPlatform = typeof platform === 'string' && platform.trim() ? platform.trim().toUpperCase() : 'ANDROID';
-    const cleanToken = typeof token === 'string' && token.trim() ? token.trim() : null;
-
-    const authHeader = req.headers.authorization;
-    let authUserId: string | null = null;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      try {
-        const decoded: any = jwt.verify(authHeader.split(' ')[1], config.jwt.accessSecret);
-        authUserId = decoded?.userId || decoded?.id || null;
-      } catch {
-        // Continue as anonymous installation
-      }
-    }
+    const authUserId = req.user!.id;
 
     const title = 'Welcome to Hiralal and Sons!';
     const message = 'Welcome to Hiralal and Sons Sales Rewards Program. Register and upload your bills to get your rewards.';
 
-    // 1. Check existing installation record to prevent duplicate send races
+    // 1. Verify installation ownership
     let installation = await prisma.appInstallation.findUnique({
       where: { installationId: cleanInstallId },
     });
 
-    if (installation && installation.welcomeStatus === 'DELIVERED') {
-      if (authUserId && installation.userId !== authUserId) {
-        await prisma.appInstallation.update({
-          where: { id: installation.id },
-          data: { userId: authUserId, ...(cleanToken ? { pushToken: cleanToken } : {}) },
-        });
-      }
+    if (installation && installation.userId && installation.userId !== authUserId) {
+      return res.status(403).json({
+        success: false,
+        message: 'This installation is already registered to a different account.',
+      });
+    }
+
+    if (installation && (installation.welcomeStatus === 'ACCEPTED' || installation.welcomeStatus === 'DELIVERED')) {
       return res.json({
         success: true,
-        status: 'RECORDED',
-        delivered: false,
+        status: 'ALREADY_ACCEPTED',
+        delivered: true,
         installationId: cleanInstallId,
         message: 'Welcome notification already delivered previously for this installation.',
       });
     }
 
-    // Upsert AppInstallation record initially
+    // 2. Ensure installation record is provisioned and bound to current user
     if (!installation) {
       try {
         installation = await prisma.appInstallation.create({
@@ -77,7 +67,6 @@ router.post('/welcome', welcomeRateLimiter, async (req: Request, res: Response) 
             installationId: cleanInstallId,
             userId: authUserId,
             platform: cleanPlatform,
-            pushToken: cleanToken,
             appVersion: typeof appVersion === 'string' ? appVersion.slice(0, 50) : null,
             welcomeStatus: 'PENDING',
           },
@@ -87,97 +76,172 @@ router.post('/welcome', welcomeRateLimiter, async (req: Request, res: Response) 
           where: { installationId: cleanInstallId },
         });
       }
-    } else if (authUserId && installation.userId !== authUserId) {
+    } else if (!installation.userId) {
       installation = await prisma.appInstallation.update({
         where: { id: installation.id },
-        data: { userId: authUserId, ...(cleanToken ? { pushToken: cleanToken } : {}) },
+        data: { userId: authUserId },
       });
     }
 
-    if (installation?.welcomeStatus === 'DELIVERED') {
+    // Double check status after provision
+    if (installation?.welcomeStatus === 'ACCEPTED' || installation?.welcomeStatus === 'DELIVERED') {
       return res.json({
         success: true,
-        status: 'RECORDED',
-        delivered: false,
+        status: 'ALREADY_ACCEPTED',
+        delivered: true,
         installationId: cleanInstallId,
         message: 'Welcome notification already delivered previously for this installation.',
       });
     }
 
-    let notification: any = null;
-    if (authUserId) {
-      notification = await NotificationService.createForUser({
+    // 3. Atomically claim dispatch lease to prevent concurrent double-dispatch
+    const claimId = crypto.randomUUID();
+    const claimExpiresAt = new Date(Date.now() + 30000); // 30-second bounded claim lease
+    const now = new Date();
+
+    const claimResult = await prisma.appInstallation.updateMany({
+      where: {
+        installationId: cleanInstallId,
         userId: authUserId,
-        title,
-        message,
-        type: 'WELCOME',
-        dedupeKey: `welcome_install_${cleanInstallId}`,
+        welcomeStatus: { in: ['PENDING', 'FAILED_RETRYABLE'] },
+        OR: [
+          { claimExpiresAt: null },
+          { claimExpiresAt: { lt: now } },
+        ],
+      },
+      data: {
+        welcomeStatus: 'SENDING',
+        claimId,
+        claimExpiresAt,
+      },
+    });
+
+    if (claimResult.count === 0) {
+      // Another concurrent worker claimed the dispatch or it transitioned to accepted
+      const latest = await prisma.appInstallation.findUnique({ where: { installationId: cleanInstallId } });
+      if (latest?.welcomeStatus === 'ACCEPTED' || latest?.welcomeStatus === 'DELIVERED') {
+        return res.json({
+          success: true,
+          status: 'ALREADY_ACCEPTED',
+          delivered: true,
+          installationId: cleanInstallId,
+          message: 'Welcome notification already delivered previously for this installation.',
+        });
+      }
+      return res.json({
+        success: true,
+        status: 'SENDING',
+        delivered: false,
+        installationId: cleanInstallId,
+        message: 'Welcome notification dispatch is actively in progress by another request.',
+      });
+    }
+
+    // 4. Create durable in-app welcome notification for user
+    const notification = await NotificationService.createForUser({
+      userId: authUserId,
+      title,
+      message,
+      type: 'WELCOME',
+      dedupeKey: `welcome_install_${cleanInstallId}`,
+    });
+
+    // 5. Query verified active device token registered for THIS authenticated user
+    const activeDeviceToken = await prisma.pushDeviceToken.findFirst({
+      where: {
+        userId: authUserId,
+        isActive: true,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (!activeDeviceToken || !activeDeviceToken.token) {
+      // No active registered push token yet: release claim and mark PENDING for future retry
+      await prisma.appInstallation.updateMany({
+        where: { installationId: cleanInstallId, claimId },
+        data: {
+          welcomeStatus: 'PENDING',
+          claimExpiresAt: null,
+        },
       });
 
-      if (cleanToken) {
-        await NotificationService.registerDeviceToken(authUserId, { token: cleanToken, platform: cleanPlatform });
-      }
+      return res.json({
+        success: true,
+        status: 'RECORDED_PENDING_PUSH',
+        delivered: false,
+        installationId: cleanInstallId,
+        notification,
+        message: 'Welcome event recorded. Awaiting registered device push token before FCM dispatch.',
+      });
     }
 
-    // 2. Dispatch push via FCM only if genuine token provided
-    let finalStatus: 'DELIVERED' | 'RECORDED' | 'NOT_SENT' = 'NOT_SENT';
-    if (cleanToken && authUserId) {
-      try {
-        const pushResult = await FcmProvider.sendPush({
-          token: cleanToken,
-          title,
-          body: message,
-          data: { type: 'WELCOME', installId: cleanInstallId },
-        });
+    // 6. Dispatch FCM push to the authenticated user's registered token outside DB tx
+    try {
+      const pushResult = await FcmProvider.sendPush({
+        token: activeDeviceToken.token,
+        title,
+        body: message,
+        data: { type: 'WELCOME', installId: cleanInstallId },
+      });
 
-        if (pushResult.success) {
-          finalStatus = 'DELIVERED';
-          await prisma.appInstallation.update({
-            where: { installationId: cleanInstallId },
-            data: {
-              welcomeStatus: 'DELIVERED',
-              welcomeSentAt: new Date(),
-              pushToken: cleanToken,
-            },
-          });
-        } else {
-          finalStatus = 'NOT_SENT';
-          await prisma.appInstallation.update({
-            where: { installationId: cleanInstallId },
-            data: {
-              welcomeStatus: 'FAILED_RETRYABLE',
-              pushToken: cleanToken,
-            },
-          });
-        }
-      } catch (pushErr: any) {
-        console.warn('[WELCOME-PUSH-ERROR]', pushErr?.message);
-        finalStatus = 'NOT_SENT';
-        await prisma.appInstallation.update({
-          where: { installationId: cleanInstallId },
+      if (pushResult.success) {
+        await prisma.appInstallation.updateMany({
+          where: { installationId: cleanInstallId, claimId },
           data: {
-            welcomeStatus: 'FAILED_RETRYABLE',
-            pushToken: cleanToken,
+            welcomeStatus: 'ACCEPTED',
+            welcomeSentAt: new Date(),
+            pushToken: activeDeviceToken.token,
+            claimExpiresAt: null,
           },
         });
-      }
-    } else {
-      finalStatus = authUserId ? 'RECORDED' : 'NOT_SENT';
-    }
 
-    res.json({
-      success: true,
-      status: finalStatus,
-      delivered: finalStatus === 'DELIVERED',
-      installationId: cleanInstallId,
-      notification,
-      message:
-        finalStatus === 'DELIVERED'
-          ? 'Welcome notification delivered successfully.'
-          : finalStatus === 'RECORDED'
-            ? 'Installation recorded for user.'
-            : 'Installation recorded without push notification.',
-    });
+        return res.json({
+          success: true,
+          status: 'ACCEPTED',
+          delivered: true,
+          installationId: cleanInstallId,
+          notification,
+          message: 'Welcome push notification accepted by provider for delivery.',
+        });
+      } else {
+        await prisma.appInstallation.updateMany({
+          where: { installationId: cleanInstallId, claimId },
+          data: {
+            welcomeStatus: 'FAILED_RETRYABLE',
+            pushToken: activeDeviceToken.token,
+            claimExpiresAt: null,
+          },
+        });
+
+        return res.json({
+          success: true,
+          status: 'FAILED_RETRYABLE',
+          delivered: false,
+          installationId: cleanInstallId,
+          notification,
+          message: 'Push notification provider returned temporary failure; queued for retry.',
+        });
+      }
+    } catch (pushErr: any) {
+      console.warn('[WELCOME-PUSH-ERROR]', pushErr?.message);
+      await prisma.appInstallation.updateMany({
+        where: { installationId: cleanInstallId, claimId },
+        data: {
+          welcomeStatus: 'FAILED_RETRYABLE',
+          pushToken: activeDeviceToken.token,
+          claimExpiresAt: null,
+        },
+      });
+
+      return res.json({
+        success: true,
+        status: 'FAILED_RETRYABLE',
+        delivered: false,
+        installationId: cleanInstallId,
+        notification,
+        message: 'Push notification dispatch encountered error; queued for retry.',
+      });
+    }
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
   }

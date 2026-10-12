@@ -106,15 +106,31 @@ export class AccountDeletionWorker {
 
     // Heartbeat: renew lock every 15 seconds while batch is in flight.
     // LOCK_TTL_SECONDS = 55, so we renew well before expiry.
+    // Guard against overlapping concurrent renewals and dangling intervals on shutdown.
     const HEARTBEAT_INTERVAL_MS = 15_000;
     let leaseActive = true;
+    let stopped = false;
+    let renewalInProgress = false;
+
     const heartbeat = setInterval(async () => {
-      const renewed = await this.renewLock(workerInstanceId);
-      if (!renewed) {
+      if (stopped || !leaseActive || renewalInProgress) return;
+      renewalInProgress = true;
+      try {
+        const renewed = await this.renewLock(workerInstanceId);
+        if (!renewed) {
+          leaseActive = false;
+          console.warn('[ACCOUNT-DELETION-WORKER] Failed to renew lock — lease may have been lost. Stopping after current user.');
+        }
+      } catch {
         leaseActive = false;
-        console.warn('[ACCOUNT-DELETION-WORKER] Failed to renew lock — lease may have been lost. Stopping after current user.');
+      } finally {
+        renewalInProgress = false;
       }
     }, HEARTBEAT_INTERVAL_MS);
+
+    if (typeof heartbeat.unref === 'function') {
+      heartbeat.unref();
+    }
 
     // assertLease is called before each per-user DB mutation inside the service.
     const assertLease = () => {
@@ -124,7 +140,7 @@ export class AccountDeletionWorker {
     };
 
     try {
-      const result = await AccountDeletionService.processScheduledDeletions(prisma, assertLease);
+      const result = await AccountDeletionService.processScheduledDeletions(prisma, assertLease, workerInstanceId);
       if (result.processedCount > 0) {
         console.log(`🗑️ [ACCOUNT-DELETION-WORKER] Processed ${result.processedCount} scheduled account deletion(s).`);
       }
@@ -136,6 +152,7 @@ export class AccountDeletionWorker {
         errorsCount: result.errors.length,
       };
     } finally {
+      stopped = true;
       leaseActive = false;
       clearInterval(heartbeat);
       await this.releaseLock(workerInstanceId);

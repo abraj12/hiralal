@@ -8,6 +8,7 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { ArrowLeft, CheckCircle2, ChevronRight, AlertCircle, Wrench, Grid, MoreHorizontal } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
@@ -117,6 +118,28 @@ export default function RegisterScreen() {
       if (res.refreshToken) {
         await MobileApiClient.setRefreshToken(res.refreshToken);
       }
+
+      // Complete post-registration notification lifecycle: register token & dispatch welcome
+      try {
+        const { NotificationsService } = await import('../services/notifications.service');
+        const tokenResult = await NotificationsService.getNativePushToken();
+        if (tokenResult.token) {
+          await MobileApiClient.registerDevicePushToken(
+            tokenResult.token,
+            tokenResult.platform?.toUpperCase() || Platform.OS.toUpperCase()
+          );
+        }
+        const { getOrCreateInstallationId } = await import('../context/AppContext');
+        const installId = await getOrCreateInstallationId();
+        await MobileApiClient.triggerWelcomeNotification(
+          installId,
+          tokenResult.token || undefined,
+          tokenResult.platform?.toUpperCase() || Platform.OS.toUpperCase()
+        );
+      } catch (notifErr: any) {
+        console.warn('[POST-REG-NOTIFICATION] Non-fatal notification setup error:', notifErr?.message);
+      }
+
       await refreshData();
       setCurrentScreen('MAIN');
     } catch (e: any) {

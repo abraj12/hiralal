@@ -203,27 +203,17 @@ describe('AccountDeletionService — assertLease Guard', () => {
 // 3. Welcome Notification Status Semantics
 // ==========================================
 describe('Welcome Notification Status Semantics', () => {
-  test('POST /api/notifications/welcome without token returns NOT_SENT status', async () => {
+  test('POST /api/notifications/welcome unauthenticated request is rejected with 401', async () => {
     const installId = `inst-phase-f-${Date.now()}-nosend`;
 
     const res = await request(app)
       .post('/api/notifications/welcome')
       .send({ installationId: installId, platform: 'ANDROID' });
 
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.status).toBe('NOT_SENT');
-    expect(res.body.delivered).toBe(false);
-
-    // DB: welcomeStatus should be PENDING (no token provided, no delivery attempted)
-    const dbRec = await prisma.appInstallation.findUnique({ where: { installationId: installId } });
-    expect(dbRec?.welcomeStatus).toBe('PENDING');
-
-    // Cleanup
-    await prisma.appInstallation.delete({ where: { installationId: installId } });
+    expect(res.status).toBe(401);
   });
 
-  test('POST /api/notifications/welcome with auth token but no FCM token returns RECORDED', async () => {
+  test('POST /api/notifications/welcome with auth token but no registered FCM token returns RECORDED_PENDING_PUSH', async () => {
     const installId = `inst-phase-f-${Date.now()}-recorded`;
 
     const res = await request(app)
@@ -233,7 +223,7 @@ describe('Welcome Notification Status Semantics', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.status).toBe('RECORDED');
+    expect(res.body.status).toBe('RECORDED_PENDING_PUSH');
 
     const dbRec = await prisma.appInstallation.findUnique({ where: { installationId: installId } });
     expect(dbRec?.userId).toBe(userId);
@@ -242,7 +232,7 @@ describe('Welcome Notification Status Semantics', () => {
     await prisma.appInstallation.delete({ where: { installationId: installId } });
   });
 
-  test('Second call with DELIVERED status returns RECORDED (idempotent)', async () => {
+  test('Second call with DELIVERED status returns ALREADY_ACCEPTED (idempotent)', async () => {
     const installId = `inst-phase-f-${Date.now()}-idempotent`;
     // Create installation as already delivered
     await prisma.appInstallation.create({
@@ -257,12 +247,13 @@ describe('Welcome Notification Status Semantics', () => {
 
     const res = await request(app)
       .post('/api/notifications/welcome')
+      .set('Authorization', `Bearer ${userToken}`)
       .send({ installationId: installId, platform: 'ANDROID' });
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.status).toBe('RECORDED');
-    expect(res.body.delivered).toBe(false);
+    expect(res.body.status).toBe('ALREADY_ACCEPTED');
+    expect(res.body.delivered).toBe(true);
 
     // Cleanup
     await prisma.appInstallation.delete({ where: { installationId: installId } });

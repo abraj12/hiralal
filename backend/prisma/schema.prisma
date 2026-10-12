@@ -72,6 +72,8 @@ enum OtpPurpose {
 
 enum WelcomeDeliveryStatus {
   PENDING
+  SENDING
+  ACCEPTED
   DELIVERED
   FAILED_RETRYABLE
 }
@@ -487,11 +489,14 @@ model AppInstallation {
   appVersion     String?
   welcomeSentAt  DateTime?
   welcomeStatus  WelcomeDeliveryStatus @default(PENDING)
+  claimId        String?
+  claimExpiresAt DateTime?
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
 
   @@index([userId])
   @@index([installationId])
+  @@index([welcomeStatus])
 }
 
 model AccountDeletionOperation {
@@ -507,6 +512,9 @@ model AccountDeletionOperation {
   lastError         String?
   deletedFilesCount Int                     @default(0)
   failedFileKeys    Json?
+  leaseOwner        String?
+  leaseVersion      Int                     @default(0)
+  leaseExpiresAt    DateTime?
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
 
@@ -514,4 +522,5 @@ model AccountDeletionOperation {
   @@index([status])
   @@index([scheduledFor])
   @@index([nextRetryAt])
+  @@index([leaseOwner])
 }

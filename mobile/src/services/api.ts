@@ -342,27 +342,35 @@ export class MobileApiClient {
     // Perform pre-auth integrity attestation on Android only
     if (Platform.OS === 'android') {
       try {
-        const { sha256Json } = await import('./integrityRequestHash');
+        const { createRegistrationRequestHash } = await import('./integrityRequestHash');
         const { MobileIntegrityService } = await import('./integrity.service');
 
-        const requestHash = await sha256Json({
-          version: 1,
-          action: 'REGISTRATION',
-          mobile: String(data.mobile || '').trim(),
+        const requestHash = await createRegistrationRequestHash({
+          mobile: data.mobile,
+          profession: data.profession,
+          firstName: data.firstName,
+          middleName: data.middleName,
+          lastName: data.lastName,
+          fullName: data.fullName,
         });
 
         // Fetch pre-auth nonce (no authentication required)
         const nonceRes = await this.getPreAuthIntegrityNonce({ requestHash, action: 'REGISTRATION' });
-        if (nonceRes?.success && nonceRes?.nonce) {
-          // Get native device integrity token
-          const integrityToken = await MobileIntegrityService.requestDeviceIntegrityToken(nonceRes.nonce);
-          extraHeaders['x-integrity-token'] = integrityToken;
-          extraHeaders['x-integrity-nonce'] = nonceRes.nonce;
+        if (!nonceRes?.success || !nonceRes?.nonce) {
+          throw new Error(nonceRes?.message || 'Failed to acquire pre-auth registration integrity nonce.');
         }
+
+        // Get native device integrity token
+        const integrityToken = await MobileIntegrityService.requestDeviceIntegrityToken(nonceRes.nonce);
+        if (!integrityToken) {
+          throw new Error('Device integrity token could not be obtained.');
+        }
+
+        extraHeaders['x-integrity-token'] = integrityToken;
+        extraHeaders['x-integrity-nonce'] = nonceRes.nonce;
       } catch (integrityErr: any) {
-        // If enforcement is active on the server, this request will be rejected with 403.
-        // If enforcement is off, the server accepts the request without the headers.
-        console.warn('[MOBILE-INTEGRITY] Pre-auth registration attestation failed (will proceed without headers):', integrityErr?.message);
+        console.error('[MOBILE-INTEGRITY] Pre-auth registration attestation failed:', integrityErr?.message);
+        throw new Error(`Device integrity attestation failed for registration: ${integrityErr?.message || 'Unknown error'}`);
       }
     }
 
@@ -401,27 +409,30 @@ export class MobileApiClient {
 
     if (Platform.OS === 'android' && !isAdminCandidate) {
       try {
-        const { sha256Json } = await import('./integrityRequestHash');
+        const { createAuthRequestHash } = await import('./integrityRequestHash');
         const { MobileIntegrityService } = await import('./integrity.service');
 
-        const requestHash = await sha256Json({
-          version: 1,
-          action: 'AUTH',
-          mobile: String(identifier || '').trim(),
+        const requestHash = await createAuthRequestHash({
+          identifier,
         });
 
         // Fetch pre-auth nonce (no authentication required)
-        const nonceRes = await this.getPreAuthIntegrityNonce({ requestHash });
-        if (nonceRes?.success && nonceRes?.nonce) {
-          // Get native device integrity token
-          const integrityToken = await MobileIntegrityService.requestDeviceIntegrityToken(nonceRes.nonce);
-          extraHeaders['x-integrity-token'] = integrityToken;
-          extraHeaders['x-integrity-nonce'] = nonceRes.nonce;
+        const nonceRes = await this.getPreAuthIntegrityNonce({ requestHash, action: 'AUTH' });
+        if (!nonceRes?.success || !nonceRes?.nonce) {
+          throw new Error(nonceRes?.message || 'Failed to acquire pre-auth login integrity nonce.');
         }
+
+        // Get native device integrity token
+        const integrityToken = await MobileIntegrityService.requestDeviceIntegrityToken(nonceRes.nonce);
+        if (!integrityToken) {
+          throw new Error('Device integrity token could not be obtained.');
+        }
+
+        extraHeaders['x-integrity-token'] = integrityToken;
+        extraHeaders['x-integrity-nonce'] = nonceRes.nonce;
       } catch (integrityErr: any) {
-        // If enforcement is active on the server, this request will be rejected with 403.
-        // If enforcement is off, the server accepts the request without the headers.
-        console.warn('[MOBILE-INTEGRITY] Pre-auth login attestation failed (will proceed without headers):', integrityErr?.message);
+        console.error('[MOBILE-INTEGRITY] Pre-auth login attestation failed:', integrityErr?.message);
+        throw new Error(`Device integrity attestation failed for login: ${integrityErr?.message || 'Unknown error'}`);
       }
     }
 

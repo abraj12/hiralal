@@ -8,7 +8,7 @@ import { NotificationsService } from '../services/notifications.service';
 const INSTALLATION_KEY = 'hiralal_installation_id';
 const WELCOME_DISPATCHED_KEY = 'hiralal_welcome_dispatched';
 
-async function getOrCreateInstallationId(): Promise<string> {
+export async function getOrCreateInstallationId(): Promise<string> {
   try {
     let id: string | null = null;
     if (Platform.OS === 'web') {
@@ -35,7 +35,7 @@ async function getOrCreateInstallationId(): Promise<string> {
   }
 }
 
-async function dispatchWelcomeNotificationOnce(): Promise<void> {
+export async function dispatchWelcomeNotificationOnce(): Promise<void> {
   try {
     let alreadyDispatched = false;
     if (Platform.OS === 'web') {
@@ -64,10 +64,9 @@ async function dispatchWelcomeNotificationOnce(): Promise<void> {
 
     const res: any = await MobileApiClient.triggerWelcomeNotification(instId, nativeToken, nativePlatform);
 
-    // Only mark as permanently dispatched when the server confirms actual delivery ('DELIVERED')
-    // or when the installation is recorded for an authenticated user ('RECORDED').
-    // 'NOT_SENT' means no push token was available — leave un-marked so next launch retries.
-    const permanentStatuses = ['DELIVERED', 'RECORDED'];
+    // Only mark as permanently dispatched when the server confirms actual provider acceptance ('ACCEPTED' or 'ALREADY_ACCEPTED')
+    // 'RECORDED_PENDING_PUSH', 'FAILED_RETRYABLE', 'NOT_SENT' are NOT treated as permanently completed so future launches can retry.
+    const permanentStatuses = ['ACCEPTED', 'ALREADY_ACCEPTED', 'DELIVERED'];
     if (res && res.success && permanentStatuses.includes(res.status)) {
       if (Platform.OS === 'web') {
         if (typeof window !== 'undefined' && window.localStorage) {

@@ -90,6 +90,13 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       BILL_ADMIN_PREFIX: 'BADM',
       OPERATIONS_ADMIN_PREFIX: 'OADM',
       REDIS_PASSWORD: 'redis_prod_strong_secret_key_min_24_chars_2026',
+      PLAY_INTEGRITY_CLIENT_EMAIL: 'play-integrity@hiralal-rewards.iam.gserviceaccount.com',
+      PLAY_INTEGRITY_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC...\n-----END PRIVATE KEY-----',
+      PLAY_INTEGRITY_PACKAGE_NAME: 'com.hiralal.rewards',
+      PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
+      PLAY_INTEGRITY_ALLOW_MOCK: 'false',
+      PLAY_INTEGRITY_REQUIRE_LICENSING: 'true',
+      PLAY_INTEGRITY_ENFORCE_ACTIONS: 'true',
     };
 
     it('passes when all production secrets are valid and high-entropy', () => {

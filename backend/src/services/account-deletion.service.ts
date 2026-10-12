@@ -216,11 +216,16 @@ export class AccountDeletionService {
    *   for tax and financial audit integrity, attached to the anonymized user record.
    * Idempotent: repeated calls safely skip already processed accounts.
    */
-  static async processScheduledDeletions(prismaClient: any = prisma, assertLease?: () => void): Promise<{
+  static async processScheduledDeletions(
+    prismaClient: any = prisma,
+    assertLease?: () => void,
+    workerInstanceId?: string
+  ): Promise<{
     processedCount: number;
     errors: Array<{ userId: string; error: string }>;
   }> {
     const now = new Date();
+    const leaseOwner = workerInstanceId || `del-worker-${process.pid}-${Date.now()}`;
     const dueUsers = await prismaClient.user.findMany({
       where: {
         deletionScheduledAt: { lte: now },
@@ -236,33 +241,95 @@ export class AccountDeletionService {
 
     for (const u of dueUsers) {
       try {
-        // 1. Claim or retrieve AccountDeletionOperation
+        // 1. Fresh user validation before claiming or touching any files
+        const freshUser = await prismaClient.user.findUnique({
+          where: { id: u.id },
+          select: { id: true, deletionScheduledAt: true, deletionRequestedAt: true, status: true, mobile: true },
+        });
+
+        if (!freshUser || !freshUser.deletionScheduledAt || freshUser.deletionScheduledAt > now || freshUser.status === 'SUSPENDED') {
+          // Deletion was cancelled or grace period still active
+          await prismaClient.accountDeletionOperation.updateMany({
+            where: { userId: u.id, status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE'] } },
+            data: { status: 'CANCELLED', completedAt: new Date(), leaseExpiresAt: null },
+          });
+          continue;
+        }
+
+        // 2. Atomic claim / fencing on AccountDeletionOperation
+        const leaseExpiry = new Date(now.getTime() + 60000); // 60-second lease
         let operation = await prismaClient.accountDeletionOperation.findFirst({
           where: { userId: u.id, status: { in: ['PENDING', 'FAILED_RETRYABLE', 'IN_PROGRESS'] } },
           orderBy: { createdAt: 'desc' },
         });
 
+        let currentLeaseVersion = 1;
         if (!operation) {
           operation = await prismaClient.accountDeletionOperation.create({
             data: {
               userId: u.id,
               status: 'IN_PROGRESS',
-              scheduledFor: u.deletionScheduledAt || now,
+              scheduledFor: freshUser.deletionScheduledAt,
               startedAt: now,
+              attemptCount: 1,
+              leaseOwner,
+              leaseVersion: 1,
+              leaseExpiresAt: leaseExpiry,
             },
           });
+          currentLeaseVersion = 1;
         } else {
-          // If in retry backoff window, skip until nextRetryAt
+          // If in retry backoff window and nextRetryAt > now, skip
           if (operation.nextRetryAt && operation.nextRetryAt > now) {
             continue;
           }
-          operation = await prismaClient.accountDeletionOperation.update({
-            where: { id: operation.id },
-            data: { status: 'IN_PROGRESS', startedAt: now },
+
+          const claim = await prismaClient.accountDeletionOperation.updateMany({
+            where: {
+              id: operation.id,
+              status: { in: ['PENDING', 'FAILED_RETRYABLE', 'IN_PROGRESS'] },
+              OR: [
+                { leaseExpiresAt: null },
+                { leaseExpiresAt: { lt: now } },
+                { leaseOwner },
+              ],
+            },
+            data: {
+              status: 'IN_PROGRESS',
+              startedAt: now,
+              attemptCount: { increment: 1 },
+              leaseOwner,
+              leaseVersion: { increment: 1 },
+              leaseExpiresAt: leaseExpiry,
+            },
           });
+
+          if (claim.count === 0) {
+            // Concurrent worker already holds an active lease
+            continue;
+          }
+
+          const refreshed = await prismaClient.accountDeletionOperation.findUnique({
+            where: { id: operation.id },
+          });
+          operation = refreshed || operation;
+          currentLeaseVersion = operation.leaseVersion;
         }
 
-        // 2. Delete private invoice files from Cloudflare R2 storage
+        // 3. Verify distributed lease before any destructive work
+        assertLease?.();
+
+        // 4. Re-check: cancellation check right before file deletions
+        const preFileCheck = await prismaClient.user.findUnique({ where: { id: u.id } });
+        if (!preFileCheck || !preFileCheck.deletionScheduledAt || preFileCheck.deletionScheduledAt > now) {
+          await prismaClient.accountDeletionOperation.updateMany({
+            where: { id: operation.id, leaseOwner },
+            data: { status: 'CANCELLED', completedAt: new Date(), leaseExpiresAt: null },
+          });
+          continue;
+        }
+
+        // 5. Delete private invoice files from Cloudflare R2 storage
         const failedFileKeys: string[] = [];
         let deletedFilesCount = 0;
 
@@ -294,6 +361,7 @@ export class AccountDeletionService {
               lastError: `Failed to delete ${failedFileKeys.length} invoice file(s) from storage: ${failedFileKeys.join(', ')}`,
               failedFileKeys: failedFileKeys,
               deletedFilesCount,
+              leaseExpiresAt: null,
             },
           });
 
@@ -304,22 +372,33 @@ export class AccountDeletionService {
           continue;
         }
 
-        // 3. All files verified deleted. Verify lease ownership before irreversible anonymization.
+        // 6. All files verified deleted. Verify lease ownership before irreversible anonymization.
         assertLease?.();
 
-        // Re-validate: cancellation check - user may have logged in during processing
-        const freshUser = await prismaClient.user.findUnique({ where: { id: u.id } });
-        if (!freshUser || !freshUser.deletionScheduledAt) {
-          // Deletion was cancelled (user logged in during grace period)
-          await prismaClient.accountDeletionOperation.updateMany({
-            where: { id: operation.id, status: { in: ['IN_PROGRESS', 'PENDING'] } },
-            data: { status: 'CANCELLED', completedAt: new Date() },
-          });
-          continue;
-        }
-
-        // Anonymize personal profile and purge credentials atomically
+        // 7. Anonymize personal profile and purge credentials atomically under fencing lock
         await prismaClient.$transaction(async (tx: any) => {
+          // Fencing verification inside transaction
+          const lockedOp = await tx.accountDeletionOperation.findUnique({
+            where: { id: operation.id },
+          });
+
+          if (!lockedOp || lockedOp.leaseOwner !== leaseOwner || lockedOp.leaseVersion !== currentLeaseVersion) {
+            throw new Error(`[ACCOUNT-DELETION] Lease fencing failed: ownership lost to another worker (expected v${currentLeaseVersion}, found v${lockedOp?.leaseVersion})`);
+          }
+
+          // Cancellation check inside transaction
+          const lockedUser = await tx.user.findUnique({
+            where: { id: u.id },
+          });
+
+          if (!lockedUser || !lockedUser.deletionScheduledAt) {
+            await tx.accountDeletionOperation.update({
+              where: { id: operation.id },
+              data: { status: 'CANCELLED', completedAt: now, leaseExpiresAt: null },
+            });
+            return;
+          }
+
           // Delete active tokens and sessions
           await tx.pushDeviceToken.deleteMany({ where: { userId: u.id } });
           // Redact AppInstallation records: remove userId link and stored push token
@@ -386,6 +465,7 @@ export class AccountDeletionService {
               completedAt: now,
               deletedFilesCount,
               failedFileKeys: null,
+              leaseExpiresAt: null,
             },
           });
 

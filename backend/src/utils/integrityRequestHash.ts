@@ -129,6 +129,81 @@ export function buildCanonicalBeneficiaryPayload(
   };
 }
 
+export interface CanonicalAuthPayload {
+  version: 1;
+  action: 'AUTH';
+  mobile: string;
+}
+
+export function buildCanonicalAuthPayload(mobileOrIdentifier: string): CanonicalAuthPayload {
+  return {
+    version: 1,
+    action: 'AUTH',
+    mobile: String(mobileOrIdentifier || '').trim(),
+  };
+}
+
+export type RegistrationIntegrityPayload = {
+  version: 2;
+  action: 'REGISTRATION';
+  mobile: string;
+  profession: 'PLUMBER' | 'TILE_INSTALLER';
+  firstName: string;
+  middleName: string;
+  lastName: string;
+  fullName: string;
+};
+
+export function normalizeRegistrationIntegrityPayload(input: {
+  mobile: string;
+  profession: string;
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
+  fullName?: string;
+}): RegistrationIntegrityPayload {
+  const mobile = String(input.mobile || '').replace(/\D/g, '').slice(-10);
+  const profession = String(input.profession || '').trim().toUpperCase();
+
+  if (!/^\d{10}$/.test(mobile)) {
+    throw new Error('A valid mobile number is required.');
+  }
+
+  if (profession !== 'PLUMBER' && profession !== 'TILE_INSTALLER') {
+    throw new Error('Invalid registration profession.');
+  }
+
+  const firstName = (input.firstName ?? '').trim().replace(/\s+/g, ' ');
+  const middleName = (input.middleName ?? '').trim().replace(/\s+/g, ' ');
+  const lastName = (input.lastName ?? '').trim().replace(/\s+/g, ' ');
+  const fullName = (input.fullName && input.fullName.trim()
+    ? input.fullName.trim()
+    : [firstName, middleName, lastName].filter(Boolean).join(' ')
+  ).replace(/\s+/g, ' ');
+
+  return {
+    version: 2,
+    action: 'REGISTRATION',
+    mobile,
+    profession: profession as 'PLUMBER' | 'TILE_INSTALLER',
+    firstName,
+    middleName,
+    lastName,
+    fullName,
+  };
+}
+
+export function buildCanonicalRegistrationPayload(input: {
+  mobile: string;
+  profession: string;
+  firstName?: string;
+  middleName?: string;
+  lastName?: string;
+  fullName?: string;
+}): RegistrationIntegrityPayload {
+  return normalizeRegistrationIntegrityPayload(input);
+}
+
 /**
  * Computes canonical SHA-256 request hash from the actual received Express request.
  */
@@ -221,19 +296,40 @@ export function computeIntegrityRequestHash(
       return computeSha256Json(payload);
     }
 
-    case 'AUTH':
-    case 'REGISTRATION':
-    case 'FORGOT_PASSWORD':
-    case 'GENERAL': {
+    case 'REGISTRATION': {
+      const payload = buildCanonicalRegistrationPayload({
+        mobile: req.body?.mobile,
+        profession: req.body?.profession,
+        firstName: req.body?.firstName,
+        middleName: req.body?.middleName,
+        lastName: req.body?.lastName,
+        fullName: req.body?.fullName,
+      });
+      return computeSha256Json(payload);
+    }
+
+    case 'AUTH': {
+      const payload = buildCanonicalAuthPayload(
+        req.body?.identifier || req.body?.mobile || ''
+      );
+      return computeSha256Json(payload);
+    }
+
+    case 'FORGOT_PASSWORD': {
       const payload = {
         version: 1,
-        action,
+        action: 'FORGOT_PASSWORD',
         mobile: String(req.body?.mobile || '').trim(),
       };
       return computeSha256Json(payload);
+    }
+
+    case 'GENERAL': {
+      return computeSha256Json({ version: 1, action: 'GENERAL' });
     }
 
     default:
       throw new Error(`Unsupported integrity action "${action}" for request hash calculation.`);
   }
 }
+

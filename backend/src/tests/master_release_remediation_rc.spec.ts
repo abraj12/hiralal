@@ -114,6 +114,7 @@ describe('Master Release-Blocker Remediation Final Corrective Verification (Work
     test('POST /api/notifications/welcome records durable AppInstallation without synthetic tokens', async () => {
       const res = await request(app)
         .post('/api/notifications/welcome')
+        .set('Authorization', `Bearer ${userToken}`)
         .send({
           installationId: installId1,
           platform: 'ANDROID',
@@ -121,7 +122,7 @@ describe('Master Release-Blocker Remediation Final Corrective Verification (Work
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.status).toBe('NOT_SENT');
+      expect(res.body.status).toBe('RECORDED_PENDING_PUSH');
       expect(res.body.delivered).toBe(false);
 
       const dbRecord = await prisma.appInstallation.findUnique({
@@ -130,9 +131,10 @@ describe('Master Release-Blocker Remediation Final Corrective Verification (Work
       expect(dbRecord).not.toBeNull();
       expect(dbRecord?.platform).toBe('ANDROID');
       expect(dbRecord?.welcomeStatus).toBe('PENDING');
+      expect(dbRecord?.userId).toBe(userId);
     });
 
-    test('Idempotent replay: repeated welcome request returns RECORDED and avoids duplication', async () => {
+    test('Idempotent replay: repeated welcome request returns ALREADY_ACCEPTED and avoids duplication', async () => {
       // Simulate delivered status
       await prisma.appInstallation.update({
         where: { installationId: installId1 },
@@ -141,6 +143,7 @@ describe('Master Release-Blocker Remediation Final Corrective Verification (Work
 
       const res = await request(app)
         .post('/api/notifications/welcome')
+        .set('Authorization', `Bearer ${userToken}`)
         .send({
           installationId: installId1,
           platform: 'ANDROID',
@@ -148,8 +151,8 @@ describe('Master Release-Blocker Remediation Final Corrective Verification (Work
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.status).toBe('RECORDED');
-      expect(res.body.delivered).toBe(false);
+      expect(res.body.status).toBe('ALREADY_ACCEPTED');
+      expect(res.body.delivered).toBe(true);
       expect(res.body.message).toContain('already delivered previously');
     });
 
@@ -166,7 +169,7 @@ describe('Master Release-Blocker Remediation Final Corrective Verification (Work
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.status).toBe('RECORDED');
+      expect(res.body.status).toBe('RECORDED_PENDING_PUSH');
 
       const dbRecord = await prisma.appInstallation.findUnique({
         where: { installationId: installId2 },
