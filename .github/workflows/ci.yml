@@ -76,6 +76,10 @@ jobs:
         working-directory: backend
         run: npm ci
 
+      - name: Production Dependency Audit
+        working-directory: backend
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Prisma Schema Validation
         working-directory: backend
         env:

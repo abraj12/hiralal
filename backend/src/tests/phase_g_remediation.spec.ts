@@ -23,6 +23,7 @@ import { AccountDeletionService } from '../services/account-deletion.service';
 import { AuthService } from '../services/auth.service';
 import { StorageService } from '../services/storage';
 import { FcmProvider } from '../services/push/fcm.provider';
+import { sha256Hash } from '../utils/crypto.utils';
 import {
   computeIntegrityRequestHash,
   normalizeRegistrationIntegrityPayload,
@@ -34,6 +35,13 @@ import {
 const TEST_MOBILE = '9833300088';
 const OTHER_USER_MOBILE = '9833300089';
 const TEST_ADMIN_MOBILE = '9833300090';
+const G3_USER_A_MOBILE = '9833300091';
+const G3_USER_B_MOBILE = '9833300092';
+const G3_USER_C_MOBILE = '9833300093';
+const G3_USER_D_MOBILE = '9833300094';
+const G3_USER_E_MOBILE = '9833300095';
+const G3_USER_F_MOBILE = '9833300096';
+const G3_USER_G_MOBILE = '9833300097';
 const TEST_PASSWORD = 'PhaseG_Test@2026';
 
 const validRsaKey = crypto.generateKeyPairSync('rsa', {
@@ -87,7 +95,17 @@ const validProductionEnv: Record<string, string> = {
 };
 
 async function cleanTestData() {
-  const mobiles = [TEST_MOBILE, OTHER_USER_MOBILE];
+  const mobiles = [
+    TEST_MOBILE,
+    OTHER_USER_MOBILE,
+    G3_USER_A_MOBILE,
+    G3_USER_B_MOBILE,
+    G3_USER_C_MOBILE,
+    G3_USER_D_MOBILE,
+    G3_USER_E_MOBILE,
+    G3_USER_F_MOBILE,
+    G3_USER_G_MOBILE,
+  ];
   await prisma.accountDeletionOperation.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
   await prisma.appInstallation.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
   await prisma.pushDeviceToken.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
@@ -98,6 +116,41 @@ async function cleanTestData() {
   await prisma.wallet.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
   await prisma.notification.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
   await prisma.user.deleteMany({ where: { mobile: { in: mobiles } } });
+}
+
+async function createG3TestUser(mobile: string, fullName = 'Phase G3 User') {
+  await cleanG3User(mobile);
+  const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
+  return prisma.user.create({
+    data: {
+      mobile,
+      fullName,
+      firstName: 'PhaseG3',
+      lastName: 'User',
+      passwordHash,
+      role: 'USER',
+      status: 'ACTIVE',
+      profession: 'PLUMBER',
+      isVerified: true,
+      wallet: { create: { availableBalance: 100.0, totalRedeemed: 0.0 } },
+    },
+  });
+}
+
+async function cleanG3User(mobile: string) {
+  const user = await prisma.user.findUnique({ where: { mobile } });
+  if (user) {
+    await prisma.accountDeletionOperation.deleteMany({ where: { userId: user.id } });
+    await prisma.appInstallation.deleteMany({ where: { userId: user.id } });
+    await prisma.pushDeviceToken.deleteMany({ where: { userId: user.id } });
+    await prisma.authSession.deleteMany({ where: { userId: user.id } });
+    await prisma.bill.deleteMany({ where: { userId: user.id } });
+    await prisma.walletTransaction.deleteMany({ where: { wallet: { userId: user.id } } });
+    await prisma.wallet.deleteMany({ where: { userId: user.id } });
+    await prisma.auditLog.deleteMany({ where: { entityId: user.id } });
+    await prisma.user.delete({ where: { id: user.id } });
+  }
+  await prisma.otpRequest.deleteMany({ where: { mobile } });
 }
 
 beforeAll(async () => {
@@ -988,6 +1041,483 @@ describe('Admin Prefix Discovery — Dynamic Server-Configured Prefixes', () => 
     expect([200, 400, 401, 403]).toContain(res.status);
     if (res.status === 403) {
       expect(res.body.code).not.toBe('INTEGRITY_FAILED');
+    }
+  });
+});
+
+// ==========================================
+// 7. Phase G.3 Account Deletion Concurrency & Lease Fencing Integration Suite
+// ==========================================
+describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Ordering', () => {
+  test('Phase G.3 Test A — Re-confirmation after destructive processing starts is rejected', async () => {
+    const mobile = G3_USER_A_MOBILE;
+    const user = await createG3TestUser(mobile);
+    const testOtpCode = '112233';
+
+    try {
+      // 1. Arrange: User scheduled for deletion, cooldown older than 30 days
+      const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 3600 * 1000);
+      const scheduledAt = new Date(Date.now() - 2 * 24 * 3600 * 1000);
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          deletionRequestedAt: fortyDaysAgo,
+          deletionScheduledAt: scheduledAt,
+          lastDeletionRequestAt: fortyDaysAgo,
+        },
+      });
+
+      // 2. Active operation with destructiveStartedAt set (e.g. FAILED_RETRYABLE after R2 deletion started)
+      const op = await prisma.accountDeletionOperation.create({
+        data: {
+          userId: user.id,
+          status: 'FAILED_RETRYABLE',
+          scheduledFor: scheduledAt,
+          startedAt: scheduledAt,
+          destructiveStartedAt: scheduledAt,
+          attemptCount: 1,
+          leaseOwner: 'worker-node-prev',
+          leaseVersion: 1,
+        },
+      });
+
+      // Create valid OTP for confirmation
+      await prisma.otpRequest.create({
+        data: {
+          mobile,
+          otpHash: sha256Hash(testOtpCode),
+          purpose: 'ACCOUNT_DELETION',
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      });
+
+      // 3. Attempt confirmation again
+      await expect(
+        AccountDeletionService.confirmDeletion(user.id, testOtpCode)
+      ).rejects.toThrow(/entered the destructive processing stage/i);
+
+      // 4. Assert: Operation not cancelled or replaced
+      const opAfter = await prisma.accountDeletionOperation.findUnique({ where: { id: op.id } });
+      expect(opAfter?.status).toBe('FAILED_RETRYABLE');
+      expect(opAfter?.destructiveStartedAt).toBeDefined();
+
+      // Assert no new operation created
+      const activeOps = await prisma.accountDeletionOperation.findMany({
+        where: { userId: user.id, status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE'] } },
+      });
+      expect(activeOps.length).toBe(1);
+
+      // Assert scheduled timestamp not reset
+      const userAfter = await prisma.user.findUnique({ where: { id: user.id } });
+      expect(userAfter?.deletionScheduledAt?.toISOString()).toBe(scheduledAt.toISOString());
+      expect(userAfter?.activeSessionId).toBeNull();
+    } finally {
+      await cleanG3User(mobile);
+    }
+  });
+
+  test('Phase G.3 Test B — Duplicate confirmation before destructive processing returns already scheduled', async () => {
+    const mobile = G3_USER_B_MOBILE;
+    const user = await createG3TestUser(mobile);
+    const testOtpCode = '223344';
+
+    try {
+      const scheduledAt = new Date(Date.now() + 5 * 24 * 3600 * 1000);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          deletionRequestedAt: new Date(),
+          deletionScheduledAt: scheduledAt,
+          lastDeletionRequestAt: new Date(),
+        },
+      });
+
+      const op = await prisma.accountDeletionOperation.create({
+        data: {
+          userId: user.id,
+          status: 'PENDING',
+          scheduledFor: scheduledAt,
+          destructiveStartedAt: null,
+        },
+      });
+
+      await prisma.otpRequest.create({
+        data: {
+          mobile,
+          otpHash: sha256Hash(testOtpCode),
+          purpose: 'ACCOUNT_DELETION',
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      });
+
+      // Attempt confirmation again
+      await expect(
+        AccountDeletionService.confirmDeletion(user.id, testOtpCode)
+      ).rejects.toThrow(/already scheduled/i);
+
+      // Assert no duplicate operation created, existing op is not cancelled
+      const ops = await prisma.accountDeletionOperation.findMany({
+        where: { userId: user.id, status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE'] } },
+      });
+      expect(ops.length).toBe(1);
+      expect(ops[0].id).toBe(op.id);
+      expect(ops[0].status).toBe('PENDING');
+
+      // Assert grace period not silently extended
+      const userAfter = await prisma.user.findUnique({ where: { id: user.id } });
+      expect(userAfter?.deletionScheduledAt?.toISOString()).toBe(scheduledAt.toISOString());
+    } finally {
+      await cleanG3User(mobile);
+    }
+  });
+
+  test('Phase G.3 Test C — Two actual concurrent workers processing scheduled deletion: exactly one wins and anonymizes', async () => {
+    const mobile = G3_USER_C_MOBILE;
+    const user = await createG3TestUser(mobile);
+    await prisma.bill.create({
+      data: {
+        userId: user.id,
+        invoiceNumber: `INV-C-${Date.now()}`,
+        invoiceDate: new Date(),
+        billAmount: 500,
+        grossBillAmount: 500,
+        calculatedReward: 5,
+        status: 'APPROVED',
+        fileUrl: 'https://r2.test/bill-c.pdf',
+        fileKey: 'bills/bill-c.pdf',
+      },
+    });
+
+    const pastDate = new Date(Date.now() - 10 * 24 * 3600 * 1000);
+    const dueDate = new Date(Date.now() - 2 * 24 * 3600 * 1000);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        deletionRequestedAt: pastDate,
+        deletionScheduledAt: dueDate,
+        lastDeletionRequestAt: pastDate,
+      },
+    });
+
+    await prisma.accountDeletionOperation.create({
+      data: {
+        userId: user.id,
+        status: 'PENDING',
+        scheduledFor: dueDate,
+      },
+    });
+
+    const storageSpy = jest.spyOn(StorageService.getProvider(), 'delete')
+      .mockImplementation(async () => {
+        // Small delay to ensure concurrent execution window
+        await new Promise((r) => setTimeout(r, 50));
+      });
+
+    try {
+      const [resA, resB] = await Promise.all([
+        AccountDeletionService.processScheduledDeletions(prisma, undefined, 'worker-C1'),
+        AccountDeletionService.processScheduledDeletions(prisma, undefined, 'worker-C2'),
+      ]);
+
+      // Exactly one worker should claim and complete the deletion
+      expect(resA.processedCount + resB.processedCount).toBe(1);
+
+      // Verify user was anonymized exactly once
+      const userAfter = await prisma.user.findUnique({ where: { id: user.id } });
+      expect(userAfter?.fullName).toBe('Deleted User');
+      expect(userAfter?.status).toBe('SUSPENDED');
+
+      // Verify operation is completed
+      const completedOps = await prisma.accountDeletionOperation.findMany({
+        where: { userId: user.id, status: 'COMPLETED' },
+      });
+      expect(completedOps.length).toBe(1);
+
+      // Verify audit log has exactly one executed action
+      const auditLogs = await prisma.auditLog.findMany({
+        where: { entityId: user.id, action: 'ACCOUNT_DELETION_EXECUTED' },
+      });
+      expect(auditLogs.length).toBe(1);
+    } finally {
+      storageSpy.mockRestore();
+      await cleanG3User(mobile);
+    }
+  });
+
+  test('Phase G.3 Test D — Lease expires before finalization: finalization CAS rejects and aborts anonymization', async () => {
+    const mobile = G3_USER_D_MOBILE;
+    const user = await createG3TestUser(mobile);
+    await prisma.bill.create({
+      data: {
+        userId: user.id,
+        invoiceNumber: `INV-D-${Date.now()}`,
+        invoiceDate: new Date(),
+        billAmount: 800,
+        grossBillAmount: 800,
+        calculatedReward: 8,
+        status: 'APPROVED',
+        fileUrl: 'https://r2.test/bill-d.pdf',
+        fileKey: 'bills/bill-d.pdf',
+      },
+    });
+
+    const pastDate = new Date(Date.now() - 10 * 24 * 3600 * 1000);
+    const dueDate = new Date(Date.now() - 1 * 24 * 3600 * 1000);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        deletionRequestedAt: pastDate,
+        deletionScheduledAt: dueDate,
+        lastDeletionRequestAt: pastDate,
+      },
+    });
+
+    await prisma.accountDeletionOperation.create({
+      data: {
+        userId: user.id,
+        status: 'PENDING',
+        scheduledFor: dueDate,
+      },
+    });
+
+    // Mock storage delete to simulate lease expiry right after file deletion
+    const storageSpy = jest.spyOn(StorageService.getProvider(), 'delete')
+      .mockImplementation(async () => {
+        // Expire the lease in the DB directly
+        await prisma.accountDeletionOperation.updateMany({
+          where: { userId: user.id },
+          data: {
+            leaseExpiresAt: new Date(Date.now() - 10000), // Expired 10s ago
+          },
+        });
+      });
+
+    try {
+      const res = await AccountDeletionService.processScheduledDeletions(prisma, undefined, 'worker-D');
+      expect(res.processedCount).toBe(0);
+      expect(res.errors.length).toBe(1);
+      expect(res.errors[0].error).toMatch(/Lease fencing failed/i);
+
+      // Verify user was NOT anonymized
+      const userAfter = await prisma.user.findUnique({ where: { id: user.id } });
+      expect(userAfter?.fullName).not.toBe('Deleted User');
+      expect(userAfter?.status).toBe('ACTIVE');
+
+      // Verify operation is NOT COMPLETED
+      const opAfter = await prisma.accountDeletionOperation.findFirst({
+        where: { userId: user.id },
+      });
+      expect(opAfter?.status).not.toBe('COMPLETED');
+    } finally {
+      storageSpy.mockRestore();
+      await cleanG3User(mobile);
+    }
+  });
+
+  test('Phase G.3 Test E — R2 failure after partial progress: marks FAILED_RETRYABLE, preserves destructiveStartedAt, blocks login and re-confirmation', async () => {
+    const mobile = G3_USER_E_MOBILE;
+    const user = await createG3TestUser(mobile);
+    await prisma.bill.create({
+      data: {
+        userId: user.id,
+        invoiceNumber: `INV-E1-${Date.now()}`,
+        invoiceDate: new Date(),
+        billAmount: 300,
+        grossBillAmount: 300,
+        calculatedReward: 3,
+        status: 'APPROVED',
+        fileUrl: 'https://r2.test/bill-e1.pdf',
+        fileKey: 'bills/bill-e1.pdf',
+      },
+    });
+    await prisma.bill.create({
+      data: {
+        userId: user.id,
+        invoiceNumber: `INV-E2-${Date.now()}`,
+        invoiceDate: new Date(),
+        billAmount: 400,
+        grossBillAmount: 400,
+        calculatedReward: 4,
+        status: 'APPROVED',
+        fileUrl: 'https://r2.test/bill-e2.pdf',
+        fileKey: 'bills/bill-e2.pdf',
+      },
+    });
+
+    const pastDate = new Date(Date.now() - 10 * 24 * 3600 * 1000);
+    const dueDate = new Date(Date.now() - 1 * 24 * 3600 * 1000);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        deletionRequestedAt: pastDate,
+        deletionScheduledAt: dueDate,
+        lastDeletionRequestAt: pastDate,
+      },
+    });
+
+    await prisma.accountDeletionOperation.create({
+      data: {
+        userId: user.id,
+        status: 'PENDING',
+        scheduledFor: dueDate,
+      },
+    });
+
+    // Mock storage delete: first succeeds, second fails
+    const storageSpy = jest.spyOn(StorageService.getProvider(), 'delete')
+      .mockImplementation(async (key: string) => {
+        if (key === 'bills/bill-e2.pdf') {
+          throw new Error('Cloudflare R2 500 Connection Timeout');
+        }
+      });
+
+    try {
+      const res = await AccountDeletionService.processScheduledDeletions(prisma, undefined, 'worker-E');
+      expect(res.processedCount).toBe(0);
+      expect(res.errors.length).toBe(1);
+
+      // Verify operation is marked FAILED_RETRYABLE
+      const op = await prisma.accountDeletionOperation.findFirst({
+        where: { userId: user.id },
+      });
+      expect(op?.status).toBe('FAILED_RETRYABLE');
+      expect(op?.destructiveStartedAt).toBeDefined();
+      expect(op?.deletedFilesCount).toBe(1);
+      expect(op?.failedFileKeys).toEqual(['bills/bill-e2.pdf']);
+      expect(op?.nextRetryAt).toBeDefined();
+
+      // Verify user was NOT anonymized
+      const userAfter = await prisma.user.findUnique({ where: { id: user.id } });
+      expect(userAfter?.fullName).not.toBe('Deleted User');
+      expect(userAfter?.status).toBe('ACTIVE');
+
+      // Assert login cannot cancel the destructive operation
+      await expect(
+        AuthService.login(mobile, TEST_PASSWORD)
+      ).rejects.toThrow(/in progress and cannot be cancelled/i);
+
+      // Assert re-confirmation cannot cancel or overwrite
+      const testOtpCode = '556677';
+      await prisma.otpRequest.create({
+        data: {
+          mobile,
+          otpHash: sha256Hash(testOtpCode),
+          purpose: 'ACCOUNT_DELETION',
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      });
+
+      await expect(
+        AccountDeletionService.confirmDeletion(user.id, testOtpCode)
+      ).rejects.toThrow(/entered the destructive processing stage/i);
+    } finally {
+      storageSpy.mockRestore();
+      await cleanG3User(mobile);
+    }
+  });
+
+  test('Phase G.3 Test F — Login racing against finalization is safely serialized without deadlock or partial anonymization', async () => {
+    const mobile = G3_USER_F_MOBILE;
+    const user = await createG3TestUser(mobile);
+    const pastDate = new Date(Date.now() - 10 * 24 * 3600 * 1000);
+    const dueDate = new Date(Date.now() - 1 * 24 * 3600 * 1000);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        deletionRequestedAt: pastDate,
+        deletionScheduledAt: dueDate,
+        lastDeletionRequestAt: pastDate,
+      },
+    });
+
+    await prisma.accountDeletionOperation.create({
+      data: {
+        userId: user.id,
+        status: 'PENDING',
+        scheduledFor: dueDate,
+      },
+    });
+
+    try {
+      // Execute login and processScheduledDeletions concurrently
+      const results = await Promise.allSettled([
+        AuthService.login(mobile, TEST_PASSWORD),
+        AccountDeletionService.processScheduledDeletions(prisma, undefined, 'worker-F'),
+      ]);
+
+      const loginResult = results[0];
+      const deletionResult = results[1];
+
+      // Neither should deadlock! Both must settle cleanly
+      expect(loginResult.status).toBeDefined();
+      expect(deletionResult.status).toBe('fulfilled');
+
+      // Because dueDate is in the past, login must be rejected either by grace expiry or by destructiveStartedAt/SUSPENDED
+      expect(loginResult.status).toBe('rejected');
+
+      const userAfter = await prisma.user.findUnique({ where: { id: user.id } });
+      // User must be safely suspended/anonymized, never partially deleted
+      expect(userAfter?.status).toBe('SUSPENDED');
+    } finally {
+      await cleanG3User(mobile);
+    }
+  });
+
+  test('Phase G.3 Test G — Invalid OTP bookkeeping survives a failed confirmation', async () => {
+    const mobile = G3_USER_G_MOBILE;
+    const user = await createG3TestUser(mobile);
+    const correctOtp = '889900';
+    const wrongOtp = '111111';
+
+    try {
+      // Create valid OTP record
+      const otpRecord = await prisma.otpRequest.create({
+        data: {
+          mobile,
+          otpHash: sha256Hash(correctOtp),
+          purpose: 'ACCOUNT_DELETION',
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+          attemptsCount: 0,
+        },
+      });
+
+      // Submit invalid OTP
+      await expect(
+        AccountDeletionService.confirmDeletion(user.id, wrongOtp)
+      ).rejects.toThrow(/invalid verification code/i);
+
+      // Verify attemptsCount incremented in database
+      const otpCheck1 = await prisma.otpRequest.findUnique({ where: { id: otpRecord.id } });
+      expect(otpCheck1?.attemptsCount).toBe(1);
+      expect(otpCheck1?.isUsed).toBe(false);
+
+      // Verify User deletion fields were NOT set
+      const userCheck = await prisma.user.findUnique({ where: { id: user.id } });
+      expect(userCheck?.deletionScheduledAt).toBeNull();
+      expect(userCheck?.deletionRequestedAt).toBeNull();
+
+      // Verify no AccountDeletionOperation was created
+      const ops = await prisma.accountDeletionOperation.findMany({ where: { userId: user.id } });
+      expect(ops.length).toBe(0);
+
+      // Exhaust attempts to verify lock out at threshold 5
+      for (let i = 2; i <= 4; i++) {
+        await expect(AccountDeletionService.confirmDeletion(user.id, wrongOtp)).rejects.toThrow(/invalid verification code/i);
+        const cur = await prisma.otpRequest.findUnique({ where: { id: otpRecord.id } });
+        expect(cur?.attemptsCount).toBe(i);
+      }
+
+      // 5th attempt invalidates OTP
+      await expect(AccountDeletionService.confirmDeletion(user.id, wrongOtp)).rejects.toThrow(/maximum verification attempts exceeded/i);
+      const exhausted = await prisma.otpRequest.findUnique({ where: { id: otpRecord.id } });
+      expect(exhausted?.isUsed).toBe(true);
+
+      // Even correct OTP now rejected because OTP is invalidated
+      await expect(AccountDeletionService.confirmDeletion(user.id, correctOtp)).rejects.toThrow();
+    } finally {
+      await cleanG3User(mobile);
     }
   });
 });

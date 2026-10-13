@@ -10,7 +10,7 @@ import {
   hmacHashOtp,
 } from '../utils/crypto.utils';
 import { validateStructuredName } from '../utils/name.utils';
-import { UserRole, Profession, OtpPurpose } from '@prisma/client';
+import { UserRole, Profession, OtpPurpose, Prisma } from '@prisma/client';
 import { SmsService } from './sms';
 
 export function normalizeStrictIndianMobile(identifier: string): string | null {
@@ -741,57 +741,91 @@ export class AuthService {
   }
 
   /**
-   * Verifies OTP and returns a short-lived, single-use verificationToken.
-   * Stores only the SHA-256 hash of the verification token in PostgreSQL.
+   * Transaction-aware OTP verification helper.
+   * Locks OTP row FOR UPDATE, checks expiry, counts failed attempts, enforces attempt limit,
+   * marks successful OTPs as used, and optionally creates a verification token.
+   * Returns { success: boolean, message: string, ... } without throwing so failed attempt increments commit.
    */
-  static async verifyOtp(params: {
-    mobile: string;
-    otpCode: string;
-    purpose: OtpPurpose | 'REGISTRATION' | 'FORGOT_PASSWORD' | 'LOGIN' | 'ADMIN_LOGIN';
-  }) {
+  static async verifyOtpInTransaction(
+    tx: Prisma.TransactionClient,
+    params: {
+      mobile: string;
+      otpCode: string;
+      purpose: OtpPurpose | 'REGISTRATION' | 'FORGOT_PASSWORD' | 'LOGIN' | 'ADMIN_LOGIN' | 'ACCOUNT_DELETION';
+    },
+    options?: {
+      createVerificationToken?: boolean;
+    }
+  ): Promise<{
+    success: boolean;
+    message: string;
+    verificationToken?: string;
+    expiresAt?: string;
+  }> {
     const cleanMobile = params.mobile.replace(/\D/g, '').slice(-10);
     const cleanOtp = (params.otpCode || '').trim();
 
     if (!cleanOtp || cleanOtp.length !== 6) {
-      throw new Error('Please enter a valid 6-digit verification code.');
+      return {
+        success: false,
+        message: 'Please enter a valid 6-digit verification code.',
+      };
     }
 
     const now = new Date();
 
-    const txResult = await prisma.$transaction(async (tx) => {
-      // Look up latest unused, non-expired OTP record
-      const latest = await tx.otpRequest.findFirst({
-        where: {
-          mobile: cleanMobile,
-          purpose: params.purpose as OtpPurpose,
-          isUsed: false,
-          expiresAt: { gt: now },
-        },
-        orderBy: { createdAt: 'desc' },
+    // Look up latest unused, non-expired OTP record
+    const latest = await tx.otpRequest.findFirst({
+      where: {
+        mobile: cleanMobile,
+        purpose: params.purpose as OtpPurpose,
+        isUsed: false,
+        expiresAt: { gt: now },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!latest) {
+      return {
+        success: false,
+        message: 'Verification code has expired or is invalid. Please request a new code.',
+      };
+    }
+
+    // Lock row FOR UPDATE to protect attempt limit against concurrent requests
+    await tx.$queryRaw`SELECT "id" FROM "OtpRequest" WHERE "id" = ${latest.id} FOR UPDATE`;
+
+    const record = await tx.otpRequest.findUnique({
+      where: { id: latest.id },
+    });
+
+    if (!record || record.isUsed || record.expiresAt <= new Date()) {
+      return {
+        success: false,
+        message: 'Verification code has expired or is invalid. Please request a new code.',
+      };
+    }
+
+    if (record.attemptsCount >= 5) {
+      await tx.otpRequest.update({
+        where: { id: record.id },
+        data: { isUsed: true },
       });
+      return {
+        success: false,
+        message: 'Maximum verification attempts exceeded. Please request a new code.',
+      };
+    }
 
-      if (!latest) {
-        return {
-          success: false,
-          message: 'Verification code has expired or is invalid. Please request a new code.',
-        };
-      }
-
-      // Lock row FOR UPDATE to protect attempt limit against concurrent requests
-      await tx.$queryRaw`SELECT "id" FROM "OtpRequest" WHERE "id" = ${latest.id} FOR UPDATE`;
-
-      const record = await tx.otpRequest.findUnique({
-        where: { id: latest.id },
+    // Verify cryptographic HMAC or SHA-256 hash (backward-compatible)
+    const inputHmac = hmacHashOtp(cleanOtp);
+    const inputSha = sha256Hash(cleanOtp);
+    if (inputHmac !== record.otpHash && inputSha !== record.otpHash) {
+      const updated = await tx.otpRequest.update({
+        where: { id: record.id },
+        data: { attemptsCount: { increment: 1 } },
       });
-
-      if (!record || record.isUsed || record.expiresAt <= new Date()) {
-        return {
-          success: false,
-          message: 'Verification code has expired or is invalid. Please request a new code.',
-        };
-      }
-
-      if (record.attemptsCount >= 5) {
+      if (updated.attemptsCount >= 5) {
         await tx.otpRequest.update({
           where: { id: record.id },
           data: { isUsed: true },
@@ -801,58 +835,65 @@ export class AuthService {
           message: 'Maximum verification attempts exceeded. Please request a new code.',
         };
       }
+      return {
+        success: false,
+        message: 'Invalid verification code. Please check and try again.',
+      };
+    }
 
-      // Verify cryptographic HMAC or SHA-256 hash (backward-compatible)
-      const inputHmac = hmacHashOtp(cleanOtp);
-      const inputSha = sha256Hash(cleanOtp);
-      if (inputHmac !== record.otpHash && inputSha !== record.otpHash) {
-        const updated = await tx.otpRequest.update({
-          where: { id: record.id },
-          data: { attemptsCount: { increment: 1 } },
-        });
-        if (updated.attemptsCount >= 5) {
-          await tx.otpRequest.update({
-            where: { id: record.id },
-            data: { isUsed: true },
-          });
-          return {
-            success: false,
-            message: 'Maximum verification attempts exceeded. Please request a new code.',
-          };
-        }
-        return {
-          success: false,
-          message: 'Invalid verification code. Please check and try again.',
-        };
-      }
+    // Mark OTP as used atomically
+    await tx.otpRequest.update({
+      where: { id: record.id },
+      data: { isUsed: true },
+    });
 
-      // Mark OTP as used atomically
-      await tx.otpRequest.update({
-        where: { id: record.id },
-        data: { isUsed: true },
-      });
-
-      // Generate short-lived verificationToken (32 bytes hex)
-      const verificationToken = generateSecureToken(32);
-      const tokenHash = sha256Hash(verificationToken);
-      const tokenExpiresAt = new Date(now.getTime() + 15 * 60 * 1000); // 15 mins
-
-      await tx.verificationToken.create({
-        data: {
-          mobile: cleanMobile,
-          tokenHash,
-          purpose: params.purpose as OtpPurpose,
-          isUsed: false,
-          expiresAt: tokenExpiresAt,
-        },
-      });
-
+    const shouldCreateToken = options?.createVerificationToken !== false;
+    if (!shouldCreateToken) {
       return {
         success: true,
         message: 'Code verified successfully.',
-        verificationToken,
-        expiresAt: tokenExpiresAt.toISOString(),
       };
+    }
+
+    // Generate short-lived verificationToken (32 bytes hex)
+    const verificationToken = generateSecureToken(32);
+    const tokenHash = sha256Hash(verificationToken);
+    const tokenExpiresAt = new Date(now.getTime() + 15 * 60 * 1000); // 15 mins
+
+    await tx.verificationToken.create({
+      data: {
+        mobile: cleanMobile,
+        tokenHash,
+        purpose: params.purpose as OtpPurpose,
+        isUsed: false,
+        expiresAt: tokenExpiresAt,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Code verified successfully.',
+      verificationToken,
+      expiresAt: tokenExpiresAt.toISOString(),
+    };
+  }
+
+  /**
+   * Verifies OTP and returns a short-lived, single-use verificationToken.
+   * Stores only the SHA-256 hash of the verification token in PostgreSQL.
+   */
+  static async verifyOtp(params: {
+    mobile: string;
+    otpCode: string;
+    purpose: OtpPurpose | 'REGISTRATION' | 'FORGOT_PASSWORD' | 'LOGIN' | 'ADMIN_LOGIN' | 'ACCOUNT_DELETION';
+  }) {
+    const cleanOtp = (params.otpCode || '').trim();
+    if (!cleanOtp || cleanOtp.length !== 6) {
+      throw new Error('Please enter a valid 6-digit verification code.');
+    }
+
+    const txResult = await prisma.$transaction(async (tx) => {
+      return this.verifyOtpInTransaction(tx, params, { createVerificationToken: true });
     });
 
     if (!txResult.success) {
@@ -1084,8 +1125,9 @@ export class AuthService {
 
       const activeOp = lockedOps && lockedOps.length > 0 ? lockedOps[0] : null;
 
-      // If worker has already claimed and entered destructive phase, login cannot cancel deletion!
-      if (activeOp && activeOp.destructiveStartedAt) {
+      // If worker has claimed and entered destructive phase, or is in progress/retryable, login cannot cancel deletion!
+      // Fail closed when destructive status is ambiguous or active work is underway.
+      if (activeOp && (activeOp.destructiveStartedAt || activeOp.status === 'IN_PROGRESS' || activeOp.status === 'FAILED_RETRYABLE')) {
         throw new Error('Your account deletion is in progress and cannot be cancelled.');
       }
 
@@ -1109,7 +1151,7 @@ export class AuthService {
           },
         });
 
-        if (activeOp) {
+        if (activeOp && activeOp.status === 'PENDING') {
           await tx.accountDeletionOperation.update({
             where: { id: activeOp.id },
             data: {
