@@ -144,22 +144,19 @@ jobs:
           chmod +x ./gradlew
           TARGET="${{ github.event.inputs.build_target }}"
 
-          GRADLE_ARGS="-Dorg.gradle.jvmargs=\"-Xmx3072m -XX:MaxMetaspaceSize=512m\" --no-daemon"
-
           if [ "$TARGET" = "both" ] || [ "$TARGET" = "aab" ]; then
             echo "Building signed Android App Bundle (AAB)..."
-            ./gradlew :app:bundleRelease $GRADLE_ARGS
+            ./gradlew :app:bundleRelease --no-daemon -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=512m"
           fi
 
           if [ "$TARGET" = "both" ] || [ "$TARGET" = "apk" ]; then
             echo "Building signed Release APK..."
-            ./gradlew :app:assembleRelease $GRADLE_ARGS
+            ./gradlew :app:assembleRelease --no-daemon -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=512m"
           fi
 
       - name: Verify Artifact Signature and Extract Fingerprints
         run: |
           mkdir -p release-artifacts
-          TARGET="${{ github.event.inputs.build_target }}"
 
           echo "### Android Release Candidate Verification Summary" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit SHA:** \`${{ github.event.inputs.release_sha }}\`" >> $GITHUB_STEP_SUMMARY
@@ -191,7 +188,7 @@ jobs:
 
           # Generate SHA-256 Checksums for all release outputs
           cd release-artifacts
-          sha256sum * > SHA256SUMS.txt
+          find . -maxdepth 1 -type f ! -name "SHA256SUMS.txt" -exec sha256sum {} + > SHA256SUMS.txt
           echo "#### Artifact SHA-256 Checksums" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           cat SHA256SUMS.txt >> $GITHUB_STEP_SUMMARY
