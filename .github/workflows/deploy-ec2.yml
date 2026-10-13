@@ -109,6 +109,22 @@ jobs:
             set -euo pipefail
             echo "==> Deploying Hiralal & Sons Rewards Platform on AWS Graviton2..."
             
+            # Validate and normalize TARGET_SHA immediately before any path or command usage
+            case "${TARGET_SHA:-}" in
+              ""|*[!0-9a-fA-F]*)
+                echo "[FATAL ERROR] TARGET_SHA must be a full 40-character hexadecimal commit SHA." >&2
+                exit 2
+                ;;
+            esac
+
+            if [ "${#TARGET_SHA}" -ne 40 ] || ! [[ "${TARGET_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+              echo "[FATAL ERROR] TARGET_SHA must be exactly 40 hexadecimal characters." >&2
+              exit 2
+            fi
+
+            TARGET_SHA="$(printf '%s' "${TARGET_SHA}" | tr '[:upper:]' '[:lower:]')"
+            export TARGET_SHA
+
             APP_DIR="${APP_DIR:-/opt/hiralal}"
             if [ ! -d "${APP_DIR}" ]; then
               APP_DIR="${HOME}/hiralal"
@@ -120,13 +136,6 @@ jobs:
             STATE_DIR="${APP_DIR}/deployment-state"
             RELEASES_DIR="${APP_DIR}/releases"
             mkdir -p "${STATE_DIR}" "${RELEASES_DIR}/${TARGET_SHA}"
-
-            if ! [[ "${TARGET_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]]; then
-              echo "[FATAL ERROR] TARGET_SHA must be a full 40-character commit SHA." >&2
-              exit 2
-            fi
-
-            TARGET_SHA="$(printf '%s' "${TARGET_SHA}" | tr '[:upper:]' '[:lower:]')"
 
             # Fetch the authoritative main ref BEFORE testing for the target object.
             if ! git fetch --prune origin +refs/heads/main:refs/remotes/origin/main; then

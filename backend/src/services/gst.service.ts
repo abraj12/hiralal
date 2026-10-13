@@ -42,13 +42,24 @@ export class GstService {
       configuredGstRate === null ||
       configuredGstRate === undefined ||
       !Number.isFinite(configuredGstRate) ||
-      configuredGstRate <= 0 ||
+      configuredGstRate < 0 ||
       configuredGstRate > 100
     ) {
       throw new Error('[NO_APPLICABLE_GST_RULE]');
     }
 
     const gross = roundMoney(grossBillAmount);
+
+    if (configuredGstRate === 0) {
+      return {
+        grossBillAmount: gross,
+        gstIncluded: true,
+        gstRate: 0,
+        gstAmount: 0,
+        eligibleRewardAmount: gross,
+      };
+    }
+
     const gstAmount = roundMoney(
       (gross * configuredGstRate) / (100 + configuredGstRate)
     );
@@ -94,17 +105,6 @@ export class GstService {
       gstRatePercentage > 100
     ) {
       throw new Error('GST rate must be between 0% and 100%.');
-    }
-
-    if (gstRatePercentage === 0) {
-      const gross = roundMoney(grossBillAmount);
-      return {
-        grossBillAmount: gross,
-        gstIncluded: true,
-        gstRate: 0,
-        gstAmount: 0,
-        eligibleRewardAmount: gross,
-      };
     }
 
     return this.calculateReverseGst(grossBillAmount, true, gstRatePercentage);

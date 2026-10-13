@@ -31,6 +31,22 @@ export function normalizeStrictIndianMobile(identifier: string): string | null {
   return null;
 }
 
+export const GENERIC_OTP_PURPOSES = new Set<string>([
+  'REGISTRATION',
+  'LOGIN',
+  'FORGOT_PASSWORD',
+  'ACCOUNT_DELETION',
+]);
+
+export type GenericOtpPurpose = 'REGISTRATION' | 'LOGIN' | 'FORGOT_PASSWORD' | 'ACCOUNT_DELETION';
+
+export function requireGenericOtpPurpose(value: unknown): GenericOtpPurpose {
+  if (typeof value !== 'string' || !GENERIC_OTP_PURPOSES.has(value)) {
+    throw new Error('Invalid OTP purpose. Purpose is required and must be an authorized worker purpose.');
+  }
+  return value as GenericOtpPurpose;
+}
+
 export class AuthService {
   /**
    * Checks whether an identifier matches any server-configured administrator prefix
@@ -69,28 +85,36 @@ export class AuthService {
       Array<{
         failedPasswordAttempts: number;
         lockedUntil: Date | null;
+        isLocked: boolean;
       }>
     >`
-      UPDATE "User"
+      WITH clock AS (
+        SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now
+      )
+      UPDATE "User" u
       SET
-        "failedPasswordAttempts" = "failedPasswordAttempts" + 1,
+        "failedPasswordAttempts" = u."failedPasswordAttempts" + 1,
         "lockedUntil" = CASE
-          WHEN "failedPasswordAttempts" + 1 >= ${maxFailedAttempts}
-          THEN CURRENT_TIMESTAMP + (${lockoutSeconds} * INTERVAL '1 second')
-          ELSE "lockedUntil"
+          WHEN u."failedPasswordAttempts" + 1 >= ${maxFailedAttempts}
+            AND (u."lockedUntil" IS NULL OR u."lockedUntil" <= clock.now)
+          THEN clock.now + (${lockoutSeconds} * INTERVAL '1 second')
+          ELSE u."lockedUntil"
         END,
-        "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = ${userId}
-      RETURNING "failedPasswordAttempts", "lockedUntil"
+        "updatedAt" = clock.now
+      FROM clock
+      WHERE u."id" = ${userId}
+      RETURNING
+        u."failedPasswordAttempts",
+        u."lockedUntil",
+        (u."lockedUntil" IS NOT NULL AND u."lockedUntil" > clock.now) AS "isLocked"
     `;
 
     if (!updatedRows || updatedRows.length !== 1) {
       throw new Error('Failed to record authentication failure safely.');
     }
 
-    const { failedPasswordAttempts, lockedUntil } = updatedRows[0];
-    const isLocked = Boolean(lockedUntil && new Date(lockedUntil).getTime() > Date.now());
-    return { failedPasswordAttempts, lockedUntil, isLocked };
+    const { failedPasswordAttempts, lockedUntil, isLocked } = updatedRows[0];
+    return { failedPasswordAttempts, lockedUntil, isLocked: Boolean(isLocked) };
   }
 
   /**
@@ -244,95 +268,155 @@ export class AuthService {
       throw new Error('Invalid login credentials. Please check your details and try again.');
     }
 
-    if (admin.failedPasswordAttempts > 0 || admin.lockedUntil) {
-      await AuthService.resetFailedPasswordAttempts(admin.id);
-    }
+    const txResult = await prisma.$transaction(async (tx) => {
+      // Lock admin user row FOR UPDATE using database clock
+      const lockedRows = await tx.$queryRaw<Array<{
+        id: string;
+        status: string;
+        passwordHash: string;
+        failedPasswordAttempts: number;
+        lockedUntil: Date | null;
+        isLocked: boolean;
+        now: Date;
+      }>>`
+        WITH clock AS (
+          SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now
+        )
+        SELECT
+          u."id",
+          u."status",
+          u."passwordHash",
+          u."failedPasswordAttempts",
+          u."lockedUntil",
+          (u."lockedUntil" IS NOT NULL AND u."lockedUntil" > clock.now) AS "isLocked",
+          clock.now AS "now"
+        FROM "User" u, clock
+        WHERE u."id" = ${admin.id}
+        FOR UPDATE
+      `;
 
-    const now = new Date();
+      if (!lockedRows || lockedRows.length === 0) {
+        throw new Error('Invalid login credentials. Please check your details and try again.');
+      }
+      const lockedAdmin = lockedRows[0];
+      const now = lockedAdmin.now;
 
-    // 1. Cooldown enforcement (60 seconds)
-    const activeCooldown = await prisma.otpRequest.findFirst({
-      where: {
-        mobile,
-        purpose: 'ADMIN_LOGIN',
-        cooldownUntil: { gt: now },
-      },
+      // Stale password / credentials recheck under row lock
+      if (lockedAdmin.passwordHash !== admin.passwordHash || lockedAdmin.status !== 'ACTIVE') {
+        throw new Error('Invalid login credentials. Please check your details and try again.');
+      }
+
+      // Recheck lockout state under row lock: racing failed attempts establish lockout!
+      if (lockedAdmin.isLocked) {
+        throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
+      }
+
+      // 1. Cooldown enforcement (60 seconds)
+      const activeCooldown = await tx.otpRequest.findFirst({
+        where: {
+          mobile,
+          purpose: 'ADMIN_LOGIN',
+          cooldownUntil: { gt: new Date() },
+        },
+      });
+
+      if (activeCooldown && activeCooldown.cooldownUntil) {
+        const remainingSec = Math.max(
+          1,
+          Math.ceil((activeCooldown.cooldownUntil.getTime() - Date.now()) / 1000)
+        );
+        throw new Error(`Please wait ${remainingSec} seconds before requesting a new admin verification code.`);
+      }
+
+      // 2. Rate-limiting: max 5 requests per 10 minutes
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+      const recentRequests = await tx.otpRequest.count({
+        where: {
+          mobile,
+          purpose: 'ADMIN_LOGIN',
+          createdAt: { gt: tenMinutesAgo },
+        },
+      });
+
+      if (recentRequests >= 5) {
+        throw new Error('Too many verification requests. Please try again after 10 minutes.');
+      }
+
+      // 3. Reset failed attempts under row lock since password matched and account is not locked
+      if (lockedAdmin.failedPasswordAttempts > 0 || lockedAdmin.lockedUntil) {
+        await tx.$executeRaw`
+          UPDATE "User"
+          SET
+            "failedPasswordAttempts" = 0,
+            "lockedUntil" = NULL,
+            "updatedAt" = CURRENT_TIMESTAMP
+          WHERE "id" = ${admin.id}
+        `;
+      }
+
+      // 4. Invalidate earlier unused ADMIN_LOGIN OTPs and VerificationTokens for this mobile
+      await tx.otpRequest.updateMany({
+        where: {
+          mobile,
+          purpose: 'ADMIN_LOGIN',
+          isUsed: false,
+        },
+        data: { isUsed: true },
+      });
+
+      await tx.verificationToken.updateMany({
+        where: {
+          mobile,
+          purpose: 'ADMIN_LOGIN',
+          isUsed: false,
+        },
+        data: { isUsed: true },
+      });
+
+      // 5. Generate cryptographically secure OTP & Hash
+      const otpCode = generateSecureOtp();
+      const otpHash = hmacHashOtp(otpCode);
+      const ttlMs = config.otp.ttlSeconds * 1000;
+      const nowJs = new Date();
+      const expiresAt = new Date(nowJs.getTime() + ttlMs);
+      const cooldownUntil = new Date(nowJs.getTime() + 60 * 1000);
+
+      await tx.otpRequest.create({
+        data: {
+          mobile,
+          otpHash,
+          purpose: 'ADMIN_LOGIN',
+          expiresAt,
+          cooldownUntil,
+        },
+      });
+
+      // 6. Generate and store pre-auth challenge token
+      const challengeToken = generateSecureToken(32);
+      const challengeTokenHash = sha256Hash(challengeToken);
+      const challengeExpiresAt = new Date(new Date(now).getTime() + 10 * 60 * 1000); // 10 minutes
+
+      await tx.verificationToken.create({
+        data: {
+          mobile,
+          tokenHash: challengeTokenHash,
+          purpose: 'ADMIN_LOGIN',
+          isUsed: false,
+          expiresAt: challengeExpiresAt,
+        },
+      });
+
+      return {
+        otpCode,
+        challengeToken,
+        expiresAt: expiresAt.toISOString(),
+      };
     });
 
-    if (activeCooldown && activeCooldown.cooldownUntil) {
-      const remainingSec = Math.ceil((activeCooldown.cooldownUntil.getTime() - now.getTime()) / 1000);
-      throw new Error(`Please wait ${remainingSec} seconds before requesting a new admin verification code.`);
-    }
-
-    // 2. Rate-limiting: max 5 requests per 10 minutes
-    const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
-    const recentRequests = await prisma.otpRequest.count({
-      where: {
-        mobile,
-        purpose: 'ADMIN_LOGIN',
-        createdAt: { gt: tenMinutesAgo },
-      },
-    });
-
-    if (recentRequests >= 5) {
-      throw new Error('Too many verification requests. Please try again after 10 minutes.');
-    }
-
-    // 3. Invalidate earlier unused ADMIN_LOGIN OTPs for this mobile
-    await prisma.otpRequest.updateMany({
-      where: {
-        mobile,
-        purpose: 'ADMIN_LOGIN',
-        isUsed: false,
-      },
-      data: { isUsed: true },
-    });
-
-    // 4. Generate cryptographically secure OTP & Hash
-    const otpCode = generateSecureOtp();
-    const otpHash = hmacHashOtp(otpCode);
-    const ttlMs = config.otp.ttlSeconds * 1000;
-    const expiresAt = new Date(now.getTime() + ttlMs);
-    const cooldownUntil = new Date(now.getTime() + 60 * 1000);
-
-    await prisma.otpRequest.create({
-      data: {
-        mobile,
-        otpHash,
-        purpose: 'ADMIN_LOGIN',
-        expiresAt,
-        cooldownUntil,
-      },
-    });
-
-    // 5. Generate and store pre-auth challenge token
-    const challengeToken = generateSecureToken(32);
-    const challengeTokenHash = sha256Hash(challengeToken);
-    const challengeExpiresAt = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes
-
-    await prisma.verificationToken.updateMany({
-      where: {
-        mobile,
-        purpose: 'ADMIN_LOGIN',
-        isUsed: false,
-      },
-      data: { isUsed: true },
-    });
-
-    await prisma.verificationToken.create({
-      data: {
-        mobile,
-        tokenHash: challengeTokenHash,
-        purpose: 'ADMIN_LOGIN',
-        isUsed: false,
-        expiresAt: challengeExpiresAt,
-      },
-    });
-
-    // 6. Dispatch SMS
+    // 7. Dispatch SMS outside transaction
     const smsResult = await SmsService.sendOtp({
       mobile,
-      otpCode,
+      otpCode: txResult.otpCode,
     });
 
     if (!smsResult.success && config.isProduction) {
@@ -342,11 +426,11 @@ export class AuthService {
     return {
       message: 'Admin verification code dispatched successfully to your registered mobile number.',
       cooldownSeconds: 60,
-      expiresAt: expiresAt.toISOString(),
+      expiresAt: txResult.expiresAt,
       role,
       requireOtp: true,
-      challengeToken,
-      verificationToken: challengeToken,
+      challengeToken: txResult.challengeToken,
+      verificationToken: txResult.challengeToken,
     };
   }
 
@@ -591,10 +675,11 @@ export class AuthService {
    */
   static async requestOtp(params: {
     mobile: string;
-    purpose: OtpPurpose | 'REGISTRATION' | 'FORGOT_PASSWORD' | 'LOGIN' | 'ADMIN_LOGIN';
+    purpose?: unknown;
     ipAddress?: string;
   }) {
-    const cleanMobile = params.mobile.replace(/\D/g, '').slice(-10);
+    const validatedPurpose = requireGenericOtpPurpose(params.purpose);
+    const cleanMobile = (params.mobile || '').replace(/\D/g, '').slice(-10);
     if (cleanMobile.length !== 10) {
       throw new Error('Please enter a valid 10-digit Indian mobile number.');
     }
@@ -602,14 +687,14 @@ export class AuthService {
     const now = new Date();
 
     // 1. Business purpose validation
-    if (params.purpose === 'REGISTRATION') {
+    if (validatedPurpose === 'REGISTRATION') {
       const existingUser = await prisma.user.findUnique({
         where: { mobile: cleanMobile },
       });
       if (existingUser) {
         throw new Error('This mobile number is already registered. Please proceed to login.');
       }
-    } else if (params.purpose === 'FORGOT_PASSWORD') {
+    } else if (validatedPurpose === 'FORGOT_PASSWORD') {
       const existingUser = await prisma.user.findUnique({
         where: { mobile: cleanMobile },
       });
@@ -628,7 +713,7 @@ export class AuthService {
     const activeCooldown = await prisma.otpRequest.findFirst({
       where: {
         mobile: cleanMobile,
-        purpose: params.purpose as OtpPurpose,
+        purpose: validatedPurpose as OtpPurpose,
         cooldownUntil: { gt: now },
       },
     });
@@ -662,7 +747,7 @@ export class AuthService {
       data: {
         mobile: cleanMobile,
         otpHash,
-        purpose: params.purpose as OtpPurpose,
+        purpose: validatedPurpose as OtpPurpose,
         expiresAt,
         cooldownUntil,
       },
@@ -714,6 +799,13 @@ export class AuthService {
       return {
         success: false,
         message: 'Please enter a valid 6-digit verification code.',
+      };
+    }
+
+    if ((params.purpose as string) === 'ADMIN_LOGIN') {
+      return {
+        success: false,
+        message: 'Invalid OTP purpose for worker verification.',
       };
     }
 
@@ -824,15 +916,24 @@ export class AuthService {
   static async verifyOtp(params: {
     mobile: string;
     otpCode: string;
-    purpose: OtpPurpose | 'REGISTRATION' | 'FORGOT_PASSWORD' | 'LOGIN' | 'ADMIN_LOGIN' | 'ACCOUNT_DELETION';
+    purpose?: unknown;
   }) {
+    const validatedPurpose = requireGenericOtpPurpose(params.purpose);
     const cleanOtp = (params.otpCode || '').trim();
     if (!cleanOtp || cleanOtp.length !== 6) {
       throw new Error('Please enter a valid 6-digit verification code.');
     }
 
     const txResult = await prisma.$transaction(async (tx) => {
-      return this.verifyOtpInTransaction(tx, params, { createVerificationToken: true });
+      return this.verifyOtpInTransaction(
+        tx,
+        {
+          mobile: params.mobile,
+          otpCode: cleanOtp,
+          purpose: validatedPurpose as OtpPurpose,
+        },
+        { createVerificationToken: true }
+      );
     });
 
     if (!txResult.success) {
@@ -1042,11 +1143,14 @@ export class AuthService {
     let deletionCancelled = false;
 
     await prisma.$transaction(async (tx) => {
-      // 1. Lock user row FOR UPDATE to prevent race with deletion worker and stale credentials
+      // 1. Lock user row FOR UPDATE to prevent race with deletion worker, lockout, and stale credentials
       const lockedUsers = await tx.$queryRaw<Array<{
         id: string;
         status: string;
         passwordHash: string;
+        failedPasswordAttempts: number;
+        lockedUntil: Date | null;
+        isLocked: boolean;
         deletionScheduledAt: Date | null;
         deletionRequestedAt: Date | null;
         gracePeriodExpired: boolean;
@@ -1059,6 +1163,9 @@ export class AuthService {
           u."id",
           u."status",
           u."passwordHash",
+          u."failedPasswordAttempts",
+          u."lockedUntil",
+          (u."lockedUntil" IS NOT NULL AND u."lockedUntil" > clock.now) AS "isLocked",
           u."deletionScheduledAt",
           u."deletionRequestedAt",
           (u."deletionScheduledAt" IS NOT NULL AND u."deletionScheduledAt" <= clock.now) AS "gracePeriodExpired",
@@ -1081,6 +1188,11 @@ export class AuthService {
 
       if (lockedUser.status === 'SUSPENDED') {
         throw new Error('Your account has been suspended. Please contact customer support.');
+      }
+
+      // Recheck lockout state under row lock: racing failed password attempts establish lockout!
+      if (lockedUser.isLocked) {
+        throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
       }
 
       // 2. Lock active AccountDeletionOperation row FOR UPDATE if one exists

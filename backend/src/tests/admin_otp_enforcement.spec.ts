@@ -96,6 +96,439 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
     });
   });
 
+  describe('HIR-V4-01: Runtime Allowlist & Administrator OTP Bypass Closure', () => {
+    // 1. Generic OTP request with purpose: ADMIN_LOGIN is rejected
+    test('1. Generic OTP request with purpose: ADMIN_LOGIN is rejected', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/otp/request')
+        .send({ mobile: billAdminMobile, purpose: 'ADMIN_LOGIN' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/Invalid OTP purpose/i);
+
+      // Verify service layer also rejects directly
+      await expect(
+        AuthService.requestOtp({ mobile: billAdminMobile, purpose: 'ADMIN_LOGIN' as any })
+      ).rejects.toThrow(/Invalid OTP purpose/i);
+    });
+
+    // 2. The rejection creates no administrator challenge and no unauthorized verification token or session
+    test('2. Rejection creates no administrator challenge and no unauthorized verification token or session', async () => {
+      await request(app)
+        .post('/api/v1/auth/otp/request')
+        .send({ mobile: billAdminMobile, purpose: 'ADMIN_LOGIN' });
+
+      const tokens = await prisma.verificationToken.findMany({
+        where: { mobile: billAdminMobile, purpose: 'ADMIN_LOGIN' },
+      });
+      expect(tokens).toHaveLength(0);
+
+      const otpRequests = await prisma.otpRequest.findMany({
+        where: { mobile: billAdminMobile, purpose: 'ADMIN_LOGIN' },
+      });
+      expect(otpRequests).toHaveLength(0);
+
+      const sessions = await prisma.authSession.findMany({
+        where: { userId: billAdminId },
+      });
+      expect(sessions).toHaveLength(0);
+    });
+
+    // 3. Generic OTP verification with purpose: ADMIN_LOGIN is rejected
+    test('3. Generic OTP verification with purpose: ADMIN_LOGIN is rejected', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/otp/verify')
+        .send({ mobile: billAdminMobile, otpCode: '123456', purpose: 'ADMIN_LOGIN' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/Invalid OTP purpose/i);
+
+      // Verify service layer also rejects directly
+      await expect(
+        AuthService.verifyOtp({ mobile: billAdminMobile, otpCode: '123456', purpose: 'ADMIN_LOGIN' as any })
+      ).rejects.toThrow(/Invalid OTP purpose/i);
+
+      const tokens = await prisma.verificationToken.findMany({
+        where: { mobile: billAdminMobile },
+      });
+      expect(tokens).toHaveLength(0);
+    });
+
+    // 4. The same restrictions apply to /auth/send-otp and /auth/verify-otp compatibility aliases
+    test('4. The same restrictions apply to /auth/send-otp and /auth/verify-otp aliases', async () => {
+      const reqAlias = await request(app)
+        .post('/api/v1/auth/send-otp')
+        .send({ mobile: billAdminMobile, purpose: 'ADMIN_LOGIN' });
+      expect(reqAlias.status).toBe(400);
+      expect(reqAlias.body.success).toBe(false);
+      expect(reqAlias.body.message).toMatch(/Invalid OTP purpose/i);
+
+      const verifyAlias = await request(app)
+        .post('/api/v1/auth/verify-otp')
+        .send({ mobile: billAdminMobile, otpCode: '123456', purpose: 'ADMIN_LOGIN' });
+      expect(verifyAlias.status).toBe(400);
+      expect(verifyAlias.body.success).toBe(false);
+      expect(verifyAlias.body.message).toMatch(/Invalid OTP purpose/i);
+
+      const tokens = await prisma.verificationToken.findMany({
+        where: { mobile: billAdminMobile },
+      });
+      expect(tokens).toHaveLength(0);
+    });
+
+    // 5. Unknown and malformed purposes are rejected
+    test('5. Unknown, missing, and malformed purposes are rejected', async () => {
+      const invalidPurposes = ['SUPERADMIN_LOGIN', 'ROOT', '', null, 12345, 'FORGED'];
+      for (const badPurpose of invalidPurposes) {
+        const resReq = await request(app)
+          .post('/api/v1/auth/otp/request')
+          .send({ mobile: workerMobile, purpose: badPurpose });
+        expect(resReq.status).toBe(400);
+        expect(resReq.body.success).toBe(false);
+
+        const resVerify = await request(app)
+          .post('/api/v1/auth/otp/verify')
+          .send({ mobile: workerMobile, otpCode: '123456', purpose: badPurpose });
+        expect(resVerify.status).toBe(400);
+        expect(resVerify.body.success).toBe(false);
+      }
+
+      // Missing purpose completely
+      const resMissing = await request(app)
+        .post('/api/v1/auth/otp/request')
+        .send({ mobile: workerMobile });
+      expect(resMissing.status).toBe(400);
+      expect(resMissing.body.success).toBe(false);
+    });
+
+    // 6. The disallowed paths do not set an authentication cookie or issue a usable session
+    test('6. Disallowed paths do not set an authentication cookie or issue a usable session', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/otp/request')
+        .send({ mobile: billAdminMobile, purpose: 'ADMIN_LOGIN' });
+
+      expect(res.headers['set-cookie']).toBeUndefined();
+      expect(res.body.accessToken).toBeUndefined();
+      expect(res.body.token).toBeUndefined();
+      expect(res.body.sessionId).toBeUndefined();
+
+      const sessions = await prisma.authSession.findMany({
+        where: { userId: billAdminId },
+      });
+      expect(sessions).toHaveLength(0);
+    });
+
+    // 7. Dedicated administrator OTP issuance rejects a wrong password without issuing a usable administrator challenge or OTP
+    test('7. Dedicated admin OTP issuance rejects a wrong password without issuing challenge or OTP', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/admin/otp/request')
+        .send({
+          identifier: `${config.admin.billAdminPrefix}${billAdminMobile}`,
+          password: 'WrongPassword123!',
+        });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.challengeToken).toBeUndefined();
+
+      const tokens = await prisma.verificationToken.findMany({
+        where: { mobile: billAdminMobile },
+      });
+      expect(tokens).toHaveLength(0);
+
+      const otpRequests = await prisma.otpRequest.findMany({
+        where: { mobile: billAdminMobile },
+      });
+      expect(otpRequests).toHaveLength(0);
+    });
+
+    // 8. Correct password followed by the correct OTP succeeds through the intended dedicated path
+    test('8. Correct password followed by correct OTP succeeds through intended dedicated path', async () => {
+      // 1. Password check & challenge issuance
+      const reqRes = await request(app)
+        .post('/api/v1/auth/admin/otp/request')
+        .send({
+          identifier: `${config.admin.billAdminPrefix}${billAdminMobile}`,
+          password: testPassword,
+        });
+
+      expect(reqRes.status).toBe(200);
+      expect(reqRes.body.success).toBe(true);
+      expect(reqRes.body.challengeToken).toBeDefined();
+      const challengeToken = reqRes.body.challengeToken;
+
+      // In test environment, set a known OTP code in database for verification
+      const realOtp = '774411';
+      const latestOtp = await prisma.otpRequest.findFirst({
+        where: { mobile: billAdminMobile, purpose: 'ADMIN_LOGIN', isUsed: false },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(latestOtp).toBeDefined();
+      await prisma.otpRequest.update({
+        where: { id: latestOtp!.id },
+        data: { otpHash: sha256Hash(realOtp) },
+      });
+
+      // 2. OTP & Challenge verification
+      const verifyRes = await request(app)
+        .post('/api/v1/auth/admin/otp/verify')
+        .send({
+          identifier: `${config.admin.billAdminPrefix}${billAdminMobile}`,
+          otpCode: realOtp,
+          challengeToken,
+        });
+
+      expect(verifyRes.status).toBe(200);
+      expect(verifyRes.body.success).toBe(true);
+      expect(verifyRes.body.accessToken).toBeDefined();
+      expect(verifyRes.body.user.role).toBe('BILL_ADMIN');
+      expect(verifyRes.headers['set-cookie']).toBeDefined();
+
+      const session = await prisma.authSession.findFirst({
+        where: { userId: billAdminId, revokedAt: null },
+      });
+      expect(session).toBeDefined();
+    });
+
+    // 9. Incorrect or expired OTPs do not create an administrator session
+    test('9. Incorrect or expired OTPs do not create an administrator session', async () => {
+      const otpReq = await AuthService.requestAdminOtp({
+        identifier: `${config.admin.billAdminPrefix}${billAdminMobile}`,
+        password: testPassword,
+      });
+
+      // Incorrect OTP
+      const resBad = await request(app)
+        .post('/api/v1/auth/admin/otp/verify')
+        .send({
+          identifier: `${config.admin.billAdminPrefix}${billAdminMobile}`,
+          otpCode: '000000',
+          challengeToken: otpReq.challengeToken,
+        });
+      expect(resBad.body.success).toBe(false);
+      expect(resBad.body.accessToken).toBeUndefined();
+
+      // Expire OTP in DB
+      await prisma.otpRequest.updateMany({
+        where: { mobile: billAdminMobile, purpose: 'ADMIN_LOGIN' },
+        data: { expiresAt: new Date(Date.now() - 60000) },
+      });
+
+      const resExpired = await request(app)
+        .post('/api/v1/auth/admin/otp/verify')
+        .send({
+          identifier: `${config.admin.billAdminPrefix}${billAdminMobile}`,
+          otpCode: '123456',
+          challengeToken: otpReq.challengeToken,
+        });
+      expect(resExpired.body.success).toBe(false);
+      expect(resExpired.body.accessToken).toBeUndefined();
+
+      const sessions = await prisma.authSession.findMany({
+        where: { userId: billAdminId, revokedAt: null },
+      });
+      expect(sessions).toHaveLength(0);
+    });
+
+    // 10. An already-used challenge/OTP cannot be replayed
+    test('10. An already-used challenge/OTP cannot be replayed', async () => {
+      const otpReq = await AuthService.requestAdminOtp({
+        identifier: `${config.admin.operationsAdminPrefix}${opsAdminMobile}`,
+        password: testPassword,
+      });
+      const realOtp = '882299';
+      const latestOtp = await prisma.otpRequest.findFirst({
+        where: { mobile: opsAdminMobile, purpose: 'ADMIN_LOGIN', isUsed: false },
+        orderBy: { createdAt: 'desc' },
+      });
+      await prisma.otpRequest.update({
+        where: { id: latestOtp!.id },
+        data: { otpHash: sha256Hash(realOtp) },
+      });
+
+      // First verification succeeds
+      const res1 = await request(app)
+        .post('/api/v1/auth/admin/otp/verify')
+        .send({
+          identifier: `${config.admin.operationsAdminPrefix}${opsAdminMobile}`,
+          otpCode: realOtp,
+          challengeToken: otpReq.challengeToken,
+        });
+      expect(res1.status).toBe(200);
+
+      // Replay attempt must fail
+      const resReplay = await request(app)
+        .post('/api/v1/auth/admin/otp/verify')
+        .send({
+          identifier: `${config.admin.operationsAdminPrefix}${opsAdminMobile}`,
+          otpCode: realOtp,
+          challengeToken: otpReq.challengeToken,
+        });
+      expect(resReplay.body.success).toBe(false);
+      expect(resReplay.body.accessToken).toBeUndefined();
+
+      const sessions = await prisma.authSession.findMany({
+        where: { userId: opsAdminId, revokedAt: null },
+      });
+      expect(sessions).toHaveLength(1);
+    });
+
+    // 11. A worker OTP cannot be substituted for an administrator challenge
+    test('11. A worker OTP cannot be substituted for an administrator challenge', async () => {
+      // Worker legitimately requests and verifies OTP
+      const testWorkerMobile = '9876543299';
+      await prisma.user.upsert({
+        where: { mobile: testWorkerMobile },
+        update: {},
+        create: {
+          mobile: testWorkerMobile,
+          fullName: 'Sub Worker',
+          passwordHash: 'dummy',
+          role: 'USER',
+          status: 'ACTIVE',
+        },
+      });
+
+      const workerReq = await AuthService.requestOtp({
+        mobile: testWorkerMobile,
+        purpose: 'LOGIN',
+      });
+      expect(workerReq).toBeDefined();
+
+      const workerOtp = '334455';
+      const wOtpRow = await prisma.otpRequest.findFirst({
+        where: { mobile: testWorkerMobile, purpose: 'LOGIN' },
+        orderBy: { createdAt: 'desc' },
+      });
+      await prisma.otpRequest.update({
+        where: { id: wOtpRow!.id },
+        data: { otpHash: sha256Hash(workerOtp) },
+      });
+
+      const workerVerify = await AuthService.verifyOtp({
+        mobile: testWorkerMobile,
+        otpCode: workerOtp,
+        purpose: 'LOGIN',
+      });
+      expect(workerVerify.verificationToken).toBeDefined();
+
+      // Attacker attempts to pass worker's verificationToken to admin verification
+      const resAttack = await request(app)
+        .post('/api/v1/auth/admin/otp/verify')
+        .send({
+          identifier: `${config.admin.billAdminPrefix}${billAdminMobile}`,
+          otpCode: workerOtp,
+          challengeToken: workerVerify.verificationToken,
+        });
+
+      expect(resAttack.status).toBe(400);
+      expect(resAttack.body.success).toBe(false);
+      expect(resAttack.body.accessToken).toBeUndefined();
+
+      const sessions = await prisma.authSession.findMany({
+        where: { userId: billAdminId, revokedAt: null },
+      });
+      expect(sessions).toHaveLength(0);
+    });
+
+    // 12. Valid generic worker OTP use cases still work
+    test('12. Valid generic worker OTP use cases still work', async () => {
+      const freshWorkerMobile = '9876543288';
+      await prisma.user.deleteMany({ where: { mobile: freshWorkerMobile } });
+      await prisma.otpRequest.deleteMany({ where: { mobile: freshWorkerMobile } });
+      await prisma.verificationToken.deleteMany({ where: { mobile: freshWorkerMobile } });
+
+      // Request REGISTRATION OTP
+      const regReq = await request(app)
+        .post('/api/v1/auth/otp/request')
+        .send({ mobile: freshWorkerMobile, purpose: 'REGISTRATION' });
+      expect(regReq.status).toBe(200);
+      expect(regReq.body.success).toBe(true);
+
+      const knownOtp = '654321';
+      const otpRow = await prisma.otpRequest.findFirst({
+        where: { mobile: freshWorkerMobile, purpose: 'REGISTRATION' },
+        orderBy: { createdAt: 'desc' },
+      });
+      await prisma.otpRequest.update({
+        where: { id: otpRow!.id },
+        data: { otpHash: sha256Hash(knownOtp) },
+      });
+
+      // Verify REGISTRATION OTP
+      const regVerify = await request(app)
+        .post('/api/v1/auth/otp/verify')
+        .send({ mobile: freshWorkerMobile, otpCode: knownOtp, purpose: 'REGISTRATION' });
+      expect(regVerify.status).toBe(200);
+      expect(regVerify.body.success).toBe(true);
+      expect(regVerify.body.verificationToken).toBeDefined();
+
+      // Request FORGOT_PASSWORD OTP for existing worker
+      const resetReq = await request(app)
+        .post('/api/v1/auth/otp/request')
+        .send({ mobile: workerMobile, purpose: 'FORGOT_PASSWORD' });
+      expect(resetReq.status).toBe(200);
+      expect(resetReq.body.success).toBe(true);
+    });
+
+    // 13. Both administrative roles remain correctly scoped after successful login
+    test('13. Both administrative roles remain correctly scoped after successful login', async () => {
+      // 1. Bill Admin login
+      const billReq = await AuthService.requestAdminOtp({
+        identifier: `${config.admin.billAdminPrefix}${billAdminMobile}`,
+        password: testPassword,
+      });
+      const billOtp = '121212';
+      const billOtpRow = await prisma.otpRequest.findFirst({
+        where: { mobile: billAdminMobile, purpose: 'ADMIN_LOGIN' },
+        orderBy: { createdAt: 'desc' },
+      });
+      await prisma.otpRequest.update({
+        where: { id: billOtpRow!.id },
+        data: { otpHash: sha256Hash(billOtp) },
+      });
+
+      const billVerify = await request(app)
+        .post('/api/v1/auth/admin/otp/verify')
+        .send({
+          identifier: `${config.admin.billAdminPrefix}${billAdminMobile}`,
+          otpCode: billOtp,
+          challengeToken: billReq.challengeToken,
+        });
+      expect(billVerify.status).toBe(200);
+      expect(billVerify.body.user.role).toBe('BILL_ADMIN');
+      expect(billVerify.body.role).toBe('BILL_ADMIN');
+
+      // 2. Operations Admin login
+      const opsReq = await AuthService.requestAdminOtp({
+        identifier: `${config.admin.operationsAdminPrefix}${opsAdminMobile}`,
+        password: testPassword,
+      });
+      const opsOtp = '343434';
+      const opsOtpRow = await prisma.otpRequest.findFirst({
+        where: { mobile: opsAdminMobile, purpose: 'ADMIN_LOGIN' },
+        orderBy: { createdAt: 'desc' },
+      });
+      await prisma.otpRequest.update({
+        where: { id: opsOtpRow!.id },
+        data: { otpHash: sha256Hash(opsOtp) },
+      });
+
+      const opsVerify = await request(app)
+        .post('/api/v1/auth/admin/otp/verify')
+        .send({
+          identifier: `${config.admin.operationsAdminPrefix}${opsAdminMobile}`,
+          otpCode: opsOtp,
+          challengeToken: opsReq.challengeToken,
+        });
+      expect(opsVerify.status).toBe(200);
+      expect(opsVerify.body.user.role).toBe('OPERATIONS_ADMIN');
+      expect(opsVerify.body.role).toBe('OPERATIONS_ADMIN');
+    });
+  });
+
   // 1. Correct administrator password produces an OTP challenge but no authenticated session
   test('1. Correct administrator password produces an OTP challenge but no authenticated session', async () => {
     const res = await request(app)

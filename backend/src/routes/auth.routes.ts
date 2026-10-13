@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { AuthService, normalizeStrictIndianMobile } from '../services/auth.service';
+import { AuthService, normalizeStrictIndianMobile, requireGenericOtpPurpose } from '../services/auth.service';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import {
   otpRequestLimiter,
@@ -66,12 +66,13 @@ router.get('/admin-prefixes', (_req: Request, res: Response) => {
 
 const handleOtpRequest = async (req: Request, res: Response) => {
   try {
-    const { mobile, purpose = 'REGISTRATION' } = req.body;
+    const { mobile, purpose } = req.body;
     if (!mobile) {
       return res.status(400).json({ success: false, message: 'Mobile number is required.' });
     }
+    const validatedPurpose = requireGenericOtpPurpose(purpose);
     const ipAddress = req.ip || req.socket.remoteAddress;
-    const result = await AuthService.requestOtp({ mobile, purpose, ipAddress });
+    const result = await AuthService.requestOtp({ mobile, purpose: validatedPurpose, ipAddress });
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
@@ -83,11 +84,12 @@ router.post('/send-otp', otpRequestIpLimiter, otpRequestLimiter, handleOtpReques
 
 const handleOtpVerify = async (req: Request, res: Response) => {
   try {
-    const { mobile, otpCode, purpose = 'REGISTRATION' } = req.body;
+    const { mobile, otpCode, purpose } = req.body;
     if (!mobile || !otpCode) {
       return res.status(400).json({ success: false, message: 'Mobile and 6-digit OTP code are required.' });
     }
-    const result = await AuthService.verifyOtp({ mobile, otpCode, purpose });
+    const validatedPurpose = requireGenericOtpPurpose(purpose);
+    const result = await AuthService.verifyOtp({ mobile, otpCode, purpose: validatedPurpose });
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });

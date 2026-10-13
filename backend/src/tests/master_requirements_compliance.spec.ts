@@ -49,9 +49,19 @@ describe('Master Remediation & Requirements Compliance Test Suite', () => {
       expect(() => GstService.calculateReverseGst(10000, true, undefined as any)).toThrow(/\[NO_APPLICABLE_GST_RULE\]/);
     });
 
-    it('fails closed with [NO_APPLICABLE_GST_RULE] when GST is included but rate is zero or negative', () => {
-      expect(() => GstService.calculateReverseGst(10000, true, 0)).toThrow(/\[NO_APPLICABLE_GST_RULE\]/);
+    it('handles explicitly configured 0% GST rate with gstIncluded = true deterministically', () => {
+      const result = GstService.calculateReverseGst(10000, true, 0);
+      expect(result.grossBillAmount).toBe(10000);
+      expect(result.gstIncluded).toBe(true);
+      expect(result.gstRate).toBe(0);
+      expect(result.gstAmount).toBe(0);
+      expect(result.eligibleRewardAmount).toBe(10000);
+    });
+
+    it('fails closed with [NO_APPLICABLE_GST_RULE] when GST is included but rate is negative or invalid', () => {
       expect(() => GstService.calculateReverseGst(10000, true, -5)).toThrow(/\[NO_APPLICABLE_GST_RULE\]/);
+      expect(() => GstService.calculateReverseGst(10000, true, NaN)).toThrow(/\[NO_APPLICABLE_GST_RULE\]/);
+      expect(() => GstService.calculateReverseGst(10000, true, 105)).toThrow(/\[NO_APPLICABLE_GST_RULE\]/);
     });
   });
 

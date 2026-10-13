@@ -370,6 +370,18 @@ class TestRollbackAndReleaseIntegrity(unittest.TestCase):
         """deploy-ec2.yml remote script must validate TARGET_SHA format as 40 hex chars."""
         self.assertIn('[[ "${TARGET_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]]', self.deploy_workflow_content)
 
+    def test_deploy_workflow_validates_target_sha_before_any_path_creation(self):
+        """deploy-ec2.yml remote script must validate TARGET_SHA format before any path or directory creation."""
+        sha_validation_marker = 'case "${TARGET_SHA:-}" in'
+        mkdir_releases_marker = 'mkdir -p "${STATE_DIR}" "${RELEASES_DIR}/${TARGET_SHA}"'
+        self.assertIn(sha_validation_marker, self.deploy_workflow_content)
+        self.assertIn(mkdir_releases_marker, self.deploy_workflow_content)
+        self.assertLess(
+            self.deploy_workflow_content.index(sha_validation_marker),
+            self.deploy_workflow_content.index(mkdir_releases_marker),
+            "TARGET_SHA format validation must precede any mkdir or filesystem path creation"
+        )
+
     def test_deploy_workflow_preserves_first_deployment_safe_gate(self):
         """deploy-ec2.yml must preserve safe first deployment detection without existing active-release.json."""
         self.assertIn('Verified first deployment: no previous release state and zero application containers running', self.deploy_workflow_content)
@@ -628,14 +640,86 @@ class TestEC2DeploymentHarness(unittest.TestCase):
         script = """
         set -euo pipefail
         TARGET_SHA="not_a_sha"
-        if ! [[ "${TARGET_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]]; then
-          echo "[FATAL ERROR] TARGET_SHA must be a full 40-character commit SHA." >&2
-          exit 2
-        fi
+        case "${TARGET_SHA:-}" in
+          ""|*[!0-9a-fA-F]*)
+            echo "[FATAL ERROR] TARGET_SHA must be a full 40-character commit SHA." >&2
+            exit 2
+            ;;
+        esac
         """
         res = subprocess.run([self.bash_cmd, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertEqual(res.returncode, 2)
         self.assertIn("full 40-character commit SHA", res.stderr)
+
+    def test_harness_rejects_empty_and_wrong_length_and_traversal_shas_before_path_creation(self):
+        """Validates that empty, 39-char, 41-char, non-hex, traversal strings exit 2 and create no directories."""
+        import tempfile
+        invalid_shas = [
+            "",
+            "a" * 39,
+            "a" * 41,
+            "g" * 40,
+            "../release",
+            "../../etc/passwd",
+            "/tmp/evil",
+            "$(whoami)",
+            "726e43a 90ae6bf",
+        ]
+        for bad_sha in invalid_shas:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmpdir_fwd = tmpdir.replace("\\", "/")
+                releases_dir = os.path.join(tmpdir, "releases")
+                script = f"""
+                set -eu
+                TARGET_SHA='{bad_sha}'
+                RELEASES_DIR="{tmpdir_fwd}/releases"
+                STATE_DIR="{tmpdir_fwd}/state"
+
+                case "${{TARGET_SHA:-}}" in
+                  ""|*[!0-9a-fA-F]*)
+                    echo "[FATAL ERROR] TARGET_SHA must be a full 40-character hexadecimal commit SHA." >&2
+                    exit 2
+                    ;;
+                esac
+
+                if [ "${{#TARGET_SHA}}" -ne 40 ] || ! [[ "${{TARGET_SHA:-}}" =~ ^[0-9a-fA-F]{{40}}$ ]]; then
+                  echo "[FATAL ERROR] TARGET_SHA must be exactly 40 hexadecimal characters." >&2
+                  exit 2
+                fi
+
+                TARGET_SHA="$(printf '%s' "${{TARGET_SHA}}" | tr '[:upper:]' '[:lower:]')"
+                export TARGET_SHA
+
+                mkdir -p "${{STATE_DIR}}" "${{RELEASES_DIR}}/${{TARGET_SHA}}"
+                """
+                res = subprocess.run([self.bash_cmd, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                self.assertEqual(res.returncode, 2, f"Expected bad SHA {bad_sha!r} to exit 2, got {res.returncode}")
+                # Invariant: directory was NOT created
+                self.assertFalse(os.path.exists(releases_dir), f"Directory was created for bad SHA: {bad_sha}")
+
+    def test_harness_normalizes_uppercase_hex_target_sha_safely(self):
+        """Validates that valid uppercase 40-char hex is safely normalized to lowercase."""
+        upper_sha = "A" * 40
+        script = f"""
+        set -eu
+        TARGET_SHA='{upper_sha}'
+
+        case "${{TARGET_SHA:-}}" in
+          ""|*[!0-9a-fA-F]*)
+            exit 2
+            ;;
+        esac
+
+        if [ "${{#TARGET_SHA}}" -ne 40 ] || ! [[ "${{TARGET_SHA:-}}" =~ ^[0-9a-fA-F]{{40}}$ ]]; then
+          exit 2
+        fi
+
+        TARGET_SHA="$(printf '%s' "${{TARGET_SHA}}" | tr '[:upper:]' '[:lower:]')"
+        echo "NORMALIZED=${{TARGET_SHA}}"
+        """
+        res = subprocess.run([self.bash_cmd, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("NORMALIZED=" + "a" * 40, res.stdout)
 
     def test_harness_rejects_missing_remote_fetch(self):
         import tempfile
