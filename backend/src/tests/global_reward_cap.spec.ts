@@ -122,8 +122,19 @@ describe('Part B & C — Pool-Free Reward Integrity, Volume Scaling, Self-Approv
     // Enable redemption window
     await prisma.redemptionSettings.upsert({
       where: { id: 'default' },
-      update: { isEnabled: true, startAt: null, endAt: null },
-      create: { id: 'default', isEnabled: true },
+      update: {
+        isEnabled: true,
+        startAt: new Date(Date.now() - 3600 * 1000),
+        endAt: new Date(Date.now() + 86400 * 1000),
+        minimumRedemptionAmount: 100.0,
+      },
+      create: {
+        id: 'default',
+        isEnabled: true,
+        startAt: new Date(Date.now() - 3600 * 1000),
+        endAt: new Date(Date.now() + 86400 * 1000),
+        minimumRedemptionAmount: 100.0,
+      },
     });
   });
 

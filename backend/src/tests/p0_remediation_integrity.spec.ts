@@ -442,8 +442,19 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
     beforeAll(async () => {
       await prisma.redemptionSettings.upsert({
         where: { id: 'default' },
-        update: { isEnabled: true, minimumRedemptionAmount: 0.01, startAt: null, endAt: null },
-        create: { id: 'default', isEnabled: true, minimumRedemptionAmount: 0.01, startAt: null, endAt: null },
+        update: {
+          isEnabled: true,
+          minimumRedemptionAmount: 0.01,
+          startAt: new Date(Date.now() - 3600 * 1000),
+          endAt: new Date(Date.now() + 86400 * 1000),
+        },
+        create: {
+          id: 'default',
+          isEnabled: true,
+          minimumRedemptionAmount: 0.01,
+          startAt: new Date(Date.now() - 3600 * 1000),
+          endAt: new Date(Date.now() + 86400 * 1000),
+        },
       });
     });
 

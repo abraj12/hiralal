@@ -358,7 +358,12 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
         .set('Cookie', `admin_access_token=${adminToken}; csrf_token=valid_secret_csrf_token_12345`)
         .set('Origin', 'http://localhost:3000')
         .set('X-CSRF-Token', 'valid_secret_csrf_token_12345')
-        .send({ isEnabled: true });
+        .send({
+          isEnabled: true,
+          minimumRedemptionAmount: 500,
+          startAt: new Date(Date.now() - 3600000).toISOString(),
+          endAt: new Date(Date.now() + 86400000).toISOString(),
+        });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);

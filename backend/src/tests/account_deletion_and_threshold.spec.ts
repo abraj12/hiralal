@@ -365,15 +365,15 @@ describe('Account Deletion Lifecycle & Minimum Redemption Threshold Tests', () =
         update: {
           isEnabled: true,
           minimumRedemptionAmount: 500.0,
-          startAt: null,
-          endAt: null,
+          startAt: new Date(Date.now() - 3600 * 1000),
+          endAt: new Date(Date.now() + 86400 * 1000),
         },
         create: {
           id: 'default',
           isEnabled: true,
           minimumRedemptionAmount: 500.0,
-          startAt: null,
-          endAt: null,
+          startAt: new Date(Date.now() - 3600 * 1000),
+          endAt: new Date(Date.now() + 86400 * 1000),
           message: 'Redemption window is open',
         },
       });

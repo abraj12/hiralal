@@ -52,33 +52,11 @@ export async function provisionRewardRules(
       });
 
       if (totalCount === 0) {
-        if (process.env.NODE_ENV === 'production') {
-          const msg = `ℹ️ [SEED] Production mode: Automatic reward rule creation disabled for ${prof}. Operations Admin must configure reward rules via the administration interface before rewards can be calculated.`;
-          result.warnings.push(msg);
-          postCommitLogs.push(() => {
-            console.log(msg);
-          });
-        } else if (process.env.ENABLE_DEV_REWARD_RULES === 'true') {
-          await trx.rewardRule.create({
-            data: {
-              profession: prof,
-              rewardPercentage: 0.50,
-              effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
-              version: 1,
-              isActive: true,
-            },
-          });
-          result.provisioned.push(prof);
-          postCommitLogs.push(() => {
-            console.log(`✅ [SEED] Initial test/dev reward rule created for ${prof} (0.50%, v1, 2020-01-01 IST)`);
-          });
-        } else {
-          const msg = `ℹ️ [SEED] Profession ${prof} has zero reward rules. Operations Admin must configure reward rules via the administration interface before rewards can be calculated (no default rate).`;
-          result.warnings.push(msg);
-          postCommitLogs.push(() => {
-            console.log(msg);
-          });
-        }
+        const msg = `ℹ️ [SEED] Profession ${prof} has zero reward rules. Operations Admin must configure reward rules via the administration interface before rewards can be calculated (no default rate).`;
+        result.warnings.push(msg);
+        postCommitLogs.push(() => {
+          console.log(msg);
+        });
       } else {
         // Historical records exist: preserve all rows immutable
         const activeRule = await trx.rewardRule.findFirst({

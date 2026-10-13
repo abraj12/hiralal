@@ -683,16 +683,16 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
         where: { id: 'default' },
         update: {
           isEnabled: true,
-          startAt: null,
-          endAt: null,
+          startAt: new Date(Date.now() - 3600 * 1000),
+          endAt: new Date(Date.now() + 86400 * 1000),
           message: 'Rewards redemption window is now open.',
           minimumRedemptionAmount: 100.0,
         },
         create: {
           id: 'default',
           isEnabled: true,
-          startAt: null,
-          endAt: null,
+          startAt: new Date(Date.now() - 3600 * 1000),
+          endAt: new Date(Date.now() + 86400 * 1000),
           message: 'Rewards redemption window is now open.',
           minimumRedemptionAmount: 100.0,
         },
@@ -737,7 +737,13 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       // Restore to open for subsequent tests
       await prisma.redemptionSettings.update({
         where: { id: 'default' },
-        data: { isEnabled: true, message: 'Rewards redemption window is now open.', minimumRedemptionAmount: 100.0 },
+        data: {
+          isEnabled: true,
+          startAt: new Date(Date.now() - 3600 * 1000),
+          endAt: new Date(Date.now() + 86400 * 1000),
+          message: 'Rewards redemption window is now open.',
+          minimumRedemptionAmount: 100.0,
+        },
       });
     });
 

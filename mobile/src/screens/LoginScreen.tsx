@@ -24,6 +24,7 @@ import {
 } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
+import { AdminPrefixes, validateAdminPrefixes } from '../services/adminPrefixes';
 
 type LoginState =
   | 'IDLE'
@@ -50,10 +51,9 @@ export default function LoginScreen() {
   // Mode & Administrator Role Selection
   const [authMode, setAuthMode] = useState<'WORKER' | 'ADMIN'>('WORKER');
   const [adminRoleChoice, setAdminRoleChoice] = useState<'BILL_ADMIN' | 'OPERATIONS_ADMIN'>('BILL_ADMIN');
-  const [adminPrefixes, setAdminPrefixes] = useState<{ billAdmin: string; operationsAdmin: string }>({
-    billAdmin: 'BADM',
-    operationsAdmin: 'OADM',
-  });
+  const [adminPrefixes, setAdminPrefixes] = useState<AdminPrefixes | null>(null);
+  const [adminPrefixesLoading, setAdminPrefixesLoading] = useState(true);
+  const [adminPrefixesError, setAdminPrefixesError] = useState<string | null>(null);
 
   // Administrator OTP Verification State
   const [showOtpModal, setShowOtpModal] = useState(false);
@@ -75,14 +75,28 @@ export default function LoginScreen() {
   const [forgotLoading, setForgotLoading] = useState(false);
 
   // Load configured administrator prefixes dynamically from server
+  const fetchAdminPrefixes = async () => {
+    setAdminPrefixesLoading(true);
+    setAdminPrefixesError(null);
+    try {
+      const res = await MobileApiClient.getAdminPrefixes();
+      if (!res || !res.prefixes) {
+        throw new Error('Failed to retrieve administrator prefix configuration.');
+      }
+      const validated = validateAdminPrefixes(res.prefixes);
+      setAdminPrefixes(validated);
+    } catch (err: any) {
+      setAdminPrefixes(null);
+      setAdminPrefixesError(
+        err.message || 'Unable to retrieve administrator prefix configuration. Please tap Retry.'
+      );
+    } finally {
+      setAdminPrefixesLoading(false);
+    }
+  };
+
   useEffect(() => {
-    MobileApiClient.getAdminPrefixes()
-      .then((res) => {
-        if (res && res.prefixes) {
-          setAdminPrefixes(res.prefixes);
-        }
-      })
-      .catch(() => {});
+    fetchAdminPrefixes();
   }, []);
 
   // Cooldown countdown timer for OTP resend
@@ -120,6 +134,11 @@ export default function LoginScreen() {
 
     let finalId = trimmedId;
     if (authMode === 'ADMIN') {
+      if (!adminPrefixes) {
+        setErrorMsg('Administrator prefix configuration is not loaded. Please tap Retry.');
+        setLoginState('ERROR');
+        return;
+      }
       const activePrefix =
         adminRoleChoice === 'BILL_ADMIN' ? adminPrefixes.billAdmin : adminPrefixes.operationsAdmin;
       const cleanDigits = trimmedId.replace(/\D/g, '').slice(-10);
@@ -165,6 +184,11 @@ export default function LoginScreen() {
   const handleVerifyAdminOtp = async () => {
     if (loginState === 'VERIFYING_OTP') return;
 
+    if (!adminPrefixes) {
+      setOtpError('Administrator prefix configuration is not loaded.');
+      return;
+    }
+
     const cleanOtp = adminOtp.trim();
     if (!cleanOtp || cleanOtp.length !== 6) {
       setOtpError('Please enter the 6-digit verification code.');
@@ -200,6 +224,12 @@ export default function LoginScreen() {
   // Resend Admin OTP
   const handleResendAdminOtp = async () => {
     if (cooldownRemaining > 0) return;
+
+    if (!adminPrefixes) {
+      setOtpError('Administrator prefix configuration is not loaded.');
+      return;
+    }
+
     const activePrefix =
       adminRoleChoice === 'BILL_ADMIN' ? adminPrefixes.billAdmin : adminPrefixes.operationsAdmin;
     const cleanDigits = identifier.replace(/\D/g, '').slice(-10);
@@ -393,62 +423,85 @@ export default function LoginScreen() {
         {authMode === 'ADMIN' && (
           <View style={styles.adminRoleSection}>
             <Text style={styles.adminRoleSectionTitle}>Select Administrator Role</Text>
-            <View style={styles.roleChipsRow}>
-              <TouchableOpacity
-                style={[
-                  styles.roleChip,
-                  adminRoleChoice === 'BILL_ADMIN' && styles.roleChipActive,
-                ]}
-                onPress={() => {
-                  setAdminRoleChoice('BILL_ADMIN');
-                  setErrorMsg(null);
-                }}
-                activeOpacity={0.8}
-              >
-                <Text
-                  style={[
-                    styles.roleChipText,
-                    adminRoleChoice === 'BILL_ADMIN' && styles.roleChipTextActive,
-                  ]}
+            {adminPrefixesLoading && (
+              <View style={styles.adminPrefixStateBox}>
+                <ActivityIndicator size="small" color="#1E60D5" />
+                <Text style={styles.adminPrefixStateText}>Loading administrator configuration...</Text>
+              </View>
+            )}
+            {adminPrefixesError && (
+              <View style={[styles.adminPrefixStateBox, styles.adminPrefixErrorBox]}>
+                <AlertCircle size={16} color="#DC2626" />
+                <Text style={styles.adminPrefixErrorText}>{adminPrefixesError}</Text>
+                <TouchableOpacity
+                  style={styles.adminRetryBtn}
+                  onPress={fetchAdminPrefixes}
+                  activeOpacity={0.8}
                 >
-                  Bill Review Admin
-                </Text>
-                <View style={[styles.prefixPill, adminRoleChoice === 'BILL_ADMIN' && styles.prefixPillActive]}>
-                  <Text style={[styles.prefixPillText, adminRoleChoice === 'BILL_ADMIN' && styles.prefixPillTextActive]}>
-                    {adminPrefixes.billAdmin}
-                  </Text>
-                </View>
-              </TouchableOpacity>
+                  <Text style={styles.adminRetryBtnText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {adminPrefixes && (
+              <>
+                <View style={styles.roleChipsRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.roleChip,
+                      adminRoleChoice === 'BILL_ADMIN' && styles.roleChipActive,
+                    ]}
+                    onPress={() => {
+                      setAdminRoleChoice('BILL_ADMIN');
+                      setErrorMsg(null);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.roleChipText,
+                        adminRoleChoice === 'BILL_ADMIN' && styles.roleChipTextActive,
+                      ]}
+                    >
+                      Bill Review Admin
+                    </Text>
+                    <View style={[styles.prefixPill, adminRoleChoice === 'BILL_ADMIN' && styles.prefixPillActive]}>
+                      <Text style={[styles.prefixPillText, adminRoleChoice === 'BILL_ADMIN' && styles.prefixPillTextActive]}>
+                        {adminPrefixes.billAdmin}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
 
-              <TouchableOpacity
-                style={[
-                  styles.roleChip,
-                  adminRoleChoice === 'OPERATIONS_ADMIN' && styles.roleChipActive,
-                ]}
-                onPress={() => {
-                  setAdminRoleChoice('OPERATIONS_ADMIN');
-                  setErrorMsg(null);
-                }}
-                activeOpacity={0.8}
-              >
-                <Text
-                  style={[
-                    styles.roleChipText,
-                    adminRoleChoice === 'OPERATIONS_ADMIN' && styles.roleChipTextActive,
-                  ]}
-                >
-                  Operations Admin
-                </Text>
-                <View style={[styles.prefixPill, adminRoleChoice === 'OPERATIONS_ADMIN' && styles.prefixPillActive]}>
-                  <Text style={[styles.prefixPillText, adminRoleChoice === 'OPERATIONS_ADMIN' && styles.prefixPillTextActive]}>
-                    {adminPrefixes.operationsAdmin}
-                  </Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.roleChip,
+                      adminRoleChoice === 'OPERATIONS_ADMIN' && styles.roleChipActive,
+                    ]}
+                    onPress={() => {
+                      setAdminRoleChoice('OPERATIONS_ADMIN');
+                      setErrorMsg(null);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.roleChipText,
+                        adminRoleChoice === 'OPERATIONS_ADMIN' && styles.roleChipTextActive,
+                      ]}
+                    >
+                      Operations Admin
+                    </Text>
+                    <View style={[styles.prefixPill, adminRoleChoice === 'OPERATIONS_ADMIN' && styles.prefixPillActive]}>
+                      <Text style={[styles.prefixPillText, adminRoleChoice === 'OPERATIONS_ADMIN' && styles.prefixPillTextActive]}>
+                        {adminPrefixes.operationsAdmin}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
                 </View>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.adminHintText}>
-              Logging in as {adminRoleChoice === 'BILL_ADMIN' ? 'Bill Review' : 'Operations'} Administrator. Two-factor authentication required.
-            </Text>
+                <Text style={styles.adminHintText}>
+                  Logging in as {adminRoleChoice === 'BILL_ADMIN' ? 'Bill Review' : 'Operations'} Administrator. Two-factor authentication required.
+                </Text>
+              </>
+            )}
           </View>
         )}
 
@@ -464,9 +517,11 @@ export default function LoginScreen() {
                 <Text style={styles.prefixText}>
                   {authMode === 'WORKER'
                     ? '🇮🇳 +91'
-                    : adminRoleChoice === 'BILL_ADMIN'
-                    ? adminPrefixes.billAdmin
-                    : adminPrefixes.operationsAdmin}
+                    : adminPrefixes
+                    ? adminRoleChoice === 'BILL_ADMIN'
+                      ? adminPrefixes.billAdmin
+                      : adminPrefixes.operationsAdmin
+                    : '---'}
                 </Text>
               </View>
               <TextInput
@@ -543,9 +598,13 @@ export default function LoginScreen() {
 
           {/* 4. Primary Sign In Button */}
           <TouchableOpacity
-            style={[styles.loginBtn, isSubmitting && styles.loginBtnDisabled]}
+            style={[
+              styles.loginBtn,
+              (isSubmitting || (authMode === 'ADMIN' && (!adminPrefixes || adminPrefixesLoading))) &&
+                styles.loginBtnDisabled,
+            ]}
             onPress={handleUnifiedLogin}
-            disabled={isSubmitting}
+            disabled={isSubmitting || (authMode === 'ADMIN' && (!adminPrefixes || adminPrefixesLoading))}
             activeOpacity={0.85}
           >
             {isSubmitting ? (
@@ -633,17 +692,22 @@ export default function LoginScreen() {
                   Resend code in {cooldownRemaining}s
                 </Text>
               ) : (
-                <TouchableOpacity onPress={handleResendAdminOtp}>
-                  <Text style={styles.resendActiveText}>Resend Security Code</Text>
+                <TouchableOpacity onPress={handleResendAdminOtp} disabled={!adminPrefixes}>
+                  <Text style={[styles.resendActiveText, !adminPrefixes && { opacity: 0.5 }]}>
+                    Resend Security Code
+                  </Text>
                 </TouchableOpacity>
               )}
             </View>
 
             {/* Verify & Sign In Action */}
             <TouchableOpacity
-              style={[styles.modalBtn, loginState === 'VERIFYING_OTP' && styles.loginBtnDisabled]}
+              style={[
+                styles.modalBtn,
+                (loginState === 'VERIFYING_OTP' || !adminPrefixes) && styles.loginBtnDisabled,
+              ]}
               onPress={handleVerifyAdminOtp}
-              disabled={loginState === 'VERIFYING_OTP'}
+              disabled={loginState === 'VERIFYING_OTP' || !adminPrefixes}
               activeOpacity={0.85}
             >
               {loginState === 'VERIFYING_OTP' ? (
@@ -1202,5 +1266,42 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748B',
     textAlign: 'center',
+  },
+  adminPrefixStateBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 8,
+    marginVertical: 4,
+    gap: 8,
+  },
+  adminPrefixStateText: {
+    fontSize: 12,
+    color: '#1E60D5',
+    fontWeight: '500',
+    flex: 1,
+  },
+  adminPrefixErrorBox: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+    borderWidth: 1,
+  },
+  adminPrefixErrorText: {
+    fontSize: 12,
+    color: '#DC2626',
+    fontWeight: '500',
+    flex: 1,
+  },
+  adminRetryBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: '#DC2626',
+    borderRadius: 6,
+  },
+  adminRetryBtnText: {
+    fontSize: 11,
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
 });

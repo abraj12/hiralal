@@ -167,20 +167,7 @@ describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', (
   // ---------------------------------------------------------------
   describe('Task 2 — Safe Baseline Seeding for All Historical States (Actual Implementation)', () => {
     let origEnv: string | undefined;
-    beforeAll(() => {
-      origEnv = process.env.ENABLE_DEV_REWARD_RULES;
-      process.env.ENABLE_DEV_REWARD_RULES = 'true';
-    });
-
-    afterAll(() => {
-      if (origEnv !== undefined) {
-        process.env.ENABLE_DEV_REWARD_RULES = origEnv;
-      } else {
-        delete process.env.ENABLE_DEV_REWARD_RULES;
-      }
-    });
-
-    test('1. Completely empty profession: one initial baseline is created', async () => {
+    test('1. Completely empty profession: zero rules created, requires explicit admin configuration', async () => {
       // Remove all PLUMBER rules to simulate a fresh database with 0 historical rows
       await prisma.rewardRule.deleteMany({ where: { profession: 'PLUMBER' } });
       const countBefore = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
@@ -188,29 +175,30 @@ describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', (
 
       // Execute actual provisioning function
       const result = await provisionRewardRules(prisma);
-      expect(result.provisioned).toContain('PLUMBER');
+      // Zero rules provisioned automatically - no default rates!
+      expect(result.provisioned).toHaveLength(0);
+      expect(result.warnings.some((w) => w.includes('PLUMBER') && w.includes('zero reward rules'))).toBe(true);
 
-      // Verify exactly one baseline row was created
+      // Verify zero rows were created
       const countAfter = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
-      expect(countAfter).toBe(1);
-
-      const created = await prisma.rewardRule.findFirst({ where: { profession: 'PLUMBER', isActive: true } });
-      expect(created).not.toBeNull();
-      expect(created!.effectiveFrom.toISOString()).toBe(new Date('2020-01-01T00:00:00+05:30').toISOString());
-      expect(Number(created!.rewardPercentage)).toBe(0.50);
-      expect(created!.version).toBe(1);
-      expect(created!.isActive).toBe(true);
+      expect(countAfter).toBe(0);
     });
 
     test('2. Existing active rule: all rows remain unchanged', async () => {
-      // Ensure PLUMBER has an existing active rule
-      const activeBefore = await prisma.rewardRule.findFirst({
-        where: { profession: 'PLUMBER', isActive: true },
-        orderBy: { version: 'desc' },
+      // Set up explicitly configured active rule (simulating Operations Admin configuration)
+      await prisma.rewardRule.deleteMany({ where: { profession: 'PLUMBER' } });
+      const initialRule = await prisma.rewardRule.create({
+        data: {
+          profession: 'PLUMBER',
+          rewardPercentage: 0.50,
+          effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+          version: 1,
+          isActive: true,
+        },
       });
-      expect(activeBefore).not.toBeNull();
-      const initialUpdatedAt = activeBefore!.updatedAt.getTime();
-      const initialEffectiveFrom = activeBefore!.effectiveFrom.getTime();
+
+      const initialUpdatedAt = initialRule.updatedAt.getTime();
+      const initialEffectiveFrom = initialRule.effectiveFrom.getTime();
 
       // Execute actual provisioning function
       const result = await provisionRewardRules(prisma);
@@ -220,12 +208,12 @@ describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', (
       const count = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
       expect(count).toBe(1);
 
-      const reloaded = await prisma.rewardRule.findUnique({ where: { id: activeBefore!.id } });
+      const reloaded = await prisma.rewardRule.findUnique({ where: { id: initialRule.id } });
       expect(reloaded!.updatedAt.getTime()).toBe(initialUpdatedAt);
       expect(reloaded!.effectiveFrom.getTime()).toBe(initialEffectiveFrom);
-      expect(Number(reloaded!.rewardPercentage)).toBe(Number(activeBefore!.rewardPercentage));
+      expect(Number(reloaded!.rewardPercentage)).toBe(Number(initialRule.rewardPercentage));
       expect(reloaded!.isActive).toBe(true);
-      expect(reloaded!.version).toBe(activeBefore!.version);
+      expect(reloaded!.version).toBe(initialRule.version);
     });
 
     test('3. Existing inactive history with no active rule: no baseline created and no historical fields change', async () => {
@@ -307,15 +295,29 @@ describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', (
       expect(reloadedV2!.isActive).toBe(true);
     });
 
-    test('5. Concurrent seed execution: Promise.all creates exactly 1 baseline per profession without duplicate versions', async () => {
-      // Clean slate for both professions
+    test('5. Concurrent seed execution: preserves existing configured rules without duplicate versions', async () => {
+      // Set up explicitly configured active rule for each profession
       await prisma.rewardRule.deleteMany({
         where: { profession: { in: ['PLUMBER', 'TILE_INSTALLER'] } },
       });
-      const countPlumberBefore = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
-      const countTileBefore = await prisma.rewardRule.count({ where: { profession: 'TILE_INSTALLER' } });
-      expect(countPlumberBefore).toBe(0);
-      expect(countTileBefore).toBe(0);
+      await prisma.rewardRule.create({
+        data: {
+          profession: 'PLUMBER',
+          rewardPercentage: 0.50,
+          effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+          version: 1,
+          isActive: true,
+        },
+      });
+      await prisma.rewardRule.create({
+        data: {
+          profession: 'TILE_INSTALLER',
+          rewardPercentage: 0.75,
+          effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+          version: 1,
+          isActive: true,
+        },
+      });
 
       // Concurrently invoke provisionRewardRules 3 times simultaneously
       const results = await Promise.all([
@@ -324,24 +326,20 @@ describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', (
         provisionRewardRules(prisma),
       ]);
 
-      // Exactly one baseline created per profession
+      // Exactly one rule per profession preserved across executions
       const countPlumberAfter = await prisma.rewardRule.count({ where: { profession: 'PLUMBER' } });
       const countTileAfter = await prisma.rewardRule.count({ where: { profession: 'TILE_INSTALLER' } });
       expect(countPlumberAfter).toBe(1);
       expect(countTileAfter).toBe(1);
 
-      // Across the 3 results, exactly 1 must have provisioned PLUMBER, and 2 must have preserved it
-      const plumberProvisionedCount = results.filter((r) => r.provisioned.includes('PLUMBER')).length;
-      const plumberPreservedCount = results.filter((r) => r.preserved.includes('PLUMBER')).length;
-      expect(plumberProvisionedCount).toBe(1);
-      expect(plumberPreservedCount).toBe(2);
+      // Across the 3 results, all 3 preserved existing rules (zero newly provisioned)
+      for (const res of results) {
+        expect(res.provisioned).toHaveLength(0);
+        expect(res.preserved).toContain('PLUMBER');
+        expect(res.preserved).toContain('TILE_INSTALLER');
+      }
 
-      const tileProvisionedCount = results.filter((r) => r.provisioned.includes('TILE_INSTALLER')).length;
-      const tilePreservedCount = results.filter((r) => r.preserved.includes('TILE_INSTALLER')).length;
-      expect(tileProvisionedCount).toBe(1);
-      expect(tilePreservedCount).toBe(2);
-
-      // Both created rules must be version 1 and active
+      // Both rules remain version 1 and active
       const plumberRule = await prisma.rewardRule.findFirst({ where: { profession: 'PLUMBER' } });
       const tileRule = await prisma.rewardRule.findFirst({ where: { profession: 'TILE_INSTALLER' } });
       expect(plumberRule!.version).toBe(1);
@@ -504,7 +502,7 @@ describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', (
   // Task 4 — Redemption window PUT uses strict timestamp validation
   // ---------------------------------------------------------------
   describe('Task 4 — PUT /settings/redemption uses strict timestamp validation', () => {
-    test('accepts valid ISO timestamps with explicit timezone', async () => {
+    test('accepts valid ISO timestamps with explicit timezone and threshold', async () => {
       const res = await request(app)
         .put('/api/admin/settings/redemption')
         .set('Authorization', `Bearer ${opsAdminToken}`)
@@ -512,13 +510,14 @@ describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', (
           isEnabled: true,
           startAt: '2026-11-01T09:00:00+05:30',
           endAt: '2026-11-30T18:00:00+05:30',
+          minimumRedemptionAmount: 500,
           message: 'Open',
         });
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
     });
 
-    test('accepts omitted startAt/endAt (open window without bounds)', async () => {
+    test('rejects omitted startAt/endAt when isEnabled is true (fail closed)', async () => {
       const res = await request(app)
         .put('/api/admin/settings/redemption')
         .set('Authorization', `Bearer ${opsAdminToken}`)
@@ -526,7 +525,8 @@ describe('Part 2A.4 — Immutable-History and Timestamp Validation Hardening', (
           isEnabled: true,
           message: 'Open unbounded',
         });
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain('required to enable redemption');
     });
 
     test('rejects invalid hour in startAt (hour 25)', async () => {

@@ -54,6 +54,60 @@ export class AuthService {
   }
 
   /**
+   * Concurrency-safe atomic recording of failed password attempt using PostgreSQL UPDATE expression.
+   * Atomically increments failedPasswordAttempts and sets lockedUntil if threshold is reached.
+   */
+  static async recordFailedPasswordAttempt(userId: string, tx: any = prisma): Promise<{
+    failedPasswordAttempts: number;
+    lockedUntil: Date | null;
+    isLocked: boolean;
+  }> {
+    const maxFailedAttempts = config.auth?.maxFailedAttempts || 10;
+    const lockoutSeconds = config.authLockoutSeconds || config.auth?.lockoutSeconds || 900;
+
+    const updatedRows = await tx.$queryRaw<
+      Array<{
+        failedPasswordAttempts: number;
+        lockedUntil: Date | null;
+      }>
+    >`
+      UPDATE "User"
+      SET
+        "failedPasswordAttempts" = "failedPasswordAttempts" + 1,
+        "lockedUntil" = CASE
+          WHEN "failedPasswordAttempts" + 1 >= ${maxFailedAttempts}
+          THEN CURRENT_TIMESTAMP + (${lockoutSeconds} * INTERVAL '1 second')
+          ELSE "lockedUntil"
+        END,
+        "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${userId}
+      RETURNING "failedPasswordAttempts", "lockedUntil"
+    `;
+
+    if (!updatedRows || updatedRows.length !== 1) {
+      throw new Error('Failed to record authentication failure safely.');
+    }
+
+    const { failedPasswordAttempts, lockedUntil } = updatedRows[0];
+    const isLocked = Boolean(lockedUntil && new Date(lockedUntil).getTime() > Date.now());
+    return { failedPasswordAttempts, lockedUntil, isLocked };
+  }
+
+  /**
+   * Concurrency-safe atomic reset of failed password attempts after successful authentication.
+   */
+  static async resetFailedPasswordAttempts(userId: string, tx: any = prisma): Promise<void> {
+    await tx.$executeRaw`
+      UPDATE "User"
+      SET
+        "failedPasswordAttempts" = 0,
+        "lockedUntil" = NULL,
+        "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${userId}
+    `;
+  }
+
+  /**
    * Resolves an admin identifier with prefix (e.g. XYZ9876543210 or ABC9876543210)
    * to designated role ('BILL_ADMIN' or 'OPERATIONS_ADMIN') and 10-digit mobile number.
    */
@@ -177,36 +231,21 @@ export class AuthService {
       throw new Error('Invalid login credentials. Please check your details and try again.');
     }
 
-    if (admin.lockedUntil && admin.lockedUntil > new Date()) {
+    if (admin.lockedUntil && new Date(admin.lockedUntil).getTime() > Date.now()) {
       throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
     }
 
     const isMatch = await bcrypt.compare(params.password, admin.passwordHash);
     if (!isMatch) {
-      const attempts = (admin.failedPasswordAttempts || 0) + 1;
-      const lockoutSeconds = config.authLockoutSeconds || 900;
-      const lockedUntil = attempts >= 10 ? new Date(Date.now() + lockoutSeconds * 1000) : null;
-      await prisma.user.update({
-        where: { id: admin.id },
-        data: {
-          failedPasswordAttempts: attempts,
-          ...(lockedUntil ? { lockedUntil } : {}),
-        },
-      });
-      if (attempts >= 10) {
+      const lockResult = await AuthService.recordFailedPasswordAttempt(admin.id);
+      if (lockResult.isLocked || lockResult.failedPasswordAttempts >= (config.auth?.maxFailedAttempts || 10)) {
         throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
       }
       throw new Error('Invalid login credentials. Please check your details and try again.');
     }
 
     if (admin.failedPasswordAttempts > 0 || admin.lockedUntil) {
-      await prisma.user.update({
-        where: { id: admin.id },
-        data: {
-          failedPasswordAttempts: 0,
-          lockedUntil: null,
-        },
-      });
+      await AuthService.resetFailedPasswordAttempts(admin.id);
     }
 
     const now = new Date();
@@ -610,17 +649,8 @@ export class AuthService {
 
       const isMatch = await bcrypt.compare(params.password, adminUser.passwordHash);
       if (!isMatch) {
-        const attempts = (adminUser.failedPasswordAttempts || 0) + 1;
-        const lockoutSeconds = config.authLockoutSeconds || 900;
-        const lockedUntil = attempts >= 10 ? new Date(Date.now() + lockoutSeconds * 1000) : null;
-        await tx.user.update({
-          where: { id: adminUser.id },
-          data: {
-            failedPasswordAttempts: attempts,
-            ...(lockedUntil ? { lockedUntil } : {}),
-          },
-        });
-        if (attempts >= 10) {
+        const lockResult = await AuthService.recordFailedPasswordAttempt(adminUser.id, tx);
+        if (lockResult.isLocked || lockResult.failedPasswordAttempts >= (config.auth?.maxFailedAttempts || 10)) {
           throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
         }
         throw new Error('Invalid admin credentials.');
@@ -1129,23 +1159,14 @@ export class AuthService {
       throw new Error('Your account has been suspended. Please contact customer support.');
     }
 
-    if (user.lockedUntil && user.lockedUntil > new Date()) {
+    if (user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now()) {
       throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
     }
 
     const isMatch = await bcrypt.compare(pass, user.passwordHash);
     if (!isMatch) {
-      const attempts = (user.failedPasswordAttempts || 0) + 1;
-      const lockoutSeconds = config.authLockoutSeconds || 900;
-      const lockedUntil = attempts >= 10 ? new Date(Date.now() + lockoutSeconds * 1000) : null;
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          failedPasswordAttempts: attempts,
-          ...(lockedUntil ? { lockedUntil } : {}),
-        },
-      });
-      if (attempts >= 10) {
+      const lockResult = await AuthService.recordFailedPasswordAttempt(user.id);
+      if (lockResult.isLocked || lockResult.failedPasswordAttempts >= (config.auth?.maxFailedAttempts || 10)) {
         throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
       }
       throw new Error('Invalid mobile number or password.');

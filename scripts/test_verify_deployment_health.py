@@ -359,9 +359,15 @@ class TestRollbackExecutionDecision(unittest.TestCase):
     def setUp(self):
         self.repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.manifest_path = os.path.join(self.repo_root, "backend", "prisma", "migrations", "deployment-compatibility.json")
+        self.rollback_script_path = os.path.join(self.repo_root, "scripts", "deploy", "rollback-release.sh")
         import json
         with open(self.manifest_path, "r", encoding="utf-8") as f:
             self.manifest = json.loads(f.read())
+        self.bash_cmd = "bash"
+        if os.name == "nt":
+            git_bash = r"C:\Program Files\Git\bin\bash.exe"
+            if os.path.exists(git_bash):
+                self.bash_cmd = git_bash
         self.migrations_map = {m["id"]: m for m in self.manifest.get("migrations", [])}
 
     def evaluate_rollback(self, migration_ids):
@@ -419,6 +425,63 @@ class TestRollbackExecutionDecision(unittest.TestCase):
         self.assertTrue(bool(sha_regex.match(valid_sha)))
         for s in invalid_shas:
             self.assertFalse(bool(sha_regex.match(s)))
+
+    def test_first_deployment_without_previous_sha_blocked(self):
+        """Rollback must fail closed when PREVIOUS_SHA is NONE (first deployment)."""
+        res = subprocess.run(
+            [self.bash_cmd, self.rollback_script_path, "NONE", "90ae6bf343c3cd9146341096e440e20c38eb0532"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("Cannot roll back first deployment", res.stderr)
+
+    def test_rollback_identical_shas_blocked(self):
+        """Rollback must reject identical target and previous SHAs."""
+        dummy_sha = "90ae6bf343c3cd9146341096e440e20c38eb0532"
+        res = subprocess.run(
+            [self.bash_cmd, self.rollback_script_path, dummy_sha, dummy_sha],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("identical", res.stderr.lower())
+
+    def test_bundletool_verification_script_pinned_checksum(self):
+        """scripts/verify-bundletool.sh must pin version 1.17.1 and official SHA-256."""
+        script_path = os.path.join(self.repo_root, "scripts", "verify-bundletool.sh")
+        self.assertTrue(os.path.isfile(script_path))
+        with open(script_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn('BUNDLETOOL_VERSION="1.17.1"', content)
+        self.assertIn('BUNDLETOOL_EXPECTED_SHA256="45881ead13388872d82c4255b195488b7fc33f2cac5a9a977b0afc5e92367592"', content)
+        self.assertIn('sha256sum --check --status', content)
+        self.assertIn('com.hiralal.rewards', content)
+
+    def test_active_release_json_parsing_fail_closed_on_corrupt_sha(self):
+        """Active release JSON parsing fails closed (exit 2) when SHA is invalid or missing."""
+        import tempfile
+        import json
+        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as f:
+            json.dump({"gitSha": "bad-sha", "status": "HEALTHY"}, f)
+            temp_path = f.name
+        try:
+            node_cmd = [
+                "node", "-e",
+                'const fs = require("node:fs");'
+                'const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));'
+                'const sha = (state.gitSha || "").trim();'
+                'if (!/^[0-9a-f]{40}$/i.test(sha)) process.exit(2);'
+                'console.log(sha);',
+                temp_path
+            ]
+            res = subprocess.run(node_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(res.returncode, 2)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,47 @@ import { getIstDate } from '../utils/timezone.utils';
 import { toPaise, fromPaise } from '../utils/money.utils';
 import { areNamesMatching } from '../utils/name.utils';
 
+export interface RedemptionWindowInput {
+  isEnabled: boolean;
+  minimumRedemptionAmount: unknown;
+  startAt: Date | null;
+  endAt: Date | null;
+}
+
+export function isRedemptionWindowOpen(
+  settings: RedemptionWindowInput,
+  now: Date = new Date()
+): boolean {
+  const minimum = Number(settings.minimumRedemptionAmount);
+
+  const validMinimum =
+    settings.minimumRedemptionAmount !== null &&
+    settings.minimumRedemptionAmount !== undefined &&
+    Number.isFinite(minimum) &&
+    minimum > 0;
+
+  const validTimestamps =
+    settings.startAt instanceof Date &&
+    settings.endAt instanceof Date &&
+    Number.isFinite(settings.startAt.getTime()) &&
+    Number.isFinite(settings.endAt.getTime()) &&
+    settings.startAt.getTime() < settings.endAt.getTime();
+
+  if (
+    settings.isEnabled !== true ||
+    !validMinimum ||
+    !validTimestamps ||
+    !Number.isFinite(now.getTime())
+  ) {
+    return false;
+  }
+
+  return (
+    now.getTime() >= settings.startAt!.getTime() &&
+    now.getTime() < settings.endAt!.getTime()
+  );
+}
+
 export class PayoutService {
   /**
    * Retrieves active admin redemption settings for a profession and evaluates window status
@@ -32,20 +73,22 @@ export class PayoutService {
           isEnabled: false, // Default CLOSED until explicitly opened
           startAt: null,
           endAt: null,
+          minimumRedemptionAmount: null,
           message: 'Rewards redemption is currently unavailable.',
         },
       });
     }
 
     const now = new Date();
-    let isWindowOpen = settings.isEnabled;
-
-    if (settings.startAt && now < settings.startAt) {
-      isWindowOpen = false;
-    }
-    if (settings.endAt && now > settings.endAt) {
-      isWindowOpen = false;
-    }
+    const isWindowOpen = isRedemptionWindowOpen(
+      {
+        isEnabled: settings.isEnabled,
+        minimumRedemptionAmount: settings.minimumRedemptionAmount,
+        startAt: settings.startAt,
+        endAt: settings.endAt,
+      },
+      now
+    );
 
     return {
       settings,
@@ -149,7 +192,11 @@ export class PayoutService {
 
     let reason = '';
     if (!isWindowOpen) {
-      reason = settings.message || 'Rewards redemption window is currently closed by administration.';
+      if (!settings.isEnabled && settings.message && !settings.message.toLowerCase().includes('open')) {
+        reason = settings.message;
+      } else {
+        reason = 'Rewards redemption window is currently closed by administration.';
+      }
     } else if (!isThresholdConfigured) {
       reason = 'Rewards redemption minimum threshold is not configured by administration.';
     } else if (hasActivePayout) {
@@ -261,7 +308,11 @@ export class PayoutService {
 
         const { settings, isWindowOpen } = await this.getRedemptionSettings(user.profession || undefined, tx);
         if (!isWindowOpen) {
-          throw new Error(settings.message || 'Rewards redemption window is currently closed by administration.');
+          const closedMsg =
+            !settings.isEnabled && settings.message && !settings.message.toLowerCase().includes('open')
+              ? settings.message
+              : 'Rewards redemption window is currently closed by administration.';
+          throw new Error(closedMsg);
         }
 
         const minThreshold =

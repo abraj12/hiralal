@@ -41,6 +41,10 @@ echo "=================================================================="
 PREVIOUS_SHA="$(echo "${PREVIOUS_SHA}" | tr '[:upper:]' '[:lower:]')"
 TARGET_SHA="$(echo "${TARGET_SHA}" | tr '[:upper:]' '[:lower:]')"
 
+if [[ "${PREVIOUS_SHA}" == "none" ]]; then
+  fail "Cannot roll back first deployment: PREVIOUS_SHA is NONE (no prior established release exists to roll back to)"
+fi
+
 [[ "${PREVIOUS_SHA}" != "${TARGET_SHA}" ]] ||
   fail "Previous and failed candidate release SHAs are identical (${TARGET_SHA})"
 

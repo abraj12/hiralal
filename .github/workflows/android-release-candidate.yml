@@ -161,8 +161,26 @@ jobs:
           chmod 600 "$KEYSTORE_PATH"
           echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
+      - name: Validate Production API URL Configuration
+        working-directory: mobile
+        env:
+          EXPO_PUBLIC_API_URL: ${{ vars.HSSPL_PRODUCTION_API_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EXPO_PUBLIC_API_URL:-}" ]; then
+            echo "::error::HSSPL_PRODUCTION_API_URL variable is required for production builds!"
+            exit 1
+          fi
+          node -e '
+            const { validateProductionApiUrl } = require("./plugins/validateApiUrl.js");
+            const url = validateProductionApiUrl(process.env.EXPO_PUBLIC_API_URL);
+            console.log("Validated production API URL:", url);
+          '
+
       - name: Expo Android Clean Prebuild
         working-directory: mobile
+        env:
+          EXPO_PUBLIC_API_URL: ${{ vars.HSSPL_PRODUCTION_API_URL }}
         run: npx expo prebuild --platform android --no-install --clean
 
       - name: Verify Reproducible Signing and Play Integrity Config Plugins
@@ -180,6 +198,7 @@ jobs:
       - name: Build Signed Android Release Artifacts
         working-directory: mobile/android
         env:
+          EXPO_PUBLIC_API_URL: ${{ vars.HSSPL_PRODUCTION_API_URL }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -311,27 +330,8 @@ jobs:
               fi
               echo "AAB ($aab) certificate digest matches EXPECTED_RELEASE_CERT_SHA256."
 
-              # Verify package name from actual built AAB via bundletool
-              if ! command -v bundletool &>/dev/null && [ ! -f /tmp/bundletool.jar ]; then
-                curl -sSL "https://github.com/google/bundletool/releases/download/1.17.1/bundletool-all-1.17.1.jar" -o /tmp/bundletool.jar 2>/dev/null || true
-              fi
-              if command -v bundletool &>/dev/null; then
-                AAB_MANIFEST="$(bundletool dump manifest --bundle="$aab" 2>/dev/null || true)"
-              elif [ -f /tmp/bundletool.jar ]; then
-                AAB_MANIFEST="$(java -jar /tmp/bundletool.jar dump manifest --bundle="$aab" 2>/dev/null || true)"
-              else
-                AAB_MANIFEST=""
-              fi
-              ACTUAL_AAB_PKG="$(echo "$AAB_MANIFEST" | grep -oP 'package="\K[^"]+' || echo "$AAB_MANIFEST" | grep -oP "package: name='\K[^']+" || true)"
-              if [ -z "$ACTUAL_AAB_PKG" ]; then
-                echo "::error::Failed to extract package name from AAB ($aab). Failing closed."
-                exit 1
-              fi
-              if [ "$ACTUAL_AAB_PKG" != "com.hiralal.rewards" ]; then
-                echo "::error::AAB package name is '$ACTUAL_AAB_PKG', expected 'com.hiralal.rewards'!"
-                exit 1
-              fi
-              echo "Verified AAB package name from binary: $ACTUAL_AAB_PKG"
+              # Verify package name from actual built AAB via pinned checksum-verified bundletool
+              bash scripts/verify-bundletool.sh "$aab"
             done
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi

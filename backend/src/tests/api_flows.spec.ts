@@ -272,6 +272,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
         isEnabled: true,
         startAt,
         endAt,
+        minimumRedemptionAmount: 500,
         message: 'Rewards redemption window is now open for verified craftsmen.',
       });
 

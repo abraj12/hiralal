@@ -158,6 +158,51 @@ describe('Master Remediation & Requirements Compliance Test Suite', () => {
       expect(userClean?.failedPasswordAttempts).toBe(0);
       expect(userClean?.lockedUntil).toBeNull();
     });
+
+    it('concurrent failed password attempts increment atomically without lost updates and lock account', async () => {
+      const concurrentUserMobile = '9876540099';
+      const userHash = await bcrypt.hash('CorrectPass123!', 10);
+      await prisma.user.upsert({
+        where: { mobile: concurrentUserMobile },
+        update: {
+          passwordHash: userHash,
+          failedPasswordAttempts: 0,
+          lockedUntil: null,
+          status: 'ACTIVE',
+        },
+        create: {
+          mobile: concurrentUserMobile,
+          fullName: 'Test Concurrent Lockout User',
+          passwordHash: userHash,
+          profession: 'PLUMBER',
+          role: 'USER',
+          status: 'ACTIVE',
+          isVerified: true,
+        },
+      });
+
+      // Fire 10 concurrent failed login attempts simultaneously
+      const attempts = Array.from({ length: 10 }, (_, i) =>
+        AuthService.login(concurrentUserMobile, `WrongPass_${i}`).catch((err) => err)
+      );
+
+      const results = await Promise.all(attempts);
+      expect(results).toHaveLength(10);
+      results.forEach((res) => {
+        expect(res).toBeInstanceOf(Error);
+      });
+
+      // Check user in database: failedPasswordAttempts must be exactly 10 with no lost updates
+      const updatedUser = await prisma.user.findUnique({ where: { mobile: concurrentUserMobile } });
+      expect(updatedUser?.failedPasswordAttempts).toBe(10);
+      expect(updatedUser?.lockedUntil).not.toBeNull();
+      expect(updatedUser?.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
+
+      // Attempting to login with correct password is immediately blocked by lockout
+      await expect(AuthService.login(concurrentUserMobile, 'CorrectPass123!')).rejects.toThrow(
+        /Account is temporarily locked due to too many failed login attempts/
+      );
+    });
   });
 
   describe('5. Role Separation on /api/v1/admin/dashboard Endpoint', () => {

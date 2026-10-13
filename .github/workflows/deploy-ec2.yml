@@ -121,7 +121,12 @@ jobs:
             RELEASES_DIR="${APP_DIR}/releases"
             mkdir -p "${STATE_DIR}" "${RELEASES_DIR}/${TARGET_SHA}"
 
-            # 1. Determine running release from persistent deployment-state record first (fail-closed)
+            # Capture actual running container image IDs before modifying working tree
+            CURRENT_BACKEND_IMG=$(docker inspect --format='{{.Image}}' hiralal_backend 2>/dev/null || echo "")
+            CURRENT_WORKER_IMG=$(docker inspect --format='{{.Image}}' hiralal_worker 2>/dev/null || echo "")
+            CURRENT_ADMIN_IMG=$(docker inspect --format='{{.Image}}' hiralal_admin 2>/dev/null || echo "")
+
+            # 1. Determine running release from persistent deployment-state record (fail-closed)
             PREVIOUS_SHA="NONE"
             if [ -f "${STATE_DIR}/active-release.json" ]; then
               PREVIOUS_SHA=$(node -e '
@@ -142,13 +147,27 @@ jobs:
                 echo "[FATAL ERROR] Corrupted active-release.json. Halting deployment (fail closed)." >&2
                 exit 2
               }
+
+              # Validate that recorded PREVIOUS_SHA commit exists in git repository
+              if ! git cat-file -e "${PREVIOUS_SHA}^{commit}" 2>/dev/null; then
+                echo "[FATAL ERROR] Previously recorded release SHA (${PREVIOUS_SHA}) does not exist in git history. Failing closed." >&2
+                exit 2
+              fi
+            else
+              # If active-release.json does not exist, check whether application containers are already running
+              if [ -n "${CURRENT_BACKEND_IMG}" ] || [ -n "${CURRENT_WORKER_IMG}" ] || [ -n "${CURRENT_ADMIN_IMG}" ]; then
+                echo "[FATAL ERROR] Application containers are running but persistent active-release.json is missing! Release identity cannot be verified. Failing closed." >&2
+                exit 2
+              fi
+              echo "Verified first deployment: no previous release state and zero application containers running."
             fi
             echo "Previously running release SHA: ${PREVIOUS_SHA}"
 
-            # Capture actual running container image IDs before modifying working tree
-            CURRENT_BACKEND_IMG=$(docker inspect --format='{{.Image}}' hiralal_backend 2>/dev/null || echo "")
-            CURRENT_WORKER_IMG=$(docker inspect --format='{{.Image}}' hiralal_worker 2>/dev/null || echo "")
-            CURRENT_ADMIN_IMG=$(docker inspect --format='{{.Image}}' hiralal_admin 2>/dev/null || echo "")
+            # Validate that TARGET_SHA exists in git repository
+            if ! git cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
+              echo "[FATAL ERROR] Target deployment SHA (${TARGET_SHA}) is missing from git history. Failing closed." >&2
+              exit 2
+            fi
 
             # Tag existing application container images with PREVIOUS_SHA to ensure immutable retention
             if [ "${PREVIOUS_SHA}" != "NONE" ]; then

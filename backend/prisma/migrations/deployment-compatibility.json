@@ -163,6 +163,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Retires legacy seeded default reward and GST rules, and adds failedPasswordAttempts and lockedUntil to User for persistent account lockout."
+    },
+    {
+      "id": "20261013210000_disable_invalid_redemption_settings",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Ensures any existing redemption settings without valid dates or threshold are safely disabled (fail-closed)."
     }
   ]
 }

@@ -635,8 +635,19 @@ describe('Dynamic Business Rules, Profession Separation & GST Calculation Tests'
     // 1. Open redemption window with required minimum redemption amount
     await prisma.redemptionSettings.upsert({
       where: { id: 'default' },
-      update: { isEnabled: true, startAt: null, endAt: null, minimumRedemptionAmount: 500.0 },
-      create: { id: 'default', isEnabled: true, startAt: null, endAt: null, minimumRedemptionAmount: 500.0 },
+      update: {
+        isEnabled: true,
+        startAt: new Date(Date.now() - 3600 * 1000),
+        endAt: new Date(Date.now() + 86400 * 1000),
+        minimumRedemptionAmount: 500.0,
+      },
+      create: {
+        id: 'default',
+        isEnabled: true,
+        startAt: new Date(Date.now() - 3600 * 1000),
+        endAt: new Date(Date.now() + 86400 * 1000),
+        minimumRedemptionAmount: 500.0,
+      },
     });
 
     // 2. Set user wallet balance to ₹1,250.75

@@ -741,7 +741,7 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
       return res.status(400).json({ success: false, message: `Invalid end time: ${err.message}` });
     }
 
-    if (startDate && endDate && endDate <= startDate) {
+    if (startDate && endDate && endDate.getTime() <= startDate.getTime()) {
       return res.status(400).json({ success: false, message: 'End date and time must be after the start date.' });
     }
 
@@ -754,7 +754,7 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
           typeof minimumRedemptionAmount === 'number'
             ? minimumRedemptionAmount
             : parseFloat(String(minimumRedemptionAmount));
-        if (!Number.isFinite(parsed) || parsed < 0) {
+        if (!Number.isFinite(parsed) || parsed <= 0) {
           return res.status(400).json({
             success: false,
             message: 'Minimum redemption amount must be a valid positive number.',
@@ -764,45 +764,83 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
       }
     }
 
+    // Server-side validation for enabling redemption:
+    // Requires positive finite minimum amount, valid start timestamp, valid end timestamp, and endAt > startAt
+    if (Boolean(isEnabled)) {
+      if (!startDate) {
+        return res.status(400).json({
+          success: false,
+          message: 'An opening timestamp (startAt) is required to enable redemption.',
+        });
+      }
+      if (!endDate) {
+        return res.status(400).json({
+          success: false,
+          message: 'A closing timestamp (endAt) is required to enable redemption.',
+        });
+      }
+      if (endDate.getTime() <= startDate.getTime()) {
+        return res.status(400).json({
+          success: false,
+          message: 'End date and time must be after the start date.',
+        });
+      }
+      if (minRedemption === null || minRedemption === undefined || minRedemption <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'A positive minimum redemption threshold is required to enable redemption.',
+        });
+      }
+    } else if (startDate && endDate && endDate.getTime() <= startDate.getTime()) {
+      return res.status(400).json({
+        success: false,
+        message: 'End date and time must be after the start date.',
+      });
+    }
+
     const prof: Profession | null = profession && profession !== 'ALL' ? (profession as Profession) : null;
     const settingId = prof ? `setting_${prof}` : 'default';
 
-    const prevSettings = await prisma.redemptionSettings.findUnique({
-      where: prof ? { profession: prof } : { id: settingId },
-    });
+    const updated = await prisma.$transaction(async (tx) => {
+      const prevSettings = await tx.redemptionSettings.findUnique({
+        where: prof ? { profession: prof } : { id: settingId },
+      });
 
-    const updated = await prisma.redemptionSettings.upsert({
-      where: prof ? { profession: prof } : { id: settingId },
-      update: {
-        isEnabled: Boolean(isEnabled),
-        startAt: startDate,
-        endAt: endDate,
-        ...(minRedemption !== undefined && { minimumRedemptionAmount: minRedemption }),
-        message: message || 'Rewards redemption window is open for verified craftsmen.',
-        updatedByAdminId: admin.id,
-      },
-      create: {
-        id: settingId,
-        profession: prof,
-        isEnabled: Boolean(isEnabled),
-        startAt: startDate,
-        endAt: endDate,
-        minimumRedemptionAmount: minRedemption !== undefined ? minRedemption : null,
-        message: message || 'Rewards redemption window is open for verified craftsmen.',
-        updatedByAdminId: admin.id,
-      },
-    });
+      const saved = await tx.redemptionSettings.upsert({
+        where: prof ? { profession: prof } : { id: settingId },
+        update: {
+          isEnabled: Boolean(isEnabled),
+          startAt: startDate,
+          endAt: endDate,
+          ...(minRedemption !== undefined && { minimumRedemptionAmount: minRedemption }),
+          message: message || (Boolean(isEnabled) ? 'Rewards redemption window is open for verified craftsmen.' : 'Rewards redemption is currently unavailable.'),
+          updatedByAdminId: admin.id,
+        },
+        create: {
+          id: settingId,
+          profession: prof,
+          isEnabled: Boolean(isEnabled),
+          startAt: startDate,
+          endAt: endDate,
+          minimumRedemptionAmount: minRedemption !== undefined ? minRedemption : null,
+          message: message || (Boolean(isEnabled) ? 'Rewards redemption window is open for verified craftsmen.' : 'Rewards redemption is currently unavailable.'),
+          updatedByAdminId: admin.id,
+        },
+      });
 
-    // Immutable Audit Log
-    await prisma.auditLog.create({
-      data: {
-        adminId: admin.id,
-        action: 'REDEMPTION_SETTINGS_UPDATED',
-        entityType: 'REDEMPTION_SETTINGS',
-        entityId: updated.id,
-        oldValue: JSON.stringify(prevSettings),
-        newValue: JSON.stringify(updated),
-      },
+      // Immutable Audit Log
+      await tx.auditLog.create({
+        data: {
+          adminId: admin.id,
+          action: 'REDEMPTION_SETTINGS_UPDATED',
+          entityType: 'REDEMPTION_SETTINGS',
+          entityId: saved.id,
+          oldValue: JSON.stringify(prevSettings),
+          newValue: JSON.stringify(saved),
+        },
+      });
+
+      return saved;
     });
 
     res.json({
