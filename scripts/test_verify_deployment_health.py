@@ -206,14 +206,25 @@ class TestDeploymentWorkflowSafety(unittest.TestCase):
         self.assertNotIn("pull_request:", self.android_content)
 
     def test_android_release_workflow_requires_confirmation_and_sha(self):
-        """Android release candidate requires 'RELEASE' confirmation and 40-char hex SHA."""
-        self.assertIn('confirm_release }}" != "RELEASE"', self.android_content)
+        """Android release candidate requires 'RELEASE' confirmation and 40-char hex SHA without inline expression injection."""
+        self.assertIn('"$CONFIRM_RELEASE" != "RELEASE"', self.android_content)
         self.assertIn('^[0-9a-fA-F]{40}$', self.android_content)
+        self.assertNotIn('${{ github.event.inputs.confirm_release }}', self.android_content.split("run: |")[1])
 
     def test_android_release_workflow_verifies_origin_main(self):
-        """Android release candidate verifies target commit is on origin/main."""
-        self.assertIn("git merge-base --is-ancestor", self.android_content)
+        """Android release candidate verifies target commit matches origin/main head."""
+        self.assertIn('"${RELEASE_SHA}" != "${MAIN_HEAD}"', self.android_content)
         self.assertIn("origin/main", self.android_content)
+
+    def test_android_release_workflow_binds_protected_environment(self):
+        """Android release candidate must bind protected environment android-release-signing."""
+        self.assertIn("environment: android-release-signing", self.android_content)
+        self.assertIn("github.ref == 'refs/heads/main'", self.android_content)
+
+    def test_android_release_workflow_structured_ci_check(self):
+        """Android release candidate queries structured fields from gh run list."""
+        self.assertIn("--json headSha,status,conclusion,databaseId", self.android_content)
+        self.assertIn('.status == "completed" and .conclusion == "success"', self.android_content)
 
     def test_android_release_workflow_fails_closed_on_missing_signing_secrets(self):
         """Android release candidate fails before build if signing secrets are missing."""
@@ -227,10 +238,17 @@ class TestDeploymentWorkflowSafety(unittest.TestCase):
         self.assertIn("Missing required Android signing secrets", self.android_content)
 
     def test_android_release_workflow_verifies_signature_and_erases_keystore(self):
-        """Android release candidate runs apksigner verify and securely erases keystore file."""
+        """Android release candidate runs apksigner and jarsigner verify and securely erases keystore file."""
         self.assertIn("apksigner verify", self.android_content)
+        self.assertIn("jarsigner -verify", self.android_content)
         self.assertIn("sha256sum", self.android_content)
         self.assertIn("shred -u", self.android_content)
+
+    def test_ec2_deployment_captures_previous_sha_and_handles_rollback(self):
+        """EC2 deployment workflow captures PREVIOUS_SHA and executes safe application rollback on failure."""
+        self.assertIn("PREVIOUS_SHA", self.deploy_content)
+        self.assertIn("rollback", self.deploy_content.lower())
+        self.assertIn("forward-only", self.deploy_content.lower())
 
     def test_no_secret_material_echoed_in_workflow_logs(self):
         """Neither release nor deployment workflow should echo private keys or passwords."""

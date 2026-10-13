@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import fs from 'fs';
 import { createPrivateKey } from 'node:crypto';
+import { isIP } from 'node:net';
 dotenv.config();
 
 export interface AppConfig {
@@ -455,6 +456,37 @@ export function validateProductionPlayIntegrity(env: Record<string, string | und
   }
 }
 
+function isPrivateOrLoopbackIp(ip: string): boolean {
+  const version = isIP(ip);
+  if (version === 4) {
+    const parts = ip.split('.').map((p) => parseInt(p, 10));
+    if (parts.length !== 4 || parts.some(isNaN)) return true;
+    if (parts[0] === 127) return true; // 127.0.0.0/8 loopback
+    if (parts[0] === 10) return true; // 10.0.0.0/8 private
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true; // 172.16.0.0/12 private
+    if (parts[0] === 192 && parts[1] === 168) return true; // 192.168.0.0/16 private
+    if (parts[0] === 169 && parts[1] === 254) return true; // 169.254.0.0/16 link-local
+    if (parts[0] === 0) return true; // 0.0.0.0/8 current network
+    if (parts[0] >= 224) return true; // 224.0.0.0/4 multicast & reserved
+    return false;
+  }
+  if (version === 6) {
+    const lower = ip.toLowerCase();
+    if (lower === '::1' || lower === '0:0:0:0:0:0:0:1') return true; // loopback
+    if (lower === '::' || lower === '0:0:0:0:0:0:0:0') return true; // unspecified
+    if (/^fe[89ab]/i.test(lower)) return true; // fe80::/10 link-local
+    if (/^f[cd]/i.test(lower)) return true; // fc00::/7 unique-local
+    if (lower.startsWith('::ffff:')) {
+      const v4Part = lower.slice(7);
+      if (isIP(v4Part) === 4) {
+        return isPrivateOrLoopbackIp(v4Part);
+      }
+    }
+    return false;
+  }
+  return false;
+}
+
 export function validateProductionSignCare(env: Record<string, string | undefined>): void {
   const baseUrl = env.SIGNCARE_BASE_URL?.trim();
   if (!baseUrl) {
@@ -476,16 +508,49 @@ export function validateProductionSignCare(env: Record<string, string | undefine
     throw new Error('[FATAL] SIGNCARE_BASE_URL must use https: protocol.');
   }
 
-  const hostname = parsed.hostname.toLowerCase();
+  if (parsed.username || parsed.password || parsed.hash) {
+    throw new Error('[FATAL] SIGNCARE_BASE_URL contains forbidden URL components.');
+  }
+
+  if (parsed.search) {
+    throw new Error('[FATAL] SIGNCARE_BASE_URL contains forbidden URL query parameters.');
+  }
+
+  const rawHostname = parsed.hostname.toLowerCase();
+  const hostname = rawHostname.replace(/^\[|\]$/g, '');
+
   if (
     hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname.includes('uat') ||
-    hostname.includes('sandbox')
+    hostname.endsWith('.localhost') ||
+    isIP(hostname) ||
+    isPrivateOrLoopbackIp(hostname)
   ) {
     throw new Error(
-      `[FATAL] SIGNCARE_BASE_URL cannot use localhost, loopback, or UAT/sandbox endpoints (${hostname}) in production.`
+      `[FATAL] SIGNCARE_BASE_URL cannot use localhost, loopback, or private IP endpoints (${rawHostname}) in production.`
+    );
+  }
+
+  if (
+    hostname.includes('uat') ||
+    hostname.includes('sandbox') ||
+    hostname.includes('staging') ||
+    hostname.includes('dev.') ||
+    hostname.startsWith('dev-') ||
+    hostname.includes('test')
+  ) {
+    throw new Error(
+      `[FATAL] SIGNCARE_BASE_URL cannot use localhost, loopback, or UAT/sandbox endpoints (${rawHostname}) in production.`
+    );
+  }
+
+  if (parsed.port && parsed.port !== '443') {
+    throw new Error(`[FATAL] SIGNCARE_BASE_URL cannot use non-standard port (${parsed.port}) in production.`);
+  }
+
+  const APPROVED_SIGNCARE_HOSTS = ['api.signcare.in'];
+  if (!APPROVED_SIGNCARE_HOSTS.includes(hostname)) {
+    throw new Error(
+      `[FATAL] SIGNCARE_BASE_URL host "${rawHostname}" is not on the approved production allowlist (https://api.signcare.in).`
     );
   }
 
@@ -499,11 +564,56 @@ export function validateProductionSignCare(env: Record<string, string | undefine
   }
 }
 
+export function validateFcmPrivateKey(configuredValue: string | undefined): void {
+  const pem = configuredValue?.replace(/\\n/g, '\n').trim();
+
+  if (!pem) {
+    throw new Error('[FATAL] FCM private key is missing or malformed.');
+  }
+
+  if (isPlaceholderCredential(pem)) {
+    throw new Error('[FATAL] FCM private key contains an insecure placeholder or example value.');
+  }
+
+  if (!pem.includes('PRIVATE KEY')) {
+    throw new Error('[FATAL] FCM private key is missing or malformed.');
+  }
+
+  try {
+    const key = createPrivateKey(pem);
+
+    if (key.asymmetricKeyType !== 'rsa') {
+      throw new Error('Unexpected key type.');
+    }
+  } catch (err: any) {
+    if (err.message === 'Unexpected key type.') {
+      throw new Error('[FATAL] FCM private key must be an RSA private key.');
+    }
+    throw new Error('[FATAL] FCM private key is invalid or unusable.');
+  }
+}
+
 export function validateProductionFcm(env: Record<string, string | undefined>): void {
   const saKey = (env.FIREBASE_SERVICE_ACCOUNT_KEY || env.FCM_SERVICE_ACCOUNT_KEY)?.trim();
   const projectId = (env.FIREBASE_PROJECT_ID || env.FCM_PROJECT_ID)?.trim();
   const clientEmail = (env.FIREBASE_CLIENT_EMAIL || env.FCM_CLIENT_EMAIL)?.trim();
   const privateKey = (env.FIREBASE_PRIVATE_KEY || env.FCM_PRIVATE_KEY)?.trim();
+
+  const hasAnyIndividual = Boolean(projectId || clientEmail || privateKey);
+
+  // Reject mixed / inconsistent credential modes (both Mode A and Mode B configured)
+  if (saKey && hasAnyIndividual) {
+    throw new Error(
+      '[FATAL] Inconsistent FCM credentials: configure either individual credentials (Mode A) or service-account key (Mode B), not both.'
+    );
+  }
+
+  // If neither Mode A nor Mode B is configured
+  if (!saKey && !hasAnyIndividual) {
+    throw new Error(
+      '[FATAL] Production startup halted for role "api". Missing required Firebase Cloud Messaging (FCM) credentials: configure either individual credentials (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) or service-account configuration (FIREBASE_SERVICE_ACCOUNT_KEY).'
+    );
+  }
 
   // Mode B: Service Account Key (JSON string or file path)
   if (saKey) {
@@ -535,7 +645,8 @@ export function validateProductionFcm(env: Record<string, string | undefined>): 
 
     const saProjectId = parsed.project_id?.trim();
     const saClientEmail = parsed.client_email?.trim();
-    const saPrivateKey = parsed.private_key?.replace(/\\n/g, '\n').trim();
+    const saPrivateKey = parsed.private_key?.trim();
+    const saTokenUri = parsed.token_uri?.trim();
 
     if (!saProjectId || isPlaceholderCredential(saProjectId)) {
       throw new Error('[FATAL] Service account configuration missing or invalid project_id.');
@@ -543,20 +654,17 @@ export function validateProductionFcm(env: Record<string, string | undefined>): 
     if (!saClientEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(saClientEmail) || isPlaceholderCredential(saClientEmail)) {
       throw new Error('[FATAL] Service account configuration missing or invalid client_email.');
     }
-    if (!saPrivateKey || !saPrivateKey.includes('PRIVATE KEY') || isPlaceholderCredential(saPrivateKey)) {
-      throw new Error('[FATAL] Service account configuration missing or invalid private_key.');
+    if (saTokenUri) {
+      if (isPlaceholderCredential(saTokenUri) || saTokenUri !== 'https://oauth2.googleapis.com/token') {
+        throw new Error('[FATAL] Service account token_uri is invalid or unauthorized.');
+      }
     }
+
+    validateFcmPrivateKey(saPrivateKey);
     return;
   }
 
   // Mode A: Individual triplet
-  const hasAnyIndividual = Boolean(projectId || clientEmail || privateKey);
-  if (!hasAnyIndividual) {
-    throw new Error(
-      '[FATAL] Production startup halted for role "api". Missing required Firebase Cloud Messaging (FCM) credentials: configure either individual credentials (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) or service-account configuration (FIREBASE_SERVICE_ACCOUNT_KEY).'
-    );
-  }
-
   if (!projectId || !clientEmail || !privateKey) {
     throw new Error(
       '[FATAL] Incomplete FCM credentials: Mode A requires all three variables (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY).'
@@ -571,10 +679,7 @@ export function validateProductionFcm(env: Record<string, string | undefined>): 
     throw new Error('[FATAL] FIREBASE_CLIENT_EMAIL must be a valid service-account email address.');
   }
 
-  const cleanPem = privateKey.replace(/\\n/g, '\n').trim();
-  if (!cleanPem.includes('PRIVATE KEY') || isPlaceholderCredential(cleanPem)) {
-    throw new Error('[FATAL] FIREBASE_PRIVATE_KEY is missing or contains an invalid/placeholder private key.');
-  }
+  validateFcmPrivateKey(privateKey);
 }
 
 export function normalizeAdminPrefix(prefix: string | undefined): string {

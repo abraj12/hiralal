@@ -23,26 +23,49 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   validate-and-build-signed-release:
     name: Build Signed Android Release Candidate
     runs-on: ubuntu-latest
+    environment: android-release-signing
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (github.ref == 'refs/heads/main' || github.ref_name == 'main')
+
     steps:
-      - name: Validate Manual Confirmation Input
+      - name: Validate Release Inputs and Authorization
+        env:
+          CONFIRM_RELEASE: ${{ github.event.inputs.confirm_release }}
+          RELEASE_SHA: ${{ github.event.inputs.release_sha }}
+          BUILD_TARGET: ${{ github.event.inputs.build_target }}
         run: |
-          if [ "${{ github.event.inputs.confirm_release }}" != "RELEASE" ]; then
+          set -euo pipefail
+
+          if [[ "$CONFIRM_RELEASE" != "RELEASE" ]]; then
             echo "::error::Release execution canceled. confirm_release must be exactly 'RELEASE'."
             exit 1
           fi
 
-      - name: Validate Release SHA Format
-        run: |
-          RELEASE_SHA="${{ github.event.inputs.release_sha }}"
           if ! [[ "$RELEASE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
             echo "::error::Invalid release_sha format: '$RELEASE_SHA'. Must be a 40-character hexadecimal SHA."
             exit 1
           fi
+
+          if [[ "$BUILD_TARGET" != "both" && "$BUILD_TARGET" != "aab" && "$BUILD_TARGET" != "apk" ]]; then
+            echo "::error::Invalid build_target: '$BUILD_TARGET'. Must be one of 'both', 'aab', or 'apk'."
+            exit 1
+          fi
+
+          if [[ "${GITHUB_REF:-}" != "refs/heads/main" && "${GITHUB_REF_NAME:-}" != "main" ]]; then
+            echo "::error::Workflow execution refused: release candidate builds are restricted to refs/heads/main."
+            exit 1
+          fi
+
+          RELEASE_SHA_LOWER="$(echo "$RELEASE_SHA" | tr '[:upper:]' '[:lower:]')"
+          echo "VALIDATED_RELEASE_SHA=$RELEASE_SHA_LOWER" >> "$GITHUB_ENV"
+          echo "VALIDATED_BUILD_TARGET=$BUILD_TARGET" >> "$GITHUB_ENV"
 
       - name: Validate Required Android Release Signing Secrets
         env:
@@ -51,6 +74,7 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          set -euo pipefail
           MISSING_SECRETS=()
           [ -z "$KEYSTORE_B64" ] && MISSING_SECRETS+=("ANDROID_KEYSTORE_BASE64")
           [ -z "$KEYSTORE_PASS" ] && MISSING_SECRETS+=("ANDROID_KEYSTORE_PASSWORD")
@@ -70,16 +94,36 @@ jobs:
           ref: ${{ github.event.inputs.release_sha }}
           fetch-depth: 0
 
-      - name: Verify Commit Exists on Main Branch
+      - name: Verify Exact Release Commit on Main and Successful CI Status
+        env:
+          RELEASE_SHA: ${{ env.VALIDATED_RELEASE_SHA }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          RELEASE_SHA="${{ github.event.inputs.release_sha }}"
+          set -euo pipefail
           git fetch origin main:refs/remotes/origin/main
-          if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/main; then
-            echo "::error::Commit $RELEASE_SHA is not present on origin/main branch!"
+
+          MAIN_HEAD="$(git rev-parse origin/main)"
+          echo "Target Release SHA: ${RELEASE_SHA}"
+          echo "origin/main Head:   ${MAIN_HEAD}"
+
+          if [[ "${RELEASE_SHA}" != "${MAIN_HEAD}" ]]; then
+            echo "::error::Release SHA ${RELEASE_SHA} does not match current origin/main head (${MAIN_HEAD}). Drift detected!"
             exit 1
           fi
-          HEAD_MAIN_SHA=$(git rev-parse origin/main)
-          echo "Verified commit $RELEASE_SHA belongs to origin/main (main HEAD: $HEAD_MAIN_SHA)."
+
+          # Query structured CI workflow run fields
+          echo "Verifying successful completed CI run for commit ${RELEASE_SHA}..."
+          SUCCESSFUL_RUN="$(gh run list \
+            --workflow="ci.yml" \
+            --commit="${RELEASE_SHA}" \
+            --json headSha,status,conclusion,databaseId \
+            --jq '[.[] | select(.headSha == "'"${RELEASE_SHA}"'" and .status == "completed" and .conclusion == "success")] | first // empty' 2>/dev/null || echo "")"
+
+          if [ -z "${SUCCESSFUL_RUN}" ]; then
+            echo "::error::No successful completed CI run found for commit ${RELEASE_SHA}. Release build blocked."
+            exit 1
+          fi
+          echo "Verified: Passing CI workflow exists for release commit ${RELEASE_SHA}."
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
@@ -96,8 +140,8 @@ jobs:
 
       - name: Configure Android SDK
         run: |
-          echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+          echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
           if command -v sdkmanager >/dev/null 2>&1; then
             yes | sdkmanager --licenses || true
           elif [ -x "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager" ]; then
@@ -115,7 +159,7 @@ jobs:
           KEYSTORE_PATH="${RUNNER_TEMP}/hiralal_release.keystore"
           echo "$KEYSTORE_B64" | base64 -d > "$KEYSTORE_PATH"
           chmod 600 "$KEYSTORE_PATH"
-          echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> $GITHUB_ENV
+          echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
       - name: Expo Android Clean Prebuild
         working-directory: mobile
@@ -139,10 +183,10 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          TARGET: ${{ env.VALIDATED_BUILD_TARGET }}
         run: |
           echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
           chmod +x ./gradlew
-          TARGET="${{ github.event.inputs.build_target }}"
 
           if [ "$TARGET" = "both" ] || [ "$TARGET" = "aab" ]; then
             echo "Building signed Android App Bundle (AAB)..."
@@ -155,12 +199,16 @@ jobs:
           fi
 
       - name: Verify Artifact Signature and Extract Fingerprints
+        env:
+          RELEASE_SHA: ${{ env.VALIDATED_RELEASE_SHA }}
+          BUILD_TARGET: ${{ env.VALIDATED_BUILD_TARGET }}
         run: |
+          set -euo pipefail
           mkdir -p release-artifacts
 
-          echo "### Android Release Candidate Verification Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit SHA:** \`${{ github.event.inputs.release_sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Target:** \`${{ github.event.inputs.build_target }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "### Android Release Candidate Verification Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Commit SHA:** \`${RELEASE_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Target:** \`${BUILD_TARGET}\`" >> "$GITHUB_STEP_SUMMARY"
 
           # Copy APK if exists
           APK_SRC="mobile/android/app/build/outputs/apk/release"
@@ -175,36 +223,59 @@ jobs:
           fi
 
           # Signature verification for APKs using apksigner
-          APKS=$(find release-artifacts -name "*.apk")
+          APKS="$(find release-artifacts -name "*.apk" 2>/dev/null || true)"
           if [ -n "$APKS" ]; then
-            echo "#### APK Signature Verification" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "#### APK Signature Verification" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
             for apk in $APKS; do
-              echo "Verifying $apk:" >> $GITHUB_STEP_SUMMARY
-              apksigner verify --verbose --print-certs "$apk" >> $GITHUB_STEP_SUMMARY 2>&1
+              echo "Verifying $apk:" >> "$GITHUB_STEP_SUMMARY"
+              apksigner verify --verbose --print-certs "$apk" >> "$GITHUB_STEP_SUMMARY" 2>&1
             done
-            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Signature verification for AABs using jarsigner
+          AABS="$(find release-artifacts -name "*.aab" 2>/dev/null || true)"
+          if [ -n "$AABS" ]; then
+            echo "#### AAB Signature Verification" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            for aab in $AABS; do
+              echo "Verifying $aab with jarsigner:" >> "$GITHUB_STEP_SUMMARY"
+              jarsigner -verify -verbose -certs "$aab" >> "$GITHUB_STEP_SUMMARY" 2>&1
+            done
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Verify package name in mobile/app.json
+          if [ -f "mobile/app.json" ]; then
+            APP_PKG="$(node -e 'const c = require("./mobile/app.json"); console.log(c.expo?.android?.package || "");')"
+            if [ "$APP_PKG" != "com.hiralal.rewards" ]; then
+              echo "::error::Package name is '$APP_PKG', expected 'com.hiralal.rewards'!"
+              exit 1
+            fi
+            echo "Verified package name: com.hiralal.rewards"
           fi
 
           # Generate SHA-256 Checksums for all release outputs
           cd release-artifacts
           find . -maxdepth 1 -type f ! -name "SHA256SUMS.txt" -exec sha256sum {} + > SHA256SUMS.txt
-          echo "#### Artifact SHA-256 Checksums" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          cat SHA256SUMS.txt >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "#### Artifact SHA-256 Checksums" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Signed Release Candidate Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: android-release-${{ github.event.inputs.release_sha }}
+          name: android-release-${{ env.VALIDATED_RELEASE_SHA }}
           path: release-artifacts/*
           retention-days: 30
 
       - name: Shred and Clean Keystore Material
         if: always()
         run: |
-          if [ -n "$ANDROID_KEYSTORE_PATH" ] && [ -f "$ANDROID_KEYSTORE_PATH" ]; then
-            shred -u "$ANDROID_KEYSTORE_PATH" 2>/dev/null || rm -f "$ANDROID_KEYSTORE_PATH"
+          KEYSTORE="${ANDROID_KEYSTORE_PATH:-}"
+          if [ -n "$KEYSTORE" ] && [ -f "$KEYSTORE" ]; then
+            shred -u "$KEYSTORE" 2>/dev/null || rm -f "$KEYSTORE"
             echo "Release keystore securely erased from runner filesystem."
           fi

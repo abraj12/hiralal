@@ -121,7 +121,7 @@
 
 5. Run Prisma database migrations in an isolated container:
    ```bash
-   docker compose run --rm backend npx prisma migrate deploy
+   docker compose --profile tools run --rm migrate
    ```
 
 6. Start all application services:

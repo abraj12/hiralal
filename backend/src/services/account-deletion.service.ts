@@ -11,8 +11,8 @@ export class AccountDeletionService {
 
   /**
    * Step 1: User initiates account deletion while authenticated by providing their password.
-   * Enforces 30-day cooldown between requests.
-   * Dispatches OTP with purpose ACCOUNT_DELETION to the user's registered mobile number.
+   * Enforces 30-day cooldown between requests using database-derived time under row lock.
+   * Dispatches OTP with purpose ACCOUNT_DELETION to the user's registered mobile number OUTSIDE transaction.
    */
   static async requestDeletion(userId: string, password: string, ipAddress?: string) {
     if (!password || !password.trim()) {
@@ -35,34 +35,100 @@ export class AccountDeletionService {
       throw new Error('Account is suspended. Please contact customer support.');
     }
 
-    // Verify password
+    // Verify password first
     const isPasswordCorrect = await bcrypt.compare(password, user.passwordHash);
     if (!isPasswordCorrect) {
       throw new Error('Incorrect password. Password verification is required to initiate account deletion.');
     }
 
-    // Check 30-day cooldown from previous deletion request
-    if (user.lastDeletionRequestAt) {
-      const cooldownMs = this.COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
-      const elapsedMs = Date.now() - user.lastDeletionRequestAt.getTime();
-      if (elapsedMs < cooldownMs) {
-        const remainingDays = Math.ceil((cooldownMs - elapsedMs) / (24 * 60 * 60 * 1000));
+    // Authoritative state check and 30-day cooldown verification under row lock with database clock
+    const verifiedUser = await prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<Array<{
+        id: string;
+        mobile: string;
+        role: string;
+        status: string;
+        passwordHash: string;
+        deletionScheduledAt: Date | null;
+        lastDeletionRequestAt: Date | null;
+        cooldownActive: boolean;
+        remainingDays: number;
+        hasActiveOp: boolean;
+      }>>`
+        WITH clock AS (
+          SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now
+        )
+        SELECT
+          u."id",
+          u."mobile",
+          u."role",
+          u."status",
+          u."passwordHash",
+          u."deletionScheduledAt",
+          u."lastDeletionRequestAt",
+          (
+            u."lastDeletionRequestAt" IS NOT NULL
+            AND clock.now < u."lastDeletionRequestAt" + (${this.COOLDOWN_DAYS} * INTERVAL '1 day')
+          ) AS "cooldownActive",
+          CASE
+            WHEN u."lastDeletionRequestAt" IS NULL THEN 0
+            WHEN clock.now >= u."lastDeletionRequestAt" + (${this.COOLDOWN_DAYS} * INTERVAL '1 day') THEN 0
+            ELSE GREATEST(1, CEIL(EXTRACT(EPOCH FROM ((u."lastDeletionRequestAt" + (${this.COOLDOWN_DAYS} * INTERVAL '1 day')) - clock.now)) / 86400.0)::int)
+          END AS "remainingDays",
+          EXISTS (
+            SELECT 1 FROM "AccountDeletionOperation" op
+            WHERE op."userId" = u."id"
+              AND op."status" IN ('PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE')
+          ) AS "hasActiveOp"
+        FROM "User" u, clock
+        WHERE u."id" = ${userId}
+        FOR UPDATE
+      `;
+
+      if (!rows || rows.length !== 1) {
+        throw new Error('User not found.');
+      }
+
+      const locked = rows[0];
+
+      if (locked.role !== 'USER') {
+        throw new Error('Account deletion is only available for standard user accounts.');
+      }
+
+      if (locked.status === 'SUSPENDED') {
+        throw new Error('Account is suspended. Please contact customer support.');
+      }
+
+      // Locked-hash verification principle: reject if password changed concurrently
+      if (locked.passwordHash !== user.passwordHash) {
+        throw new Error('Incorrect password. Password verification is required to initiate account deletion.');
+      }
+
+      if (locked.cooldownActive) {
         throw new Error(
-          `Another deletion request cannot be submitted within 30 days of the previous request. Please try again in ${remainingDays} day(s).`
+          `Another deletion request cannot be submitted within 30 days of the previous request. Please try again in ${locked.remainingDays} day(s).`
         );
       }
-    }
 
-    // Request deletion OTP via SMS provider
+      if (locked.hasActiveOp || locked.deletionScheduledAt) {
+        throw new Error('An account deletion is already scheduled or processing.');
+      }
+
+      return {
+        mobile: locked.mobile,
+      };
+    });
+
+    // Request deletion OTP via SMS provider OUTSIDE database transaction
     await AuthService.requestOtp({
-      mobile: user.mobile,
+      mobile: verifiedUser.mobile,
       purpose: 'ACCOUNT_DELETION' as any,
       ipAddress,
     });
 
     return {
       success: true,
-      mobile: user.mobile.replace(/(\d{2})\d{6}(\d{2})/, '$1******$2'),
+      mobile: verifiedUser.mobile.replace(/(\d{2})\d{6}(\d{2})/, '$1******$2'),
       message: 'A deletion confirmation OTP has been sent to your registered mobile number.',
       gracePeriodDays: this.GRACE_PERIOD_DAYS,
     };
@@ -71,10 +137,9 @@ export class AccountDeletionService {
   /**
    * Step 2: User verifies OTP to confirm account deletion.
    * Atomically locks User row, then active AccountDeletionOperation row.
-   * Re-evaluates state from locked rows.
+   * Derives authoritative now and scheduledAt together from PostgreSQL clock_timestamp().
+   * Re-evaluates state, cooldown and existing operations under row locks.
    * Verifies and consumes deletion OTP within the transaction.
-   * If destructive processing has started, rejects.
-   * If operation or deletion is already scheduled, rejects without duplicate.
    * Creates exactly one PENDING operation and sets deletion lifecycle fields atomically.
    */
   static async confirmDeletion(userId: string, otpCode: string, ipAddress?: string) {
@@ -82,11 +147,8 @@ export class AccountDeletionService {
       throw new Error('Verification OTP code is required to confirm account deletion.');
     }
 
-    const now = new Date();
-    const scheduledAt = new Date(now.getTime() + this.GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
-
     const txResult = await prisma.$transaction(async (tx) => {
-      // 1. Lock the target User row with SELECT ... FOR UPDATE
+      // 1. Lock the target User row with SELECT ... FOR UPDATE and derive PostgreSQL clock
       const lockedUsers = await tx.$queryRaw<Array<{
         id: string;
         mobile: string;
@@ -94,16 +156,34 @@ export class AccountDeletionService {
         status: string;
         lastDeletionRequestAt: Date | null;
         deletionScheduledAt: Date | null;
+        now: Date;
+        scheduledAt: Date;
+        cooldownActive: boolean;
+        remainingDays: number;
       }>>`
+        WITH clock AS (
+          SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now
+        )
         SELECT
-          "id",
-          "mobile",
-          "role",
-          "status",
-          "lastDeletionRequestAt",
-          "deletionScheduledAt"
-        FROM "User"
-        WHERE "id" = ${userId}
+          u."id",
+          u."mobile",
+          u."role",
+          u."status",
+          u."lastDeletionRequestAt",
+          u."deletionScheduledAt",
+          clock.now,
+          clock.now + (${this.GRACE_PERIOD_DAYS} * INTERVAL '1 day') AS "scheduledAt",
+          (
+            u."lastDeletionRequestAt" IS NOT NULL
+            AND clock.now < u."lastDeletionRequestAt" + (${this.COOLDOWN_DAYS} * INTERVAL '1 day')
+          ) AS "cooldownActive",
+          CASE
+            WHEN u."lastDeletionRequestAt" IS NULL THEN 0
+            WHEN clock.now >= u."lastDeletionRequestAt" + (${this.COOLDOWN_DAYS} * INTERVAL '1 day') THEN 0
+            ELSE GREATEST(1, CEIL(EXTRACT(EPOCH FROM ((u."lastDeletionRequestAt" + (${this.COOLDOWN_DAYS} * INTERVAL '1 day')) - clock.now)) / 86400.0)::int)
+          END AS "remainingDays"
+        FROM "User" u, clock
+        WHERE u."id" = ${userId}
         FOR UPDATE
       `;
 
@@ -167,16 +247,11 @@ export class AccountDeletionService {
         );
       }
 
-      // Re-enforce 30-day cooldown check using locked user data
-      if (lockedUser.lastDeletionRequestAt) {
-        const cooldownMs = this.COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
-        const elapsedMs = now.getTime() - new Date(lockedUser.lastDeletionRequestAt).getTime();
-        if (elapsedMs < cooldownMs) {
-          const remainingDays = Math.ceil((cooldownMs - elapsedMs) / (24 * 60 * 60 * 1000));
-          throw new Error(
-            `Another deletion request cannot be submitted within 30 days of the previous request. Please try again in ${remainingDays} day(s).`
-          );
-        }
+      // Re-enforce 30-day cooldown check using database-derived time under row lock
+      if (lockedUser.cooldownActive) {
+        throw new Error(
+          `Another deletion request cannot be submitted within 30 days of the previous request. Please try again in ${lockedUser.remainingDays} day(s).`
+        );
       }
 
       // 3. Verify OTP in transaction (recording failed attempts if invalid)
@@ -197,7 +272,10 @@ export class AccountDeletionService {
         };
       }
 
-      // 4. Update User deletion lifecycle fields
+      const now = lockedUser.now;
+      const scheduledAt = lockedUser.scheduledAt;
+
+      // 4. Update User deletion lifecycle fields using database-derived timestamps
       await tx.user.update({
         where: { id: lockedUser.id },
         data: {
@@ -220,7 +298,7 @@ export class AccountDeletionService {
         data: { isActive: false },
       });
 
-      // 7. Create exactly one new PENDING operation
+      // 7. Create exactly one new PENDING operation with database-derived scheduledAt
       await tx.accountDeletionOperation.create({
         data: {
           userId: lockedUser.id,
@@ -265,41 +343,54 @@ export class AccountDeletionService {
 
   /**
    * Retrieves current deletion status for an authenticated user.
+   * All pending status, cooldown, and remaining days calculations are derived from PostgreSQL clock.
    */
   static async getDeletionStatus(userId: string) {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        deletionRequestedAt: true,
-        deletionScheduledAt: true,
-        lastDeletionRequestAt: true,
-      },
-    });
+    const rows = await prisma.$queryRaw<Array<{
+      id: string;
+      deletionRequestedAt: Date | null;
+      deletionScheduledAt: Date | null;
+      lastDeletionRequestAt: Date | null;
+      isPendingDeletion: boolean;
+      cooldownActive: boolean;
+      cooldownRemainingDays: number;
+    }>>`
+      WITH clock AS (
+        SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now
+      )
+      SELECT
+        u."id",
+        u."deletionRequestedAt",
+        u."deletionScheduledAt",
+        u."lastDeletionRequestAt",
+        (u."deletionScheduledAt" IS NOT NULL AND u."deletionScheduledAt" > clock.now) AS "isPendingDeletion",
+        (
+          u."lastDeletionRequestAt" IS NOT NULL
+          AND clock.now < u."lastDeletionRequestAt" + (${this.COOLDOWN_DAYS} * INTERVAL '1 day')
+        ) AS "cooldownActive",
+        CASE
+          WHEN u."lastDeletionRequestAt" IS NULL THEN 0
+          WHEN clock.now >= u."lastDeletionRequestAt" + (${this.COOLDOWN_DAYS} * INTERVAL '1 day') THEN 0
+          ELSE GREATEST(1, CEIL(EXTRACT(EPOCH FROM ((u."lastDeletionRequestAt" + (${this.COOLDOWN_DAYS} * INTERVAL '1 day')) - clock.now)) / 86400.0)::int)
+        END AS "cooldownRemainingDays"
+      FROM "User" u, clock
+      WHERE u."id" = ${userId}
+    `;
 
-    if (!user) throw new Error('User not found.');
-
-    const now = new Date();
-    const isPendingDeletion = Boolean(user.deletionScheduledAt && user.deletionScheduledAt > now);
-
-    let canRequestDeletion = true;
-    let cooldownRemainingDays = 0;
-
-    if (user.lastDeletionRequestAt) {
-      const cooldownMs = this.COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
-      const elapsedMs = now.getTime() - user.lastDeletionRequestAt.getTime();
-      if (elapsedMs < cooldownMs) {
-        canRequestDeletion = false;
-        cooldownRemainingDays = Math.ceil((cooldownMs - elapsedMs) / (24 * 60 * 60 * 1000));
-      }
+    if (!rows || rows.length !== 1) {
+      throw new Error('User not found.');
     }
+
+    const row = rows[0];
+    const isPendingDeletion = Boolean(row.isPendingDeletion);
+    const canRequestDeletion = !row.cooldownActive && !isPendingDeletion;
 
     return {
       isPendingDeletion,
-      deletionRequestedAt: user.deletionRequestedAt?.toISOString() || null,
-      deletionScheduledAt: user.deletionScheduledAt?.toISOString() || null,
-      canRequestDeletion: canRequestDeletion && !isPendingDeletion,
-      cooldownRemainingDays,
+      deletionRequestedAt: row.deletionRequestedAt ? new Date(row.deletionRequestedAt).toISOString() : null,
+      deletionScheduledAt: row.deletionScheduledAt ? new Date(row.deletionScheduledAt).toISOString() : null,
+      canRequestDeletion,
+      cooldownRemainingDays: Number(row.cooldownRemainingDays) || 0,
       gracePeriodDays: this.GRACE_PERIOD_DAYS,
     };
   }
@@ -323,7 +414,7 @@ export class AccountDeletionService {
     processedCount: number;
     errors: Array<{ userId: string; error: string }>;
   }> {
-    const leaseOwner = workerInstanceId || `del-worker-${process.pid}-${Date.now()}`;
+    const leaseOwner = workerInstanceId || `del-worker-${process.pid}-${crypto.randomUUID()}`;
     const dueUsers = await prismaClient.$queryRaw<Array<{ id: string }>>`
       SELECT DISTINCT u."id"
       FROM "User" u
@@ -785,7 +876,7 @@ export class AccountDeletionService {
           });
 
           // 6. Anonymize User record (retain ID for ledger foreign keys)
-          const anonymizedMobile = `DEL_${u.id.replace(/-/g, '').slice(0, 8)}_${Date.now()}`;
+          const anonymizedMobile = `DEL_${u.id.replace(/-/g, '').slice(0, 8)}_${crypto.randomBytes(4).toString('hex')}`;
           await tx.user.update({
             where: { id: u.id },
             data: {

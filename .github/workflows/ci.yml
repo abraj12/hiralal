@@ -190,7 +190,7 @@ jobs:
 
 
   admin-date-tests:
-    name: Admin Date Helper Tests
+    name: Admin Typecheck, Security Floor, Audit, Build & Date Helper Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -207,9 +207,20 @@ jobs:
         working-directory: admin
         run: npm ci
 
+      - name: Verify Next.js Security Floor
+        run: node scripts/check-next-security-floor.cjs
+
+      - name: Production Dependency Audit
+        working-directory: admin
+        run: npm audit --omit=dev --audit-level=high
+
       - name: TypeScript Typecheck
         working-directory: admin
         run: npx tsc --noEmit
+
+      - name: Build Next.js Admin Panel
+        working-directory: admin
+        run: npm run build
 
       - name: Run Admin Date Helper Tests
         working-directory: admin

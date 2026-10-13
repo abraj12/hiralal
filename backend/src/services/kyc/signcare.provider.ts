@@ -48,6 +48,7 @@ export class SignCareKycProvider implements KycProvider {
 
       const response = await fetch(url, {
         method: 'POST',
+        redirect: 'error',
         headers: {
           'X-API-KEY': config.signcare.apiKey,
           'X-API-APP-ID': config.signcare.appId,

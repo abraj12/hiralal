@@ -1092,10 +1092,22 @@ export class AuthService {
         passwordHash: string;
         deletionScheduledAt: Date | null;
         deletionRequestedAt: Date | null;
+        gracePeriodExpired: boolean;
+        now: Date;
       }>>`
-        SELECT "id", "status", "passwordHash", "deletionScheduledAt", "deletionRequestedAt"
-        FROM "User"
-        WHERE "id" = ${user.id}
+        WITH clock AS (
+          SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now
+        )
+        SELECT
+          u."id",
+          u."status",
+          u."passwordHash",
+          u."deletionScheduledAt",
+          u."deletionRequestedAt",
+          (u."deletionScheduledAt" IS NOT NULL AND u."deletionScheduledAt" <= clock.now) AS "gracePeriodExpired",
+          clock.now AS "now"
+        FROM "User" u, clock
+        WHERE u."id" = ${user.id}
         FOR UPDATE
       `;
 
@@ -1103,6 +1115,7 @@ export class AuthService {
         throw new Error('User not found.');
       }
       const lockedUser = lockedUsers[0];
+      const now = lockedUser.now;
 
       // Optimistic credential-version verification under row lock
       if (lockedUser.passwordHash !== user.passwordHash) {
@@ -1137,11 +1150,8 @@ export class AuthService {
         throw new Error('Your account deletion is in progress and cannot be cancelled.');
       }
 
-      const now = new Date();
-
       if (lockedUser.deletionScheduledAt) {
-        const scheduledTime = new Date(lockedUser.deletionScheduledAt);
-        if (scheduledTime <= now) {
+        if (lockedUser.gracePeriodExpired) {
           throw new Error('Account deletion grace period has expired.');
         }
 
@@ -1158,14 +1168,13 @@ export class AuthService {
         });
 
         if (activeOp && activeOp.status === 'PENDING') {
-          await tx.accountDeletionOperation.update({
-            where: { id: activeOp.id },
-            data: {
-              status: 'CANCELLED',
-              completedAt: now,
-              leaseExpiresAt: null,
-            },
-          });
+          await tx.$executeRaw`
+            UPDATE "AccountDeletionOperation"
+            SET "status" = 'CANCELLED',
+                "completedAt" = (clock_timestamp() AT TIME ZONE 'UTC'),
+                "leaseExpiresAt" = NULL
+            WHERE "id" = ${activeOp.id}
+          `;
         }
 
         await tx.auditLog.create({

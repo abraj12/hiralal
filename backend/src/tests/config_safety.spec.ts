@@ -337,25 +337,102 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
         expect(() => validateProductionSignCare(env)).toThrow(/SIGNCARE_BASE_URL must use https: protocol/);
       });
 
+      it('rejects malformed URLs', () => {
+        const env = { ...validBaseEnv, SIGNCARE_BASE_URL: 'not-a-valid-url' };
+        expect(() => validateProductionSignCare(env)).toThrow(/SIGNCARE_BASE_URL is not a valid parseable URL/);
+      });
+
       it('rejects localhost and loopback SIGNCARE_BASE_URL', () => {
         expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://localhost:8080' })).toThrow(
-          /cannot use localhost, loopback, or UAT\/sandbox endpoints/
+          /cannot use localhost, loopback, or private IP endpoints/
         );
         expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://127.0.0.1:8080' })).toThrow(
-          /cannot use localhost, loopback, or UAT\/sandbox endpoints/
+          /cannot use localhost, loopback, or private IP endpoints/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://[::1]' })).toThrow(
+          /cannot use localhost, loopback, or private IP endpoints/
         );
       });
 
-      it('rejects UAT and sandbox SIGNCARE_BASE_URL in production', () => {
+      it('rejects private IPv4 and link-local addresses', () => {
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://10.0.0.1' })).toThrow(
+          /cannot use localhost, loopback, or private IP endpoints/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://192.168.1.1' })).toThrow(
+          /cannot use localhost, loopback, or private IP endpoints/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://172.16.5.1' })).toThrow(
+          /cannot use localhost, loopback, or private IP endpoints/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://169.254.169.254' })).toThrow(
+          /cannot use localhost, loopback, or private IP endpoints/
+        );
+      });
+
+      it('rejects IPv6 unique-local and link-local addresses', () => {
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://[fe80::1]' })).toThrow(
+          /cannot use localhost, loopback, or private IP endpoints/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://[fc00::1]' })).toThrow(
+          /cannot use localhost, loopback, or private IP endpoints/
+        );
+      });
+
+      it('rejects UAT, sandbox, staging and dev endpoints', () => {
         expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://uat.signcare.in' })).toThrow(
           /cannot use localhost, loopback, or UAT\/sandbox endpoints/
         );
         expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://sandbox.signcare.in' })).toThrow(
           /cannot use localhost, loopback, or UAT\/sandbox endpoints/
         );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://staging.signcare.in' })).toThrow(
+          /cannot use localhost, loopback, or UAT\/sandbox endpoints/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://dev.signcare.in' })).toThrow(
+          /cannot use localhost, loopback, or UAT\/sandbox endpoints/
+        );
       });
 
-      it('accepts approved production endpoint https://api.signcare.in', () => {
+      it('rejects URL credentials, fragments, query strings, and non-standard ports', () => {
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://user:pass@api.signcare.in' })).toThrow(
+          /forbidden URL components/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://api.signcare.in#section' })).toThrow(
+          /forbidden URL components/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://api.signcare.in?key=leak' })).toThrow(
+          /forbidden URL query parameters/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://api.signcare.in:8443' })).toThrow(
+          /cannot use non-standard port/
+        );
+      });
+
+      it('rejects unauthorized production domains and deceptive hostnames', () => {
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://api.signcare.in.evil.com' })).toThrow(
+          /not on the approved production allowlist/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://unauthorized-kyc-host.com' })).toThrow(
+          /not on the approved production allowlist/
+        );
+      });
+
+      it('rejects missing or placeholder SIGNCARE_API_KEY and SIGNCARE_APP_ID', () => {
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_API_KEY: '' })).toThrow(
+          /Valid SIGNCARE_API_KEY is required in production/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_API_KEY: 'your_api_key_placeholder' })).toThrow(
+          /Valid SIGNCARE_API_KEY is required in production/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_APP_ID: '' })).toThrow(
+          /Valid SIGNCARE_APP_ID is required in production/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_APP_ID: 'replace_with_app_id' })).toThrow(
+          /Valid SIGNCARE_APP_ID is required in production/
+        );
+      });
+
+      it('accepts approved production endpoint https://api.signcare.in with valid credentials', () => {
         const env = { ...validBaseEnv, SIGNCARE_BASE_URL: 'https://api.signcare.in' };
         expect(() => validateProductionSignCare(env)).not.toThrow();
       });
@@ -372,9 +449,29 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       });
 
       it('rejects incomplete Mode A credentials triplet', () => {
-        const env = { ...validBaseEnv };
-        delete env.FIREBASE_PRIVATE_KEY;
-        expect(() => validateProductionFcm(env)).toThrow(/Incomplete FCM credentials: Mode A requires all three variables/);
+        const env1 = { ...validBaseEnv };
+        delete env1.FIREBASE_PRIVATE_KEY;
+        expect(() => validateProductionFcm(env1)).toThrow(/Incomplete FCM credentials: Mode A requires all three variables/);
+
+        const env2 = { ...validBaseEnv };
+        delete env2.FIREBASE_PROJECT_ID;
+        expect(() => validateProductionFcm(env2)).toThrow(/Incomplete FCM credentials: Mode A requires all three variables/);
+
+        const env3 = { ...validBaseEnv };
+        delete env3.FIREBASE_CLIENT_EMAIL;
+        expect(() => validateProductionFcm(env3)).toThrow(/Incomplete FCM credentials: Mode A requires all three variables/);
+      });
+
+      it('rejects mixed Mode A and Mode B credentials to prevent ambiguous config', () => {
+        const env = {
+          ...validBaseEnv,
+          FIREBASE_SERVICE_ACCOUNT_KEY: JSON.stringify({
+            project_id: 'sa-proj',
+            client_email: 'sa@proj.iam.gserviceaccount.com',
+            private_key: validTestRsaKey,
+          }),
+        };
+        expect(() => validateProductionFcm(env)).toThrow(/Inconsistent FCM credentials/);
       });
 
       it('rejects placeholder values in Mode A credentials', () => {
@@ -388,7 +485,16 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
 
         expect(() =>
           validateProductionFcm({ ...validBaseEnv, FIREBASE_PRIVATE_KEY: 'not_a_pem_private_key' })
-        ).toThrow(/FIREBASE_PRIVATE_KEY is missing or contains an invalid\/placeholder private key/);
+        ).toThrow(/FCM private key is missing or malformed/);
+      });
+
+      it('rejects invalid or non-RSA private key in Mode A', () => {
+        expect(() =>
+          validateProductionFcm({
+            ...validBaseEnv,
+            FIREBASE_PRIVATE_KEY: '-----BEGIN RSA PRIVATE KEY-----\nINVALID_KEY_DATA\n-----END RSA PRIVATE KEY-----',
+          })
+        ).toThrow(/FCM private key is invalid or unusable/);
       });
 
       it('accepts valid Mode A triplet', () => {
@@ -404,23 +510,44 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
           project_id: 'hiralal-sa-prod',
           client_email: 'sa@hiralal-sa-prod.iam.gserviceaccount.com',
           private_key: validTestRsaKey,
+          token_uri: 'https://oauth2.googleapis.com/token',
         });
         expect(() => validateProductionFcm(env)).not.toThrow();
       });
 
+      it('rejects unauthorized or placeholder token_uri in Mode B', () => {
+        const env = { ...validBaseEnv };
+        delete env.FIREBASE_PROJECT_ID;
+        delete env.FIREBASE_CLIENT_EMAIL;
+        delete env.FIREBASE_PRIVATE_KEY;
+        env.FIREBASE_SERVICE_ACCOUNT_KEY = JSON.stringify({
+          project_id: 'hiralal-sa-prod',
+          client_email: 'sa@hiralal-sa-prod.iam.gserviceaccount.com',
+          private_key: validTestRsaKey,
+          token_uri: 'https://evil-auth-server.com/token',
+        });
+        expect(() => validateProductionFcm(env)).toThrow(/token_uri is invalid or unauthorized/);
+      });
+
       it('rejects malformed service-account JSON in Mode B', () => {
-        const env = {
+        const env: Record<string, string | undefined> = {
           ...validBaseEnv,
           FIREBASE_SERVICE_ACCOUNT_KEY: '{ malformed_json: true ',
         };
+        delete env.FIREBASE_PROJECT_ID;
+        delete env.FIREBASE_CLIENT_EMAIL;
+        delete env.FIREBASE_PRIVATE_KEY;
         expect(() => validateProductionFcm(env)).toThrow(/FIREBASE_SERVICE_ACCOUNT_KEY contains invalid JSON/);
       });
 
       it('rejects non-existent file path in Mode B', () => {
-        const env = {
+        const env: Record<string, string | undefined> = {
           ...validBaseEnv,
           FIREBASE_SERVICE_ACCOUNT_KEY: '/nonexistent/path/to/service-account.json',
         };
+        delete env.FIREBASE_PROJECT_ID;
+        delete env.FIREBASE_CLIENT_EMAIL;
+        delete env.FIREBASE_PRIVATE_KEY;
         expect(() => validateProductionFcm(env)).toThrow(/file does not exist at specified path/);
       });
     });

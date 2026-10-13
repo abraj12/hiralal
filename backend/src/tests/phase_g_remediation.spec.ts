@@ -46,6 +46,10 @@ const G4_USER_H1_MOBILE = '9833300098';
 const G4_USER_H2_MOBILE = '9833300099';
 const G4_USER_I_MOBILE = '9833300100';
 const G4_USER_J_MOBILE = '9833300101';
+const G5_USER_K_MOBILE = '9833300102';
+const G5_USER_L_MOBILE = '9833300103';
+const G5_USER_M_MOBILE = '9833300104';
+const G5_USER_N_MOBILE = '9833300105';
 const TEST_PASSWORD = 'PhaseG_Test@2026';
 
 const validRsaKey = crypto.generateKeyPairSync('rsa', {
@@ -117,6 +121,10 @@ async function cleanTestData() {
     G4_USER_H2_MOBILE,
     G4_USER_I_MOBILE,
     G4_USER_J_MOBILE,
+    G5_USER_K_MOBILE,
+    G5_USER_L_MOBILE,
+    G5_USER_M_MOBILE,
+    G5_USER_N_MOBILE,
   ];
   await prisma.accountDeletionOperation.deleteMany({
     where: {
@@ -1849,6 +1857,239 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
       await prisma.accountDeletionOperation.deleteMany({ where: { userId: user.id } });
       await prisma.auditLog.deleteMany({ where: { entityId: user.id } });
       await prisma.user.deleteMany({ where: { id: user.id } });
+      await cleanG3User(mobile);
+    }
+  });
+
+  test('Phase G.5 Test K — DB-clock cooldown calculation is immune to application clock skew', async () => {
+    const mobile = G5_USER_K_MOBILE;
+    const user = await createG3TestUser(mobile);
+
+    try {
+      // 1. Simulate user requested deletion 10 days ago (in PostgreSQL clock)
+      await prisma.$executeRaw`
+        UPDATE "User"
+        SET "lastDeletionRequestAt" = (clock_timestamp() AT TIME ZONE 'UTC') - interval '10 days'
+        WHERE "id" = ${user.id}
+      `;
+
+      // 2. Skew application clock forward by +45 days
+      const realDateNow = Date.now;
+      jest.spyOn(Date, 'now').mockReturnValue(realDateNow() + 45 * 24 * 3600 * 1000);
+
+      try {
+        // App clock says 45 days passed, but DB clock says only 10 days passed (< 30 days cooldown).
+        // Must throw cooldown error!
+        await expect(
+          AccountDeletionService.requestDeletion(user.id, TEST_PASSWORD, '127.0.0.1')
+        ).rejects.toThrow(/cannot be submitted within 30 days/i);
+      } finally {
+        (Date.now as any).mockRestore();
+      }
+
+      // 3. Simulate user requested deletion 31 days ago (in PostgreSQL clock)
+      await prisma.$executeRaw`
+        UPDATE "User"
+        SET "lastDeletionRequestAt" = (clock_timestamp() AT TIME ZONE 'UTC') - interval '31 days'
+        WHERE "id" = ${user.id}
+      `;
+
+      // 4. Skew application clock backward by -15 days (app clock says only 16 days passed)
+      jest.spyOn(Date, 'now').mockReturnValue(realDateNow() - 15 * 24 * 3600 * 1000);
+
+      try {
+        // Even though app clock says only 16 days passed, DB clock confirms 31 days passed (> 30 days).
+        // Request must succeed and issue verification code!
+        const result = await AccountDeletionService.requestDeletion(user.id, TEST_PASSWORD, '127.0.0.1');
+        expect(result.success).toBe(true);
+        expect(result.message).toMatch(/OTP has been sent/i);
+      } finally {
+        (Date.now as any).mockRestore();
+      }
+    } finally {
+      await cleanG3User(mobile);
+    }
+  });
+
+  test('Phase G.5 Test L — Deletion scheduledAt and getDeletionStatus use DB clock under app clock skew', async () => {
+    const mobile = G5_USER_L_MOBILE;
+    const user = await createG3TestUser(mobile);
+
+    try {
+      // Request deletion to populate OTP
+      await AccountDeletionService.requestDeletion(user.id, TEST_PASSWORD, '127.0.0.1');
+
+      // Get latest OTP code from database
+      const otpRec = await prisma.otpRequest.findFirst({
+        where: { mobile, purpose: 'ACCOUNT_DELETION' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(otpRec).toBeDefined();
+
+      // Seed a known hash for '123456' using sha256Hash
+      const testOtp = '123456';
+      const otpHash = sha256Hash(testOtp);
+      await prisma.otpRequest.update({
+        where: { id: otpRec!.id },
+        data: { otpHash, attemptsCount: 0 },
+      });
+
+      // Skew app clock forward by +1 year (365 days)
+      const realDateNow = Date.now;
+      jest.spyOn(Date, 'now').mockReturnValue(realDateNow() + 365 * 24 * 3600 * 1000);
+
+      try {
+        // Confirm deletion with OTP
+        const confirmRes = await AccountDeletionService.confirmDeletion(user.id, testOtp, '127.0.0.1');
+        expect(confirmRes.success).toBe(true);
+
+        // Verify deletionScheduledAt in User table was calculated via DB clock (+7 days), not app clock (+372 days)
+        const [userRow] = await prisma.$queryRaw<Array<{ days_diff: number }>>`
+          SELECT ROUND(EXTRACT(EPOCH FROM ("deletionScheduledAt" - (clock_timestamp() AT TIME ZONE 'UTC'))) / 86400.0)::integer as days_diff
+          FROM "User"
+          WHERE "id" = ${user.id}
+        `;
+        expect(userRow.days_diff).toBe(7);
+
+        // Verify AccountDeletionOperation.scheduledFor is also scheduled for +7 days relative to DB clock
+        const [opRow] = await prisma.$queryRaw<Array<{ days_diff: number }>>`
+          SELECT ROUND(EXTRACT(EPOCH FROM ("scheduledFor" - (clock_timestamp() AT TIME ZONE 'UTC'))) / 86400.0)::integer as days_diff
+          FROM "AccountDeletionOperation"
+          WHERE "userId" = ${user.id}
+        `;
+        expect(opRow.days_diff).toBe(7);
+
+        // Verify getDeletionStatus calculates status via DB clock
+        const status = await AccountDeletionService.getDeletionStatus(user.id);
+        expect(status.isPendingDeletion).toBe(true);
+        expect(status.gracePeriodDays).toBe(7);
+      } finally {
+        (Date.now as any).mockRestore();
+      }
+    } finally {
+      await cleanG3User(mobile);
+    }
+  });
+
+  test('Phase G.5 Test M — Login grace period expiration vs cancellation strictly governed by DB clock', async () => {
+    const mobile = G5_USER_M_MOBILE;
+    const user = await createG3TestUser(mobile);
+
+    try {
+      // 1. User has deletionScheduledAt with 1 day remaining in grace period according to PostgreSQL
+      await prisma.$executeRaw`
+        UPDATE "User"
+        SET "status" = 'ACTIVE',
+            "deletionScheduledAt" = (clock_timestamp() AT TIME ZONE 'UTC') + interval '1 day',
+            "deletionRequestedAt" = (clock_timestamp() AT TIME ZONE 'UTC') - interval '6 days'
+        WHERE "id" = ${user.id}
+      `;
+      await prisma.$executeRaw`
+        INSERT INTO "AccountDeletionOperation" ("id", "userId", "status", "scheduledFor", "createdAt", "updatedAt")
+        VALUES (gen_random_uuid(), ${user.id}, 'PENDING', (clock_timestamp() AT TIME ZONE 'UTC') + interval '1 day', clock_timestamp() AT TIME ZONE 'UTC', clock_timestamp() AT TIME ZONE 'UTC')
+      `;
+
+      // Skew app clock forward by +10 days (app clock says grace period expired 9 days ago!)
+      const realDateNow = Date.now;
+      jest.spyOn(Date, 'now').mockReturnValue(realDateNow() + 10 * 24 * 3600 * 1000);
+
+      try {
+        // App clock is in the future, but DB clock knows user is still within grace period (+1 day).
+        // Login must succeed and cancel deletion!
+        const loginRes = await AuthService.login(mobile, TEST_PASSWORD);
+        expect(loginRes.accessToken).toBeDefined();
+
+        // Check user status is ACTIVE and deletion fields cleared
+        const userAfter = await prisma.user.findUnique({ where: { id: user.id } });
+        expect(userAfter?.status).toBe('ACTIVE');
+        expect(userAfter?.deletionScheduledAt).toBeNull();
+
+        // Check operation is CANCELLED
+        const opAfter = await prisma.accountDeletionOperation.findFirst({ where: { userId: user.id } });
+        expect(opAfter?.status).toBe('CANCELLED');
+        expect(opAfter?.completedAt).toBeDefined();
+      } finally {
+        (Date.now as any).mockRestore();
+      }
+
+      // 2. Now set user deletionScheduledAt to 1 hour ago according to PostgreSQL
+      await prisma.$executeRaw`
+        UPDATE "User"
+        SET "status" = 'ACTIVE',
+            "deletionScheduledAt" = (clock_timestamp() AT TIME ZONE 'UTC') - interval '1 hour',
+            "deletionRequestedAt" = (clock_timestamp() AT TIME ZONE 'UTC') - interval '7 days 1 hour'
+        WHERE "id" = ${user.id}
+      `;
+      await prisma.$executeRaw`
+        UPDATE "AccountDeletionOperation"
+        SET "status" = 'PENDING',
+            "scheduledFor" = (clock_timestamp() AT TIME ZONE 'UTC') - interval '1 hour',
+            "completedAt" = NULL
+        WHERE "userId" = ${user.id}
+      `;
+
+      // Skew app clock backward by -10 days (app clock claims user is well within grace period!)
+      jest.spyOn(Date, 'now').mockReturnValue(realDateNow() - 10 * 24 * 3600 * 1000);
+
+      try {
+        // App clock says within grace period, but DB clock knows grace period expired 1 hour ago.
+        // Login must be rejected
+        await expect(
+          AuthService.login(mobile, TEST_PASSWORD)
+        ).rejects.toThrow(/Account deletion grace period has expired/i);
+      } finally {
+        (Date.now as any).mockRestore();
+      }
+    } finally {
+      await cleanG3User(mobile);
+    }
+  });
+
+  test('Phase G.5 Test N — Concurrent confirmDeletion calls serialize cleanly without duplicate operations', async () => {
+    const mobile = G5_USER_N_MOBILE;
+    const user = await createG3TestUser(mobile);
+
+    try {
+      // 1. Request deletion to issue OTP
+      await AccountDeletionService.requestDeletion(user.id, TEST_PASSWORD, '127.0.0.1');
+
+      // 2. Seed a known OTP with sha256Hash
+      const testOtp = '654321';
+      const otpHash = sha256Hash(testOtp);
+      const otpRec = await prisma.otpRequest.findFirst({
+        where: { mobile, purpose: 'ACCOUNT_DELETION' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(otpRec).toBeDefined();
+      await prisma.otpRequest.update({
+        where: { id: otpRec!.id },
+        data: { otpHash, attemptsCount: 0 },
+      });
+
+      // 3. Fire 10 concurrent confirmDeletion requests
+      const concurrentAttempts = Array.from({ length: 10 }, () =>
+        AccountDeletionService.confirmDeletion(user.id, testOtp, '127.0.0.1')
+          .then((res) => ({ success: true, res }))
+          .catch((err) => ({ success: false, error: err.message }))
+      );
+
+      const results = await Promise.all(concurrentAttempts);
+
+      // Exactly one attempt must succeed
+      const successfulAttempts = results.filter((r) => r.success);
+      expect(successfulAttempts.length).toBe(1);
+
+      // Verify in database: Exactly ONE active AccountDeletionOperation exists
+      const ops = await prisma.accountDeletionOperation.findMany({
+        where: { userId: user.id },
+      });
+      expect(ops.length).toBe(1);
+      expect(ops[0].status).toBe('PENDING');
+
+      // Verify user has deletionScheduledAt set
+      const userAfter = await prisma.user.findUnique({ where: { id: user.id } });
+      expect(userAfter?.deletionScheduledAt).toBeDefined();
+    } finally {
       await cleanG3User(mobile);
     }
   });
