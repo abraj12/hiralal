@@ -98,3 +98,88 @@ export function requireActionIntegrity(action: IntegrityAction) {
     }
   };
 }
+
+/**
+ * Express middleware to enforce Google Play Integrity device attestation on pre-authentication actions
+ * (e.g. registration, password reset) where the caller is not yet authenticated with a user session.
+ */
+export function requirePreAuthActionIntegrity(action: IntegrityAction) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const isEnforcing = PlayIntegrityService.isEnforcingActions();
+
+    const integrityToken =
+      (req.headers['x-integrity-token'] as string) ||
+      (req.body?.integrityToken as string) ||
+      '';
+
+    const integrityNonce =
+      (req.headers['x-integrity-nonce'] as string) ||
+      (req.body?.integrityNonce as string) ||
+      '';
+
+    // In production or when enforcement is enabled: attestation is strictly required
+    if (isEnforcing) {
+      if (!integrityToken || !integrityNonce) {
+        res.status(403).json({
+          success: false,
+          code: 'INTEGRITY_REQUIRED',
+          message: 'Device integrity attestation is required for this action.',
+        });
+        return;
+      }
+    } else {
+      // In development/test with enforcement disabled: if client didn't supply token/nonce, proceed
+      if (!integrityToken && !integrityNonce) {
+        next();
+        return;
+      }
+    }
+
+    // Compute canonical request hash from actual server-received request payload
+    let requestHash: string;
+    try {
+      requestHash = computeIntegrityRequestHash(action, req);
+    } catch (err: any) {
+      res.status(403).json({
+        success: false,
+        code: 'INTEGRITY_FAILED',
+        message: `Failed to compute request payload hash: ${err.message}`,
+      });
+      return;
+    }
+
+    // Context binding for pre-auth action (no user or session bound)
+    const expectedContext = {
+      action,
+      requestHash,
+    };
+
+    try {
+      const verdict = await PlayIntegrityService.verifyActionToken({
+        nonce: integrityNonce,
+        integrityToken,
+        expectedContext,
+      });
+
+      if (!verdict.success) {
+        res.status(403).json({
+          success: false,
+          code: 'INTEGRITY_FAILED',
+          message: verdict.error || 'Device integrity verification failed.',
+          verdict,
+        });
+        return;
+      }
+
+      // Attach verified verdict to request for downstream audit logging
+      (req as any).integrityVerdict = verdict;
+      next();
+    } catch (err: any) {
+      res.status(403).json({
+        success: false,
+        code: 'INTEGRITY_ERROR',
+        message: `Device integrity check error: ${err.message}`,
+      });
+    }
+  };
+}

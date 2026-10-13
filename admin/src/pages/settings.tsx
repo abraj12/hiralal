@@ -226,12 +226,16 @@ export default function AdminSettingsPage() {
     clearAlerts();
 
     try {
-      if (!newGstRate.trim()) {
+      const normalizedRate = newGstRate.trim();
+      if (!normalizedRate) {
         throw new Error('GST rate is required. Enter the percentage explicitly.');
       }
-      const parsedRate = parseFloat(newGstRate.trim());
+      if (!/^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/.test(normalizedRate)) {
+        throw new Error('GST rate must be between 0.00% and 100.00% with at most 2 decimal places.');
+      }
+      const parsedRate = parseFloat(normalizedRate);
       if (!Number.isFinite(parsedRate) || parsedRate < 0 || parsedRate > 100) {
-        throw new Error('GST rate must be a valid number between 0% and 100%.');
+        throw new Error('GST rate must be between 0.00% and 100.00%.');
       }
 
       await AdminApiClient.createGstRule({

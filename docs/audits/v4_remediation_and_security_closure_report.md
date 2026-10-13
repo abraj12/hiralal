@@ -317,23 +317,95 @@ For bills where GST is not included (`gstIncluded: false`), `GstService.calculat
 
 ---
 
+### 2.8 HIR-V4.2-01: Worker-Only Password Recovery & Strict Generic OTP Purpose Boundary Enforcement
+
+#### Problem Statement
+Generic OTP routes (`/otp/request`, `/send-otp`, `/otp/verify`, `/verify-otp`) historically processed arbitrary worker purposes. This exposed password recovery and account deletion to generic endpoints and created potential enumeration or credential reset bypass risks against administrator accounts.
+
+#### Implementation Details
+1. **Generic OTP Purpose Set Enforcement**:
+   - In `backend/src/services/auth.service.ts`: defined `PUBLIC_GENERIC_OTP_PURPOSES = new Set(['REGISTRATION', 'LOGIN'])`.
+   - `requirePublicGenericOtpPurpose()` rejects any other purpose with HTTP 400 `'Unsupported OTP purpose for this endpoint.'`.
+   - Generic endpoints (`POST /api/v1/auth/otp/request`, `POST /api/v1/auth/send-otp`, `POST /api/v1/auth/otp/verify`, `POST /api/v1/auth/verify-otp`) now enforce `requirePublicGenericOtpPurpose`.
+2. **Dedicated Worker Password Recovery Methods**:
+   - `AuthService.requestPasswordResetOtp()`: Restricts recovery to worker accounts (`role === 'USER'`) with `status === 'ACTIVE'`.
+   - **Anti-Enumeration Protection**: For non-existent accounts, administrator accounts (`BILL_ADMIN`, `OPERATIONS_ADMIN`), and inactive/suspended accounts, the endpoint returns a synthetic success response (`"If an account is associated with this mobile number, a verification code has been dispatched."`) without inserting `OtpRequest` records or dispatching SMS.
+   - `AuthService.verifyPasswordResetOtp()`: Verifies OTP under row locks, validating account role is `USER` and status is `ACTIVE`.
+   - `AuthService.completePasswordReset()`: Enforces `user.role === 'USER'` and `user.status === 'ACTIVE'` before consuming `verificationToken` or modifying password hash.
+   - Rejection preserves administrator password hash and lockout counters unchanged.
+3. **Dedicated Worker Account Deletion Method**:
+   - `AuthService.requestAccountDeletionOtp()`: Dispatches deletion OTPs with purpose `ACCOUNT_DELETION`.
+   - `AccountDeletionService.requestDeletion()` now calls `AuthService.requestAccountDeletionOtp()` directly.
+
+---
+
+### 2.9 HIR-V4.2-02: Pre-Authentication Play Integrity Device Attestation for Worker Recovery
+
+#### Problem Statement
+Worker password reset routes operate prior to establishing an authenticated session. Without pre-authentication device attestation, recovery endpoints could be subjected to automated bot attacks or mobile API tampering.
+
+#### Implementation Details
+1. **Integrity Action Type Expansion**:
+   - In `backend/src/services/integrity/playIntegrity.service.ts`: added `FORGOT_PASSWORD_REQUEST`, `FORGOT_PASSWORD_VERIFY`, `FORGOT_PASSWORD_COMPLETE` to `IntegrityAction`.
+   - Allowed in `/integrity/pre-auth/nonce` endpoint.
+2. **Pre-Authentication Integrity Middleware**:
+   - In `backend/src/middleware/integrity.middleware.ts`: implemented `requirePreAuthActionIntegrity(action)`.
+   - Evaluates attestation when enforcement is active; verifies nonce binding against `{ action, requestHash }`.
+   - Attached to `/password-reset/request`, `/password-reset/verify`, `/password-reset/complete` routes.
+3. **Canonical Request Hash Alignment**:
+   - In `backend/src/utils/integrityRequestHash.ts`: binds `{ version: 1, action, mobile }`.
+   - In `mobile/src/services/integrityRequestHash.ts`: implemented `createPasswordResetRequestHash(action, { mobile })`.
+   - In `mobile/src/services/api.ts`: updated `requestPasswordReset`, `verifyPasswordResetOtp`, and `completePasswordReset` to accept optional `attestation?: RequiredActionAttestation` and attach `x-integrity-token` and `x-integrity-nonce` headers.
+
+---
+
+### 2.10 HIR-V4.2-03: Strict GST Decimal Scale Precision, Negative-Zero Neutralization & Advisory Lock Atomicity
+
+#### Problem Statement
+1. Input values formatted using scientific notation (e.g. `1e-7`) or numbers with excess decimal scale could evade naive validation.
+2. JavaScript negative zero (`-0`) could leak into persisted state.
+3. Concurrent default rule updates lacked database-level synchronization, allowing potential race conditions where multiple rules temporarily claimed default status or updating a non-existent rule could clear existing default flags.
+
+#### Implementation Details
+1. **Decimal Scale Validation with Tolerance**:
+   - In `parseStrictGstRate()` in `backend/src/services/gst.service.ts`:
+     - Evaluates numeric input against `tolerance = Number.EPSILON * Math.max(1, Math.abs(rate)) * 4` against `Math.round(rate * 100) / 100` to catch exponential numbers like `1e-7`.
+     - Validates string input against `GST_RATE_STRING_PATTERN = /^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/` and explicitly rejects fractional strings with `decimals.length > 2`.
+     - Returns `Object.is(rate, -0) ? 0 : rate` to neutralize JavaScript negative zero.
+2. **PostgreSQL Advisory Lock Serialization**:
+   - In `GstService.createGstRule()` and `GstService.updateGstRule()`: serializes default-rule mutations using `await db.$executeRaw\`SELECT pg_advisory_xact_lock(7212026, 1)\``.
+3. **Target Existence Verification Before Default Clearing**:
+   - In `GstService.updateGstRule()`: validates target rule existence inside the transaction *before* modifying any default flags. If the rule does not exist, throws `GST rule with ID "..." not found.` without touching existing default rules.
+4. **Admin UI Form Alignment**:
+   - In `admin/src/pages/settings.tsx`: updated `handleCreateGstRule` with client-side pattern validation matching `/^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/`.
+
+---
+
 ## 3. Production Gates & Repository Controls
 
 All changes strictly conform to the repository safety policies:
 1. **Protected Branch Preservation**: The protected `main` branch (`b90136ccc046dbc1f3f50f3e0993cb1c21375789`) was never touched, merged into, or force-pushed.
 2. **Branch Isolation**: All commits and tests reside on `audit/deploy-workflow-investigation`.
 3. **Zero Production Mutation**: No live AWS deployment was triggered, no live database migrations were executed, and no Play Store release was published.
-4. **Zero Test Regressions**: All 619 backend tests across 35 suites, 61 deployment tests, 22 security floor tests, 9 admin unit tests, and 24 mobile plugin tests pass cleanly.
+4. **Zero Test Regressions**:
+   - **Backend**: 627 passed across 35 test suites (`npm test -- --runInBand`).
+   - **Deployment Health**: 61 passed across all suites (`python -m unittest scripts/test_verify_deployment_health.py`).
+   - **Next.js Security Floor**: 22 passed (`node scripts/test-next-security-floor.cjs`).
+   - **Admin Portal**: 9 date-utility tests passed; production build clean (`next build`, 11/11 static pages generated).
+   - **Mobile Workspace**: 24 plugin/config tests passed; TypeScript check clean (`npx tsc --noEmit`).
 
 ---
 
 ## 4. Conclusion & Release Readiness
 
-With the completion of HIR-V4-01 through HIR-V4-04, HIR-V4.1-01, HIR-V4.1-02, and HIRALAL-GST-02:
-- Generic OTP authentication paths cannot bypass administrator password checks.
+With the completion of HIR-V4-01 through HIR-V4-04, HIR-V4.1-01, HIR-V4.1-02, HIRALAL-GST-02, and V4.2 findings:
+- Generic OTP authentication paths strictly reject administrator, recovery, and deletion purposes (`Unsupported OTP purpose for this endpoint.`).
+- Password recovery is strictly scoped to worker (`USER`) accounts with full anti-enumeration protections and defense-in-depth credential mutation checks.
+- Pre-authentication Play Integrity device attestation protects worker password recovery against tampering and bot abuse.
 - Authentication lockouts are serialized and enforced under database row-locks against race conditions during both challenge issuance and OTP verification.
 - Deployment scripts validate target SHAs immediately before executing filesystem operations.
-- Zero-rate GST invoices and strict rate validation are handled consistently and atomically without accounting anomalies, loose string conversions, or fallback errors.
+- Zero-rate GST invoices, strict rate validation, decimal-scale precision, negative-zero neutralization, and advisory-locked default rule atomicity are guaranteed.
 - Reverse GST calculations maintain mathematical and schema consistency across all endpoints.
 
 The codebase on branch `audit/deploy-workflow-investigation` is fully remediated, verified with 100% passing tests, and ready for code review and production staging deployment.
+

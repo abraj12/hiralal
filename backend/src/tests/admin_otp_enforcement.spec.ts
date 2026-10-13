@@ -105,12 +105,12 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/Invalid OTP purpose/i);
+      expect(res.body.message).toMatch(/Unsupported OTP purpose|Invalid OTP purpose/i);
 
       // Verify service layer also rejects directly
       await expect(
         AuthService.requestOtp({ mobile: billAdminMobile, purpose: 'ADMIN_LOGIN' as any })
-      ).rejects.toThrow(/Invalid OTP purpose/i);
+      ).rejects.toThrow(/Unsupported OTP purpose|Invalid OTP purpose/i);
     });
 
     // 2. The rejection creates no administrator challenge and no unauthorized verification token or session
@@ -143,12 +143,12 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/Invalid OTP purpose/i);
+      expect(res.body.message).toMatch(/Unsupported OTP purpose|Invalid OTP purpose/i);
 
       // Verify service layer also rejects directly
       await expect(
         AuthService.verifyOtp({ mobile: billAdminMobile, otpCode: '123456', purpose: 'ADMIN_LOGIN' as any })
-      ).rejects.toThrow(/Invalid OTP purpose/i);
+      ).rejects.toThrow(/Unsupported OTP purpose|Invalid OTP purpose/i);
 
       const tokens = await prisma.verificationToken.findMany({
         where: { mobile: billAdminMobile },
@@ -163,14 +163,14 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
         .send({ mobile: billAdminMobile, purpose: 'ADMIN_LOGIN' });
       expect(reqAlias.status).toBe(400);
       expect(reqAlias.body.success).toBe(false);
-      expect(reqAlias.body.message).toMatch(/Invalid OTP purpose/i);
+      expect(reqAlias.body.message).toMatch(/Unsupported OTP purpose|Invalid OTP purpose/i);
 
       const verifyAlias = await request(app)
         .post('/api/v1/auth/verify-otp')
         .send({ mobile: billAdminMobile, otpCode: '123456', purpose: 'ADMIN_LOGIN' });
       expect(verifyAlias.status).toBe(400);
       expect(verifyAlias.body.success).toBe(false);
-      expect(verifyAlias.body.message).toMatch(/Invalid OTP purpose/i);
+      expect(verifyAlias.body.message).toMatch(/Unsupported OTP purpose|Invalid OTP purpose/i);
 
       const tokens = await prisma.verificationToken.findMany({
         where: { mobile: billAdminMobile },
@@ -465,10 +465,17 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
       expect(regVerify.body.success).toBe(true);
       expect(regVerify.body.verificationToken).toBeDefined();
 
-      // Request FORGOT_PASSWORD OTP for existing worker
-      const resetReq = await request(app)
+      // Generic endpoint strictly rejects FORGOT_PASSWORD
+      const genericResetReq = await request(app)
         .post('/api/v1/auth/otp/request')
         .send({ mobile: workerMobile, purpose: 'FORGOT_PASSWORD' });
+      expect(genericResetReq.status).toBe(400);
+      expect(genericResetReq.body.message).toMatch(/Unsupported OTP purpose/i);
+
+      // Dedicated password recovery request succeeds for existing worker
+      const resetReq = await request(app)
+        .post('/api/v1/auth/password-reset/request')
+        .send({ mobile: workerMobile });
       expect(resetReq.status).toBe(200);
       expect(resetReq.body.success).toBe(true);
     });
@@ -1009,5 +1016,288 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
       where: { userId: billAdminId, revokedAt: null },
     });
     expect(sessions).toHaveLength(0);
+  });
+
+  describe('HIR-V4.2: Worker Password Recovery Closure, Generic OTP Restriction & Play Integrity Attestation', () => {
+    const freshRecoveryWorkerMobile = '9876543204';
+    let freshWorkerId: string;
+    const initialWorkerPassword = 'InitialWorker@123';
+    const newWorkerPassword = 'NewWorkerPassword@456';
+
+    beforeAll(async () => {
+      await prisma.verificationToken.deleteMany({ where: { mobile: freshRecoveryWorkerMobile } });
+      await prisma.otpRequest.deleteMany({ where: { mobile: freshRecoveryWorkerMobile } });
+      await prisma.authSession.deleteMany({ where: { user: { mobile: freshRecoveryWorkerMobile } } });
+      await prisma.user.deleteMany({ where: { mobile: freshRecoveryWorkerMobile } });
+
+      const hash = await bcrypt.hash(initialWorkerPassword, 10);
+      const user = await prisma.user.create({
+        data: {
+          mobile: freshRecoveryWorkerMobile,
+          fullName: 'Recovery Test Worker',
+          passwordHash: hash,
+          role: 'USER',
+          status: 'ACTIVE',
+          profession: 'PLUMBER',
+          isVerified: true,
+        },
+      });
+      freshWorkerId = user.id;
+    });
+
+    afterAll(async () => {
+      await prisma.user.deleteMany({ where: { mobile: freshRecoveryWorkerMobile } });
+    });
+
+    // Finding A: Worker password recovery
+    test('A1. Worker password recovery succeeds end-to-end and invalidates old sessions', async () => {
+      // 1. Request recovery OTP
+      const reqRes = await request(app)
+        .post('/api/v1/auth/password-reset/request')
+        .send({ mobile: freshRecoveryWorkerMobile });
+      expect(reqRes.status).toBe(200);
+      expect(reqRes.body.success).toBe(true);
+
+      const otpRow = await prisma.otpRequest.findFirst({
+        where: { mobile: freshRecoveryWorkerMobile, purpose: 'FORGOT_PASSWORD', isUsed: false },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(otpRow).not.toBeNull();
+
+      // Use OTP row hash to verify by inserting known OTP hash
+      const knownOtp = '654321';
+      await prisma.otpRequest.update({
+        where: { id: otpRow!.id },
+        data: { otpHash: hmacHashOtp(knownOtp) },
+      });
+
+      // 2. Verify OTP
+      const verifyRes = await request(app)
+        .post('/api/v1/auth/password-reset/verify')
+        .send({ mobile: freshRecoveryWorkerMobile, otpCode: knownOtp });
+      expect(verifyRes.status).toBe(200);
+      expect(verifyRes.body.success).toBe(true);
+      expect(verifyRes.body.verificationToken).toBeDefined();
+
+      const resetToken = verifyRes.body.verificationToken;
+
+      // 3. Complete password reset
+      const completeRes = await request(app)
+        .post('/api/v1/auth/password-reset/complete')
+        .send({
+          mobile: freshRecoveryWorkerMobile,
+          verificationToken: resetToken,
+          newPassword: newWorkerPassword,
+        });
+      expect(completeRes.status).toBe(200);
+      expect(completeRes.body.success).toBe(true);
+
+      // Verify old password no longer works, new password works
+      await expect(
+        AuthService.authenticatePasswordFirst({
+          identifier: freshRecoveryWorkerMobile,
+          password: initialWorkerPassword,
+        })
+      ).rejects.toThrow();
+
+      const authRes = await AuthService.authenticatePasswordFirst({
+        identifier: freshRecoveryWorkerMobile,
+        password: newWorkerPassword,
+      });
+      expect(authRes.kind).toBe('USER_AUTHENTICATED');
+    });
+
+    test('A2. Admin accounts cannot receive worker recovery OTP and return anti-enumeration response', async () => {
+      // Bill admin request password reset
+      const billResetRes = await request(app)
+        .post('/api/v1/auth/password-reset/request')
+        .send({ mobile: billAdminMobile });
+
+      expect(billResetRes.status).toBe(200);
+      expect(billResetRes.body.success).toBe(true);
+      expect(billResetRes.body.message).toMatch(/If an account is associated with this mobile number/i);
+
+      // Verify NO OTP row was inserted in database
+      const billOtpCount = await prisma.otpRequest.count({
+        where: { mobile: billAdminMobile, purpose: 'FORGOT_PASSWORD' },
+      });
+      expect(billOtpCount).toBe(0);
+
+      // Ops admin request password reset
+      const opsResetRes = await request(app)
+        .post('/api/v1/auth/password-reset/request')
+        .send({ mobile: opsAdminMobile });
+
+      expect(opsResetRes.status).toBe(200);
+      expect(opsResetRes.body.success).toBe(true);
+      expect(opsResetRes.body.message).toMatch(/If an account is associated with this mobile number/i);
+
+      const opsOtpCount = await prisma.otpRequest.count({
+        where: { mobile: opsAdminMobile, purpose: 'FORGOT_PASSWORD' },
+      });
+      expect(opsOtpCount).toBe(0);
+    });
+
+    test('A3. Password reset completion fails closed for non-USER accounts and preserves credentials', async () => {
+      // Try to verify OTP for admin mobile
+      const verifyRes = await request(app)
+        .post('/api/v1/auth/password-reset/verify')
+        .send({ mobile: billAdminMobile, otpCode: '123456' });
+
+      expect(verifyRes.status).toBe(400);
+      expect(verifyRes.body.success).toBe(false);
+      expect(verifyRes.body.message).toMatch(/Password recovery is available only for worker accounts/i);
+
+      // Even if an attacker synthesizes a valid verification token in DB for admin mobile
+      const adminToken = crypto.randomBytes(32).toString('hex');
+      await prisma.verificationToken.create({
+        data: {
+          mobile: billAdminMobile,
+          tokenHash: sha256Hash(adminToken),
+          purpose: 'FORGOT_PASSWORD',
+          isUsed: false,
+          expiresAt: new Date(Date.now() + 600000),
+        },
+      });
+
+      const initialAdmin = await prisma.user.findUnique({ where: { id: billAdminId } });
+      const initialAdminHash = initialAdmin!.passwordHash;
+
+      // Complete reset directly via AuthService
+      await expect(
+        AuthService.completePasswordReset({
+          mobile: billAdminMobile,
+          verificationToken: adminToken,
+          newPassword: 'HackedAdminPassword@123',
+        })
+      ).rejects.toThrow(/Password recovery is available only for worker accounts/i);
+
+      // Verify admin password hash is untouched
+      const refreshedAdmin = await prisma.user.findUnique({ where: { id: billAdminId } });
+      expect(refreshedAdmin!.passwordHash).toBe(initialAdminHash);
+      expect(refreshedAdmin!.failedPasswordAttempts).toBe(initialAdmin!.failedPasswordAttempts);
+      expect(refreshedAdmin!.lockedUntil).toEqual(initialAdmin!.lockedUntil);
+    });
+
+    test('A4. Non-existent mobile returns anti-enumeration response without database rows', async () => {
+      const nonExistentMobile = '9999988888';
+      const res = await request(app)
+        .post('/api/v1/auth/password-reset/request')
+        .send({ mobile: nonExistentMobile });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toMatch(/If an account is associated with this mobile number/i);
+
+      const rows = await prisma.otpRequest.count({
+        where: { mobile: nonExistentMobile },
+      });
+      expect(rows).toBe(0);
+    });
+
+    test('A5. Concurrent password reset completions with the same token permit at most one to succeed', async () => {
+      // Create a valid verification token for worker
+      const sharedToken = crypto.randomBytes(32).toString('hex');
+      await prisma.verificationToken.create({
+        data: {
+          mobile: freshRecoveryWorkerMobile,
+          tokenHash: sha256Hash(sharedToken),
+          purpose: 'FORGOT_PASSWORD',
+          isUsed: false,
+          expiresAt: new Date(Date.now() + 600000),
+        },
+      });
+
+      const promises = [
+        AuthService.completePasswordReset({
+          mobile: freshRecoveryWorkerMobile,
+          verificationToken: sharedToken,
+          newPassword: 'ConcurrentPassword1@123',
+        }),
+        AuthService.completePasswordReset({
+          mobile: freshRecoveryWorkerMobile,
+          verificationToken: sharedToken,
+          newPassword: 'ConcurrentPassword2@123',
+        }),
+      ];
+
+      const results = await Promise.allSettled(promises);
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason.message).toMatch(/Invalid or expired password reset token/i);
+    });
+
+    // Finding B: Generic OTP endpoint restrictions
+    test('B1. All 4 generic OTP routes reject ADMIN_LOGIN, FORGOT_PASSWORD, and ACCOUNT_DELETION', async () => {
+      const forbiddenPurposes = ['ADMIN_LOGIN', 'FORGOT_PASSWORD', 'ACCOUNT_DELETION'];
+      const genericRequestRoutes = ['/api/v1/auth/otp/request', '/api/v1/auth/send-otp'];
+      const genericVerifyRoutes = ['/api/v1/auth/otp/verify', '/api/v1/auth/verify-otp'];
+
+      for (const purpose of forbiddenPurposes) {
+        for (const route of genericRequestRoutes) {
+          const res = await request(app)
+            .post(route)
+            .send({ mobile: freshRecoveryWorkerMobile, purpose });
+          expect(res.status).toBe(400);
+          expect(res.body.success).toBe(false);
+          expect(res.body.message).toBe('Unsupported OTP purpose for this endpoint.');
+        }
+
+        for (const route of genericVerifyRoutes) {
+          const res = await request(app)
+            .post(route)
+            .send({ mobile: freshRecoveryWorkerMobile, otpCode: '123456', purpose });
+          expect(res.status).toBe(400);
+          expect(res.body.success).toBe(false);
+          expect(res.body.message).toBe('Unsupported OTP purpose for this endpoint.');
+        }
+      }
+    });
+
+    test('B2. Generic OTP routes accept only REGISTRATION and LOGIN', async () => {
+      // REGISTRATION with unregistered mobile returns 200
+      const unregMobile = '9111222333';
+      const regRes = await request(app)
+        .post('/api/v1/auth/otp/request')
+        .send({ mobile: unregMobile, purpose: 'REGISTRATION' });
+      expect(regRes.status).toBe(200);
+      expect(regRes.body.success).toBe(true);
+
+      // Clean up unreg mobile
+      await prisma.otpRequest.deleteMany({ where: { mobile: unregMobile } });
+
+      // LOGIN with worker mobile returns 200
+      const loginRes = await request(app)
+        .post('/api/v1/auth/otp/request')
+        .send({ mobile: freshRecoveryWorkerMobile, purpose: 'LOGIN' });
+      expect(loginRes.status).toBe(200);
+      expect(loginRes.body.success).toBe(true);
+
+      await prisma.otpRequest.deleteMany({ where: { mobile: freshRecoveryWorkerMobile } });
+    });
+
+    // Finding C: Play Integrity attestation for recovery
+    test('C1. Pre-auth nonce endpoint accepts FORGOT_PASSWORD_REQUEST, VERIFY, and COMPLETE', async () => {
+      const actions = [
+        'FORGOT_PASSWORD_REQUEST',
+        'FORGOT_PASSWORD_VERIFY',
+        'FORGOT_PASSWORD_COMPLETE',
+      ] as const;
+
+      for (const action of actions) {
+        const dummyHash = crypto.createHash('sha256').update(action).digest('hex');
+        const res = await request(app)
+          .post('/api/v1/auth/integrity/pre-auth/nonce')
+          .send({ action, requestHash: dummyHash });
+
+        expect(res.status).toBe(200);
+        expect(res.body.success).toBe(true);
+        expect(res.body.nonce).toBeDefined();
+        expect(res.body.action).toBe(action);
+      }
+    });
   });
 });

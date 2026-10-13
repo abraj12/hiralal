@@ -315,10 +315,13 @@ export function computeIntegrityRequestHash(
       return computeSha256Json(payload);
     }
 
-    case 'FORGOT_PASSWORD': {
+    case 'FORGOT_PASSWORD':
+    case 'FORGOT_PASSWORD_REQUEST':
+    case 'FORGOT_PASSWORD_VERIFY':
+    case 'FORGOT_PASSWORD_COMPLETE': {
       const payload = {
         version: 1,
-        action: 'FORGOT_PASSWORD',
+        action,
         mobile: String(req.body?.mobile || '').trim(),
       };
       return computeSha256Json(payload);

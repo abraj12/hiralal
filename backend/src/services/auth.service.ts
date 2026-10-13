@@ -31,21 +31,28 @@ export function normalizeStrictIndianMobile(identifier: string): string | null {
   return null;
 }
 
-export const GENERIC_OTP_PURPOSES = new Set<string>([
+export const PUBLIC_GENERIC_OTP_PURPOSES = new Set<string>([
   'REGISTRATION',
   'LOGIN',
-  'FORGOT_PASSWORD',
-  'ACCOUNT_DELETION',
 ]);
 
-export type GenericOtpPurpose = 'REGISTRATION' | 'LOGIN' | 'FORGOT_PASSWORD' | 'ACCOUNT_DELETION';
+export type PublicGenericOtpPurpose = 'REGISTRATION' | 'LOGIN';
 
-export function requireGenericOtpPurpose(value: unknown): GenericOtpPurpose {
-  if (typeof value !== 'string' || !GENERIC_OTP_PURPOSES.has(value)) {
-    throw new Error('Invalid OTP purpose. Purpose is required and must be an authorized worker purpose.');
+export function requirePublicGenericOtpPurpose(purpose: unknown): PublicGenericOtpPurpose {
+  if (
+    typeof purpose !== 'string' ||
+    !PUBLIC_GENERIC_OTP_PURPOSES.has(purpose)
+  ) {
+    throw new Error('Unsupported OTP purpose for this endpoint.');
   }
-  return value as GenericOtpPurpose;
+
+  return purpose as PublicGenericOtpPurpose;
 }
+
+// Backwards-compatible aliases
+export const GENERIC_OTP_PURPOSES = PUBLIC_GENERIC_OTP_PURPOSES;
+export type GenericOtpPurpose = PublicGenericOtpPurpose;
+export const requireGenericOtpPurpose = requirePublicGenericOtpPurpose;
 
 export class AuthService {
   /**
@@ -754,19 +761,6 @@ export class AuthService {
       if (existingUser) {
         throw new Error('This mobile number is already registered. Please proceed to login.');
       }
-    } else if (validatedPurpose === 'FORGOT_PASSWORD') {
-      const existingUser = await prisma.user.findUnique({
-        where: { mobile: cleanMobile },
-      });
-      if (!existingUser) {
-        // Privacy protection: do not reveal account non-existence
-        const ttlMs = config.otp.ttlSeconds * 1000;
-        return {
-          message: 'If an account is associated with this mobile number, a verification code has been dispatched.',
-          cooldownSeconds: 60,
-          expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
-        };
-      }
     }
 
     // 2. Cooldown enforcement: prevent rapid resend within 60 seconds
@@ -814,6 +808,176 @@ export class AuthService {
     });
 
     // 5. Secure SMS dispatch via configured provider (MSG91 in production)
+    const smsResult = await SmsService.sendOtp({
+      mobile: cleanMobile,
+      otpCode,
+    });
+
+    if (!smsResult.success && config.isProduction) {
+      throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
+    }
+
+    return {
+      message: 'Verification code dispatched successfully to your mobile number.',
+      cooldownSeconds: 60,
+      expiresAt: expiresAt.toISOString(),
+    };
+  }
+
+  /**
+   * Dedicated OTP request for worker password recovery.
+   * Enforces worker (USER) role requirement and anti-enumeration:
+   * non-existent users, non-USER accounts, and inactive accounts
+   * receive a synthetic response without OTP dispatch or database writes.
+   */
+  static async requestPasswordResetOtp(params: {
+    mobile: string;
+    ipAddress?: string;
+  }) {
+    const cleanMobile = (params.mobile || '').replace(/\D/g, '').slice(-10);
+    if (cleanMobile.length !== 10) {
+      throw new Error('Please enter a valid 10-digit Indian mobile number.');
+    }
+
+    const now = new Date();
+    const ttlMs = config.otp.ttlSeconds * 1000;
+    const antiEnumerationResponse = {
+      message: 'If an account is associated with this mobile number, a verification code has been dispatched.',
+      cooldownSeconds: 60,
+      expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
+    };
+
+    // Check account existence and role
+    const existingUser = await prisma.user.findUnique({
+      where: { mobile: cleanMobile },
+    });
+
+    // Anti-enumeration: If user does not exist, is not role 'USER', or is not ACTIVE,
+    // silently return generic response without generating OTP or sending SMS.
+    if (!existingUser || existingUser.role !== 'USER' || existingUser.status !== 'ACTIVE') {
+      return antiEnumerationResponse;
+    }
+
+    // 1. Cooldown enforcement: prevent rapid resend within 60 seconds
+    const activeCooldown = await prisma.otpRequest.findFirst({
+      where: {
+        mobile: cleanMobile,
+        purpose: 'FORGOT_PASSWORD',
+        cooldownUntil: { gt: now },
+      },
+    });
+
+    if (activeCooldown && activeCooldown.cooldownUntil) {
+      const remainingSec = Math.ceil((activeCooldown.cooldownUntil.getTime() - now.getTime()) / 1000);
+      throw new Error(`Please wait ${remainingSec} seconds before requesting a new verification code.`);
+    }
+
+    // 2. Rate-limiting: max 5 requests per 10 minutes per mobile
+    const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
+    const recentRequests = await prisma.otpRequest.count({
+      where: {
+        mobile: cleanMobile,
+        createdAt: { gt: tenMinutesAgo },
+      },
+    });
+
+    if (recentRequests >= 5) {
+      throw new Error('Too many verification requests. Please try again after 10 minutes.');
+    }
+
+    // 3. Generate cryptographically secure OTP & Hash
+    const otpCode = generateSecureOtp();
+    const otpHash = hmacHashOtp(otpCode);
+    const expiresAt = new Date(now.getTime() + ttlMs);
+    const cooldownUntil = new Date(now.getTime() + 60 * 1000);
+
+    await prisma.otpRequest.create({
+      data: {
+        mobile: cleanMobile,
+        otpHash,
+        purpose: 'FORGOT_PASSWORD',
+        expiresAt,
+        cooldownUntil,
+      },
+    });
+
+    // 4. Secure SMS dispatch
+    const smsResult = await SmsService.sendOtp({
+      mobile: cleanMobile,
+      otpCode,
+    });
+
+    if (!smsResult.success && config.isProduction) {
+      throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
+    }
+
+    return {
+      message: 'Verification code dispatched successfully to your mobile number.',
+      cooldownSeconds: 60,
+      expiresAt: expiresAt.toISOString(),
+    };
+  }
+
+  /**
+   * Dedicated OTP request for authenticated worker account deletion.
+   * Enforces 60-second cooldown and 10-minute rate limiting.
+   */
+  static async requestAccountDeletionOtp(params: {
+    mobile: string;
+    ipAddress?: string;
+  }) {
+    const cleanMobile = (params.mobile || '').replace(/\D/g, '').slice(-10);
+    if (cleanMobile.length !== 10) {
+      throw new Error('Please enter a valid 10-digit Indian mobile number.');
+    }
+
+    const now = new Date();
+
+    // 1. Cooldown enforcement: prevent rapid resend within 60 seconds
+    const activeCooldown = await prisma.otpRequest.findFirst({
+      where: {
+        mobile: cleanMobile,
+        purpose: 'ACCOUNT_DELETION',
+        cooldownUntil: { gt: now },
+      },
+    });
+
+    if (activeCooldown && activeCooldown.cooldownUntil) {
+      const remainingSec = Math.ceil((activeCooldown.cooldownUntil.getTime() - now.getTime()) / 1000);
+      throw new Error(`Please wait ${remainingSec} seconds before requesting a new verification code.`);
+    }
+
+    // 2. Rate-limiting: max 5 requests per 10 minutes per mobile
+    const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
+    const recentRequests = await prisma.otpRequest.count({
+      where: {
+        mobile: cleanMobile,
+        createdAt: { gt: tenMinutesAgo },
+      },
+    });
+
+    if (recentRequests >= 5) {
+      throw new Error('Too many verification requests. Please try again after 10 minutes.');
+    }
+
+    // 3. Generate cryptographically secure OTP & Hash
+    const otpCode = generateSecureOtp();
+    const otpHash = hmacHashOtp(otpCode);
+    const ttlMs = config.otp.ttlSeconds * 1000;
+    const expiresAt = new Date(now.getTime() + ttlMs);
+    const cooldownUntil = new Date(now.getTime() + 60 * 1000);
+
+    await prisma.otpRequest.create({
+      data: {
+        mobile: cleanMobile,
+        otpHash,
+        purpose: 'ACCOUNT_DELETION',
+        expiresAt,
+        cooldownUntil,
+      },
+    });
+
+    // 4. Secure SMS dispatch
     const smsResult = await SmsService.sendOtp({
       mobile: cleanMobile,
       otpCode,
@@ -991,6 +1155,60 @@ export class AuthService {
           mobile: params.mobile,
           otpCode: cleanOtp,
           purpose: validatedPurpose as OtpPurpose,
+        },
+        { createVerificationToken: true }
+      );
+    });
+
+    if (!txResult.success) {
+      throw new Error(txResult.message);
+    }
+
+    return {
+      message: txResult.message,
+      verificationToken: txResult.verificationToken!,
+      expiresAt: txResult.expiresAt!,
+    };
+  }
+
+  /**
+   * Dedicated OTP verification for worker password recovery.
+   * Atomically verifies the OTP and returns a single-use verification token.
+   * Fails closed if the associated account is not a worker (USER) or is inactive.
+   */
+  static async verifyPasswordResetOtp(params: {
+    mobile: string;
+    otpCode: string;
+  }) {
+    const cleanOtp = (params.otpCode || '').trim();
+    if (!cleanOtp || cleanOtp.length !== 6) {
+      throw new Error('Please enter a valid 6-digit verification code.');
+    }
+
+    const cleanMobile = (params.mobile || '').replace(/\D/g, '').slice(-10);
+    if (cleanMobile.length !== 10) {
+      throw new Error('Please enter a valid 10-digit Indian mobile number.');
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { mobile: cleanMobile },
+    });
+
+    if (user && user.role !== 'USER') {
+      throw new Error('Password recovery is available only for worker accounts.');
+    }
+
+    if (user && user.status !== 'ACTIVE') {
+      throw new Error('Account is inactive or suspended.');
+    }
+
+    const txResult = await prisma.$transaction(async (tx) => {
+      return this.verifyOtpInTransaction(
+        tx,
+        {
+          mobile: cleanMobile,
+          otpCode: cleanOtp,
+          purpose: 'FORGOT_PASSWORD',
         },
         { createVerificationToken: true }
       );
@@ -1558,11 +1776,6 @@ export class AuthService {
         throw new Error('Invalid or expired password reset token. Please verify OTP again.');
       }
 
-      await tx.verificationToken.update({
-        where: { id: targetRows[0].id },
-        data: { isUsed: true },
-      });
-
       const user = await tx.user.findUnique({
         where: { mobile: cleanMobile },
       });
@@ -1570,6 +1783,19 @@ export class AuthService {
       if (!user) {
         throw new Error('User not found.');
       }
+
+      if (user.role !== 'USER') {
+        throw new Error('Password recovery is available only for worker accounts.');
+      }
+
+      if (user.status !== 'ACTIVE') {
+        throw new Error('Account is inactive or suspended.');
+      }
+
+      await tx.verificationToken.update({
+        where: { id: targetRows[0].id },
+        data: { isUsed: true },
+      });
 
       await tx.user.update({
         where: { id: user.id },

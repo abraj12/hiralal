@@ -229,9 +229,15 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
         AuthService.requestOtp({ mobile: regularUserMobile, purpose: 'REGISTRATION' })
       ).rejects.toThrow(/already registered/i);
 
-      const privacyRes = await AuthService.requestOtp({
+      await expect(
+        AuthService.requestOtp({
+          mobile: '9111199999',
+          purpose: 'FORGOT_PASSWORD',
+        })
+      ).rejects.toThrow(/Unsupported OTP purpose for this endpoint/i);
+
+      const privacyRes = await AuthService.requestPasswordResetOtp({
         mobile: '9111199999',
-        purpose: 'FORGOT_PASSWORD',
       });
       expect(privacyRes.message).toMatch(/If an account is associated with this mobile/i);
     });

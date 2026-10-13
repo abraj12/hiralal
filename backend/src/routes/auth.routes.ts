@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { AuthService, normalizeStrictIndianMobile, requireGenericOtpPurpose } from '../services/auth.service';
+import { AuthService, normalizeStrictIndianMobile, requirePublicGenericOtpPurpose, requireGenericOtpPurpose } from '../services/auth.service';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import {
   otpRequestLimiter,
@@ -22,7 +22,7 @@ import { config } from '../config';
 import { generateSecureToken, sha256Hash } from '../utils/crypto.utils';
 import { PlayIntegrityService } from '../services/integrity/playIntegrity.service';
 import { AccountDeletionService } from '../services/account-deletion.service';
-import { requireActionIntegrity } from '../middleware/integrity.middleware';
+import { requireActionIntegrity, requirePreAuthActionIntegrity } from '../middleware/integrity.middleware';
 import { computeIntegrityRequestHash } from '../utils/integrityRequestHash';
 
 const router = Router();
@@ -70,7 +70,7 @@ const handleOtpRequest = async (req: Request, res: Response) => {
     if (!mobile) {
       return res.status(400).json({ success: false, message: 'Mobile number is required.' });
     }
-    const validatedPurpose = requireGenericOtpPurpose(purpose);
+    const validatedPurpose = requirePublicGenericOtpPurpose(purpose);
     const ipAddress = req.ip || req.socket.remoteAddress;
     const result = await AuthService.requestOtp({ mobile, purpose: validatedPurpose, ipAddress });
     res.json({ success: true, ...result });
@@ -88,7 +88,7 @@ const handleOtpVerify = async (req: Request, res: Response) => {
     if (!mobile || !otpCode) {
       return res.status(400).json({ success: false, message: 'Mobile and 6-digit OTP code are required.' });
     }
-    const validatedPurpose = requireGenericOtpPurpose(purpose);
+    const validatedPurpose = requirePublicGenericOtpPurpose(purpose);
     const result = await AuthService.verifyOtp({ mobile, otpCode, purpose: validatedPurpose });
     res.json({ success: true, ...result });
   } catch (err: any) {
@@ -362,56 +362,70 @@ router.post('/logout', async (req: Request, res: Response) => {
 // 4. REAL BACKEND PASSWORD RESET FLOW
 // ==========================================
 
-router.post('/password-reset/request', passwordResetLimiter, async (req: Request, res: Response) => {
-  try {
-    const { mobile } = req.body;
-    if (!mobile) {
-      return res.status(400).json({ success: false, message: 'Mobile number is required.' });
+router.post(
+  '/password-reset/request',
+  passwordResetLimiter,
+  requirePreAuthActionIntegrity('FORGOT_PASSWORD_REQUEST'),
+  async (req: Request, res: Response) => {
+    try {
+      const { mobile } = req.body;
+      if (!mobile) {
+        return res.status(400).json({ success: false, message: 'Mobile number is required.' });
+      }
+      const ipAddress = req.ip || req.socket.remoteAddress;
+      const result = await AuthService.requestPasswordResetOtp({ mobile, ipAddress });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message });
     }
-    const ipAddress = req.ip || req.socket.remoteAddress;
-    const result = await AuthService.requestOtp({ mobile, purpose: 'FORGOT_PASSWORD', ipAddress });
-    res.json({ success: true, ...result });
-  } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
   }
-});
+);
 
-router.post('/password-reset/verify', otpVerifyLimiter, async (req: Request, res: Response) => {
-  try {
-    const { mobile, otpCode } = req.body;
-    if (!mobile || !otpCode) {
-      return res.status(400).json({ success: false, message: 'Mobile and OTP code are required.' });
+router.post(
+  '/password-reset/verify',
+  otpVerifyLimiter,
+  requirePreAuthActionIntegrity('FORGOT_PASSWORD_VERIFY'),
+  async (req: Request, res: Response) => {
+    try {
+      const { mobile, otpCode } = req.body;
+      if (!mobile || !otpCode) {
+        return res.status(400).json({ success: false, message: 'Mobile and OTP code are required.' });
+      }
+      const result = await AuthService.verifyPasswordResetOtp({ mobile, otpCode });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message });
     }
-    const result = await AuthService.verifyOtp({ mobile, otpCode, purpose: 'FORGOT_PASSWORD' });
-    res.json({ success: true, ...result });
-  } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
   }
-});
+);
 
-router.post('/password-reset/complete', async (req: Request, res: Response) => {
-  try {
-    const { mobile, verificationToken, newPassword } = req.body;
-    if (!mobile || !verificationToken || !newPassword) {
-      return res.status(400).json({ success: false, message: 'Mobile, verification token, and new password are required.' });
+router.post(
+  '/password-reset/complete',
+  requirePreAuthActionIntegrity('FORGOT_PASSWORD_COMPLETE'),
+  async (req: Request, res: Response) => {
+    try {
+      const { mobile, verificationToken, newPassword } = req.body;
+      if (!mobile || !verificationToken || !newPassword) {
+        return res.status(400).json({ success: false, message: 'Mobile, verification token, and new password are required.' });
+      }
+
+      const ipAddress = req.ip || req.socket.remoteAddress;
+      const userAgent = req.headers['user-agent'];
+
+      const result = await AuthService.completePasswordReset({
+        mobile,
+        verificationToken,
+        newPassword,
+        ipAddress,
+        userAgent,
+      });
+
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(400).json({ success: false, message: err.message });
     }
-
-    const ipAddress = req.ip || req.socket.remoteAddress;
-    const userAgent = req.headers['user-agent'];
-
-    const result = await AuthService.completePasswordReset({
-      mobile,
-      verificationToken,
-      newPassword,
-      ipAddress,
-      userAgent,
-    });
-
-    res.json({ success: true, ...result });
-  } catch (err: any) {
-    res.status(400).json({ success: false, message: err.message });
   }
-});
+);
 
 // ==========================================
 // 5. ADMIN AUTHENTICATION (OTP-First Flow)
@@ -710,13 +724,21 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const { action = 'AUTH', requestHash } = req.body ?? {};
-      const allowedPreAuthActions = ['AUTH', 'REGISTRATION', 'FORGOT_PASSWORD', 'GENERAL'] as const;
+      const allowedPreAuthActions = [
+        'AUTH',
+        'REGISTRATION',
+        'FORGOT_PASSWORD',
+        'FORGOT_PASSWORD_REQUEST',
+        'FORGOT_PASSWORD_VERIFY',
+        'FORGOT_PASSWORD_COMPLETE',
+        'GENERAL',
+      ] as const;
 
       if (!action || !allowedPreAuthActions.includes(action)) {
         return res.status(400).json({
           success: false,
           code: 'INVALID_ACTION',
-          message: 'Pre-auth integrity action must be AUTH, REGISTRATION, FORGOT_PASSWORD, or GENERAL.',
+          message: 'Pre-auth integrity action must be AUTH, REGISTRATION, FORGOT_PASSWORD, FORGOT_PASSWORD_REQUEST, FORGOT_PASSWORD_VERIFY, FORGOT_PASSWORD_COMPLETE, or GENERAL.',
         });
       }
 

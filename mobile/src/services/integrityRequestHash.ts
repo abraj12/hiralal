@@ -234,3 +234,21 @@ export async function createAuthRequestHash(data: {
   };
   return sha256Json(canonicalPayload);
 }
+
+/**
+ * Computes canonical request hash for mobile password recovery actions.
+ */
+export async function createPasswordResetRequestHash(
+  action: 'FORGOT_PASSWORD' | 'FORGOT_PASSWORD_REQUEST' | 'FORGOT_PASSWORD_VERIFY' | 'FORGOT_PASSWORD_COMPLETE',
+  data: {
+    mobile: string;
+  }
+): Promise<string> {
+  const canonicalPayload = {
+    version: 1,
+    action,
+    mobile: String(data.mobile || '').trim(),
+  };
+  return sha256Json(canonicalPayload);
+}
+

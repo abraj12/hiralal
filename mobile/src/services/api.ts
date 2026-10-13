@@ -671,27 +671,48 @@ export class MobileApiClient {
   }
 
   // Real Backend Password Reset Flow
-  static requestPasswordReset(mobile: string) {
+  static requestPasswordReset(mobile: string, attestation?: RequiredActionAttestation) {
+    const extraHeaders: Record<string, string> = {};
+    if (attestation && attestation.integrityToken?.trim()) {
+      extraHeaders['x-integrity-token'] = attestation.integrityToken.trim();
+      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce?.trim() || '';
+    }
     return this.request('/auth/password-reset/request', {
       method: 'POST',
+      headers: extraHeaders,
       body: JSON.stringify({ mobile }),
     });
   }
 
-  static verifyPasswordResetOtp(mobile: string, otpCode: string) {
+  static verifyPasswordResetOtp(mobile: string, otpCode: string, attestation?: RequiredActionAttestation) {
+    const extraHeaders: Record<string, string> = {};
+    if (attestation && attestation.integrityToken?.trim()) {
+      extraHeaders['x-integrity-token'] = attestation.integrityToken.trim();
+      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce?.trim() || '';
+    }
     return this.request('/auth/password-reset/verify', {
       method: 'POST',
+      headers: extraHeaders,
       body: JSON.stringify({ mobile, otpCode }),
     });
   }
 
-  static completePasswordReset(data: {
-    mobile: string;
-    verificationToken: string;
-    newPassword: string;
-  }) {
+  static completePasswordReset(
+    data: {
+      mobile: string;
+      verificationToken: string;
+      newPassword: string;
+    },
+    attestation?: RequiredActionAttestation
+  ) {
+    const extraHeaders: Record<string, string> = {};
+    if (attestation && attestation.integrityToken?.trim()) {
+      extraHeaders['x-integrity-token'] = attestation.integrityToken.trim();
+      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce?.trim() || '';
+    }
     return this.request('/auth/password-reset/complete', {
       method: 'POST',
+      headers: extraHeaders,
       body: JSON.stringify(data),
     });
   }

@@ -120,9 +120,8 @@ export class AccountDeletionService {
     });
 
     // Request deletion OTP via SMS provider OUTSIDE database transaction
-    await AuthService.requestOtp({
+    await AuthService.requestAccountDeletionOtp({
       mobile: verifiedUser.mobile,
-      purpose: 'ACCOUNT_DELETION' as any,
       ipAddress,
     });
 

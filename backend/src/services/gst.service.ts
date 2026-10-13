@@ -8,6 +8,8 @@ const roundMoney = (value: number): number => {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 };
 
+const GST_RATE_STRING_PATTERN = /^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/;
+
 /**
  * Strictly parses and validates a GST rate percentage.
  * Enforces:
@@ -18,21 +20,37 @@ const roundMoney = (value: number): number => {
  */
 export function parseStrictGstRate(value: unknown): number {
   let rate: number;
-  let rawStr: string | null = null;
 
   if (typeof value === 'number') {
     if (!Number.isFinite(value) || isNaN(value)) {
       throw new Error('GST rate percentage must be between 0.00% and 100.00%.');
     }
+
     rate = value;
-    rawStr = value.toString();
+
+    // Detect excess fractional precision, including values
+    // formatted by JavaScript using exponential notation (e.g. 1e-7).
+    const roundedToTwoDecimals = Math.round(rate * 100) / 100;
+    const tolerance = Number.EPSILON * Math.max(1, Math.abs(rate)) * 4;
+
+    if (Math.abs(rate - roundedToTwoDecimals) > tolerance) {
+      throw new Error('GST rate cannot have more than 2 decimal places.');
+    }
   } else if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!/^(?:0|[1-9]\d{0,2})(?:\.\d+)?$/.test(trimmed)) {
+    const normalized = value.trim();
+
+    if (/^(?:0|[1-9]\d{0,2})\.\d+$/.test(normalized)) {
+      const decimals = normalized.split('.')[1];
+      if (decimals.length > 2) {
+        throw new Error('GST rate cannot have more than 2 decimal places.');
+      }
+    }
+
+    if (!GST_RATE_STRING_PATTERN.test(normalized)) {
       throw new Error('GST rate percentage must be between 0.00% and 100.00%.');
     }
-    rawStr = trimmed;
-    rate = Number(trimmed);
+
+    rate = Number(normalized);
   } else {
     throw new Error('GST rate percentage must be between 0.00% and 100.00%.');
   }
@@ -41,15 +59,8 @@ export function parseStrictGstRate(value: unknown): number {
     throw new Error('GST rate percentage must be between 0.00% and 100.00%.');
   }
 
-  // Ensure decimal scale does not exceed 2 decimal places
-  if (rawStr && rawStr.includes('.')) {
-    const decimals = rawStr.split('.')[1];
-    if (decimals.length > 2) {
-      throw new Error('GST rate cannot have more than 2 decimal places.');
-    }
-  }
-
-  return rate;
+  // Avoid returning JavaScript negative zero
+  return Object.is(rate, -0) ? 0 : rate;
 }
 
 export class GstService {
@@ -250,6 +261,8 @@ export class GstService {
 
     const executeInTx = async (db: any) => {
       if (isDefault) {
+        // Serialize concurrent default-rule mutations using PostgreSQL advisory xact lock
+        await db.$executeRaw`SELECT pg_advisory_xact_lock(7212026, 1)`;
         // Clear existing default flags atomically
         await db.gstRule.updateMany({
           where: { isDefault: true },
@@ -291,45 +304,82 @@ export class GstService {
   }
 
   /**
-   * Updates an existing GST rate.
+   * Updates an existing GST rate atomically.
    */
   static async updateGstRule(
     adminId: string,
     id: string,
     params: {
-      description?: string;
-      isDefault?: boolean;
-      isActive?: boolean;
+      description?: unknown;
+      isDefault?: unknown;
+      isActive?: unknown;
     },
     tx: any = prisma
   ): Promise<GstRule> {
-    if (params.isDefault) {
-      await tx.gstRule.updateMany({
-        where: { isDefault: true, id: { not: id } },
-        data: { isDefault: false },
-      });
+    if (params.isDefault !== undefined && typeof params.isDefault !== 'boolean') {
+      throw new Error('isDefault must be a boolean.');
     }
 
-    const updated = await tx.gstRule.update({
-      where: { id },
-      data: {
-        ...(params.description !== undefined && { description: params.description }),
-        ...(params.isDefault !== undefined && { isDefault: params.isDefault }),
-        ...(params.isActive !== undefined && { isActive: params.isActive }),
-        updatedByAdminId: adminId,
-      },
-    });
+    if (params.isActive !== undefined && typeof params.isActive !== 'boolean') {
+      throw new Error('isActive must be a boolean.');
+    }
 
-    await tx.auditLog.create({
-      data: {
-        adminId,
-        action: 'GST_RULE_UPDATED',
-        entityType: 'GstRule',
-        entityId: id,
-        newValue: JSON.stringify(updated),
-      },
-    });
+    if (params.description !== undefined && typeof params.description !== 'string') {
+      throw new Error('GST rule description must be a string.');
+    }
 
-    return updated;
+    const isDefault = params.isDefault === true;
+    const description = params.description !== undefined ? (params.description as string).trim() : undefined;
+
+    const executeInTx = async (db: any) => {
+      if (isDefault) {
+        // Serialize concurrent default-rule mutations using PostgreSQL advisory xact lock
+        await db.$executeRaw`SELECT pg_advisory_xact_lock(7212026, 1)`;
+      }
+
+      // 1. Fetch and validate target existence inside transaction before any modifications
+      const target = await db.gstRule.findUnique({ where: { id } });
+      if (!target) {
+        throw new Error(`GST rule with ID "${id}" not found.`);
+      }
+
+      // 2. Clear old default flag only if this rule is being designated as default
+      if (isDefault) {
+        await db.gstRule.updateMany({
+          where: { isDefault: true, id: { not: id } },
+          data: { isDefault: false },
+        });
+      }
+
+      // 3. Update target rule
+      const updated = await db.gstRule.update({
+        where: { id },
+        data: {
+          ...(description !== undefined && { description }),
+          ...(params.isDefault !== undefined && { isDefault: params.isDefault as boolean }),
+          ...(params.isActive !== undefined && { isActive: params.isActive as boolean }),
+          updatedByAdminId: adminId,
+        },
+      });
+
+      // 4. Write audit record
+      await db.auditLog.create({
+        data: {
+          adminId,
+          action: 'GST_RULE_UPDATED',
+          entityType: 'GstRule',
+          entityId: id,
+          newValue: JSON.stringify(updated),
+        },
+      });
+
+      return updated;
+    };
+
+    if (tx === prisma) {
+      return await prisma.$transaction(executeInTx);
+    } else {
+      return await executeInTx(tx);
+    }
   }
 }
