@@ -174,7 +174,7 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
     test('1.3 Checkbox unchecked (gstIncluded: false): 0 GST deducted, 100% eligible', () => {
       const res = GstService.calculateGstAndEligibleAmount(10000.0, false);
       expect(res.gstIncluded).toBe(false);
-      expect(res.gstRate).toBe(0.0);
+      expect(res.gstRate).toBeNull();
       expect(res.gstAmount).toBe(0.0);
       expect(res.eligibleRewardAmount).toBe(10000.0);
     });

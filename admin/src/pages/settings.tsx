@@ -230,8 +230,8 @@ export default function AdminSettingsPage() {
         throw new Error('GST rate is required. Enter the percentage explicitly.');
       }
       const parsedRate = parseFloat(newGstRate.trim());
-      if (!Number.isFinite(parsedRate) || parsedRate <= 0 || parsedRate > 100) {
-        throw new Error('GST rate must be a valid positive number up to 100%.');
+      if (!Number.isFinite(parsedRate) || parsedRate < 0 || parsedRate > 100) {
+        throw new Error('GST rate must be a valid number between 0% and 100%.');
       }
 
       await AdminApiClient.createGstRule({

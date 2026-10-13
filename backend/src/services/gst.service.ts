@@ -8,12 +8,56 @@ const roundMoney = (value: number): number => {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 };
 
+/**
+ * Strictly parses and validates a GST rate percentage.
+ * Enforces:
+ * - Number or strict numeric string matching /^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/
+ * - Finite number in range [0.00, 100.00]
+ * - Maximum 2 decimal places (matching Decimal(5, 2))
+ * - Rejects "18foo", "", " ", null, undefined, NaN, Infinity, scientific notation, negative numbers, > 100
+ */
+export function parseStrictGstRate(value: unknown): number {
+  let rate: number;
+  let rawStr: string | null = null;
+
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || isNaN(value)) {
+      throw new Error('GST rate percentage must be between 0.00% and 100.00%.');
+    }
+    rate = value;
+    rawStr = value.toString();
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!/^(?:0|[1-9]\d{0,2})(?:\.\d+)?$/.test(trimmed)) {
+      throw new Error('GST rate percentage must be between 0.00% and 100.00%.');
+    }
+    rawStr = trimmed;
+    rate = Number(trimmed);
+  } else {
+    throw new Error('GST rate percentage must be between 0.00% and 100.00%.');
+  }
+
+  if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+    throw new Error('GST rate percentage must be between 0.00% and 100.00%.');
+  }
+
+  // Ensure decimal scale does not exceed 2 decimal places
+  if (rawStr && rawStr.includes('.')) {
+    const decimals = rawStr.split('.')[1];
+    if (decimals.length > 2) {
+      throw new Error('GST rate cannot have more than 2 decimal places.');
+    }
+  }
+
+  return rate;
+}
+
 export class GstService {
   /**
    * Calculates reverse GST and tax-exclusive eligible reward amount deterministically.
    * Specification: Section 6
    * If gstIncluded is false, returns eligibleRewardAmount = grossBillAmount, gstRate = null, gstAmount = 0.
-   * If gstIncluded is true, requires valid configuredGstRate > 0 and <= 100, otherwise throws [NO_APPLICABLE_GST_RULE].
+   * If gstIncluded is true, requires valid configuredGstRate >= 0 and <= 100, otherwise throws [NO_APPLICABLE_GST_RULE].
    */
   static calculateReverseGst(
     grossBillAmount: number,
@@ -75,7 +119,7 @@ export class GstService {
 
   /**
    * Calculates GST amount and tax-exclusive eligible reward amount deterministically.
-   * Compatible alias with calculateReverseGst.
+   * Compatible alias with calculateReverseGst returning canonical shape.
    */
   static calculateGstAndEligibleAmount(
     grossBillAmount: number,
@@ -93,8 +137,7 @@ export class GstService {
     }
 
     if (!gstIncluded) {
-      const res = this.calculateReverseGst(grossBillAmount, false, null);
-      return { ...res, gstRate: 0 };
+      return this.calculateReverseGst(grossBillAmount, false, null);
     }
 
     if (
@@ -179,57 +222,72 @@ export class GstService {
   }
 
   /**
-   * Creates a new dynamic GST rate in the database.
+   * Creates a new dynamic GST rate in the database after strictly validating inputs.
    */
   static async createGstRule(
     adminId: string,
     params: {
-      ratePercentage: number;
-      description?: string;
-      isDefault?: boolean;
+      ratePercentage: unknown;
+      description?: unknown;
+      isDefault?: unknown;
       effectiveFrom?: Date;
       effectiveUntil?: Date | null;
     },
     tx: any = prisma
   ): Promise<GstRule> {
-    const { ratePercentage, description, isDefault } = params;
+    const validatedRate = parseStrictGstRate(params.ratePercentage);
 
-    if (ratePercentage < 0 || ratePercentage > 100) {
-      throw new Error('GST rate percentage must be between 0.00% and 100.00%.');
+    if (params.isDefault !== undefined && typeof params.isDefault !== 'boolean') {
+      throw new Error('isDefault must be a boolean.');
     }
 
-    if (isDefault) {
-      // Clear existing default flags
-      await tx.gstRule.updateMany({
-        where: { isDefault: true },
-        data: { isDefault: false },
+    if (params.description !== undefined && typeof params.description !== 'string') {
+      throw new Error('GST rule description must be a string.');
+    }
+
+    const isDefault = params.isDefault === true;
+    const description = (params.description as string | undefined)?.trim();
+
+    const executeInTx = async (db: any) => {
+      if (isDefault) {
+        // Clear existing default flags atomically
+        await db.gstRule.updateMany({
+          where: { isDefault: true },
+          data: { isDefault: false },
+        });
+      }
+
+      const rule = await db.gstRule.create({
+        data: {
+          ratePercentage: validatedRate,
+          description: description || `${validatedRate}% GST`,
+          isDefault,
+          isActive: true,
+          effectiveFrom: params.effectiveFrom || new Date(),
+          effectiveUntil: params.effectiveUntil || null,
+          createdByAdminId: adminId,
+          updatedByAdminId: adminId,
+        },
       });
+
+      await db.auditLog.create({
+        data: {
+          adminId,
+          action: 'GST_RULE_CREATED',
+          entityType: 'GstRule',
+          entityId: rule.id,
+          newValue: JSON.stringify(rule),
+        },
+      });
+
+      return rule;
+    };
+
+    if (tx === prisma) {
+      return await prisma.$transaction(executeInTx);
+    } else {
+      return await executeInTx(tx);
     }
-
-    const rule = await tx.gstRule.create({
-      data: {
-        ratePercentage,
-        description: description || `${ratePercentage}% GST`,
-        isDefault: Boolean(isDefault),
-        isActive: true,
-        effectiveFrom: params.effectiveFrom || new Date(),
-        effectiveUntil: params.effectiveUntil || null,
-        createdByAdminId: adminId,
-        updatedByAdminId: adminId,
-      },
-    });
-
-    await tx.auditLog.create({
-      data: {
-        adminId,
-        action: 'GST_RULE_CREATED',
-        entityType: 'GstRule',
-        entityId: rule.id,
-        newValue: JSON.stringify(rule),
-      },
-    });
-
-    return rule;
   }
 
   /**

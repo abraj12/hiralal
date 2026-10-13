@@ -1,10 +1,15 @@
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../db';
 import { config } from '../config';
 import { AuthService } from '../services/auth.service';
 import { resetAdmins } from './test_helpers';
 
-describe('HIR-V4-02: Concurrency-Safe Password Lockout & Serialization Test Suite', () => {
+function sha256Hash(data: string): string {
+  return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+describe('HIR-V4-02 & HIR-V4.1-01: Concurrency-Safe Password Lockout & Verification Test Suite', () => {
   const workerMobileA = '9876599001';
   const workerPasswordA = 'WorkerPassA@123';
 
@@ -17,15 +22,19 @@ describe('HIR-V4-02: Concurrency-Safe Password Lockout & Serialization Test Suit
   const workerMobileD = '9876599004';
   const workerPasswordD = 'WorkerPassD@123';
 
+  const adminMobileE = '9876599005';
+  const adminPasswordE = 'AdminPassE@123';
+
   let workerIdA: string;
   let adminIdB: string;
   let workerIdC: string;
   let workerIdD: string;
+  let adminIdE: string;
 
   beforeAll(async () => {
     await resetAdmins(prisma);
 
-    const testMobiles = [workerMobileA, adminMobileB, workerMobileC, workerMobileD];
+    const testMobiles = [workerMobileA, adminMobileB, workerMobileC, workerMobileD, adminMobileE];
     await prisma.authSession.deleteMany({ where: { user: { mobile: { in: testMobiles } } } });
     await prisma.auditLog.deleteMany({ where: { admin: { mobile: { in: testMobiles } } } });
     await prisma.wallet.deleteMany({ where: { user: { mobile: { in: testMobiles } } } });
@@ -37,6 +46,7 @@ describe('HIR-V4-02: Concurrency-Safe Password Lockout & Serialization Test Suit
     const adminHashB = await bcrypt.hash(adminPasswordB, 10);
     const workerHashC = await bcrypt.hash(workerPasswordC, 10);
     const workerHashD = await bcrypt.hash(workerPasswordD, 10);
+    const adminHashE = await bcrypt.hash(adminPasswordE, 10);
 
     const uA = await prisma.user.create({
       data: {
@@ -91,10 +101,22 @@ describe('HIR-V4-02: Concurrency-Safe Password Lockout & Serialization Test Suit
     });
     workerIdD = uD.id;
     await prisma.wallet.create({ data: { userId: uD.id, availableBalance: 100 } });
+
+    const uE = await prisma.user.create({
+      data: {
+        mobile: adminMobileE,
+        fullName: 'Admin Lockout Verification Lead',
+        passwordHash: adminHashE,
+        role: 'OPERATIONS_ADMIN',
+        status: 'ACTIVE',
+        isVerified: true,
+      },
+    });
+    adminIdE = uE.id;
   });
 
   afterAll(async () => {
-    const testMobiles = [workerMobileA, adminMobileB, workerMobileC, workerMobileD];
+    const testMobiles = [workerMobileA, adminMobileB, workerMobileC, workerMobileD, adminMobileE];
     await prisma.authSession.deleteMany({ where: { user: { mobile: { in: testMobiles } } } });
     await prisma.wallet.deleteMany({ where: { user: { mobile: { in: testMobiles } } } });
     await prisma.verificationToken.deleteMany({ where: { mobile: { in: testMobiles } } });
@@ -274,5 +296,187 @@ describe('HIR-V4-02: Concurrency-Safe Password Lockout & Serialization Test Suit
     expect(userClean?.failedPasswordAttempts).toBe(0);
     expect(userClean?.lockedUntil).toBeNull();
     expect(userClean?.activeSessionId).toBe(loginResult.sessionId);
+  });
+
+  // Test E — Lockout after challenge:
+  // Admin receives valid challenge & OTP, then concurrent/subsequent failed password attempts establish lockout.
+  // When admin attempts verifyAdminOtp, it MUST be rejected under row lock, issuing NO session and preserving lockout.
+  // Replaying the same challenge or OTP MUST fail.
+  test('Test E — Lockout after challenge: subsequent failed password attempts block OTP verification and session issuance', async () => {
+    // 1. Ensure test admin E is clean, active, unlocked
+    await prisma.user.update({
+      where: { id: adminIdE },
+      data: { failedPasswordAttempts: 0, lockedUntil: null, activeSessionId: null, status: 'ACTIVE' },
+    });
+    await prisma.verificationToken.deleteMany({ where: { mobile: adminMobileE } });
+    await prisma.otpRequest.deleteMany({ where: { mobile: adminMobileE } });
+    await prisma.authSession.deleteMany({ where: { userId: adminIdE } });
+
+    const adminIdentifier = `${config.admin.operationsAdminPrefix}${adminMobileE}`;
+
+    // 2. Request administrator OTP with correct password
+    const otpReq = await AuthService.requestAdminOtp({
+      identifier: adminIdentifier,
+      password: adminPasswordE,
+    });
+    expect(otpReq.challengeToken).toBeDefined();
+
+    // 3. Harness setup: update OTP hash to deterministically known OTP
+    const testOtp = '771122';
+    const latestOtp = await prisma.otpRequest.findFirst({
+      where: { mobile: adminMobileE, purpose: 'ADMIN_LOGIN', isUsed: false },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(latestOtp).not.toBeNull();
+    await prisma.otpRequest.update({
+      where: { id: latestOtp!.id },
+      data: { otpHash: sha256Hash(testOtp) },
+    });
+
+    // 4. Before OTP verification, execute 10 failed password attempts to cross lockout threshold
+    for (let i = 0; i < 10; i++) {
+      await expect(
+        AuthService.requestAdminOtp({
+          identifier: adminIdentifier,
+          password: `WrongPassword_${i}`,
+        })
+      ).rejects.toThrow();
+    }
+
+    // 5. Assert persisted account has expected failed attempts and active lockout
+    const adminLocked = await prisma.user.findUnique({ where: { id: adminIdE } });
+    expect(adminLocked?.failedPasswordAttempts).toBe(10);
+    expect(adminLocked?.lockedUntil).not.toBeNull();
+    expect(adminLocked!.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
+
+    // 6. Submit the previously valid OTP and challenge to verifyAdminOtp
+    await expect(
+      AuthService.verifyAdminOtp({
+        identifier: adminIdentifier,
+        otpCode: testOtp,
+        challengeToken: otpReq.challengeToken,
+      })
+    ).rejects.toThrow(/Account is temporarily locked due to too many failed login attempts/i);
+
+    // 7. Assert no session was created, no activeSessionId was issued
+    const sessions = await prisma.authSession.findMany({ where: { userId: adminIdE } });
+    expect(sessions).toHaveLength(0);
+
+    const adminCheck = await prisma.user.findUnique({ where: { id: adminIdE } });
+    expect(adminCheck?.activeSessionId).toBeNull();
+
+    // 8. Assert lockout remains set and failed-attempt counter is NOT reset
+    expect(adminCheck?.failedPasswordAttempts).toBe(10);
+    expect(adminCheck?.lockedUntil).not.toBeNull();
+
+    // 9. Assert the challenge and OTP cannot be replayed later to bypass rejection
+    await expect(
+      AuthService.verifyAdminOtp({
+        identifier: adminIdentifier,
+        otpCode: testOtp,
+        challengeToken: otpReq.challengeToken,
+      })
+    ).rejects.toThrow();
+  });
+
+  // Test F — Opposite serialization order on verifyAdminOtp:
+  test('Test F — Opposite serialization on verifyAdminOtp: successful verification resets counter, subsequent failure counted from 1', async () => {
+    // 1. Reset Admin E with 4 failed attempts
+    await prisma.user.update({
+      where: { id: adminIdE },
+      data: { failedPasswordAttempts: 4, lockedUntil: null, activeSessionId: null },
+    });
+    await prisma.verificationToken.deleteMany({ where: { mobile: adminMobileE } });
+    await prisma.otpRequest.deleteMany({ where: { mobile: adminMobileE } });
+    await prisma.authSession.deleteMany({ where: { userId: adminIdE } });
+
+    const adminIdentifier = `${config.admin.operationsAdminPrefix}${adminMobileE}`;
+
+    const otpReq = await AuthService.requestAdminOtp({
+      identifier: adminIdentifier,
+      password: adminPasswordE,
+    });
+    const testOtp = '882233';
+    const latestOtp = await prisma.otpRequest.findFirst({
+      where: { mobile: adminMobileE, purpose: 'ADMIN_LOGIN', isUsed: false },
+      orderBy: { createdAt: 'desc' },
+    });
+    await prisma.otpRequest.update({
+      where: { id: latestOtp!.id },
+      data: { otpHash: sha256Hash(testOtp) },
+    });
+
+    // Legitimate verification executes and succeeds
+    const verifyRes = await AuthService.verifyAdminOtp({
+      identifier: adminIdentifier,
+      otpCode: testOtp,
+      challengeToken: otpReq.challengeToken,
+    });
+    expect(verifyRes.success).toBe(true);
+    expect(verifyRes.accessToken).toBeDefined();
+
+    // Verify counter reset to 0
+    const adminClean = await prisma.user.findUnique({ where: { id: adminIdE } });
+    expect(adminClean?.failedPasswordAttempts).toBe(0);
+    expect(adminClean?.lockedUntil).toBeNull();
+    expect(adminClean?.activeSessionId).toBe(verifyRes.sessionId);
+
+    // Subsequent failed password attempt occurs
+    await expect(
+      AuthService.requestAdminOtp({
+        identifier: adminIdentifier,
+        password: 'SubsequentBadPassword',
+      })
+    ).rejects.toThrow(/Invalid login credentials/i);
+
+    // Counter must be exactly 1
+    const adminAfterOne = await prisma.user.findUnique({ where: { id: adminIdE } });
+    expect(adminAfterOne?.failedPasswordAttempts).toBe(1);
+    expect(adminAfterOne?.lockedUntil).toBeNull();
+  });
+
+  // Test G — Inactive / Suspended administrator account rejected:
+  test('Test G — Inactive or suspended administrator rejected at verifyAdminOtp without issuing session', async () => {
+    await prisma.user.update({
+      where: { id: adminIdE },
+      data: { failedPasswordAttempts: 0, lockedUntil: null, status: 'SUSPENDED', activeSessionId: null },
+    });
+    await prisma.authSession.deleteMany({ where: { userId: adminIdE } });
+
+    const adminIdentifier = `${config.admin.operationsAdminPrefix}${adminMobileE}`;
+
+    await expect(
+      AuthService.verifyAdminOtp({
+        identifier: adminIdentifier,
+        otpCode: '123456',
+        challengeToken: 'dummychallengetokentesting1234567890',
+      })
+    ).rejects.toThrow(/Administrator account is unavailable|suspended/i);
+
+    const sessions = await prisma.authSession.findMany({ where: { userId: adminIdE } });
+    expect(sessions).toHaveLength(0);
+
+    // Restore ACTIVE status
+    await prisma.user.update({
+      where: { id: adminIdE },
+      data: { status: 'ACTIVE' },
+    });
+  });
+
+  // Test H — Role and mobile mismatch rejected at verifyAdminOtp:
+  test('Test H — Role and mobile mismatch rejected at verifyAdminOtp', async () => {
+    // Attempting to verify under bill admin prefix for operations admin mobile
+    const wrongIdentifier = `${config.admin.billAdminPrefix}${adminMobileE}`;
+
+    await expect(
+      AuthService.verifyAdminOtp({
+        identifier: wrongIdentifier,
+        otpCode: '123456',
+        challengeToken: 'dummychallengetokentesting1234567890',
+      })
+    ).rejects.toThrow();
+
+    const sessions = await prisma.authSession.findMany({ where: { userId: adminIdE } });
+    expect(sessions).toHaveLength(0);
   });
 });

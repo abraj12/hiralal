@@ -1,5 +1,9 @@
+import request from 'supertest';
+import { app } from '../server';
+import jwt from 'jsonwebtoken';
+import { config } from '../config';
 import { prisma } from '../db';
-import { GstService } from '../services/gst.service';
+import { GstService, parseStrictGstRate } from '../services/gst.service';
 import { BillService } from '../services/bill.service';
 import { RewardService } from '../services/reward.service';
 import { getOrCreateOpsAdmin, getOrCreateBillAdmin } from './test_helpers';
@@ -7,18 +11,32 @@ import { getOrCreateOpsAdmin, getOrCreateBillAdmin } from './test_helpers';
 describe('HIR-V4-04: GST Zero-Rate Consistency & Bill Approval Regression Suite', () => {
   let opsAdminId: string;
   let billAdminId: string;
+  let opsAdminToken: string;
+  let billAdminToken: string;
   let testUserId: string;
   let zeroGstRuleId: string;
   let standard18GstRuleId: string;
   let defaultRewardRuleId: string;
   let expectedRewardRate: number = 1.0;
   let didCreateRewardRule = false;
+  const createdRuleIds: string[] = [];
 
   beforeAll(async () => {
     const opsAdmin = await getOrCreateOpsAdmin(prisma, '9876599010');
     opsAdminId = opsAdmin.id;
     const billAdmin = await getOrCreateBillAdmin(prisma, '9876599011');
     billAdminId = billAdmin.id;
+
+    opsAdminToken = jwt.sign(
+      { userId: opsAdminId, role: 'OPERATIONS_ADMIN' },
+      config.admin.accessSecret || config.jwt.accessSecret,
+      { expiresIn: '1h' }
+    );
+    billAdminToken = jwt.sign(
+      { userId: billAdminId, role: 'BILL_ADMIN' },
+      config.admin.accessSecret || config.jwt.accessSecret,
+      { expiresIn: '1h' }
+    );
 
     // Create a test craftsman user with wallet
     const workerMobile = '9876599012';
@@ -97,7 +115,8 @@ describe('HIR-V4-04: GST Zero-Rate Consistency & Bill Approval Regression Suite'
     await prisma.walletTransaction.deleteMany({ where: { wallet: { userId: testUserId } } });
     await prisma.wallet.deleteMany({ where: { userId: testUserId } });
     await prisma.user.deleteMany({ where: { id: testUserId } });
-    await prisma.gstRule.deleteMany({ where: { id: { in: [zeroGstRuleId, standard18GstRuleId] } } });
+    const allRuleIdsToDelete = [zeroGstRuleId, standard18GstRuleId, ...createdRuleIds];
+    await prisma.gstRule.deleteMany({ where: { id: { in: allRuleIdsToDelete } } });
     if (didCreateRewardRule) {
       await prisma.rewardRule.deleteMany({ where: { id: defaultRewardRuleId } });
     }
@@ -293,5 +312,267 @@ describe('HIR-V4-04: GST Zero-Rate Consistency & Bill Approval Regression Suite'
       expect(Number(tx.amount)).toBeGreaterThan(0);
       expect(tx.type).toBe('REWARD_CREDIT');
     }
+  });
+
+  // 14. Unit test suite for parseStrictGstRate (HIR-V4.1-02)
+  describe('14. Unit Suite: parseStrictGstRate strict input parsing', () => {
+    test('accepts valid numeric values and clean strings within [0, 100]', () => {
+      expect(parseStrictGstRate(0)).toBe(0);
+      expect(parseStrictGstRate('0')).toBe(0);
+      expect(parseStrictGstRate('0.00')).toBe(0);
+      expect(parseStrictGstRate(18)).toBe(18);
+      expect(parseStrictGstRate('18')).toBe(18);
+      expect(parseStrictGstRate(18.5)).toBe(18.5);
+      expect(parseStrictGstRate('18.50')).toBe(18.5);
+      expect(parseStrictGstRate(100)).toBe(100);
+      expect(parseStrictGstRate('100.00')).toBe(100);
+      expect(parseStrictGstRate(' 18 ')).toBe(18);
+    });
+
+    test('rejects empty, whitespace, and alphanumeric strings', () => {
+      expect(() => parseStrictGstRate('')).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate('   ')).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate('18foo')).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate('foo18')).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate('18%')).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate('abc')).toThrow(/between 0.00% and 100.00%/i);
+    });
+
+    test('rejects scientific notation', () => {
+      expect(() => parseStrictGstRate('1e2')).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate('1e-2')).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate('2.5e1')).toThrow(/between 0.00% and 100.00%/i);
+    });
+
+    test('rejects negative numbers and values exceeding 100', () => {
+      expect(() => parseStrictGstRate(-5)).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate('-5')).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate(-0.01)).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate(105)).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate('105')).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate(100.01)).toThrow(/between 0.00% and 100.00%/i);
+    });
+
+    test('rejects NaN, Infinity, and non-numeric types', () => {
+      expect(() => parseStrictGstRate(NaN)).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate(Infinity)).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate(-Infinity)).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate(null)).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate(undefined)).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate({})).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate([])).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate(true)).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate(false)).toThrow(/between 0.00% and 100.00%/i);
+    });
+
+    test('rejects numbers with more than 2 decimal places', () => {
+      expect(() => parseStrictGstRate(18.123)).toThrow(/cannot have more than 2 decimal places/i);
+      expect(() => parseStrictGstRate('18.123')).toThrow(/cannot have more than 2 decimal places/i);
+      expect(() => parseStrictGstRate(0.001)).toThrow(/cannot have more than 2 decimal places/i);
+      expect(() => parseStrictGstRate('0.001')).toThrow(/cannot have more than 2 decimal places/i);
+    });
+  });
+
+  // 15. Service-level validation and fail-closed atomicity (HIR-V4.1-02)
+  describe('15. Service Suite: GstService.createGstRule boundary validation & atomicity', () => {
+    test('rejects non-boolean isDefault before modifying database', async () => {
+      await expect(
+        GstService.createGstRule(opsAdminId, { ratePercentage: 18, isDefault: 'false' as any })
+      ).rejects.toThrow(/isDefault must be a boolean/i);
+
+      await expect(
+        GstService.createGstRule(opsAdminId, { ratePercentage: 18, isDefault: 'true' as any })
+      ).rejects.toThrow(/isDefault must be a boolean/i);
+
+      await expect(
+        GstService.createGstRule(opsAdminId, { ratePercentage: 18, isDefault: 1 as any })
+      ).rejects.toThrow(/isDefault must be a boolean/i);
+    });
+
+    test('rejects non-string description before modifying database', async () => {
+      await expect(
+        GstService.createGstRule(opsAdminId, { ratePercentage: 18, description: 12345 as any })
+      ).rejects.toThrow(/description must be a string/i);
+
+      await expect(
+        GstService.createGstRule(opsAdminId, { ratePercentage: 18, description: true as any })
+      ).rejects.toThrow(/description must be a string/i);
+    });
+
+    test('fails closed atomically: invalid rate does NOT unset existing default rule', async () => {
+      // Create a valid default GST rule
+      const initialDefault = await GstService.createGstRule(opsAdminId, {
+        ratePercentage: 12.0,
+        isDefault: true,
+        description: 'V4.1 Initial Default 12%',
+      });
+      createdRuleIds.push(initialDefault.id);
+
+      expect(initialDefault.isDefault).toBe(true);
+
+      // Attempt to create a new default rule with invalid rate
+      await expect(
+        GstService.createGstRule(opsAdminId, {
+          ratePercentage: '18foo',
+          isDefault: true,
+          description: 'Invalid Attempt',
+        })
+      ).rejects.toThrow(/between 0.00% and 100.00%/i);
+
+      // Verify initial default rule is STILL the default
+      const checkRule = await prisma.gstRule.findUnique({ where: { id: initialDefault.id } });
+      expect(checkRule?.isDefault).toBe(true);
+
+      // Attempt to create a new default rule with invalid isDefault type
+      await expect(
+        GstService.createGstRule(opsAdminId, {
+          ratePercentage: 18.0,
+          isDefault: 'true' as any,
+          description: 'Bad isDefault Type',
+        })
+      ).rejects.toThrow(/isDefault must be a boolean/i);
+
+      // Verify initial default rule is STILL untouched
+      const checkRule2 = await prisma.gstRule.findUnique({ where: { id: initialDefault.id } });
+      expect(checkRule2?.isDefault).toBe(true);
+    });
+  });
+
+  // 16. HTTP endpoint authorization and strict validation (HIR-V4.1-02)
+  describe('16. HTTP Route Suite: POST /api/v1/admin/settings/gst-rules', () => {
+    test('rejects unauthenticated requests with 401', async () => {
+      const res = await request(app)
+        .post('/api/v1/admin/settings/gst-rules')
+        .send({ ratePercentage: 18, description: 'No Token' });
+      expect(res.status).toBe(401);
+    });
+
+    test('rejects BILL_ADMIN requests with 403 Forbidden', async () => {
+      const res = await request(app)
+        .post('/api/v1/admin/settings/gst-rules')
+        .set('Authorization', `Bearer ${billAdminToken}`)
+        .send({ ratePercentage: 18, description: 'Bill Admin Token' });
+      expect(res.status).toBe(403);
+    });
+
+    test('rejects invalid ratePercentage values with 400 Bad Request', async () => {
+      // 18foo
+      const res1 = await request(app)
+        .post('/api/v1/admin/settings/gst-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ ratePercentage: '18foo', description: 'Malformed rate' });
+      expect(res1.status).toBe(400);
+      expect(res1.body.message).toMatch(/Invalid GST rate percentage/i);
+
+      // 18.123 (>2 decimals)
+      const res2 = await request(app)
+        .post('/api/v1/admin/settings/gst-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ ratePercentage: 18.123, description: 'Too many decimals' });
+      expect(res2.status).toBe(400);
+      expect(res2.body.message).toMatch(/Invalid GST rate percentage/i);
+
+      // -5 (negative)
+      const res3 = await request(app)
+        .post('/api/v1/admin/settings/gst-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ ratePercentage: -5, description: 'Negative rate' });
+      expect(res3.status).toBe(400);
+
+      // 105 (>100)
+      const res4 = await request(app)
+        .post('/api/v1/admin/settings/gst-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ ratePercentage: 105, description: 'Over 100%' });
+      expect(res4.status).toBe(400);
+    });
+
+    test('rejects non-boolean isDefault with 400 Bad Request', async () => {
+      const res = await request(app)
+        .post('/api/v1/admin/settings/gst-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ ratePercentage: 18, isDefault: 'false', description: 'String boolean' });
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/isDefault must be a boolean/i);
+    });
+
+    test('rejects non-string description with 400 Bad Request', async () => {
+      const res = await request(app)
+        .post('/api/v1/admin/settings/gst-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ ratePercentage: 18, description: 12345 });
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/description must be a string/i);
+    });
+
+    test('accepts valid 0% and 18% GST rules and creates them with 201 Created', async () => {
+      // 0% GST
+      const zeroRes = await request(app)
+        .post('/api/v1/admin/settings/gst-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ ratePercentage: 0.0, description: 'V4.1 Test 0% Route Rule', isDefault: false });
+      expect(zeroRes.status).toBe(201);
+      expect(zeroRes.body.success).toBe(true);
+      expect(Number(zeroRes.body.rule.ratePercentage)).toBe(0);
+      createdRuleIds.push(zeroRes.body.rule.id);
+
+      // 18.5% GST
+      const standardRes = await request(app)
+        .post('/api/v1/admin/settings/gst-rules')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ ratePercentage: 18.5, description: 'V4.1 Test 18.5% Route Rule', isDefault: false });
+      expect(standardRes.status).toBe(201);
+      expect(standardRes.body.success).toBe(true);
+      expect(Number(standardRes.body.rule.ratePercentage)).toBe(18.5);
+      createdRuleIds.push(standardRes.body.rule.id);
+    });
+  });
+
+  // 17. HTTP endpoint PATCH strict validation (HIR-V4.1-02)
+  describe('17. HTTP Route Suite: PATCH /api/v1/admin/settings/gst-rules/:id', () => {
+    test('rejects non-boolean isDefault or isActive, and non-string description', async () => {
+      const resBadDefault = await request(app)
+        .patch(`/api/v1/admin/settings/gst-rules/${zeroGstRuleId}`)
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ isDefault: 'false' });
+      expect(resBadDefault.status).toBe(400);
+      expect(resBadDefault.body.message).toMatch(/isDefault must be a boolean/i);
+
+      const resBadActive = await request(app)
+        .patch(`/api/v1/admin/settings/gst-rules/${zeroGstRuleId}`)
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ isActive: 'false' });
+      expect(resBadActive.status).toBe(400);
+      expect(resBadActive.body.message).toMatch(/isActive must be a boolean/i);
+
+      const resBadDesc = await request(app)
+        .patch(`/api/v1/admin/settings/gst-rules/${zeroGstRuleId}`)
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ description: 9999 });
+      expect(resBadDesc.status).toBe(400);
+      expect(resBadDesc.body.message).toMatch(/description must be a string/i);
+    });
+  });
+
+  // 18. Canonical calculation result shape contract (HIRALAL-GST-02)
+  describe('18. Canonical Result Contract: calculateGstAndEligibleAmount for gstIncluded = false', () => {
+    test('returns identical canonical shape with gstRate: null when gstIncluded is false', () => {
+      const fromReverse = GstService.calculateReverseGst(12000, false, null);
+      const fromBothNull = GstService.calculateGstAndEligibleAmount(12000, false, null);
+      const fromZeroRate = GstService.calculateGstAndEligibleAmount(12000, false, 0);
+      const from18Rate = GstService.calculateGstAndEligibleAmount(12000, false, 18);
+
+      expect(fromBothNull).toEqual({
+        grossBillAmount: 12000,
+        gstIncluded: false,
+        gstRate: null,
+        gstAmount: 0,
+        eligibleRewardAmount: 12000,
+      });
+
+      expect(fromBothNull).toEqual(fromReverse);
+      expect(fromZeroRate).toEqual(fromReverse);
+      expect(from18Rate).toEqual(fromReverse);
+    });
   });
 });

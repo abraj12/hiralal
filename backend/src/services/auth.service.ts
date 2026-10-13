@@ -459,7 +459,74 @@ export class AuthService {
     }
 
     const txResult = await prisma.$transaction(async (tx) => {
-      // 1. Verify and lock the challenge token using database clock
+      // 1. Acquire PostgreSQL row lock on administrator User account first (enforcing consistent lock order)
+      const lockedAdmins = await tx.$queryRaw<Array<{
+        id: string;
+        mobile: string;
+        fullName: string;
+        role: string;
+        status: string;
+        failedPasswordAttempts: number;
+        lockedUntil: Date | null;
+        isLocked: boolean;
+      }>>`
+        WITH clock AS (
+          SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now
+        )
+        SELECT
+          u."id",
+          u."mobile",
+          u."fullName",
+          u."role",
+          u."status",
+          u."failedPasswordAttempts",
+          u."lockedUntil",
+          (
+            u."lockedUntil" IS NOT NULL
+            AND u."lockedUntil" > clock.now
+          ) AS "isLocked"
+        FROM "User" u
+        CROSS JOIN clock
+        WHERE u."mobile" = ${mobile}
+          AND u."role" = ${role}::"UserRole"
+        FOR UPDATE OF u
+      `;
+
+      if (!lockedAdmins || lockedAdmins.length !== 1) {
+        return {
+          success: false,
+          message: 'Invalid or expired login challenge. Please sign in again.',
+        };
+      }
+
+      const lockedAdmin = lockedAdmins[0];
+
+      if (lockedAdmin.status !== 'ACTIVE') {
+        return {
+          success: false,
+          message: 'Administrator account is unavailable.',
+        };
+      }
+
+      // Check current lockout state under row lock: racing failed attempts establish lockout!
+      if (lockedAdmin.isLocked) {
+        // Deny authentication. Invalidate outstanding unused ADMIN_LOGIN OTP/challenge records
+        await tx.otpRequest.updateMany({
+          where: { mobile, purpose: 'ADMIN_LOGIN', isUsed: false },
+          data: { isUsed: true },
+        });
+        await tx.verificationToken.updateMany({
+          where: { mobile, purpose: 'ADMIN_LOGIN', isUsed: false },
+          data: { isUsed: true },
+        });
+
+        return {
+          success: false,
+          message: 'Account is temporarily locked due to too many failed login attempts. Please try again later.',
+        };
+      }
+
+      // 2. Verify and lock the challenge token using database clock
       const cHash = sha256Hash(activeChallenge);
       const challengeRows = await tx.$queryRaw<Array<{
         id: string;
@@ -486,7 +553,7 @@ export class AuthService {
       }
       const challengeRecord = challengeRows[0];
 
-      // 2. Fetch and lock latest active OTP request using database clock
+      // 3. Fetch and lock latest active OTP request using database clock
       const latestRows = await tx.$queryRaw<Array<{
         id: string;
         otpHash: string;
@@ -577,27 +644,20 @@ export class AuthService {
         };
       }
 
-      const adminUser = await tx.user.findFirst({
-        where: { mobile, role: role as UserRole },
-      });
-
-      if (!adminUser || adminUser.status !== 'ACTIVE') {
-        return {
-          success: false,
-          message: 'Admin account is suspended or not found.',
-        };
-      }
-
       const sessionId = crypto.randomUUID();
 
       await tx.authSession.updateMany({
-        where: { userId: adminUser.id, revokedAt: null },
+        where: { userId: lockedAdmin.id, revokedAt: null },
         data: { revokedAt: new Date() },
       });
 
       await tx.user.update({
-        where: { id: adminUser.id },
-        data: { activeSessionId: sessionId },
+        where: { id: lockedAdmin.id },
+        data: {
+          activeSessionId: sessionId,
+          failedPasswordAttempts: 0,
+          lockedUntil: null,
+        },
       });
 
       const sessionToken = generateSecureToken(40);
@@ -606,7 +666,7 @@ export class AuthService {
 
       await tx.authSession.create({
         data: {
-          userId: adminUser.id,
+          userId: lockedAdmin.id,
           sessionId,
           tokenHash: sessionTokenHash,
           userAgent: params.userAgent,
@@ -617,20 +677,20 @@ export class AuthService {
 
       await tx.auditLog.create({
         data: {
-          adminId: adminUser.id,
+          adminId: lockedAdmin.id,
           action: 'ADMIN_LOGIN',
           entityType: 'User',
-          entityId: adminUser.id,
+          entityId: lockedAdmin.id,
           ipAddress: params.ipAddress,
           userAgent: params.userAgent,
-          newValue: `Administrator authenticated via verified OTP challenge for role ${adminUser.role}.`,
+          newValue: `Administrator authenticated via verified OTP challenge for role ${lockedAdmin.role}.`,
         },
       });
 
       return {
         success: true,
         message: 'Admin verification code verified successfully.',
-        adminUser,
+        adminUser: lockedAdmin,
         sessionId,
       };
     });

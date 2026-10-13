@@ -10,7 +10,7 @@ import {
 import { prisma } from '../db';
 import { RewardService } from '../services/reward.service';
 import { RewardRuleService } from '../services/reward-rule.service';
-import { GstService } from '../services/gst.service';
+import { GstService, parseStrictGstRate } from '../services/gst.service';
 import { BillService } from '../services/bill.service';
 import { StorageService } from '../services/storage.service';
 import { PayoutService } from '../services/payout.service';
@@ -976,10 +976,34 @@ router.post('/settings/gst-rules', requireOperationsAdmin, async (req: Authentic
     const admin = req.user!;
     const { ratePercentage, description, isDefault } = req.body;
 
+    let validatedRate: number;
+    try {
+      validatedRate = parseStrictGstRate(ratePercentage);
+    } catch (parseErr: any) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid GST rate percentage: ${parseErr.message}`,
+      });
+    }
+
+    if (isDefault !== undefined && typeof isDefault !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: 'isDefault must be a boolean.',
+      });
+    }
+
+    if (description !== undefined && typeof description !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'GST rule description must be a string.',
+      });
+    }
+
     const rule = await GstService.createGstRule(admin.id, {
-      ratePercentage: parseFloat(ratePercentage),
+      ratePercentage: validatedRate,
       description,
-      isDefault: Boolean(isDefault),
+      isDefault,
     });
 
     res.status(201).json({
@@ -996,6 +1020,27 @@ router.patch('/settings/gst-rules/:id', requireOperationsAdmin, async (req: Auth
   try {
     const admin = req.user!;
     const { description, isDefault, isActive } = req.body;
+
+    if (isDefault !== undefined && typeof isDefault !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: 'isDefault must be a boolean.',
+      });
+    }
+
+    if (isActive !== undefined && typeof isActive !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: 'isActive must be a boolean.',
+      });
+    }
+
+    if (description !== undefined && typeof description !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'GST rule description must be a string.',
+      });
+    }
 
     const updated = await GstService.updateGstRule(admin.id, req.params.id, {
       description,
