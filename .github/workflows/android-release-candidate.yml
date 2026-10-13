@@ -273,20 +273,26 @@ jobs:
               fi
               echo "APK ($apk) certificate digest matches EXPECTED_RELEASE_CERT_SHA256."
 
-              # Verify package name from actual built APK
-              ACTUAL_APK_PKG="$(aapt dump badging "$apk" 2>/dev/null | grep -oP "package: name='\K[^']+" || aapt2 dump badging "$apk" 2>/dev/null | grep -oP "package: name='\K[^']+" || true)"
-              if [ -n "$ACTUAL_APK_PKG" ]; then
-                if [ "$ACTUAL_APK_PKG" != "com.hiralal.rewards" ]; then
-                  echo "::error::APK package name is '$ACTUAL_APK_PKG', expected 'com.hiralal.rewards'!"
-                  exit 1
-                fi
-                echo "Verified APK package name from binary: $ACTUAL_APK_PKG"
+              # Verify package name from actual built APK (fail closed)
+              AAPT_CMD="aapt"
+              if ! command -v aapt &>/dev/null; then
+                AAPT_CMD="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name aapt -type f 2>/dev/null | sort -V | tail -n 1 || echo "aapt")"
               fi
+              ACTUAL_APK_PKG="$("$AAPT_CMD" dump badging "$apk" 2>/dev/null | grep -oP "package: name='\K[^']+" || aapt dump badging "$apk" 2>/dev/null | grep -oP "package: name='\K[^']+" || aapt2 dump badging "$apk" 2>/dev/null | grep -oP "package: name='\K[^']+" || true)"
+              if [ -z "$ACTUAL_APK_PKG" ]; then
+                echo "::error::Failed to extract package name from APK ($apk). Failing closed."
+                exit 1
+              fi
+              if [ "$ACTUAL_APK_PKG" != "com.hiralal.rewards" ]; then
+                echo "::error::APK package name is '$ACTUAL_APK_PKG', expected 'com.hiralal.rewards'!"
+                exit 1
+              fi
+              echo "Verified APK package name from binary: $ACTUAL_APK_PKG"
             done
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          # 3. Signature verification for AABs using jarsigner and keytool
+          # 3. Signature and manifest verification for AABs using jarsigner, keytool, and bundletool
           if [ -n "$AABS" ]; then
             echo "#### AAB Signature Verification" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -304,6 +310,28 @@ jobs:
                 exit 1
               fi
               echo "AAB ($aab) certificate digest matches EXPECTED_RELEASE_CERT_SHA256."
+
+              # Verify package name from actual built AAB via bundletool
+              if ! command -v bundletool &>/dev/null && [ ! -f /tmp/bundletool.jar ]; then
+                curl -sSL "https://github.com/google/bundletool/releases/download/1.17.1/bundletool-all-1.17.1.jar" -o /tmp/bundletool.jar 2>/dev/null || true
+              fi
+              if command -v bundletool &>/dev/null; then
+                AAB_MANIFEST="$(bundletool dump manifest --bundle="$aab" 2>/dev/null || true)"
+              elif [ -f /tmp/bundletool.jar ]; then
+                AAB_MANIFEST="$(java -jar /tmp/bundletool.jar dump manifest --bundle="$aab" 2>/dev/null || true)"
+              else
+                AAB_MANIFEST=""
+              fi
+              ACTUAL_AAB_PKG="$(echo "$AAB_MANIFEST" | grep -oP 'package="\K[^"]+' || echo "$AAB_MANIFEST" | grep -oP "package: name='\K[^']+" || true)"
+              if [ -z "$ACTUAL_AAB_PKG" ]; then
+                echo "::error::Failed to extract package name from AAB ($aab). Failing closed."
+                exit 1
+              fi
+              if [ "$ACTUAL_AAB_PKG" != "com.hiralal.rewards" ]; then
+                echo "::error::AAB package name is '$ACTUAL_AAB_PKG', expected 'com.hiralal.rewards'!"
+                exit 1
+              fi
+              echo "Verified AAB package name from binary: $ACTUAL_AAB_PKG"
             done
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi

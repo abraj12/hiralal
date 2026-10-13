@@ -7,16 +7,16 @@ export interface RequiredActionAttestation {
   integrityNonce: string;
 }
 
+import { validateProductionApiUrl } from './apiUrl';
+export { validateProductionApiUrl };
+
 const getBaseUrl = () => {
   // 1. In production builds, explicit HTTPS EXPO_PUBLIC_API_URL takes absolute precedence
   const isProduction = process.env.NODE_ENV === 'production' || (typeof __DEV__ !== 'undefined' && !__DEV__);
   const envUrl = process.env.EXPO_PUBLIC_API_URL;
 
   if (isProduction) {
-    if (!envUrl || !envUrl.startsWith('https://')) {
-      throw new Error('Production mobile builds require an explicit HTTPS EXPO_PUBLIC_API_URL.');
-    }
-    return envUrl;
+    return validateProductionApiUrl(envUrl);
   }
 
   // 2. If explicit EXPO_PUBLIC_API_URL is configured for development

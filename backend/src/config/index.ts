@@ -63,6 +63,11 @@ export interface AppConfig {
     billAdminInitialPassword?: string;
     operationsAdminInitialPassword?: string;
   };
+  auth: {
+    lockoutSeconds: number;
+    maxFailedAttempts: number;
+  };
+  authLockoutSeconds: number;
   otp: {
     ttlSeconds: number;
   };
@@ -120,6 +125,8 @@ export function isPlaceholderCredential(val?: string | null): boolean {
     'billadmin@123',
     'opsadmin@123',
     'change_this_to_a_strong_password_in_production',
+    'xyz',
+    'abc',
   ]);
 
   if (forbiddenExactValues.has(normalized)) {
@@ -325,12 +332,16 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
         throw new Error('[FATAL] OTP_TTL_SECONDS must be between 1 and 300 seconds (5 minutes maximum).');
       }
     }
-    if (env.BILL_ADMIN_PREFIX && env.OPERATIONS_ADMIN_PREFIX) {
-      const p1 = env.BILL_ADMIN_PREFIX.trim().toUpperCase();
-      const p2 = env.OPERATIONS_ADMIN_PREFIX.trim().toUpperCase();
-      if (!p1 || !p2 || p1 === p2) {
-        throw new Error('[FATAL] BILL_ADMIN_PREFIX and OPERATIONS_ADMIN_PREFIX must be distinct non-empty prefixes.');
-      }
+    if (!env.BILL_ADMIN_PREFIX || !env.BILL_ADMIN_PREFIX.trim() || !env.OPERATIONS_ADMIN_PREFIX || !env.OPERATIONS_ADMIN_PREFIX.trim()) {
+      throw new Error('[FATAL] BILL_ADMIN_PREFIX and OPERATIONS_ADMIN_PREFIX must be explicitly configured in production.');
+    }
+    const p1 = env.BILL_ADMIN_PREFIX.trim().toUpperCase();
+    const p2 = env.OPERATIONS_ADMIN_PREFIX.trim().toUpperCase();
+    if (p1 === p2) {
+      throw new Error('[FATAL] BILL_ADMIN_PREFIX and OPERATIONS_ADMIN_PREFIX must be distinct non-empty prefixes.');
+    }
+    if (['XYZ', 'ABC'].includes(p1) || ['XYZ', 'ABC'].includes(p2)) {
+      throw new Error('[FATAL] Insecure default admin prefixes (XYZ, ABC) are rejected in production.');
     }
     if (env.ADMIN_INITIAL_PASSWORD) {
       throw new Error(
@@ -702,8 +713,8 @@ if (rawOtpTtl !== undefined) {
 }
 
 // Global Admin Prefix collision check
-const rawBillPrefix = normalizeAdminPrefix(process.env.BILL_ADMIN_PREFIX || 'XYZ');
-const rawOpsPrefix = normalizeAdminPrefix(process.env.OPERATIONS_ADMIN_PREFIX || 'ABC');
+const rawBillPrefix = normalizeAdminPrefix(process.env.BILL_ADMIN_PREFIX || (isProduction ? '' : 'XYZ'));
+const rawOpsPrefix = normalizeAdminPrefix(process.env.OPERATIONS_ADMIN_PREFIX || (isProduction ? '' : 'ABC'));
 if (rawBillPrefix && rawOpsPrefix && rawBillPrefix === rawOpsPrefix) {
   throw new Error('[FATAL] BILL_ADMIN_PREFIX and OPERATIONS_ADMIN_PREFIX must not collide after normalization.');
 }
@@ -822,6 +833,12 @@ export const config: AppConfig = {
     billAdminInitialPassword: process.env.BILL_ADMIN_INITIAL_PASSWORD,
     operationsAdminInitialPassword: process.env.OPERATIONS_ADMIN_INITIAL_PASSWORD,
   },
+
+  auth: {
+    lockoutSeconds: parseInt(process.env.AUTH_LOCKOUT_SECONDS || '900', 10),
+    maxFailedAttempts: 10,
+  },
+  authLockoutSeconds: parseInt(process.env.AUTH_LOCKOUT_SECONDS || '900', 10),
 
   otp: {
     ttlSeconds: (() => {

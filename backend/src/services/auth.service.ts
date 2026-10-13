@@ -177,9 +177,36 @@ export class AuthService {
       throw new Error('Invalid login credentials. Please check your details and try again.');
     }
 
+    if (admin.lockedUntil && admin.lockedUntil > new Date()) {
+      throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
+    }
+
     const isMatch = await bcrypt.compare(params.password, admin.passwordHash);
     if (!isMatch) {
+      const attempts = (admin.failedPasswordAttempts || 0) + 1;
+      const lockoutSeconds = config.authLockoutSeconds || 900;
+      const lockedUntil = attempts >= 10 ? new Date(Date.now() + lockoutSeconds * 1000) : null;
+      await prisma.user.update({
+        where: { id: admin.id },
+        data: {
+          failedPasswordAttempts: attempts,
+          ...(lockedUntil ? { lockedUntil } : {}),
+        },
+      });
+      if (attempts >= 10) {
+        throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
+      }
       throw new Error('Invalid login credentials. Please check your details and try again.');
+    }
+
+    if (admin.failedPasswordAttempts > 0 || admin.lockedUntil) {
+      await prisma.user.update({
+        where: { id: admin.id },
+        data: {
+          failedPasswordAttempts: 0,
+          lockedUntil: null,
+        },
+      });
     }
 
     const now = new Date();
@@ -577,8 +604,25 @@ export class AuthService {
         throw new Error('Admin account is suspended. Please contact system support.');
       }
 
+      if (adminUser.lockedUntil && adminUser.lockedUntil > new Date()) {
+        throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
+      }
+
       const isMatch = await bcrypt.compare(params.password, adminUser.passwordHash);
       if (!isMatch) {
+        const attempts = (adminUser.failedPasswordAttempts || 0) + 1;
+        const lockoutSeconds = config.authLockoutSeconds || 900;
+        const lockedUntil = attempts >= 10 ? new Date(Date.now() + lockoutSeconds * 1000) : null;
+        await tx.user.update({
+          where: { id: adminUser.id },
+          data: {
+            failedPasswordAttempts: attempts,
+            ...(lockedUntil ? { lockedUntil } : {}),
+          },
+        });
+        if (attempts >= 10) {
+          throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
+        }
         throw new Error('Invalid admin credentials.');
       }
 
@@ -592,7 +636,11 @@ export class AuthService {
 
       await tx.user.update({
         where: { id: adminUser.id },
-        data: { activeSessionId: sessionId },
+        data: {
+          activeSessionId: sessionId,
+          failedPasswordAttempts: 0,
+          lockedUntil: null,
+        },
       });
 
       const sessionToken = generateSecureToken(40);
@@ -1081,8 +1129,25 @@ export class AuthService {
       throw new Error('Your account has been suspended. Please contact customer support.');
     }
 
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
+    }
+
     const isMatch = await bcrypt.compare(pass, user.passwordHash);
     if (!isMatch) {
+      const attempts = (user.failedPasswordAttempts || 0) + 1;
+      const lockoutSeconds = config.authLockoutSeconds || 900;
+      const lockedUntil = attempts >= 10 ? new Date(Date.now() + lockoutSeconds * 1000) : null;
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          failedPasswordAttempts: attempts,
+          ...(lockedUntil ? { lockedUntil } : {}),
+        },
+      });
+      if (attempts >= 10) {
+        throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
+      }
       throw new Error('Invalid mobile number or password.');
     }
 
@@ -1173,6 +1238,8 @@ export class AuthService {
             deletionRequestedAt: null,
             deletionScheduledAt: null,
             status: 'ACTIVE',
+            failedPasswordAttempts: 0,
+            lockedUntil: null,
           },
         });
 
@@ -1202,7 +1269,11 @@ export class AuthService {
       } else {
         await tx.user.update({
           where: { id: user.id },
-          data: { activeSessionId: sessionId },
+          data: {
+            activeSessionId: sessionId,
+            failedPasswordAttempts: 0,
+            lockedUntil: null,
+          },
         });
       }
 

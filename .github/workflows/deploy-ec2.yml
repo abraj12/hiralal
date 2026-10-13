@@ -125,16 +125,23 @@ jobs:
             PREVIOUS_SHA="NONE"
             if [ -f "${STATE_DIR}/active-release.json" ]; then
               PREVIOUS_SHA=$(node -e '
+                const fs = require("node:fs");
                 try {
-                  const s = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-                  console.log(s.gitSha || s.releaseId || "NONE");
-                } catch (e) {
-                  console.log("NONE");
+                  const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+                  const sha = (state.gitSha || state.releaseSha || state.releaseId || "").trim();
+                  if (!/^[0-9a-f]{40}$/i.test(sha)) {
+                    console.error("[FATAL ERROR] active-release.json contains invalid or corrupt git SHA:", sha);
+                    process.exit(2);
+                  }
+                  console.log(sha);
+                } catch (err) {
+                  console.error("[FATAL ERROR] Failed to parse active-release.json:", err.message);
+                  process.exit(2);
                 }
-              ' "${STATE_DIR}/active-release.json" 2>/dev/null || echo "NONE")
-            fi
-            if [ "${PREVIOUS_SHA}" = "NONE" ]; then
-              PREVIOUS_SHA=$(git rev-parse HEAD 2>/dev/null || echo "NONE")
+              ' "${STATE_DIR}/active-release.json") || {
+                echo "[FATAL ERROR] Corrupted active-release.json. Halting deployment (fail closed)." >&2
+                exit 2
+              }
             fi
             echo "Previously running release SHA: ${PREVIOUS_SHA}"
 

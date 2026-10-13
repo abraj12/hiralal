@@ -21,14 +21,26 @@ export function fromPaise(paise: bigint): number {
 /**
  * Deterministically computes reward for a bill amount.
  * Formula: floor(billAmount * percentage / 100) at paise precision.
- * Example: ₹1,00,000 * 0.5% = ₹500.00 exactly.
+ * Requires explicit, finite, positive ratePercentage (no default rate fallback).
  */
-export function calculateRewardAmount(billAmount: number | string | Decimal, ratePercentage = 0.50): number {
+export function calculateRewardAmount(
+  billAmount: number | string | Decimal,
+  ratePercentage: number | string | Decimal
+): number {
+  if (ratePercentage === undefined || ratePercentage === null) {
+    throw new Error('Reward rate percentage is required for calculation (no default rate).');
+  }
   const billDec = new Decimal(billAmount.toString());
-  const rateDec = new Decimal(ratePercentage.toString()).dividedBy(100);
-  
+  const rateDec = new Decimal(ratePercentage.toString());
+
+  if (!rateDec.isFinite() || rateDec.isNegative() || rateDec.isZero()) {
+    throw new Error('Reward rate percentage must be a finite positive number.');
+  }
+
+  const rateFraction = rateDec.dividedBy(100);
+
   // Deterministic calculation: bill * (rate / 100), floor to 2 decimal places (paise)
-  const rewardDec = billDec.times(rateDec).toDecimalPlaces(2, Decimal.ROUND_DOWN);
+  const rewardDec = billDec.times(rateFraction).toDecimalPlaces(2, Decimal.ROUND_DOWN);
   return parseFloat(rewardDec.toFixed(2));
 }
 

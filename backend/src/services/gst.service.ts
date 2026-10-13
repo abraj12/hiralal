@@ -10,56 +10,104 @@ const roundMoney = (value: number): number => {
 
 export class GstService {
   /**
+   * Calculates reverse GST and tax-exclusive eligible reward amount deterministically.
+   * Specification: Section 6
+   * If gstIncluded is false, returns eligibleRewardAmount = grossBillAmount, gstRate = null, gstAmount = 0.
+   * If gstIncluded is true, requires valid configuredGstRate > 0 and <= 100, otherwise throws [NO_APPLICABLE_GST_RULE].
+   */
+  static calculateReverseGst(
+    grossBillAmount: number,
+    gstIncluded: boolean,
+    configuredGstRate: number | null
+  ) {
+    if (!Number.isFinite(grossBillAmount) || grossBillAmount <= 0) {
+      throw new Error('Gross bill amount must be positive and finite.');
+    }
+
+    if (typeof gstIncluded !== 'boolean') {
+      throw new Error('GST selection must be explicit.');
+    }
+
+    if (!gstIncluded) {
+      return {
+        grossBillAmount: roundMoney(grossBillAmount),
+        gstIncluded: false,
+        gstRate: null,
+        gstAmount: 0,
+        eligibleRewardAmount: roundMoney(grossBillAmount),
+      };
+    }
+
+    if (
+      configuredGstRate === null ||
+      configuredGstRate === undefined ||
+      !Number.isFinite(configuredGstRate) ||
+      configuredGstRate <= 0 ||
+      configuredGstRate > 100
+    ) {
+      throw new Error('[NO_APPLICABLE_GST_RULE]');
+    }
+
+    const gross = roundMoney(grossBillAmount);
+    const gstAmount = roundMoney(
+      (gross * configuredGstRate) / (100 + configuredGstRate)
+    );
+
+    return {
+      grossBillAmount: gross,
+      gstIncluded: true,
+      gstRate: configuredGstRate,
+      gstAmount,
+      eligibleRewardAmount: roundMoney(gross - gstAmount),
+    };
+  }
+
+  /**
    * Calculates GST amount and tax-exclusive eligible reward amount deterministically.
-   *
-   * Formulations:
-   * 1. GST-excluded invoice (or Zero GST):
-   *    gstAmount = 0.00
-   *    eligibleAmount = grossBillAmount
-   *
-   * 2. GST-inclusive invoice:
-   *    gstAmount = roundMoney(grossBillAmount * rate / (100 + rate))
-   *    eligibleAmount = roundMoney(grossBillAmount - gstAmount)
+   * Compatible alias with calculateReverseGst.
    */
   static calculateGstAndEligibleAmount(
     grossBillAmount: number,
     gstIncluded: boolean,
-    gstRatePercentage: number = 0
+    gstRatePercentage?: number | null
   ): {
     grossBillAmount: number;
     gstIncluded: boolean;
-    gstRate: number;
+    gstRate: number | null;
     gstAmount: number;
     eligibleRewardAmount: number;
   } {
-    if (!Number.isFinite(grossBillAmount) || grossBillAmount <= 0) {
-      throw new Error('Gross bill amount must be a finite positive number.');
-    }
-
     if (typeof gstIncluded !== 'boolean') {
       throw new Error('GST selection must be a boolean.');
     }
 
-    const rate = gstIncluded ? gstRatePercentage : 0;
+    if (!gstIncluded) {
+      const res = this.calculateReverseGst(grossBillAmount, false, null);
+      return { ...res, gstRate: 0 };
+    }
 
-    if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+    if (
+      gstRatePercentage === undefined ||
+      gstRatePercentage === null ||
+      !Number.isFinite(gstRatePercentage) ||
+      gstRatePercentage < 0 ||
+      gstRatePercentage > 100
+    ) {
       throw new Error('GST rate must be between 0% and 100%.');
     }
 
-    const gross = roundMoney(grossBillAmount);
-    const gstAmount = gstIncluded && rate > 0
-      ? roundMoney((gross * rate) / (100 + rate))
-      : 0;
+    if (gstRatePercentage === 0) {
+      const gross = roundMoney(grossBillAmount);
+      return {
+        grossBillAmount: gross,
+        gstIncluded: true,
+        gstRate: 0,
+        gstAmount: 0,
+        eligibleRewardAmount: gross,
+      };
+    }
 
-    const eligibleRewardAmount = roundMoney(gross - gstAmount);
-
-    return {
-      grossBillAmount: gross,
-      gstIncluded,
-      gstRate: rate,
-      gstAmount,
-      eligibleRewardAmount,
-    };
+    return this.calculateReverseGst(grossBillAmount, true, gstRatePercentage);
   }
 
   /**
@@ -97,7 +145,8 @@ export class GstService {
   }
 
   /**
-   * Returns the default GST rule applicable at a specific effective business date.
+   * Returns the explicitly designated default GST rule applicable at a specific effective business date.
+   * Fails closed by returning null if no explicit default rule is configured (no silent rate substitution).
    */
   static async getDefaultGstRule(
     effectiveAt: Date = new Date(),
@@ -119,12 +168,7 @@ export class GstService {
       },
     });
 
-    if (defaultRule) return defaultRule;
-
-    return await tx.gstRule.findFirst({
-      where: applicableWhere,
-      orderBy: { ratePercentage: 'desc' },
-    });
+    return defaultRule || null;
   }
 
   /**

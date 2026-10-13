@@ -6,7 +6,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "node --test plugins/withPlayIntegrity.test.js plugins/withReleaseSigning.test.js"
+    "test": "node --test plugins/withPlayIntegrity.test.js plugins/withReleaseSigning.test.js plugins/apiUrlValidation.test.js"
   },
   "dependencies": {
     "expo": "^57.0.0",

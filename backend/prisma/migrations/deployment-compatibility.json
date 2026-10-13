@@ -155,6 +155,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Adds destructiveStartedAt column and partial unique index on AccountDeletionOperation for active operations per user."
+    },
+    {
+      "id": "20261013190000_retire_legacy_rules_and_add_password_lockout",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Retires legacy seeded default reward and GST rules, and adds failedPasswordAttempts and lockedUntil to User for persistent account lockout."
     }
   ]
 }

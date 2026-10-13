@@ -237,3 +237,39 @@ export function parseIndiaIsoDateTime(dateStr: string, timeStr: string): string 
   return dateObj.toISOString();
 }
 
+/**
+ * Strict parser for effective date and time in Asia/Kolkata timezone.
+ * Unlike parseIndiaBusinessDate which truncates to midnight, this function
+ * preserves the exact hour, minute, second, and millisecond.
+ * - If input is null/undefined: returns current exact Date.
+ * - If input is Date instance: validates it and returns it as-is without truncating time.
+ * - If input is string:
+ *   - If trimmed matches /^\d{4}-\d{2}-\d{2}$/ (date-only): normalizes to midnight 00:00:00+05:30 via parseStrictIndiaDateOnly.
+ *   - If trimmed contains 'T' or ':': parses via parseStrictIndiaTimestamp, preserving exact time and validating India calendar date and time ranges.
+ */
+export function parseIndiaEffectiveDateTime(input?: string | Date | null): Date {
+  if (input === undefined || input === null) {
+    return new Date();
+  }
+
+  if (input instanceof Date) {
+    if (isNaN(input.getTime())) {
+      throw new Error('Invalid Date instance');
+    }
+    return input;
+  }
+
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    if (!trimmed) {
+      throw new Error('Effective date/time string cannot be empty.');
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return parseStrictIndiaDateOnly(trimmed);
+    }
+    return parseStrictIndiaTimestamp(trimmed);
+  }
+
+  throw new Error('Invalid date input: must be string or Date');
+}
+

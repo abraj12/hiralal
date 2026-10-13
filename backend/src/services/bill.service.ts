@@ -360,11 +360,11 @@ export class BillService {
         }
       } else if (isGstIncluded) {
         throw new Error(
-          'A valid applicable GST rule is required when GST is included. Bill Review Administrators cannot manually override GST rates; rates are determined strictly by Operations Administrator rules.'
+          '[NO_APPLICABLE_GST_RULE] A valid applicable GST rule is required when GST is included. Bill Review Administrators cannot manually override GST rates; rates are determined strictly by Operations Administrator rules.'
         );
       }
 
-      const gstCalc = GstService.calculateGstAndEligibleAmount(gross, isGstIncluded, effectiveGstRate);
+      const gstCalc = GstService.calculateReverseGst(gross, isGstIncluded, isGstIncluded ? effectiveGstRate : null);
 
       // 4. Final reward calculation strictly rule-based
       const finalReward = RewardService.calculateReward(gstCalc.eligibleRewardAmount, rulePercentage);

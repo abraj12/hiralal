@@ -1,7 +1,7 @@
 import { prisma } from '../db';
 import { Profession, RewardRule } from '@prisma/client';
 import { config } from '../config';
-import { parseIndiaBusinessDate, formatIstDate } from '../utils/timezone.utils';
+import { parseIndiaBusinessDate, parseIndiaEffectiveDateTime, formatIstDate } from '../utils/timezone.utils';
 
 export class RewardRuleService {
   /**
@@ -17,7 +17,7 @@ export class RewardRuleService {
     const effectiveAt =
       effectiveAtInput instanceof Date && !isNaN(effectiveAtInput.getTime())
         ? effectiveAtInput
-        : parseIndiaBusinessDate(effectiveAtInput);
+        : parseIndiaEffectiveDateTime(effectiveAtInput);
     const rules = await tx.rewardRule.findMany({
       where: {
         profession,
@@ -92,10 +92,10 @@ export class RewardRuleService {
       throw new Error('Reward percentage must not exceed two decimal places (paise precision).');
     }
 
-    // 3. Validation: Effective Date (Asia/Kolkata Business Calendar)
+    // 3. Validation: Effective Date & Time (Asia/Kolkata Business Calendar)
     let effectiveFrom: Date;
     try {
-      effectiveFrom = parseIndiaBusinessDate(params.effectiveFrom);
+      effectiveFrom = parseIndiaEffectiveDateTime(params.effectiveFrom);
     } catch (err: any) {
       throw new Error(err.message || 'Effective from date must be a valid date.');
     }
@@ -104,7 +104,7 @@ export class RewardRuleService {
     let effectiveUntil: Date | null = null;
     if (params.effectiveUntil !== undefined && params.effectiveUntil !== null) {
       try {
-        effectiveUntil = parseIndiaBusinessDate(params.effectiveUntil);
+        effectiveUntil = parseIndiaEffectiveDateTime(params.effectiveUntil);
       } catch (err: any) {
         throw new Error(err.message || 'Effective until must be a valid date.');
       }
@@ -134,7 +134,7 @@ export class RewardRuleService {
 
         if (exactCollision) {
           throw new Error(
-            `An active reward rule (v${exactCollision.version}) already exists for ${profession} with effective date ${formatIstDate(effectiveFrom, 'yyyy-MM-dd')}. Ambiguous duplicate configurations are rejected to preserve deterministic history.`
+            `An active reward rule (v${exactCollision.version}) already exists for ${profession} with effective date ${formatIstDate(effectiveFrom, 'yyyy-MM-dd HH:mm:ss')}. Ambiguous duplicate configurations are rejected to preserve deterministic history.`
           );
         }
       }

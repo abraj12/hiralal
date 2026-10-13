@@ -101,6 +101,8 @@ model User {
   status                UserStatus       @default(ACTIVE)
   isVerified            Boolean          @default(false)
   activeSessionId       String?
+  failedPasswordAttempts Int          @default(0)
+  lockedUntil           DateTime?
   deletionRequestedAt   DateTime?
   deletionScheduledAt   DateTime?
   lastDeletionRequestAt DateTime?

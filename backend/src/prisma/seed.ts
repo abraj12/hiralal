@@ -53,13 +53,12 @@ export async function provisionRewardRules(
 
       if (totalCount === 0) {
         if (process.env.NODE_ENV === 'production') {
-          // Requirement: In production, do NOT silently create 0.5% baseline rules. Operations Admin must create the first rule.
-          const msg = `ℹ️ [SEED] Production mode: Automatic 0.50% reward rule creation disabled for ${prof}. Operations Admin must configure reward rules via the administration interface before rewards can be calculated.`;
+          const msg = `ℹ️ [SEED] Production mode: Automatic reward rule creation disabled for ${prof}. Operations Admin must configure reward rules via the administration interface before rewards can be calculated.`;
           result.warnings.push(msg);
           postCommitLogs.push(() => {
             console.log(msg);
           });
-        } else if (process.env.ENABLE_DEMO_SEED === 'true' || process.env.ENABLE_DEV_REWARD_RULES === 'true') {
+        } else if (process.env.ENABLE_DEV_REWARD_RULES === 'true') {
           await trx.rewardRule.create({
             data: {
               profession: prof,
@@ -71,10 +70,10 @@ export async function provisionRewardRules(
           });
           result.provisioned.push(prof);
           postCommitLogs.push(() => {
-            console.log(`✅ [SEED] Initial demo reward rule created for ${prof} (0.50%, v1, 2020-01-01 IST)`);
+            console.log(`✅ [SEED] Initial test/dev reward rule created for ${prof} (0.50%, v1, 2020-01-01 IST)`);
           });
         } else {
-          const msg = `ℹ️ [SEED] Profession ${prof} has zero reward rules. Operations Admin must configure reward rules via the administrative portal before rewards can be calculated.`;
+          const msg = `ℹ️ [SEED] Profession ${prof} has zero reward rules. Operations Admin must configure reward rules via the administration interface before rewards can be calculated (no default rate).`;
           result.warnings.push(msg);
           postCommitLogs.push(() => {
             console.log(msg);
@@ -91,7 +90,7 @@ export async function provisionRewardRules(
           result.preserved.push(prof);
           postCommitLogs.push(() => {
             console.log(
-              `ℹ️  [SEED] Active ${prof} rule already exists (v${activeRule.version}, effectiveFrom: ${activeRule.effectiveFrom.toISOString()}). Preserving as-is. If effectiveFrom is incorrect, correct it via a separately reviewed migration, not via seed.`
+              `ℹ️  [SEED] Active ${prof} rule already exists (v${activeRule.version}, effectiveFrom: ${activeRule.effectiveFrom.toISOString()}). Preserving as-is.`
             );
           });
         } else {
@@ -245,38 +244,15 @@ async function main() {
     await provisionRewardRules(prisma);
     console.log('✅ Profession reward rules initialization verified.');
 
-    // 4. Provision GST Tax Rules
-    const existingGstRules = await prisma.gstRule.findMany();
-    if (existingGstRules.length === 0) {
-      await prisma.gstRule.createMany({
-        data: [
-          {
-            ratePercentage: 18.0,
-            description: 'Standard 18% GST (Plumbing & Tile Hardware)',
-            isDefault: true,
-            isActive: true,
-            createdByAdminId: opsAdmin.id,
-          },
-          {
-            ratePercentage: 12.0,
-            description: 'Concessional 12% GST',
-            isDefault: false,
-            isActive: true,
-            createdByAdminId: opsAdmin.id,
-          },
-          {
-            ratePercentage: 0.0,
-            description: 'Tax Exempt (0% GST)',
-            isDefault: false,
-            isActive: true,
-            createdByAdminId: opsAdmin.id,
-          },
-        ],
-      });
-      console.log('✅ GST tax rules provisioned: 18% (default), 12%, 0%');
+    // 4. GST Tax Rules (Not provisioned automatically; Operations Admin creates explicitly)
+    const existingGstRules = await prisma.gstRule.count();
+    if (existingGstRules === 0) {
+      console.log('ℹ️ [SEED] Zero GST tax rules found. Operations Admin must configure GST rules via administration interface (no default rate).');
+    } else {
+      console.log(`ℹ️ [SEED] ${existingGstRules} GST rule(s) exist in database.`);
     }
 
-    // 5. Provision Initial Redemption Settings (CLOSED BY DEFAULT in production)
+    // 5. Provision Initial Redemption Settings (CLOSED AND UNCONFIGURED BY DEFAULT)
     await prisma.redemptionSettings.upsert({
       where: { id: 'default' },
       update: {},
@@ -285,6 +261,7 @@ async function main() {
         isEnabled: false, // Default CLOSED until administration explicitly opens the window
         startAt: null,
         endAt: null,
+        minimumRedemptionAmount: null,
         message: 'Rewards redemption is currently unavailable.',
         updatedByAdminId: opsAdmin.id,
       },

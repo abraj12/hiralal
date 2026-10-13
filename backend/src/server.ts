@@ -131,18 +131,22 @@ const readyHandler = async (_req: Request, res: Response) => {
 app.get('/health/ready', readyHandler);
 app.get('/ready', readyHandler);
 
-// API Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/bills', billRoutes);
-app.use('/api/rewards', rewardRoutes);
-app.use('/api/wallet', walletRoutes);
-app.use('/api/kyc', kycRoutes);
-app.use('/api/payment-account', paymentRoutes);
-app.use('/api/payouts', payoutRoutes);
-app.use('/api/webhooks', webhookRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/notifications', notificationRoutes);
-app.use('/api/push-token', pushTokenRoutes);
+// API Routes - Canonical /api/v1 with /api backward-compatibility alias
+const v1Router = express.Router();
+v1Router.use('/auth', authRoutes);
+v1Router.use('/bills', billRoutes);
+v1Router.use('/rewards', rewardRoutes);
+v1Router.use('/wallet', walletRoutes);
+v1Router.use('/kyc', kycRoutes);
+v1Router.use('/payment-account', paymentRoutes);
+v1Router.use('/payouts', payoutRoutes);
+v1Router.use('/webhooks', webhookRoutes);
+v1Router.use('/admin', adminRoutes);
+v1Router.use('/notifications', notificationRoutes);
+v1Router.use('/push-token', pushTokenRoutes);
+
+app.use('/api/v1', v1Router);
+app.use('/api', v1Router);
 
 // 404 Handler
 app.use((req: any, res: Response) => {

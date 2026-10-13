@@ -28,37 +28,61 @@ import {
 
 type TabType = 'PLUMBER' | 'TILE_INSTALLER' | 'GST' | 'REDEMPTION';
 
+const EMPTY_REWARD_FORM = {
+  rewardPercentage: '',
+  effectiveDate: '',
+  effectiveTime: '',
+  description: '',
+};
+
+function parseExplicitRewardPercentage(raw: string): number {
+  if (!raw || !raw.trim()) {
+    throw new Error(
+      'Reward percentage is not configured. Enter the percentage explicitly.'
+    );
+  }
+
+  const value = Number(raw.trim());
+
+  if (!Number.isFinite(value) || value <= 0 || value > 100) {
+    throw new Error(
+      'Enter an explicit reward percentage greater than 0 and no greater than 100.'
+    );
+  }
+
+  if (Math.round(value * 100) !== value * 100) {
+    throw new Error(
+      'Reward percentage must have at most two decimal places.'
+    );
+  }
+
+  return value;
+}
+
 export default function AdminSettingsPage() {
   const [activeTab, setActiveTab] = useState<TabType>('PLUMBER');
 
-  // Profession Rules State
-  const todayDateStr = getIndiaCalendarToday();
+  // Profession Rules State (Start in genuinely unconfigured state)
   const [plumberRules, setPlumberRules] = useState<any[]>([]);
   const [tileRules, setTileRules] = useState<any[]>([]);
-  const [plumberForm, setPlumberForm] = useState({
-    rewardPercentage: '0.5',
-    effectiveFrom: todayDateStr,
-  });
-  const [tileForm, setTileForm] = useState({
-    rewardPercentage: '0.5',
-    effectiveFrom: todayDateStr,
-  });
+  const [plumberForm, setPlumberForm] = useState(EMPTY_REWARD_FORM);
+  const [tileForm, setTileForm] = useState(EMPTY_REWARD_FORM);
 
-  // GST State
+  // GST State (Start unconfigured, no default 18%)
   const [gstRules, setGstRules] = useState<any[]>([]);
-  const [newGstRate, setNewGstRate] = useState('18');
-  const [newGstDescription, setNewGstDescription] = useState('Standard Goods & Services Tax');
+  const [newGstRate, setNewGstRate] = useState('');
+  const [newGstDescription, setNewGstDescription] = useState('');
   const [newGstDefault, setNewGstDefault] = useState(false);
   const [showAddGstModal, setShowAddGstModal] = useState(false);
 
-  // Redemption Window State
-  const [isRedemptionEnabled, setIsRedemptionEnabled] = useState(true);
+  // Redemption Window State (Start disabled and unconfigured)
+  const [isRedemptionEnabled, setIsRedemptionEnabled] = useState(false);
   const [startDate, setStartDate] = useState('');
-  const [startTime, setStartTime] = useState('10:00');
+  const [startTime, setStartTime] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [endTime, setEndTime] = useState('23:59');
+  const [endTime, setEndTime] = useState('');
   const [userMessage, setUserMessage] = useState('Rewards redemption is currently open for verified craftsmen.');
-  const [minimumRedemptionAmount, setMinimumRedemptionAmount] = useState('500');
+  const [minimumRedemptionAmount, setMinimumRedemptionAmount] = useState('');
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -73,28 +97,50 @@ export default function AdminSettingsPage() {
       const pRes = await AdminApiClient.getRewardRules('PLUMBER');
       if (pRes.rules && pRes.rules.length > 0) {
         setPlumberRules(pRes.rules);
-        const active = pRes.rules.find((r: any) => r.isActive) || pRes.rules[0];
-        setPlumberForm((prev) => ({
-          ...prev,
-          rewardPercentage: (active.rewardPercentage || active.percentage || 0.5).toString(),
-        }));
+        const active = pRes.rules.find((r: any) => r.isActive);
+        if (active && active.rewardPercentage != null) {
+          const fromDate = active.effectiveFrom ? new Date(active.effectiveFrom) : null;
+          setPlumberForm({
+            rewardPercentage: active.rewardPercentage.toString(),
+            effectiveDate: fromDate ? formatIndiaDateOnly(fromDate) : '',
+            effectiveTime: fromDate ? formatIndiaTimeOnly(fromDate) : '',
+            description: active.description || '',
+          });
+        } else {
+          setPlumberForm(EMPTY_REWARD_FORM);
+        }
+      } else {
+        setPlumberRules([]);
+        setPlumberForm(EMPTY_REWARD_FORM);
       }
 
       // 2. Fetch Tile Installer rules
       const tRes = await AdminApiClient.getRewardRules('TILE_INSTALLER');
       if (tRes.rules && tRes.rules.length > 0) {
         setTileRules(tRes.rules);
-        const active = tRes.rules.find((r: any) => r.isActive) || tRes.rules[0];
-        setTileForm((prev) => ({
-          ...prev,
-          rewardPercentage: (active.rewardPercentage || active.percentage || 0.5).toString(),
-        }));
+        const active = tRes.rules.find((r: any) => r.isActive);
+        if (active && active.rewardPercentage != null) {
+          const fromDate = active.effectiveFrom ? new Date(active.effectiveFrom) : null;
+          setTileForm({
+            rewardPercentage: active.rewardPercentage.toString(),
+            effectiveDate: fromDate ? formatIndiaDateOnly(fromDate) : '',
+            effectiveTime: fromDate ? formatIndiaTimeOnly(fromDate) : '',
+            description: active.description || '',
+          });
+        } else {
+          setTileForm(EMPTY_REWARD_FORM);
+        }
+      } else {
+        setTileRules([]);
+        setTileForm(EMPTY_REWARD_FORM);
       }
 
       // 3. Fetch GST Rules
       const gstRes = await AdminApiClient.getGstRules();
       if (gstRes.rules) {
         setGstRules(gstRes.rules);
+      } else {
+        setGstRules([]);
       }
 
       // 4. Fetch Redemption Settings
@@ -105,17 +151,25 @@ export default function AdminSettingsPage() {
         if (s.message) setUserMessage(s.message);
         if (s.minimumRedemptionAmount !== undefined && s.minimumRedemptionAmount !== null) {
           setMinimumRedemptionAmount(s.minimumRedemptionAmount.toString());
+        } else {
+          setMinimumRedemptionAmount('');
         }
 
         if (s.startAt) {
           const d = new Date(s.startAt);
           setStartDate(formatIndiaDateOnly(d));
           setStartTime(formatIndiaTimeOnly(d));
+        } else {
+          setStartDate('');
+          setStartTime('');
         }
         if (s.endAt) {
           const d = new Date(s.endAt);
           setEndDate(formatIndiaDateOnly(d));
           setEndTime(formatIndiaTimeOnly(d));
+        } else {
+          setEndDate('');
+          setEndTime('');
         }
       }
     } catch (err: any) {
@@ -143,13 +197,20 @@ export default function AdminSettingsPage() {
 
     const form = prof === 'PLUMBER' ? plumberForm : tileForm;
     try {
+      const percentage = parseExplicitRewardPercentage(form.rewardPercentage);
+
+      if (!form.effectiveDate || !form.effectiveTime) {
+        throw new Error('Both effective date and effective time (Asia/Kolkata) are required.');
+      }
+      const effectiveFrom = parseIndiaIsoDateTime(form.effectiveDate, form.effectiveTime);
+
       await AdminApiClient.createRewardRule({
         profession: prof,
-        rewardPercentage: parseFloat(form.rewardPercentage),
-        effectiveFrom: form.effectiveFrom ? form.effectiveFrom : undefined,
+        rewardPercentage: percentage,
+        effectiveFrom,
       });
 
-      setSuccessMsg(`New versioned reward rule deployed for ${prof === 'PLUMBER' ? 'Plumbers' : 'Tile Installers'} effective ${form.effectiveFrom || 'immediately'}! Historical approved bills remain financially immutable.`);
+      setSuccessMsg(`New versioned reward rule deployed for ${prof === 'PLUMBER' ? 'Plumbers' : 'Tile Installers'} effective ${form.effectiveDate} ${form.effectiveTime} IST! Historical approved bills remain financially immutable.`);
       await fetchAllData();
     } catch (err: any) {
       setErrorMsg(err.message || `Failed to update rule for ${prof}`);
@@ -165,15 +226,23 @@ export default function AdminSettingsPage() {
     clearAlerts();
 
     try {
+      if (!newGstRate.trim()) {
+        throw new Error('GST rate is required. Enter the percentage explicitly.');
+      }
+      const parsedRate = parseFloat(newGstRate.trim());
+      if (!Number.isFinite(parsedRate) || parsedRate <= 0 || parsedRate > 100) {
+        throw new Error('GST rate must be a valid positive number up to 100%.');
+      }
+
       await AdminApiClient.createGstRule({
-        ratePercentage: parseFloat(newGstRate),
-        description: newGstDescription,
+        ratePercentage: parsedRate,
+        description: newGstDescription.trim() || undefined,
         isDefault: newGstDefault,
       });
 
-      setSuccessMsg(`New GST Rule (${newGstRate}%) created and active for invoice verification!`);
+      setSuccessMsg(`New GST Rule (${parsedRate}%) created and active for invoice verification!`);
       setShowAddGstModal(false);
-      setNewGstRate('18');
+      setNewGstRate('');
       setNewGstDescription('');
       setNewGstDefault(false);
       await fetchAllData();
@@ -194,29 +263,52 @@ export default function AdminSettingsPage() {
       let startAt: string | null = null;
       let endAt: string | null = null;
 
-      if (startDate) {
+      if (isRedemptionEnabled) {
+        if (!startDate || !startTime) {
+          throw new Error('Both start date and start time are required to enable redemption.');
+        }
+        if (!endDate || !endTime) {
+          throw new Error('Both end date and end time are required to enable redemption.');
+        }
         startAt = parseIndiaIsoDateTime(startDate, startTime);
-      }
-      if (endDate) {
         endAt = parseIndiaIsoDateTime(endDate, endTime);
-      }
 
-      if (startAt && endAt && new Date(endAt) <= new Date(startAt)) {
-        throw new Error('End date and time must be after the start date and time.');
-      }
+        if (new Date(endAt) <= new Date(startAt)) {
+          throw new Error('End date and time must be after the start date and time.');
+        }
 
-      const parsedMin = minimumRedemptionAmount.trim() ? parseFloat(minimumRedemptionAmount) : null;
-      if (parsedMin !== null && (isNaN(parsedMin) || parsedMin <= 0)) {
-        throw new Error('Minimum redemption threshold must be a valid positive number (e.g. 500).');
-      }
+        if (!minimumRedemptionAmount.trim()) {
+          throw new Error('Minimum redemption threshold is required to enable redemption.');
+        }
+        const parsedMin = parseFloat(minimumRedemptionAmount.trim());
+        if (!Number.isFinite(parsedMin) || parsedMin <= 0) {
+          throw new Error('Minimum redemption threshold must be a valid positive number (e.g. 500).');
+        }
 
-      await AdminApiClient.updateRedemptionSettings({
-        isEnabled: isRedemptionEnabled,
-        startAt,
-        endAt,
-        message: userMessage,
-        minimumRedemptionAmount: parsedMin,
-      });
+        await AdminApiClient.updateRedemptionSettings({
+          isEnabled: true,
+          startAt,
+          endAt,
+          message: userMessage,
+          minimumRedemptionAmount: parsedMin,
+        });
+      } else {
+        if (startDate && startTime) {
+          startAt = parseIndiaIsoDateTime(startDate, startTime);
+        }
+        if (endDate && endTime) {
+          endAt = parseIndiaIsoDateTime(endDate, endTime);
+        }
+        const parsedMin = minimumRedemptionAmount.trim() ? parseFloat(minimumRedemptionAmount.trim()) : null;
+
+        await AdminApiClient.updateRedemptionSettings({
+          isEnabled: false,
+          startAt,
+          endAt,
+          message: userMessage,
+          minimumRedemptionAmount: parsedMin,
+        });
+      }
 
       setSuccessMsg('Redemption window settings saved and enforced for mobile workers!');
     } catch (err: any) {
@@ -329,7 +421,7 @@ export default function AdminSettingsPage() {
                 onSubmit={(e) => handleSaveProfessionRule(e, activeTab)}
                 className="space-y-5"
               >
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
                       Reward Rate Percentage (%)
@@ -345,6 +437,7 @@ export default function AdminSettingsPage() {
                           ? setPlumberForm({ ...plumberForm, rewardPercentage: e.target.value })
                           : setTileForm({ ...tileForm, rewardPercentage: e.target.value })
                       }
+                      placeholder="e.g. 0.50 (explicit required)"
                       className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
                     />
                     <span className="text-[10px] text-slate-400 mt-1 block">
@@ -354,20 +447,39 @@ export default function AdminSettingsPage() {
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Effective Date (IST Business Calendar)
+                      Effective Date (Asia/Kolkata)
                     </label>
                     <input
                       type="date"
-                      value={activeTab === 'PLUMBER' ? plumberForm.effectiveFrom : tileForm.effectiveFrom}
+                      value={activeTab === 'PLUMBER' ? plumberForm.effectiveDate : tileForm.effectiveDate}
                       onChange={(e) =>
                         activeTab === 'PLUMBER'
-                          ? setPlumberForm({ ...plumberForm, effectiveFrom: e.target.value })
-                          : setTileForm({ ...tileForm, effectiveFrom: e.target.value })
+                          ? setPlumberForm({ ...plumberForm, effectiveDate: e.target.value })
+                          : setTileForm({ ...tileForm, effectiveDate: e.target.value })
                       }
                       className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
                     />
                     <span className="text-[10px] text-slate-400 mt-1 block">
-                      Invoices on or after this date will receive this rate. Prior bills remain unchanged.
+                      Calendar date in IST when rule becomes active.
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Effective Time (Asia/Kolkata)
+                    </label>
+                    <input
+                      type="time"
+                      value={activeTab === 'PLUMBER' ? plumberForm.effectiveTime : tileForm.effectiveTime}
+                      onChange={(e) =>
+                        activeTab === 'PLUMBER'
+                          ? setPlumberForm({ ...plumberForm, effectiveTime: e.target.value })
+                          : setTileForm({ ...tileForm, effectiveTime: e.target.value })
+                      }
+                      className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-1 block">
+                      Exact time in IST. Bills submitted prior to this time keep earlier rates.
                     </span>
                   </div>
                 </div>
@@ -413,48 +525,57 @@ export default function AdminSettingsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {(activeTab === 'PLUMBER' ? plumberRules : tileRules).map((r: any, idx: number, arr: any[]) => {
-                      const now = new Date();
-                      const fromDate = r.effectiveFrom ? new Date(r.effectiveFrom) : null;
-                      let untilDate = r.effectiveUntil ? new Date(r.effectiveUntil) : null;
+                    {(activeTab === 'PLUMBER' ? plumberRules : tileRules).length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-slate-400">
+                          <span className="font-bold text-slate-500 block mb-1">Not configured</span>
+                          No versioned reward rules configured for {activeTab === 'PLUMBER' ? 'Plumbers' : 'Tile Installers'}. Operations Admin must deploy a rule before rewards can be calculated.
+                        </td>
+                      </tr>
+                    ) : (
+                      (activeTab === 'PLUMBER' ? plumberRules : tileRules).map((r: any, idx: number, arr: any[]) => {
+                        const now = new Date();
+                        const fromDate = r.effectiveFrom ? new Date(r.effectiveFrom) : null;
+                        let untilDate = r.effectiveUntil ? new Date(r.effectiveUntil) : null;
 
-                      // Derive validity until date dynamically from chronological timeline if open-ended
-                      if (!untilDate && fromDate) {
-                        const chronologicallyLater = arr
-                          .filter((other: any) => other.isActive && new Date(other.effectiveFrom) > fromDate)
-                          .sort((a: any, b: any) => new Date(a.effectiveFrom).getTime() - new Date(b.effectiveFrom).getTime())[0];
-                        if (chronologicallyLater) {
-                          untilDate = new Date(chronologicallyLater.effectiveFrom);
+                        // Derive validity until date dynamically from chronological timeline if open-ended
+                        if (!untilDate && fromDate) {
+                          const chronologicallyLater = arr
+                            .filter((other: any) => other.isActive && new Date(other.effectiveFrom) > fromDate)
+                            .sort((a: any, b: any) => new Date(a.effectiveFrom).getTime() - new Date(b.effectiveFrom).getTime())[0];
+                          if (chronologicallyLater) {
+                            untilDate = new Date(chronologicallyLater.effectiveFrom);
+                          }
                         }
-                      }
 
-                      let statusBadge = { label: 'CURRENT', badgeClass: 'bg-emerald-100 text-emerald-700' };
-                      if (!r.isActive) {
-                        statusBadge = { label: 'INACTIVE', badgeClass: 'bg-slate-100 text-slate-500' };
-                      } else if (fromDate && fromDate > now) {
-                        statusBadge = { label: 'SCHEDULED', badgeClass: 'bg-blue-100 text-blue-700' };
-                      } else if (untilDate && untilDate <= now) {
-                        statusBadge = { label: 'HISTORICAL', badgeClass: 'bg-amber-100 text-amber-800' };
-                      }
+                        let statusBadge = { label: 'CURRENT', badgeClass: 'bg-emerald-100 text-emerald-700' };
+                        if (!r.isActive) {
+                          statusBadge = { label: 'INACTIVE', badgeClass: 'bg-slate-100 text-slate-500' };
+                        } else if (fromDate && fromDate > now) {
+                          statusBadge = { label: 'SCHEDULED', badgeClass: 'bg-blue-100 text-blue-700' };
+                        } else if (untilDate && untilDate <= now) {
+                          statusBadge = { label: 'HISTORICAL', badgeClass: 'bg-amber-100 text-amber-800' };
+                        }
 
-                      return (
-                        <tr key={r.id}>
-                          <td className="py-3 px-4 font-bold text-slate-900">v{r.version}</td>
-                          <td className="py-3 px-4 font-bold text-emerald-600">{r.rewardPercentage || r.percentage}%</td>
-                          <td className="py-3 px-4 text-slate-600 font-medium">
-                            {fromDate ? fromDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Beginning'}
-                          </td>
-                          <td className="py-3 px-4 text-slate-500">
-                            {untilDate ? untilDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Present (Open-ended)'}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${statusBadge.badgeClass}`}>
-                              {statusBadge.label}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                        return (
+                          <tr key={r.id}>
+                            <td className="py-3 px-4 font-bold text-slate-900">v{r.version}</td>
+                            <td className="py-3 px-4 font-bold text-emerald-600">{r.rewardPercentage || r.percentage}%</td>
+                            <td className="py-3 px-4 text-slate-600 font-medium">
+                              {fromDate ? fromDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Beginning'}
+                            </td>
+                            <td className="py-3 px-4 text-slate-500">
+                              {untilDate ? untilDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Present (Open-ended)'}
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${statusBadge.badgeClass}`}>
+                                {statusBadge.label}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -501,31 +622,39 @@ export default function AdminSettingsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {gstRules.map((g: any) => (
-                      <tr key={g.id} className="hover:bg-slate-50/70 transition">
-                        <td className="py-3.5 px-4 font-black text-slate-900 text-sm">{g.ratePercentage}%</td>
-                        <td className="py-3.5 px-4 text-slate-700 font-medium">{g.description || '—'}</td>
-                        <td className="py-3.5 px-4">
-                          {g.isDefault ? (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-700">
-                              DEFAULT
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 text-[11px]">—</span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4 text-slate-500">
-                          {new Date(g.effectiveFrom).toLocaleDateString('en-IN')}
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            g.isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
-                          }`}>
-                            {g.isActive ? 'ACTIVE' : 'INACTIVE'}
-                          </span>
+                    {gstRules.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-slate-400 font-medium">
+                          No GST tax rules configured. Please add a GST rate to enable bill processing with GST.
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      gstRules.map((g: any) => (
+                        <tr key={g.id} className="hover:bg-slate-50/70 transition">
+                          <td className="py-3.5 px-4 font-black text-slate-900 text-sm">{g.ratePercentage}%</td>
+                          <td className="py-3.5 px-4 text-slate-700 font-medium">{g.description || '—'}</td>
+                          <td className="py-3.5 px-4">
+                            {g.isDefault ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-700">
+                                DEFAULT
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-[11px]">—</span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-500">
+                            {new Date(g.effectiveFrom).toLocaleDateString('en-IN')}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              g.isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                            }`}>
+                              {g.isActive ? 'ACTIVE' : 'INACTIVE'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>

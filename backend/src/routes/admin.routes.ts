@@ -32,13 +32,6 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
     const professionQuery = req.query.profession as string;
     const filterProfession = (professionQuery && professionQuery !== 'ALL') ? (professionQuery as Profession) : undefined;
 
-    const userWhere: any = { role: 'USER' };
-    if (filterProfession) userWhere.profession = filterProfession;
-
-    const totalUsers = await prisma.user.count({ where: userWhere });
-    const plumbersCount = await prisma.user.count({ where: { role: 'USER', profession: 'PLUMBER' } });
-    const tilesCount = await prisma.user.count({ where: { role: 'USER', profession: 'TILE_INSTALLER' } });
-
     const billWhere: any = {};
     if (filterProfession) billWhere.user = { profession: filterProfession };
 
@@ -60,6 +53,51 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
       select: { calculatedReward: true },
     });
     const rewardsThisMonth = monthBills.reduce((acc, b) => acc + Number(b.calculatedReward), 0);
+
+    // 10 most recent bills
+    const recentBills = await prisma.bill.findMany({
+      where: billWhere,
+      take: 10,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: { select: { fullName: true, mobile: true, profession: true } },
+      },
+    });
+
+    const mappedRecentBills = recentBills.map((b) => ({
+      ...b,
+      billAmount: Number(b.billAmount),
+      grossBillAmount: Number(b.grossBillAmount || b.billAmount),
+      gstAmount: b.gstAmount !== null ? Number(b.gstAmount) : 0,
+      gstRate: b.gstRate !== null ? Number(b.gstRate) : 0,
+      eligibleRewardAmount: b.eligibleRewardAmount !== null ? Number(b.eligibleRewardAmount) : Number(b.billAmount),
+      calculatedReward: Number(b.calculatedReward),
+      rewardPercentage: b.rewardPercentage !== null ? Number(b.rewardPercentage) : null,
+      fileUrl: StorageService.generateSignedUrl(b.fileKey, 30),
+    }));
+
+    // Strict Role Separation: BILL_ADMIN sees only bill review stats and recent bills
+    if (req.user?.role === 'BILL_ADMIN') {
+      return res.json({
+        success: true,
+        profession: filterProfession || 'ALL',
+        stats: {
+          pendingBills,
+          approvedBillsCount,
+          rejectedBillsCount,
+          rewardsThisMonth: Math.round(rewardsThisMonth * 100) / 100,
+        },
+        recentBills: mappedRecentBills,
+      });
+    }
+
+    // OPERATIONS_ADMIN (and other authorized roles) see full operational metrics
+    const userWhere: any = { role: 'USER' };
+    if (filterProfession) userWhere.profession = filterProfession;
+
+    const totalUsers = await prisma.user.count({ where: userWhere });
+    const plumbersCount = await prisma.user.count({ where: { role: 'USER', profession: 'PLUMBER' } });
+    const tilesCount = await prisma.user.count({ where: { role: 'USER', profession: 'TILE_INSTALLER' } });
 
     const payoutWhere: any = {};
     if (filterProfession) payoutWhere.user = { profession: filterProfession };
@@ -154,16 +192,6 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
       },
     };
 
-    // 10 most recent bills
-    const recentBills = await prisma.bill.findMany({
-      where: billWhere,
-      take: 10,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        user: { select: { fullName: true, mobile: true, profession: true } },
-      },
-    });
-
     res.json({
       success: true,
       profession: filterProfession || 'ALL',
@@ -186,17 +214,7 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
         failedPayoutAmount: Math.round(failedPayoutAmount * 100) / 100,
         programTotals,
       },
-      recentBills: recentBills.map((b) => ({
-        ...b,
-        billAmount: Number(b.billAmount),
-        grossBillAmount: Number(b.grossBillAmount || b.billAmount),
-        gstAmount: b.gstAmount !== null ? Number(b.gstAmount) : 0,
-        gstRate: b.gstRate !== null ? Number(b.gstRate) : 0,
-        eligibleRewardAmount: b.eligibleRewardAmount !== null ? Number(b.eligibleRewardAmount) : Number(b.billAmount),
-        calculatedReward: Number(b.calculatedReward),
-        rewardPercentage: b.rewardPercentage !== null ? Number(b.rewardPercentage) : null,
-        fileUrl: StorageService.generateSignedUrl(b.fileKey, 30),
-      })),
+      recentBills: mappedRecentBills,
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message });
@@ -869,9 +887,16 @@ router.put('/settings/reward-rules', requireOperationsAdmin, async (req: Authent
     const { percentage, profession } = req.body;
     const admin = req.user!;
 
-    const prof = profession as Profession || 'PLUMBER';
+    if (percentage === undefined || percentage === null || isNaN(parseFloat(percentage))) {
+      return res.status(400).json({ success: false, message: 'Explicit reward percentage is required.' });
+    }
+    if (!profession || !['PLUMBER', 'TILE_INSTALLER'].includes(profession)) {
+      return res.status(400).json({ success: false, message: 'Explicit profession (PLUMBER or TILE_INSTALLER) is required.' });
+    }
+
+    const prof = profession as Profession;
     const updated = await RewardService.updateRewardRules(admin.id, {
-      percentage: percentage ? parseFloat(percentage) : undefined,
+      percentage: parseFloat(percentage),
       profession: prof,
     });
 
