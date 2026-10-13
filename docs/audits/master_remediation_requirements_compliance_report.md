@@ -22,16 +22,18 @@ Every change has been validated by running the complete suite of tests and build
 
 | Verification Suite | Scope / Command | Result | Details |
 | :--- | :--- | :--- | :--- |
-| **Backend Test Suite** | `npm --prefix backend test -- --runInBand` | **PASS (32 / 32 suites)** | **555 / 555 tests passing (100% green)** |
+| **Backend Test Suite** | `npm --prefix backend test -- --runInBand` | **PASS (33 / 33 suites)** | **567 / 567 tests passing (100% green)** |
+| **Admin OTP Enforcement Suite** | `npm --prefix backend test src/tests/admin_otp_enforcement.spec.ts` | **PASS (1 / 1 suite)** | **12 / 12 tests passing** (Admin 2FA & OTP enforcement) |
 | **Master Compliance Suite** | `npm --prefix backend test src/tests/master_requirements_compliance.spec.ts` | **PASS (1 / 1 suite)** | **21 / 21 tests passing**, including atomic concurrency lockout |
 | **Hardening & Seeding Suite** | `npm --prefix backend test src/tests/part2a4_hardening.spec.ts` | **PASS (1 / 1 suite)** | **39 / 39 tests passing**, verifying zero dev rules seeded |
 | **Backend TypeScript Build** | `npm --prefix backend run build` | **PASS (Exit 0)** | Clean compilation via `tsc` without errors |
 | **Admin Portal Unit Tests** | `npm --prefix admin test` | **PASS (1 / 1 suite)** | **9 / 9 tests passing** (`date-utils.test.ts`) |
 | **Admin Portal Build** | `npm --prefix admin run build` | **PASS (Exit 0)** | Next.js 15.5.27 production build: 11 / 11 static pages generated |
 | **Mobile Client Tests** | `npm --prefix mobile test` | **PASS (4 / 4 suites)** | **24 / 24 tests passing** (`node --test`) |
-| **Mobile TypeScript Check** | `npx tsc --noEmit` in `mobile/` | **PASS (Exit 0)** | 0 type errors across all mobile components and services |
-| **Python Health & Deploy Tests** | `python -m unittest scripts/test_*.py` | **PASS (Exit 0)** | **53 / 53 tests passing** (liveness, rollback, bundletool, migrations) |
+| **Mobile TypeScript Check** | `tsc -p mobile --noEmit` | **PASS (Exit 0)** | 0 type errors across all mobile components and services |
+| **Python Health & Deploy Tests** | `python -m unittest scripts/test_*.py` | **PASS (Exit 0)** | **64 / 64 tests passing** (58 deploy/rollback + 6 migration compatibility) |
 | **Next.js Security Floor** | `node scripts/test-next-security-floor.cjs` | **PASS (Exit 0)** | **22 / 22 tests passing** (GHSA-vcvr-r3jv-pc5j patch compliance) |
+| **Master Remediation V3 Report** | `docs/audits/v3_security_and_release_closure_report.md` | **COMPLETE** | P0 Admin OTP bypass closure & P1 EC2 fetch reordering verified |
 
 ---
 

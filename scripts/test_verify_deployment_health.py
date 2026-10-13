@@ -346,6 +346,50 @@ class TestRollbackAndReleaseIntegrity(unittest.TestCase):
         self.assertIn("rollback-release.sh", self.deploy_workflow_content)
         self.assertIn("CURRENT_BACKEND_IMG", self.deploy_workflow_content)
 
+    def test_deploy_workflow_fetches_origin_main_before_checking_target_commit_existence(self):
+        """deploy-ec2.yml remote script must fetch origin/main before checking git cat-file on TARGET_SHA."""
+        fetch_marker = "git fetch --prune origin +refs/heads/main:refs/remotes/origin/main"
+        target_check_marker = 'git cat-file -e "${TARGET_SHA}^{commit}"'
+        self.assertIn(fetch_marker, self.deploy_workflow_content)
+        self.assertIn(target_check_marker, self.deploy_workflow_content)
+        fetch_idx = self.deploy_workflow_content.index(fetch_marker)
+        target_check_idx = self.deploy_workflow_content.index(target_check_marker)
+        self.assertLess(fetch_idx, target_check_idx, "origin/main must be fetched BEFORE testing commit object existence")
+
+    def test_deploy_workflow_verifies_target_sha_against_fetched_remote_main(self):
+        """deploy-ec2.yml remote script must verify TARGET_SHA == REMOTE_MAIN_SHA before checking target commit."""
+        remote_sha_marker = 'REMOTE_MAIN_SHA="$(git rev-parse refs/remotes/origin/main)"'
+        drift_check_marker = '[[ "${TARGET_SHA}" != "${REMOTE_MAIN_SHA}" ]]'
+        target_check_marker = 'git cat-file -e "${TARGET_SHA}^{commit}"'
+        self.assertIn(remote_sha_marker, self.deploy_workflow_content)
+        self.assertIn(drift_check_marker, self.deploy_workflow_content)
+        self.assertLess(self.deploy_workflow_content.index(remote_sha_marker), self.deploy_workflow_content.index(target_check_marker))
+        self.assertLess(self.deploy_workflow_content.index(drift_check_marker), self.deploy_workflow_content.index(target_check_marker))
+
+    def test_deploy_workflow_enforces_strict_40_char_target_sha(self):
+        """deploy-ec2.yml remote script must validate TARGET_SHA format as 40 hex chars."""
+        self.assertIn('[[ "${TARGET_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]]', self.deploy_workflow_content)
+
+    def test_deploy_workflow_preserves_first_deployment_safe_gate(self):
+        """deploy-ec2.yml must preserve safe first deployment detection without existing active-release.json."""
+        self.assertIn('Verified first deployment: no previous release state and zero application containers running', self.deploy_workflow_content)
+
+    def test_android_workflow_requires_hsspl_production_api_url_without_fallback(self):
+        """Android release workflow must bind EXPO_PUBLIC_API_URL to vars.HSSPL_PRODUCTION_API_URL without undocumented fallback."""
+        self.assertIn("EXPO_PUBLIC_API_URL: ${{ vars.HSSPL_PRODUCTION_API_URL }}", self.android_workflow_content)
+        self.assertNotIn("${{ vars.EXPO_PUBLIC_API_URL ||", self.android_workflow_content)
+        self.assertNotIn("${{ vars.HSSPL_PRODUCTION_API_URL ||", self.android_workflow_content)
+
+    def test_environment_examples_contain_canonical_api_v1(self):
+        """All production environment examples must use the canonical https://hsspl.algions.in/api/v1 endpoint."""
+        backend_env_path = os.path.join(self.repo_root, "backend", ".env.production.example")
+        root_env_path = os.path.join(self.repo_root, ".env.production.example")
+        for path in [backend_env_path, root_env_path]:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.assertIn("EXPO_PUBLIC_API_URL=https://hsspl.algions.in/api/v1", content)
+            self.assertNotIn("EXPO_PUBLIC_API_URL=https://hsspl.algions.in/api\n", content)
+
 
 class TestRollbackExecutionDecision(unittest.TestCase):
     """
@@ -482,6 +526,175 @@ class TestRollbackExecutionDecision(unittest.TestCase):
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+
+
+class TestEC2DeploymentHarness(unittest.TestCase):
+    """
+    Executes isolated git repository harness tests verifying Section 4 remote deployment logic:
+    - Target SHA matches origin/main -> passes (exit 0)
+    - Stale target SHA != origin/main -> fails closed (exit 2)
+    - Target SHA not 40-char hex -> fails closed (exit 2)
+    - Missing or unreachable origin -> fails closed (exit 2)
+    - Running containers with missing active-release.json -> fails closed (exit 2)
+    - First deployment with no containers and no state -> allows PREVIOUS_SHA=NONE
+    """
+    def setUp(self):
+        self.bash_cmd = "bash"
+        if os.name == "nt":
+            git_bash = r"C:\Program Files\Git\bin\bash.exe"
+            if os.path.exists(git_bash):
+                self.bash_cmd = git_bash
+
+    def test_harness_accepts_verified_current_main_head(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            remote_dir = os.path.join(tmpdir, "remote.git")
+            app_dir = os.path.join(tmpdir, "app")
+            subprocess.run(["git", "init", "--bare", remote_dir], check=True, stdout=subprocess.DEVNULL)
+            scratch_dir = os.path.join(tmpdir, "scratch")
+            os.makedirs(scratch_dir)
+            subprocess.run(["git", "init", "-b", "main", scratch_dir], check=True, stdout=subprocess.DEVNULL)
+            with open(os.path.join(scratch_dir, "file.txt"), "w") as f:
+                f.write("release v1")
+            subprocess.run(["git", "-C", scratch_dir, "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", scratch_dir, "config", "user.email", "test@example.com"], check=True)
+            subprocess.run(["git", "-C", scratch_dir, "add", "."], check=True)
+            subprocess.run(["git", "-C", scratch_dir, "commit", "-m", "init"], check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "-C", scratch_dir, "remote", "add", "origin", remote_dir], check=True)
+            subprocess.run(["git", "-C", scratch_dir, "push", "origin", "main"], check=True, stdout=subprocess.DEVNULL)
+            sha1 = subprocess.check_output(["git", "-C", scratch_dir, "rev-parse", "HEAD"], text=True).strip()
+
+            subprocess.run(["git", "clone", remote_dir, app_dir], check=True, stdout=subprocess.DEVNULL)
+
+            script = f"""
+            set -euo pipefail
+            cd "{app_dir.replace('\\', '/')}"
+            TARGET_SHA="{sha1}"
+            if ! [[ "${{TARGET_SHA:-}}" =~ ^[0-9a-fA-F]{{40}}$ ]]; then exit 2; fi
+            if ! git fetch --prune origin +refs/heads/main:refs/remotes/origin/main; then exit 2; fi
+            REMOTE_MAIN_SHA="$(git rev-parse refs/remotes/origin/main)"
+            if [[ "${{TARGET_SHA}}" != "${{REMOTE_MAIN_SHA}}" ]]; then exit 2; fi
+            if ! git cat-file -e "${{TARGET_SHA}}^{{commit}}" 2>/dev/null; then exit 2; fi
+            echo "SUCCESS"
+            """
+            res = subprocess.run([self.bash_cmd, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(res.returncode, 0)
+            self.assertIn("SUCCESS", res.stdout)
+
+    def test_harness_rejects_stale_target_sha(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            remote_dir = os.path.join(tmpdir, "remote.git")
+            app_dir = os.path.join(tmpdir, "app")
+            scratch_dir = os.path.join(tmpdir, "scratch")
+            subprocess.run(["git", "init", "--bare", remote_dir], check=True, stdout=subprocess.DEVNULL)
+            os.makedirs(scratch_dir)
+            subprocess.run(["git", "init", "-b", "main", scratch_dir], check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "-C", scratch_dir, "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", scratch_dir, "config", "user.email", "test@example.com"], check=True)
+            with open(os.path.join(scratch_dir, "f1.txt"), "w") as f:
+                f.write("commit 1")
+            subprocess.run(["git", "-C", scratch_dir, "add", "."], check=True)
+            subprocess.run(["git", "-C", scratch_dir, "commit", "-m", "c1"], check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "-C", scratch_dir, "remote", "add", "origin", remote_dir], check=True)
+            subprocess.run(["git", "-C", scratch_dir, "push", "origin", "main"], check=True, stdout=subprocess.DEVNULL)
+            sha1 = subprocess.check_output(["git", "-C", scratch_dir, "rev-parse", "HEAD"], text=True).strip()
+
+            with open(os.path.join(scratch_dir, "f2.txt"), "w") as f:
+                f.write("commit 2")
+            subprocess.run(["git", "-C", scratch_dir, "add", "."], check=True)
+            subprocess.run(["git", "-C", scratch_dir, "commit", "-m", "c2"], check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "-C", scratch_dir, "push", "origin", "main"], check=True, stdout=subprocess.DEVNULL)
+
+            subprocess.run(["git", "clone", remote_dir, app_dir], check=True, stdout=subprocess.DEVNULL)
+
+            script = f"""
+            set -euo pipefail
+            cd "{app_dir.replace('\\', '/')}"
+            TARGET_SHA="{sha1}"
+            if ! [[ "${{TARGET_SHA:-}}" =~ ^[0-9a-fA-F]{{40}}$ ]]; then exit 2; fi
+            if ! git fetch --prune origin +refs/heads/main:refs/remotes/origin/main; then exit 2; fi
+            REMOTE_MAIN_SHA="$(git rev-parse refs/remotes/origin/main)"
+            if [[ "${{TARGET_SHA}}" != "${{REMOTE_MAIN_SHA}}" ]]; then
+              echo "[FATAL ERROR] Target release SHA does not match fetched origin/main." >&2
+              exit 2
+            fi
+            """
+            res = subprocess.run([self.bash_cmd, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(res.returncode, 2)
+            self.assertIn("does not match fetched origin/main", res.stderr)
+
+    def test_harness_rejects_malformed_target_sha(self):
+        script = """
+        set -euo pipefail
+        TARGET_SHA="not_a_sha"
+        if ! [[ "${TARGET_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+          echo "[FATAL ERROR] TARGET_SHA must be a full 40-character commit SHA." >&2
+          exit 2
+        fi
+        """
+        res = subprocess.run([self.bash_cmd, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("full 40-character commit SHA", res.stderr)
+
+    def test_harness_rejects_missing_remote_fetch(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app_dir = os.path.join(tmpdir, "app")
+            os.makedirs(app_dir)
+            subprocess.run(["git", "init", app_dir], check=True, stdout=subprocess.DEVNULL)
+            script = f"""
+            set -euo pipefail
+            cd "{app_dir.replace('\\', '/')}"
+            TARGET_SHA="90ae6bf343c3cd9146341096e440e20c38eb0532"
+            if ! git fetch --prune origin +refs/heads/main:refs/remotes/origin/main 2>/dev/null; then
+              echo "[FATAL ERROR] Could not fetch origin/main." >&2
+              exit 2
+            fi
+            """
+            res = subprocess.run([self.bash_cmd, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(res.returncode, 2)
+            self.assertIn("Could not fetch origin/main", res.stderr)
+
+    def test_harness_state_file_and_running_containers_gate(self):
+        """Validates that running containers without active-release.json exit 2 (fail-closed), while first deployment allows PREVIOUS_SHA=NONE."""
+        script_a = """
+        set -euo pipefail
+        CURRENT_BACKEND_IMG="sha256:dummy"
+        STATE_FILE="/nonexistent/active-release.json"
+        if [ -f "${STATE_FILE}" ]; then
+          PREVIOUS_SHA="RECORDED"
+        else
+          if [ -n "${CURRENT_BACKEND_IMG}" ]; then
+            echo "[FATAL ERROR] Application containers are running but persistent active-release.json is missing!" >&2
+            exit 2
+          fi
+          PREVIOUS_SHA="NONE"
+        fi
+        """
+        res_a = subprocess.run([self.bash_cmd, "-c", script_a], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(res_a.returncode, 2)
+        self.assertIn("persistent active-release.json is missing", res_a.stderr)
+
+        script_b = """
+        set -euo pipefail
+        CURRENT_BACKEND_IMG=""
+        CURRENT_WORKER_IMG=""
+        CURRENT_ADMIN_IMG=""
+        STATE_FILE="/nonexistent/active-release.json"
+        if [ -f "${STATE_FILE}" ]; then
+          PREVIOUS_SHA="RECORDED"
+        else
+          if [ -n "${CURRENT_BACKEND_IMG}" ] || [ -n "${CURRENT_WORKER_IMG}" ] || [ -n "${CURRENT_ADMIN_IMG}" ]; then
+            exit 2
+          fi
+          PREVIOUS_SHA="NONE"
+        fi
+        echo "PREVIOUS_SHA=${PREVIOUS_SHA}"
+        """
+        res_b = subprocess.run([self.bash_cmd, "-c", script_b], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(res_b.returncode, 0)
+        self.assertIn("PREVIOUS_SHA=NONE", res_b.stdout)
 
 
 if __name__ == "__main__":

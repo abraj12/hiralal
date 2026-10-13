@@ -1,8 +1,8 @@
 # API Documentation
 
 ## Hiralal and Sons Sales Pvt. Ltd. — Rewards Management API
-**Production Base URL:** `https://hsspl.algions.in/api`  
-**Development Base URL:** `http://localhost:5000/api`
+**Production Base URL:** `https://hsspl.algions.in/api/v1`  
+**Development Base URL:** `http://localhost:5000/api/v1` (with `/api` compatibility alias)
 
 All financial values are denominated in Indian Rupees (₹) with 2-decimal paise precision.
 

@@ -121,6 +121,35 @@ jobs:
             RELEASES_DIR="${APP_DIR}/releases"
             mkdir -p "${STATE_DIR}" "${RELEASES_DIR}/${TARGET_SHA}"
 
+            if ! [[ "${TARGET_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+              echo "[FATAL ERROR] TARGET_SHA must be a full 40-character commit SHA." >&2
+              exit 2
+            fi
+
+            TARGET_SHA="$(printf '%s' "${TARGET_SHA}" | tr '[:upper:]' '[:lower:]')"
+
+            # Fetch the authoritative main ref BEFORE testing for the target object.
+            if ! git fetch --prune origin +refs/heads/main:refs/remotes/origin/main; then
+              echo "[FATAL ERROR] Could not fetch origin/main." >&2
+              exit 2
+            fi
+
+            REMOTE_MAIN_SHA="$(git rev-parse refs/remotes/origin/main)"
+
+            if [[ "${TARGET_SHA}" != "${REMOTE_MAIN_SHA}" ]]; then
+              echo "[FATAL ERROR] Target release SHA does not match fetched origin/main." >&2
+              echo "Requested: ${TARGET_SHA}" >&2
+              echo "Main head: ${REMOTE_MAIN_SHA}" >&2
+              exit 2
+            fi
+
+            if ! git cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
+              echo "[FATAL ERROR] Verified target commit is missing locally." >&2
+              exit 2
+            fi
+
+            echo "Verified target commit ${TARGET_SHA} against fetched origin/main."
+
             # Capture actual running container image IDs before modifying working tree
             CURRENT_BACKEND_IMG=$(docker inspect --format='{{.Image}}' hiralal_backend 2>/dev/null || echo "")
             CURRENT_WORKER_IMG=$(docker inspect --format='{{.Image}}' hiralal_worker 2>/dev/null || echo "")
@@ -163,12 +192,6 @@ jobs:
             fi
             echo "Previously running release SHA: ${PREVIOUS_SHA}"
 
-            # Validate that TARGET_SHA exists in git repository
-            if ! git cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
-              echo "[FATAL ERROR] Target deployment SHA (${TARGET_SHA}) is missing from git history. Failing closed." >&2
-              exit 2
-            fi
-
             # Tag existing application container images with PREVIOUS_SHA to ensure immutable retention
             if [ "${PREVIOUS_SHA}" != "NONE" ]; then
               if [ -n "${CURRENT_BACKEND_IMG}" ]; then
@@ -191,8 +214,7 @@ jobs:
             chmod 600 "${PRE_DEPLOY_TMP}"
             mv "${PRE_DEPLOY_TMP}" "${STATE_DIR}/pre-deployment.json"
 
-            # Fetch origin and checkout the exact verified release commit
-            git fetch origin
+            # Checkout the exact verified release commit
             git checkout "${TARGET_SHA}"
             
             DEPLOYED_SHA=$(git rev-parse HEAD)

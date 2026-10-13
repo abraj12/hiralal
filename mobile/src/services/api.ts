@@ -711,11 +711,9 @@ export class MobileApiClient {
     });
   }
 
-  static loginAdmin(identifier: string, password: string, verificationToken: string) {
-    return this.request('/auth/admin/login', {
-      method: 'POST',
-      body: JSON.stringify({ identifier, password, verificationToken }),
-    });
+  /** @deprecated Legacy admin login is permanently disabled. Use verifyAdminOtp instead. */
+  static loginAdmin(_identifier: string, _password: string, _verificationToken: string): Promise<any> {
+    throw new Error('Legacy admin login endpoint is permanently disabled. Complete two-factor authentication via verifyAdminOtp.');
   }
 
   // Mobile Admin Endpoints

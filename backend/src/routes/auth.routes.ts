@@ -238,9 +238,6 @@ router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Re
     });
 
     if (result.kind === 'USER_AUTHENTICATED') {
-      if (['BILL_ADMIN', 'OPERATIONS_ADMIN'].includes((result.session.user as any)?.role)) {
-        setAdminCookie(res, result.session.accessToken || result.session.token);
-      }
       return res.status(200).json({
         success: true,
         type: 'USER_AUTHENTICATED',
@@ -473,86 +470,28 @@ router.post('/admin/otp/verify', otpVerifyIpLimiter, otpVerifyLimiter, async (re
   }
 });
 
+function rejectLegacyAdminLogin(_req: Request, res: Response) {
+  return res.status(410).json({
+    success: false,
+    code: 'LEGACY_ADMIN_LOGIN_DISABLED',
+    message:
+      'This administrator login endpoint is disabled. ' +
+      'Use the password and verified OTP authentication flow.',
+  });
+}
+
 router.post(
   '/admin/login',
   adminLoginLimiter,
   adminAccountLoginLimiter,
-  async (req: Request, res: Response) => {
-    try {
-      const identifier = req.body.identifier || req.body.username;
-      const { password, verificationToken } = req.body;
-
-      if (!identifier || !password) {
-        return res.status(400).json({ success: false, message: 'Admin identifier and password are required.' });
-      }
-
-      if (!verificationToken) {
-        return res.status(403).json({
-          success: false,
-          message: 'Admin verification challenge token is required. Please verify OTP first.',
-        });
-      }
-
-      const ipAddress = req.ip || req.socket.remoteAddress;
-      const userAgent = req.headers['user-agent'];
-
-      const result = await AuthService.loginAdmin({
-        identifier,
-        password,
-        verificationToken,
-        userAgent,
-        ipAddress,
-      });
-
-      if (result.accessToken || result.token) {
-        setAdminCookie(res, result.accessToken || result.token);
-      }
-
-      res.json({ success: true, ...result });
-    } catch (err: any) {
-      res.status(401).json({ success: false, message: err.message });
-    }
-  }
+  rejectLegacyAdminLogin
 );
 
 router.post(
   '/admin-login',
   adminLoginLimiter,
   adminAccountLoginLimiter,
-  async (req: Request, res: Response) => {
-    try {
-      const identifier = req.body.identifier || req.body.username;
-      const { password, verificationToken } = req.body;
-
-      if (!identifier || !password) {
-        return res.status(400).json({ success: false, message: 'Admin mobile/username and password are required.' });
-      }
-
-      if (!verificationToken) {
-        return res.status(403).json({
-          success: false,
-          message:
-            'Password-only admin login is deprecated and disabled for security. Admin authentication requires OTP verification (/api/auth/admin/otp/request -> /api/auth/admin/otp/verify -> /api/auth/admin/login).',
-        });
-      }
-
-      const ipAddress = req.ip || req.socket.remoteAddress;
-      const userAgent = req.headers['user-agent'];
-      const result = await AuthService.loginAdmin({
-        identifier,
-        password,
-        verificationToken,
-        userAgent,
-        ipAddress,
-      });
-      if (result.accessToken || result.token) {
-        setAdminCookie(res, result.accessToken || result.token);
-      }
-      return res.json({ success: true, ...result });
-    } catch (err: any) {
-      res.status(401).json({ success: false, message: err.message });
-    }
-  }
+  rejectLegacyAdminLogin
 );
 
 // ==========================================

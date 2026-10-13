@@ -59,10 +59,19 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
         expiresAt: new Date(Date.now() + 15 * 60 * 1000),
       },
     });
+    await prisma.otpRequest.create({
+      data: {
+        mobile: '9999999992',
+        otpHash: crypto.createHash('sha256').update('123456').digest('hex'),
+        purpose: 'ADMIN_LOGIN',
+        isUsed: false,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      },
+    });
 
     const opsAdminLoginRes = await request(app)
-      .post('/api/auth/admin-login')
-      .send({ username: `${config.admin.operationsAdminPrefix}9999999992`, password: 'Admin@123', verificationToken: opsChallengeToken });
+      .post('/api/auth/admin/otp/verify')
+      .send({ identifier: `${config.admin.operationsAdminPrefix}9999999992`, otpCode: '123456', challengeToken: opsChallengeToken });
     expect(opsAdminLoginRes.status).toBe(200);
     adminToken = opsAdminLoginRes.body.token;
 
@@ -90,10 +99,19 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
         expiresAt: new Date(Date.now() + 15 * 60 * 1000),
       },
     });
+    await prisma.otpRequest.create({
+      data: {
+        mobile: '9999999991',
+        otpHash: crypto.createHash('sha256').update('654321').digest('hex'),
+        purpose: 'ADMIN_LOGIN',
+        isUsed: false,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      },
+    });
 
     const billAdminLoginRes = await request(app)
-      .post('/api/auth/admin-login')
-      .send({ username: `${config.admin.billAdminPrefix}9999999991`, password: 'Admin@123', verificationToken: billChallengeToken });
+      .post('/api/auth/admin/otp/verify')
+      .send({ identifier: `${config.admin.billAdminPrefix}9999999991`, otpCode: '654321', challengeToken: billChallengeToken });
     expect(billAdminLoginRes.status).toBe(200);
     billAdminToken = billAdminLoginRes.body.token;
 
@@ -342,12 +360,12 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     expect(validRes.body.success).toBe(true);
   });
 
-  test('Admin OTP Flow: POST /api/auth/admin-login rejects without verificationToken with 403', async () => {
+  test('Admin OTP Flow: POST /api/auth/admin-login returns 410 (legacy admin login disabled)', async () => {
     const res = await request(app)
       .post('/api/auth/admin-login')
       .send({ identifier: '9999900001', password: 'AdminPassword@123' });
-    expect(res.status).toBe(403);
-    expect(res.body.message).toContain('Password-only admin login is deprecated and disabled');
+    expect(res.status).toBe(410);
+    expect(res.body.code).toBe('LEGACY_ADMIN_LOGIN_DISABLED');
   });
 
   test('Contract C: POST /api/admin/payouts/:id/action rejects FAIL action with 400', async () => {

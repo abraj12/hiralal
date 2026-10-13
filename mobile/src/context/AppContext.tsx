@@ -242,12 +242,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return res;
   };
 
-  const loginAdmin = async (identifier: string, pass: string, verificationToken: string) => {
-    const res = await MobileApiClient.loginAdmin(identifier, pass, verificationToken);
-    await MobileApiClient.setToken(res.accessToken || res.token);
-    setUser(res.user);
-    NotificationsService.registerDeviceToken().catch(() => {});
-    setCurrentScreen('MAIN');
+  /** @deprecated Legacy admin login is permanently disabled. Use loginAdminSession instead. */
+  const loginAdmin = async (_identifier: string, _pass: string, _verificationToken: string) => {
+    throw new Error('Legacy admin login is permanently disabled. Use loginAdminSession with verified OTP.');
   };
 
   const loginAdminSession = async (adminUser: any, token: string) => {

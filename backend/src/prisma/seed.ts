@@ -23,12 +23,17 @@ export interface ProvisionRewardRulesResult {
 }
 
 /**
- * Safely provisions baseline reward rules for worker professions.
- * Invariant:
- * 1. Counts all reward-rule records for the profession, including inactive records.
- * 2. Creates the initial baseline (v1, 0.50%, 2020-01-01 IST) ONLY if the profession has zero historical records.
- * 3. If rows exist but none is active, preserves them and halts baseline provisioning for that profession with an explicit diagnostic.
- * 4. Never silently rewrites an existing row, invents a duplicate version, back-dates history, or reactivates a profession through implicit seed.
+ * Safely reconciles existing reward-rule history without inventing
+ * business configuration.
+ *
+ * Invariants:
+ * 1. No default reward percentage is hardcoded or provisioned.
+ * 2. A profession with zero historical rules remains unconfigured.
+ * 3. Existing historical rules are preserved without silent rewriting,
+ *    reactivation, duplicate version creation or fabricated history.
+ * 4. Operations Admin must explicitly create an effective-dated rule
+ *    through the authorized administration workflow.
+ * 5. Reward calculation must fail closed when no applicable rule exists.
  */
 export async function provisionRewardRules(
   prismaClient: PrismaClient = prisma

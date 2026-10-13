@@ -583,149 +583,7 @@ export class AuthService {
     };
   }
 
-  /**
-   * Completes Admin Login with identifier, challenge verificationToken, and password.
-   * Atomically consumes challenge token, verifies password, enforces SINGLE ACTIVE SESSION,
-   * invalidates prior sessions, and issues role-specific JWT.
-   */
-  static async loginAdmin(params: {
-    identifier: string;
-    password: string;
-    verificationToken: string;
-    userAgent?: string;
-    ipAddress?: string;
-  }) {
-    const { role, mobile } = this.resolveAdminIdentifier(params.identifier);
 
-    if (!params.password) {
-      throw new Error('Admin password is required.');
-    }
-
-    if (!params.verificationToken) {
-      throw new Error('Admin verification challenge token is required. Please verify OTP first.');
-    }
-
-    const tokenHash = sha256Hash(params.verificationToken);
-
-    const admin = await prisma.$transaction(async (tx) => {
-      // 1. Atomically consume verification challenge using database clock and row lock
-      const targetRows = await tx.$queryRaw<Array<{ id: string }>>`
-        SELECT "id"
-        FROM "VerificationToken"
-        WHERE "tokenHash" = ${tokenHash}
-          AND "mobile" = ${mobile}
-          AND "purpose" = 'ADMIN_LOGIN'
-          AND "isUsed" = false
-          AND "expiresAt" > (clock_timestamp() AT TIME ZONE 'UTC')
-        LIMIT 1
-        FOR UPDATE
-      `;
-
-      if (!targetRows || targetRows.length !== 1) {
-        throw new Error('Invalid or expired admin verification challenge token. Please verify OTP again.');
-      }
-
-      await tx.verificationToken.update({
-        where: { id: targetRows[0].id },
-        data: { isUsed: true },
-      });
-
-      // 2. Fetch admin user
-      const adminUser = await tx.user.findFirst({
-        where: { mobile, role: role as UserRole },
-      });
-
-      if (!adminUser) {
-        throw new Error('Admin account not found for this identifier.');
-      }
-
-      if (adminUser.status !== 'ACTIVE') {
-        throw new Error('Admin account is suspended. Please contact system support.');
-      }
-
-      if (adminUser.lockedUntil && adminUser.lockedUntil > new Date()) {
-        throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
-      }
-
-      const isMatch = await bcrypt.compare(params.password, adminUser.passwordHash);
-      if (!isMatch) {
-        const lockResult = await AuthService.recordFailedPasswordAttempt(adminUser.id, tx);
-        if (lockResult.isLocked || lockResult.failedPasswordAttempts >= (config.auth?.maxFailedAttempts || 10)) {
-          throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
-        }
-        throw new Error('Invalid admin credentials.');
-      }
-
-      // 3. Single active session: generate new sessionId and invalidate previous sessions
-      const sessionId = crypto.randomUUID();
-
-      await tx.authSession.updateMany({
-        where: { userId: adminUser.id, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-
-      await tx.user.update({
-        where: { id: adminUser.id },
-        data: {
-          activeSessionId: sessionId,
-          failedPasswordAttempts: 0,
-          lockedUntil: null,
-        },
-      });
-
-      const sessionToken = generateSecureToken(40);
-      const sessionTokenHash = sha256Hash(sessionToken);
-      const expiresAt = new Date(Date.now() + 24 * 3600 * 1000); // 1 day
-
-      await tx.authSession.create({
-        data: {
-          userId: adminUser.id,
-          sessionId,
-          tokenHash: sessionTokenHash,
-          userAgent: params.userAgent,
-          ipAddress: params.ipAddress,
-          expiresAt,
-        },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          adminId: adminUser.id,
-          action: 'ADMIN_LOGIN',
-          entityType: 'User',
-          entityId: adminUser.id,
-          ipAddress: params.ipAddress,
-          userAgent: params.userAgent,
-          newValue: `Administrator authenticated via verified OTP challenge for role ${adminUser.role}.`,
-        },
-      });
-
-      return { adminUser, sessionId };
-    });
-
-    const accessToken = jwt.sign(
-      {
-        userId: admin.adminUser.id,
-        role: admin.adminUser.role,
-        mobile: admin.adminUser.mobile,
-        sessionId: admin.sessionId,
-      },
-      config.admin.accessSecret,
-      { expiresIn: config.admin.accessTokenExpiresIn as any }
-    );
-
-    return {
-      user: {
-        id: admin.adminUser.id,
-        mobile: admin.adminUser.mobile,
-        fullName: admin.adminUser.fullName,
-        role: admin.adminUser.role,
-      },
-      accessToken,
-      token: accessToken,
-      sessionId: admin.sessionId,
-    };
-  }
 
   /**
    * Generates and dispatches cryptographically secure 6-digit OTP.
@@ -1146,13 +1004,17 @@ export class AuthService {
   static async login(mobile: string, pass: string, userAgent?: string, ipAddress?: string) {
     const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
 
-    const user = await prisma.user.findFirst({
-      where: { mobile: cleanMobile, role: 'USER' },
+    const user = await prisma.user.findUnique({
+      where: { mobile: cleanMobile },
       include: { wallet: true },
     });
 
     if (!user) {
       throw new Error('Invalid mobile number or password.');
+    }
+
+    if (user.role !== 'USER') {
+      throw new Error('Administrator accounts must authenticate using designated role prefix and two-factor authentication.');
     }
 
     if (user.status === 'SUSPENDED') {

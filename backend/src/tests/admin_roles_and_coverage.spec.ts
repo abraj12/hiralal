@@ -7,6 +7,8 @@ import { prisma } from '../db';
 import { sha256Hash, hmacHashOtp } from '../utils/crypto.utils';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import request from 'supertest';
+import { app } from '../server';
 
 import { resetAdmins } from './test_helpers';
 
@@ -350,12 +352,14 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
     });
   });
 
-  describe('4. AuthService - loginAdmin, login & Single Active Session', () => {
+  describe('4. Admin Authentication - Canonical OTP Verification, Single Active Session & Legacy 410 Enforcement', () => {
     let validToken: string;
+    const testOtp = '654321';
 
     beforeEach(async () => {
       validToken = crypto.randomBytes(32).toString('hex');
       await prisma.verificationToken.deleteMany({ where: { mobile: billAdminMobile } });
+      await prisma.otpRequest.deleteMany({ where: { mobile: billAdminMobile } });
       await prisma.verificationToken.create({
         data: {
           mobile: billAdminMobile,
@@ -365,43 +369,56 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
           expiresAt: new Date(Date.now() + 600000),
         },
       });
+      await prisma.otpRequest.create({
+        data: {
+          mobile: billAdminMobile,
+          otpHash: sha256Hash(testOtp),
+          purpose: 'ADMIN_LOGIN',
+          isUsed: false,
+          expiresAt: new Date(Date.now() + 600000),
+        },
+      });
     });
 
-    test('validates required fields', async () => {
-      await expect(
-        AuthService.loginAdmin({ identifier: `XYZ${billAdminMobile}`, password: '', verificationToken: validToken })
-      ).rejects.toThrow(/Admin password is required/i);
+    test('legacy admin login endpoints return 410 (LEGACY_ADMIN_LOGIN_DISABLED)', async () => {
+      const res1 = await request(app)
+        .post('/api/auth/admin/login')
+        .send({ identifier: `XYZ${billAdminMobile}`, password: testPassword, verificationToken: validToken });
+      expect(res1.status).toBe(410);
+      expect(res1.body.code).toBe('LEGACY_ADMIN_LOGIN_DISABLED');
 
-      await expect(
-        AuthService.loginAdmin({ identifier: `XYZ${billAdminMobile}`, password: testPassword, verificationToken: '' })
-      ).rejects.toThrow(/Admin verification challenge token is required/i);
+      const res2 = await request(app)
+        .post('/api/auth/admin-login')
+        .send({ identifier: `XYZ${billAdminMobile}`, password: testPassword, verificationToken: validToken });
+      expect(res2.status).toBe(410);
+      expect(res2.body.code).toBe('LEGACY_ADMIN_LOGIN_DISABLED');
     });
 
-    test('rejects invalid or already-consumed challenge token', async () => {
+    test('verifyAdminOtp rejects invalid or already-consumed challenge token', async () => {
       await expect(
-        AuthService.loginAdmin({
+        AuthService.verifyAdminOtp({
           identifier: `XYZ${billAdminMobile}`,
-          password: testPassword,
-          verificationToken: 'bad_token',
+          otpCode: testOtp,
+          challengeToken: 'bad_token',
         })
-      ).rejects.toThrow(/Invalid or expired admin verification challenge token/i);
+      ).rejects.toThrow(/Invalid or expired login challenge/i);
     });
 
-    test('rejects incorrect password and leaves challenge consumed', async () => {
+    test('verifyAdminOtp rejects incorrect OTP code', async () => {
       await expect(
-        AuthService.loginAdmin({
+        AuthService.verifyAdminOtp({
           identifier: `XYZ${billAdminMobile}`,
-          password: 'WrongPassword@123',
-          verificationToken: validToken,
+          otpCode: '000000',
+          challengeToken: validToken,
         })
-      ).rejects.toThrow(/Invalid admin credentials/i);
+      ).rejects.toThrow(/Invalid verification code/i);
     });
 
-    test('successfully authenticates admin, issues single active session, and logs audit record', async () => {
-      const login1 = await AuthService.loginAdmin({
+    test('successfully authenticates admin via verifyAdminOtp, issues single active session, and logs audit record', async () => {
+      const login1 = await AuthService.verifyAdminOtp({
         identifier: `XYZ${billAdminMobile}`,
-        password: testPassword,
-        verificationToken: validToken,
+        otpCode: testOtp,
+        challengeToken: validToken,
         userAgent: 'Jest/AdminDevice1',
         ipAddress: '127.0.0.1',
       });
@@ -421,8 +438,9 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       expect(audit).not.toBeNull();
       expect(audit?.newValue).toContain('BILL_ADMIN');
 
-      // Now simulate Login 2 from another device: creates fresh challenge token
+      // Now simulate Login 2 from another device: creates fresh challenge token & OTP
       const token2 = crypto.randomBytes(32).toString('hex');
+      const otp2 = '778899';
       await prisma.verificationToken.create({
         data: {
           mobile: billAdminMobile,
@@ -432,11 +450,20 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
           expiresAt: new Date(Date.now() + 600000),
         },
       });
+      await prisma.otpRequest.create({
+        data: {
+          mobile: billAdminMobile,
+          otpHash: sha256Hash(otp2),
+          purpose: 'ADMIN_LOGIN',
+          isUsed: false,
+          expiresAt: new Date(Date.now() + 600000),
+        },
+      });
 
-      const login2 = await AuthService.loginAdmin({
+      const login2 = await AuthService.verifyAdminOtp({
         identifier: `XYZ${billAdminMobile}`,
-        password: testPassword,
-        verificationToken: token2,
+        otpCode: otp2,
+        challengeToken: token2,
         userAgent: 'Jest/AdminDevice2',
         ipAddress: '127.0.0.2',
       });
@@ -460,7 +487,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       // Contract A: Admin cannot authenticate through regular user login
       await expect(
         AuthService.login(billAdminMobile, testPassword)
-      ).rejects.toThrow(/Invalid mobile number or password/i);
+      ).rejects.toThrow(/Administrator accounts must authenticate using designated role prefix and two-factor authentication/i);
 
       // Suspended regular user rejection
       await prisma.user.update({
