@@ -216,24 +216,25 @@ curl -k -s https://localhost/api/health
 
 ## 7. Production AWS Deployment Pipeline (`deploy-ec2.yml`)
 
-The production deployment workflow is strictly manual (`workflow_dispatch`). Automatic triggers on CI completion (`workflow_run`) are disabled.
+The production deployment workflow is strictly manual (`workflow_dispatch`) and bound to the canonical GitHub Environment `production-ec2`. Automatic triggers on CI completion (`workflow_run`) are disabled.
 
 ### Required Inputs
 - **`confirm_deploy`**: Must be typed exactly as `DEPLOY`.
 - **`release_sha`**: Exact 40-character hexadecimal Git commit SHA.
 
 ### Pre-Deployment Safety Gates
-1. **Branch Ref Enforcement**: Deployment executes only on `refs/heads/main`.
-2. **Commit Lineage & Drift Verification**: The target commit must exist on `origin/main` and match `origin/main` HEAD (`RELEASE_SHA == MAIN_HEAD`).
-3. **CI Pipeline Status Verification**: Queries the GitHub API to assert that `ci.yml` passed with conclusion `success` for the exact `release_sha`.
-4. **Mandatory Secret Validation**: Asserts `EC2_HOST`, `EC2_SSH_KEY`, and `EC2_SSH_KNOWN_HOSTS` are configured before initiating SSH.
-5. **Strict Host Key Checking**: Enforces `StrictHostKeyChecking=yes` using provisioned `known_hosts`.
-6. **Pre-Migration Database Backup**: Executes `scripts/backup-db.sh` before running migrations (fails closed).
-7. **Isolated Migration Runner**: Builds and runs migrations via dedicated container (`docker compose --profile tools run --rm migrate`).
-8. **Immutable Container Image Tagging**: Tags application images explicitly with `${RELEASE_SHA}` (`hiralal-backend:${RELEASE_SHA}`, `hiralal-worker:${RELEASE_SHA}`, `hiralal-admin:${RELEASE_SHA}`).
-9. **Deployment State Records**: Writes release record to `/opt/hiralal/deployment-state/active-release.json` and archives in `/opt/hiralal/releases/${RELEASE_SHA}/release.json`.
-10. **Automated Rollback Helper**: On candidate health check failure, executes `./scripts/deploy/rollback-release.sh` to evaluate migration compatibility via `backend/prisma/migrations/deployment-compatibility.json`. If safe, restores previous immutable image tags without rebuild. If breaking migrations were applied, halts and alerts operators.
-11. **Forward-Only Database Invariant**: Database backups are never restored over live writes or active user sessions. All database schema fixes must roll forward.
+1. **GitHub Environment Protection**: Job is bound to `production-ec2` requiring manual reviewer authorization before secrets (`EC2_HOST`, `EC2_SSH_KEY`, `EC2_SSH_KNOWN_HOSTS`) are injected.
+2. **Branch Ref Enforcement**: Deployment executes only on `refs/heads/main`.
+3. **Commit Lineage & Drift Verification**: The target commit must exist on `origin/main` and match `origin/main` HEAD (`RELEASE_SHA == MAIN_HEAD`).
+4. **CI Pipeline Status Verification**: Queries the GitHub API to assert that `ci.yml` passed with conclusion `success` for the exact `release_sha`.
+5. **Mandatory Secret Validation**: Asserts `EC2_HOST`, `EC2_SSH_KEY`, and `EC2_SSH_KNOWN_HOSTS` are configured before initiating SSH.
+6. **Strict Host Key Checking**: Enforces `StrictHostKeyChecking=yes` using provisioned `known_hosts`.
+7. **Pre-Migration Database Backup**: Executes `scripts/backup-db.sh` before running migrations (fails closed).
+8. **Isolated Migration Runner**: Builds and runs migrations via dedicated container (`docker compose --profile tools run --rm migrate`).
+9. **Immutable Container Image Tagging**: Tags application images explicitly with `${RELEASE_SHA}` (`hiralal-backend:${RELEASE_SHA}`, `hiralal-worker:${RELEASE_SHA}`, `hiralal-admin:${RELEASE_SHA}`).
+10. **Deployment State Records**: Atomically writes release record to `/opt/hiralal/deployment-state/active-release.json` and archives in `/opt/hiralal/releases/${RELEASE_SHA}/release.json`.
+11. **Automated Rollback Helper**: On candidate health check failure, executes `./scripts/deploy/rollback-release.sh` to evaluate migration compatibility via `backend/prisma/migrations/deployment-compatibility.json`. If safe, restores previous immutable image tags without rebuild. If breaking migrations were applied, halts and alerts operators.
+12. **Forward-Only Database Invariant**: Database backups are never restored over live writes or active user sessions. All database schema fixes must roll forward.
 
 ---
 

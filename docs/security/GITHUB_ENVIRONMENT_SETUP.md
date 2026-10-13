@@ -9,12 +9,12 @@
 
 The Hiralal platform uses two isolated GitHub Environments in repository settings (`Settings -> Environments`) to enforce strict principle of least privilege, multi-party authorization, and secret isolation:
 
-1. **`production`**: Enforces deployment gates for the AWS EC2 production stack.
+1. **`production-ec2`**: Enforces deployment gates for the AWS EC2 production stack.
 2. **`android-release-signing`**: Protects the release Android Keystore and production signing passwords.
 
 > [!IMPORTANT]
 > **Declaration vs. Configuration Warning:**
-> Declaring `environment: production` or `environment: android-release-signing` inside GitHub Actions workflow YAML files (`deploy-ec2.yml` and `android-release-candidate.yml`) binds the jobs to those environment names. However, **workflow YAML files cannot configure required reviewers, branch protection rules, or secret scoping on the GitHub repository settings page**.
+> Declaring `environment: production-ec2` or `environment: android-release-signing` inside GitHub Actions workflow YAML files (`deploy-ec2.yml` and `android-release-candidate.yml`) binds the jobs to those environment names. However, **workflow YAML files cannot configure required reviewers, branch protection rules, or secret scoping on the GitHub repository settings page**.
 > 
 > The repository owner/administrator **must explicitly execute the manual configuration steps below** in the GitHub Web UI to prevent unauthorized or single-contributor deployments and signing.
 
@@ -34,7 +34,7 @@ Navigate to **Settings -> Environments -> android-release-signing -> Environment
 | `ANDROID_KEYSTORE_PASSWORD` | Passphrase protecting the keystore file | High-entropy passphrase |
 | `ANDROID_KEY_ALIAS` | Key alias inside the keystore | `hiralal-release-key` |
 | `ANDROID_KEY_PASSWORD` | Passphrase protecting the specific private key | High-entropy passphrase |
-| `EXPECTED_RELEASE_CERT_SHA256` | (Optional Secret or Variable) SHA-256 certificate digest | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `EXPECTED_RELEASE_CERT_SHA256` | Mandatory SHA-256 certificate digest (64 hex characters) | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
 
 > [!CAUTION]
 > **Secret Hygiene Safeguards:**
@@ -58,13 +58,13 @@ Navigate to **Settings -> Environments -> android-release-signing -> Deployment 
 
 ---
 
-## 3. Environment B: `production`
+## 3. Environment B: `production-ec2`
 
 ### Purpose
 Governs live deployment to AWS EC2 Graviton2 ARM64 instances, pre-migration database backup execution, migration runner invocation, deployment state recording, and stack startup.
 
 ### Required Environment Secrets
-Navigate to **Settings -> Environments -> production -> Environment secrets**:
+Navigate to **Settings -> Environments -> production-ec2 -> Environment secrets**:
 
 | Secret Name | Description | Example / Format |
 |---|---|---|
@@ -74,7 +74,7 @@ Navigate to **Settings -> Environments -> production -> Environment secrets**:
 | `EC2_SSH_KNOWN_HOSTS` | Pinned server host key fingerprint line | `13.x.x.x ssh-ed25519 AAAAC3...` |
 
 ### Required Environment Protection Rules
-Navigate to **Settings -> Environments -> production -> Deployment protection rules**:
+Navigate to **Settings -> Environments -> production-ec2 -> Deployment protection rules**:
 
 1. **Required reviewers**:
    - Check **Required reviewers**.

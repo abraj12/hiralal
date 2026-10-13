@@ -308,57 +308,61 @@ export class AuthService {
       throw new Error('Invalid or expired login challenge. Please sign in again.');
     }
 
-    const now = new Date();
-
     const txResult = await prisma.$transaction(async (tx) => {
-      // 1. Verify that the challenge token is valid and unexpired without prematurely consuming it
+      // 1. Verify and lock the challenge token using database clock
       const cHash = sha256Hash(activeChallenge);
-      const challengeRecord = await tx.verificationToken.findFirst({
-        where: {
-          tokenHash: cHash,
-          mobile,
-          purpose: 'ADMIN_LOGIN',
-          isUsed: false,
-          expiresAt: { gt: now },
-        },
-      });
+      const challengeRows = await tx.$queryRaw<Array<{
+        id: string;
+        tokenHash: string;
+        isUsed: boolean;
+        expiresAt: Date;
+      }>>`
+        SELECT "id", "tokenHash", "isUsed", "expiresAt"
+        FROM "VerificationToken"
+        WHERE "tokenHash" = ${cHash}
+          AND "mobile" = ${mobile}
+          AND "purpose" = 'ADMIN_LOGIN'
+          AND "isUsed" = false
+          AND "expiresAt" > (clock_timestamp() AT TIME ZONE 'UTC')
+        LIMIT 1
+        FOR UPDATE
+      `;
 
-      if (!challengeRecord) {
+      if (!challengeRows || challengeRows.length === 0) {
         return {
           success: false,
           message: 'Invalid or expired login challenge. Please sign in again.',
         };
       }
+      const challengeRecord = challengeRows[0];
 
-      const latest = await tx.otpRequest.findFirst({
-        where: {
-          mobile,
-          purpose: 'ADMIN_LOGIN',
-          isUsed: false,
-          expiresAt: { gt: now },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
+      // 2. Fetch and lock latest active OTP request using database clock
+      const latestRows = await tx.$queryRaw<Array<{
+        id: string;
+        otpHash: string;
+        attemptsCount: number;
+        isUsed: boolean;
+        expiresAt: Date;
+      }>>`
+        SELECT "id", "otpHash", "attemptsCount", "isUsed", "expiresAt"
+        FROM "OtpRequest"
+        WHERE "mobile" = ${mobile}
+          AND "purpose" = 'ADMIN_LOGIN'::"OtpPurpose"
+          AND "isUsed" = false
+          AND "expiresAt" > (clock_timestamp() AT TIME ZONE 'UTC')
+        ORDER BY "createdAt" DESC
+        LIMIT 1
+        FOR UPDATE
+      `;
 
-      if (!latest) {
+      if (!latestRows || latestRows.length === 0) {
         return {
           success: false,
           message: 'Admin verification code has expired or is invalid. Please request a new code.',
         };
       }
 
-      await tx.$queryRaw`SELECT "id" FROM "OtpRequest" WHERE "id" = ${latest.id} FOR UPDATE`;
-
-      const record = await tx.otpRequest.findUnique({
-        where: { id: latest.id },
-      });
-
-      if (!record || record.isUsed || record.expiresAt <= new Date()) {
-        return {
-          success: false,
-          message: 'Admin verification code has expired or is invalid. Please request a new code.',
-        };
-      }
+      const record = latestRows[0];
 
       if (record.attemptsCount >= 5) {
         await tx.otpRequest.update({
@@ -402,21 +406,21 @@ export class AuthService {
         };
       }
 
-      // 2. OTP is verified! Atomically consume both the OTP and the pre-auth challenge
+      // OTP is verified! Atomically consume both the OTP and the pre-auth challenge
       await tx.otpRequest.update({
         where: { id: record.id },
         data: { isUsed: true },
       });
 
-      const claim = await tx.verificationToken.updateMany({
-        where: {
-          id: challengeRecord.id,
-          isUsed: false,
-        },
-        data: { isUsed: true },
-      });
+      const claimRows = await tx.$queryRaw<Array<{ id: string }>>`
+        UPDATE "VerificationToken"
+        SET "isUsed" = true
+        WHERE "id" = ${challengeRecord.id}
+          AND "isUsed" = false
+        RETURNING "id"
+      `;
 
-      if (claim.count !== 1) {
+      if (!claimRows || claimRows.length !== 1) {
         return {
           success: false,
           message: 'Invalid or expired login challenge. Please sign in again.',
@@ -536,24 +540,29 @@ export class AuthService {
     }
 
     const tokenHash = sha256Hash(params.verificationToken);
-    const now = new Date();
 
     const admin = await prisma.$transaction(async (tx) => {
-      // 1. Atomically consume verification challenge
-      const claim = await tx.verificationToken.updateMany({
-        where: {
-          tokenHash,
-          mobile,
-          purpose: 'ADMIN_LOGIN',
-          isUsed: false,
-          expiresAt: { gt: now },
-        },
-        data: { isUsed: true },
-      });
+      // 1. Atomically consume verification challenge using database clock and row lock
+      const targetRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "VerificationToken"
+        WHERE "tokenHash" = ${tokenHash}
+          AND "mobile" = ${mobile}
+          AND "purpose" = 'ADMIN_LOGIN'
+          AND "isUsed" = false
+          AND "expiresAt" > (clock_timestamp() AT TIME ZONE 'UTC')
+        LIMIT 1
+        FOR UPDATE
+      `;
 
-      if (claim.count !== 1) {
+      if (!targetRows || targetRows.length !== 1) {
         throw new Error('Invalid or expired admin verification challenge token. Please verify OTP again.');
       }
+
+      await tx.verificationToken.update({
+        where: { id: targetRows[0].id },
+        data: { isUsed: true },
+      });
 
       // 2. Fetch admin user
       const adminUser = await tx.user.findFirst({
@@ -956,21 +965,27 @@ export class AuthService {
     const sessionExpiresAt = new Date(now.getTime() + 30 * 24 * 3600 * 1000); // 30 days
 
     const { user, wallet } = await prisma.$transaction(async (tx) => {
-      // Atomic single-use claim
-      const claim = await tx.verificationToken.updateMany({
-        where: {
-          tokenHash,
-          mobile: cleanMobile,
-          purpose: 'REGISTRATION',
-          isUsed: false,
-          expiresAt: { gt: now },
-        },
-        data: { isUsed: true },
-      });
+      // Atomic single-use claim using database clock and row lock
+      const targetRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "VerificationToken"
+        WHERE "tokenHash" = ${tokenHash}
+          AND "mobile" = ${cleanMobile}
+          AND "purpose" = 'REGISTRATION'
+          AND "isUsed" = false
+          AND "expiresAt" > (clock_timestamp() AT TIME ZONE 'UTC')
+        LIMIT 1
+        FOR UPDATE
+      `;
 
-      if (claim.count !== 1) {
+      if (!targetRows || targetRows.length !== 1) {
         throw new Error('Invalid or expired registration verification token. Please verify OTP again.');
       }
+
+      await tx.verificationToken.update({
+        where: { id: targetRows[0].id },
+        data: { isUsed: true },
+      });
 
       // Prevent duplicate user
       const existing = await tx.user.findUnique({
@@ -1398,24 +1413,29 @@ export class AuthService {
     }
 
     const tokenHash = sha256Hash(params.verificationToken);
-    const now = new Date();
     const newHash = await bcrypt.hash(params.newPassword, 12);
 
     await prisma.$transaction(async (tx) => {
-      const claim = await tx.verificationToken.updateMany({
-        where: {
-          mobile: cleanMobile,
-          tokenHash,
-          purpose: 'FORGOT_PASSWORD',
-          isUsed: false,
-          expiresAt: { gt: now },
-        },
-        data: { isUsed: true },
-      });
+      const targetRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "VerificationToken"
+        WHERE "mobile" = ${cleanMobile}
+          AND "tokenHash" = ${tokenHash}
+          AND "purpose" = 'FORGOT_PASSWORD'
+          AND "isUsed" = false
+          AND "expiresAt" > (clock_timestamp() AT TIME ZONE 'UTC')
+        LIMIT 1
+        FOR UPDATE
+      `;
 
-      if (claim.count !== 1) {
+      if (!targetRows || targetRows.length !== 1) {
         throw new Error('Invalid or expired password reset token. Please verify OTP again.');
       }
+
+      await tx.verificationToken.update({
+        where: { id: targetRows[0].id },
+        data: { isUsed: true },
+      });
 
       const user = await tx.user.findUnique({
         where: { mobile: cleanMobile },

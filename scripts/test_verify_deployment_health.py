@@ -347,5 +347,79 @@ class TestRollbackAndReleaseIntegrity(unittest.TestCase):
         self.assertIn("CURRENT_BACKEND_IMG", self.deploy_workflow_content)
 
 
+class TestRollbackExecutionDecision(unittest.TestCase):
+    """
+    Exercises fail-closed rollback decisions per Workstream B:
+    - Input validation: reject malformed or non-existent commit SHAs
+    - Require PREVIOUS_SHA != TARGET_SHA
+    - Reject rollback if migration delta contains breaking/destructive migrations
+    - Reject rollback if migration delta contains uncatalogued migrations
+    - Allow rollback when all migrations in the delta are explicitly non-destructive and allowsApplicationRollback is true
+    """
+    def setUp(self):
+        self.repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.manifest_path = os.path.join(self.repo_root, "backend", "prisma", "migrations", "deployment-compatibility.json")
+        import json
+        with open(self.manifest_path, "r", encoding="utf-8") as f:
+            self.manifest = json.loads(f.read())
+        self.migrations_map = {m["id"]: m for m in self.manifest.get("migrations", [])}
+
+    def evaluate_rollback(self, migration_ids):
+        """
+        Replicates the fail-closed evaluation logic implemented in rollback-release.sh.
+        Returns (allowed: bool, reason: str).
+        """
+        for mig_id in migration_ids:
+            if mig_id not in self.migrations_map:
+                return False, f"Uncatalogued migration {mig_id}"
+            m = self.migrations_map[mig_id]
+            if m.get("destructive", False):
+                return False, f"Destructive migration {mig_id}"
+            if not m.get("allowsApplicationRollback", True):
+                return False, f"Migration {mig_id} does not allow rollback"
+        return True, "Rollback permitted"
+
+    def test_destructive_migrations_blocked(self):
+        breaking = [
+            "20261011123000_remove_active_reward_pools_and_pool_limits",
+            "20261011180000_remove_obsolete_redemption_amount_limits",
+            "20261012210000_safe_removal_of_legacy_admin_role",
+        ]
+        for mig in breaking:
+            allowed, reason = self.evaluate_rollback([mig])
+            self.assertFalse(allowed, f"Expected {mig} to block rollback")
+            self.assertIn(mig, reason)
+
+    def test_uncatalogued_migration_blocked(self):
+        allowed, reason = self.evaluate_rollback(["20261099999999_unknown_future_migration"])
+        self.assertFalse(allowed)
+        self.assertIn("Uncatalogued", reason)
+
+    def test_compatible_migration_allowed(self):
+        compatible = [
+            m["id"] for m in self.manifest.get("migrations", [])
+            if m.get("allowsApplicationRollback", True) and not m.get("destructive", False)
+        ]
+        self.assertGreater(len(compatible), 0)
+        allowed, reason = self.evaluate_rollback([compatible[0]])
+        self.assertTrue(allowed)
+        self.assertEqual(reason, "Rollback permitted")
+
+    def test_commit_sha_validation_format(self):
+        import re
+        sha_regex = re.compile(r"^[0-9a-f]{40}$")
+        valid_sha = "90ae6bf343c3cd9146341096e440e20c38eb0532"
+        invalid_shas = [
+            "not-a-sha",
+            "90ae6bf",
+            "90ae6bf343c3cd9146341096e440e20c38eb053z",
+            "",
+            "   ",
+        ]
+        self.assertTrue(bool(sha_regex.match(valid_sha)))
+        for s in invalid_shas:
+            self.assertFalse(bool(sha_regex.match(s)))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

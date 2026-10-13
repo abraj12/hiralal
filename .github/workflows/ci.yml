@@ -29,6 +29,9 @@ jobs:
       - name: Test Deployment Health Validation Script
         run: python3 scripts/test_verify_deployment_health.py
 
+      - name: Test Migration Compatibility Manifest
+        run: python3 scripts/test_migration_compatibility.py
+
   backend-test:
     name: Backend Lint, Typecheck, Migrations & Test Suite
     runs-on: ubuntu-latest

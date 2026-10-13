@@ -515,18 +515,37 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
         expect(() => validateProductionFcm(env)).not.toThrow();
       });
 
-      it('rejects unauthorized or placeholder token_uri in Mode B', () => {
+      it('rejects missing or unauthorized or placeholder token_uri in Mode B', () => {
         const env = { ...validBaseEnv };
         delete env.FIREBASE_PROJECT_ID;
         delete env.FIREBASE_CLIENT_EMAIL;
         delete env.FIREBASE_PRIVATE_KEY;
+
+        // Unauthorized URI
         env.FIREBASE_SERVICE_ACCOUNT_KEY = JSON.stringify({
           project_id: 'hiralal-sa-prod',
           client_email: 'sa@hiralal-sa-prod.iam.gserviceaccount.com',
           private_key: validTestRsaKey,
           token_uri: 'https://evil-auth-server.com/token',
         });
-        expect(() => validateProductionFcm(env)).toThrow(/token_uri is invalid or unauthorized/);
+        expect(() => validateProductionFcm(env)).toThrow(/token_uri is missing or unauthorized/);
+
+        // Missing URI
+        env.FIREBASE_SERVICE_ACCOUNT_KEY = JSON.stringify({
+          project_id: 'hiralal-sa-prod',
+          client_email: 'sa@hiralal-sa-prod.iam.gserviceaccount.com',
+          private_key: validTestRsaKey,
+        });
+        expect(() => validateProductionFcm(env)).toThrow(/token_uri is missing or unauthorized/);
+
+        // Non-approved Google endpoint
+        env.FIREBASE_SERVICE_ACCOUNT_KEY = JSON.stringify({
+          project_id: 'hiralal-sa-prod',
+          client_email: 'sa@hiralal-sa-prod.iam.gserviceaccount.com',
+          private_key: validTestRsaKey,
+          token_uri: 'https://oauth2.googleapis.com/not-token',
+        });
+        expect(() => validateProductionFcm(env)).toThrow(/token_uri is missing or unauthorized/);
       });
 
       it('rejects malformed service-account JSON in Mode B', () => {

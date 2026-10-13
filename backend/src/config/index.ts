@@ -656,10 +656,8 @@ export function validateProductionFcm(env: Record<string, string | undefined>, r
     if (!saClientEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(saClientEmail) || isPlaceholderCredential(saClientEmail)) {
       throw new Error('[FATAL] Service account configuration missing or invalid client_email.');
     }
-    if (saTokenUri) {
-      if (isPlaceholderCredential(saTokenUri) || saTokenUri !== 'https://oauth2.googleapis.com/token') {
-        throw new Error('[FATAL] Service account token_uri is invalid or unauthorized.');
-      }
+    if (!saTokenUri || isPlaceholderCredential(saTokenUri) || saTokenUri !== 'https://oauth2.googleapis.com/token') {
+      throw new Error('[FATAL] Service account token_uri is missing or unauthorized.');
     }
 
     validateFcmPrivateKey(saPrivateKey);

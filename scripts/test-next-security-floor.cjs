@@ -44,10 +44,10 @@ it('parseSemver parses standard 3-part semver correctly', () => {
 });
 
 it('parseSemver handles leading "v" prefix', () => {
-  const p = parseSemver('v16.3.0');
+  const p = parseSemver('v16.3.6');
   assert.strictEqual(p.major, 16);
   assert.strictEqual(p.minor, 3);
-  assert.strictEqual(p.patch, 0);
+  assert.strictEqual(p.patch, 6);
 });
 
 it('parseSemver separates prerelease tag', () => {
@@ -71,7 +71,7 @@ it('compareSemver accurately compares semver tuples', () => {
   assert.strictEqual(compareSemver('15.5.24', '15.5.24'), 0);
   assert.strictEqual(compareSemver('15.5.25', '15.5.24'), 1);
   assert.strictEqual(compareSemver('15.5.23', '15.5.24'), -1);
-  assert.strictEqual(compareSemver('16.0.0', '15.5.24'), 1);
+  assert.strictEqual(compareSemver('16.3.6', '16.3.5'), 1);
   assert.strictEqual(compareSemver('14.2.0', '15.0.0'), -1);
 });
 
@@ -95,17 +95,17 @@ it('Next.js 15.6.0 passes security floor', () => {
   assert.strictEqual(res.status, 'PASSED');
 });
 
-it('Exact Next.js 16 floor (16.3.0) passes security floor', () => {
-  const res = evaluateVersion('16.3.0');
+it('Exact Next.js 16 floor (16.3.6) passes security floor', () => {
+  const res = evaluateVersion('16.3.6');
   assert.strictEqual(res.ok, true);
   assert.strictEqual(res.status, 'PASSED');
-  assert.strictEqual(res.minPatchedVersion, '16.3.0');
+  assert.strictEqual(res.minPatchedVersion, '16.3.6');
 });
 
-it('Next.js 16.3.6 and 16.4.0 pass security floor', () => {
-  const res1 = evaluateVersion('16.3.6');
+it('Next.js 16.4.0 and 16.5.0 pass security floor', () => {
+  const res1 = evaluateVersion('16.4.0');
   assert.strictEqual(res1.ok, true);
-  const res2 = evaluateVersion('16.4.0');
+  const res2 = evaluateVersion('16.5.0');
   assert.strictEqual(res2.ok, true);
 });
 
@@ -127,11 +127,18 @@ it('Next.js 15.4.0 and 15.0.0 are rejected', () => {
   assert.strictEqual(res2.status, 'BELOW_SECURITY_FLOOR');
 });
 
-it('Next.js 16.2.9 is rejected (one patch below floor 16.3.0)', () => {
-  const res = evaluateVersion('16.2.9');
+it('Next.js 16.3.0 is rejected (vulnerable to next/og ImageResponse RCE GHSA-vcvr-r3jv-pc5j)', () => {
+  const res = evaluateVersion('16.3.0');
   assert.strictEqual(res.ok, false);
   assert.strictEqual(res.status, 'BELOW_SECURITY_FLOOR');
-  assert.strictEqual(res.minPatchedVersion, '16.3.0');
+  assert.strictEqual(res.minPatchedVersion, '16.3.6');
+});
+
+it('Next.js 16.3.5 is rejected (one patch below floor 16.3.6)', () => {
+  const res = evaluateVersion('16.3.5');
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.status, 'BELOW_SECURITY_FLOOR');
+  assert.strictEqual(res.minPatchedVersion, '16.3.6');
 });
 
 it('Next.js 16.0.0 is rejected', () => {
@@ -174,12 +181,12 @@ it('Future major version (18.1.0) fails closed with UNKNOWN_FUTURE_MAJOR', () =>
 });
 
 // 7. Prerelease tags fail closed
-it('Prereleases fail closed (15.5.24-canary.1, 16.3.0-rc.1)', () => {
+it('Prereleases fail closed (15.5.24-canary.1, 16.3.6-rc.1)', () => {
   const res1 = evaluateVersion('15.5.24-canary.1');
   assert.strictEqual(res1.ok, false);
   assert.strictEqual(res1.status, 'PRERELEASE_FORBIDDEN');
 
-  const res2 = evaluateVersion('16.3.0-rc.1');
+  const res2 = evaluateVersion('16.3.6-rc.1');
   assert.strictEqual(res2.ok, false);
   assert.strictEqual(res2.status, 'PRERELEASE_FORBIDDEN');
 

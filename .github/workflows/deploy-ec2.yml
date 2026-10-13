@@ -23,7 +23,7 @@ jobs:
   deploy-production:
     name: Production Deployment to AWS EC2
     runs-on: ubuntu-latest
-    environment: production
+    environment: production-ec2
     if: >-
       github.event_name == 'workflow_dispatch' &&
       (github.ref == 'refs/heads/main' || github.ref_name == 'main') &&
@@ -117,14 +117,28 @@ jobs:
             cd "${APP_DIR}"
             echo "Working directory: $(pwd)"
             
-            # Capture currently running release SHA and container image IDs before modifying working tree
-            PREVIOUS_SHA=$(git rev-parse HEAD 2>/dev/null || echo "NONE")
-            echo "Previously running release SHA: ${PREVIOUS_SHA}"
-
             STATE_DIR="${APP_DIR}/deployment-state"
             RELEASES_DIR="${APP_DIR}/releases"
             mkdir -p "${STATE_DIR}" "${RELEASES_DIR}/${TARGET_SHA}"
 
+            # 1. Determine running release from persistent deployment-state record first (fail-closed)
+            PREVIOUS_SHA="NONE"
+            if [ -f "${STATE_DIR}/active-release.json" ]; then
+              PREVIOUS_SHA=$(node -e '
+                try {
+                  const s = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+                  console.log(s.gitSha || s.releaseId || "NONE");
+                } catch (e) {
+                  console.log("NONE");
+                }
+              ' "${STATE_DIR}/active-release.json" 2>/dev/null || echo "NONE")
+            fi
+            if [ "${PREVIOUS_SHA}" = "NONE" ]; then
+              PREVIOUS_SHA=$(git rev-parse HEAD 2>/dev/null || echo "NONE")
+            fi
+            echo "Previously running release SHA: ${PREVIOUS_SHA}"
+
+            # Capture actual running container image IDs before modifying working tree
             CURRENT_BACKEND_IMG=$(docker inspect --format='{{.Image}}' hiralal_backend 2>/dev/null || echo "")
             CURRENT_WORKER_IMG=$(docker inspect --format='{{.Image}}' hiralal_worker 2>/dev/null || echo "")
             CURRENT_ADMIN_IMG=$(docker inspect --format='{{.Image}}' hiralal_admin 2>/dev/null || echo "")
@@ -141,6 +155,15 @@ jobs:
                 docker tag "${CURRENT_ADMIN_IMG}" hiralal-admin:"${PREVIOUS_SHA}"
               fi
             fi
+
+            # Record pre-deployment attempt state
+            PRE_DEPLOY_TMP="$(mktemp "${STATE_DIR}/pre-deployment.json.XXXXXX")"
+            printf '{\n  "attemptedAt": "%s",\n  "targetSha": "%s",\n  "previousSha": "%s",\n  "status": "IN_PROGRESS"\n}\n' \
+              "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+              "${TARGET_SHA}" \
+              "${PREVIOUS_SHA}" > "${PRE_DEPLOY_TMP}"
+            chmod 600 "${PRE_DEPLOY_TMP}"
+            mv "${PRE_DEPLOY_TMP}" "${STATE_DIR}/pre-deployment.json"
 
             # Fetch origin and checkout the exact verified release commit
             git fetch origin
@@ -241,20 +264,25 @@ jobs:
               CANDIDATE_HEALTHY=true
               echo "==> Deployment SUCCESS: Release ${DEPLOYED_SHA} healthy and verified!"
 
-              # Record active release state metadata
-              cat <<STATE_JSON > "${STATE_DIR}/active-release.json"
-{
-  "releaseId": "${DEPLOYED_SHA}",
-  "gitSha": "${DEPLOYED_SHA}",
-  "deployedAt": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
-  "status": "HEALTHY",
-  "images": {
-    "backend": "hiralal-backend:${DEPLOYED_SHA}",
-    "worker": "hiralal-worker:${DEPLOYED_SHA}",
-    "admin": "hiralal-admin:${DEPLOYED_SHA}"
-  }
-}
-STATE_JSON
+              # Record active release state metadata atomically using printf
+              DEPLOYED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+              STATE_TMP="$(mktemp "${STATE_DIR}/active-release.json.XXXXXX")"
+
+              printf '{\n  "releaseId": "%s",\n  "gitSha": "%s",\n  "deployedAt": "%s",\n  "status": "HEALTHY",\n  "images": {\n    "backend": "hiralal-backend:%s",\n    "worker": "hiralal-worker:%s",\n    "admin": "hiralal-admin:%s"\n  }\n}\n' \
+                "${DEPLOYED_SHA}" \
+                "${DEPLOYED_SHA}" \
+                "${DEPLOYED_AT}" \
+                "${DEPLOYED_SHA}" \
+                "${DEPLOYED_SHA}" \
+                "${DEPLOYED_SHA}" > "${STATE_TMP}"
+
+              node -e '
+                const fs = require("fs");
+                JSON.parse(fs.readFileSync(0, "utf8"));
+              ' < "${STATE_TMP}"
+
+              chmod 600 "${STATE_TMP}"
+              mv "${STATE_TMP}" "${STATE_DIR}/active-release.json"
               cp "${STATE_DIR}/active-release.json" "${RELEASES_DIR}/${TARGET_SHA}/release.json"
             else
               echo "[FATAL ERROR] Candidate release ${TARGET_SHA} failed post-startup health verification."

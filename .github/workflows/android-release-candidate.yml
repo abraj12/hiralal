@@ -211,6 +211,14 @@ jobs:
           echo "- **Commit SHA:** \`${RELEASE_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Target:** \`${BUILD_TARGET}\`" >> "$GITHUB_STEP_SUMMARY"
 
+          # 0. Require valid EXPECTED_RELEASE_CERT_SHA256 (Fail-closed)
+          RAW_EXPECTED="${EXPECTED_RELEASE_CERT_SHA256:-}"
+          NORMALIZED_EXPECTED="$(echo "$RAW_EXPECTED" | tr '[:upper:]' '[:lower:]' | tr -d ' :' || true)"
+          if [ -z "$NORMALIZED_EXPECTED" ] || ! echo "$NORMALIZED_EXPECTED" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "::error::EXPECTED_RELEASE_CERT_SHA256 is missing, invalid, or malformed! Got '${RAW_EXPECTED}'. A valid 64-character hex SHA-256 fingerprint is required to verify release integrity."
+            exit 1
+          fi
+
           # Copy APK if exists
           APK_SRC="mobile/android/app/build/outputs/apk/release"
           if [ -d "$APK_SRC" ]; then
@@ -258,28 +266,44 @@ jobs:
               APK_VERIFY_OUTPUT="$(apksigner verify --verbose --print-certs "$apk")"
               echo "$APK_VERIFY_OUTPUT" >> "$GITHUB_STEP_SUMMARY"
 
-              # Match certificate SHA-256 fingerprint against EXPECTED_RELEASE_CERT_SHA256 if configured
-              if [ -n "${EXPECTED_RELEASE_CERT_SHA256:-}" ]; then
-                echo "Validating APK certificate fingerprint against EXPECTED_RELEASE_CERT_SHA256..."
-                CERT_DIGEST="$(echo "$APK_VERIFY_OUTPUT" | grep -i "Signer #1 certificate SHA-256 digest:" | awk '{print $NF}' | tr '[:upper:]' '[:lower:]' || echo "")"
-                EXPECTED_DIGEST="$(echo "$EXPECTED_RELEASE_CERT_SHA256" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
-                if [ -z "$CERT_DIGEST" ] || [ "$CERT_DIGEST" != "$EXPECTED_DIGEST" ]; then
-                  echo "::error::APK certificate digest mismatch! Got '$CERT_DIGEST', expected '$EXPECTED_DIGEST'"
+              CERT_DIGEST="$(echo "$APK_VERIFY_OUTPUT" | grep -i "Signer #1 certificate SHA-256 digest:" | awk '{print $NF}' | tr '[:upper:]' '[:lower:]' | tr -d ' :' || echo "")"
+              if [ -z "$CERT_DIGEST" ] || [ "$CERT_DIGEST" != "$NORMALIZED_EXPECTED" ]; then
+                echo "::error::APK ($apk) certificate digest mismatch! Got '$CERT_DIGEST', expected '$NORMALIZED_EXPECTED'"
+                exit 1
+              fi
+              echo "APK ($apk) certificate digest matches EXPECTED_RELEASE_CERT_SHA256."
+
+              # Verify package name from actual built APK
+              ACTUAL_APK_PKG="$(aapt dump badging "$apk" 2>/dev/null | grep -oP "package: name='\K[^']+" || aapt2 dump badging "$apk" 2>/dev/null | grep -oP "package: name='\K[^']+" || true)"
+              if [ -n "$ACTUAL_APK_PKG" ]; then
+                if [ "$ACTUAL_APK_PKG" != "com.hiralal.rewards" ]; then
+                  echo "::error::APK package name is '$ACTUAL_APK_PKG', expected 'com.hiralal.rewards'!"
                   exit 1
                 fi
-                echo "APK certificate digest matches EXPECTED_RELEASE_CERT_SHA256."
+                echo "Verified APK package name from binary: $ACTUAL_APK_PKG"
               fi
             done
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          # 3. Signature verification for AABs using jarsigner
+          # 3. Signature verification for AABs using jarsigner and keytool
           if [ -n "$AABS" ]; then
             echo "#### AAB Signature Verification" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             for aab in $AABS; do
               echo "Verifying $aab with jarsigner:" >> "$GITHUB_STEP_SUMMARY"
               jarsigner -verify -verbose -certs "$aab" >> "$GITHUB_STEP_SUMMARY"
+
+              echo "Verifying $aab certificate fingerprint with keytool:" >> "$GITHUB_STEP_SUMMARY"
+              AAB_CERT_OUTPUT="$(keytool -printcert -jarfile "$aab")"
+              echo "$AAB_CERT_OUTPUT" >> "$GITHUB_STEP_SUMMARY"
+
+              AAB_CERT_DIGEST="$(echo "$AAB_CERT_OUTPUT" | grep -i "SHA256:" | awk '{print $2}' | tr '[:upper:]' '[:lower:]' | tr -d ' :' || echo "")"
+              if [ -z "$AAB_CERT_DIGEST" ] || [ "$AAB_CERT_DIGEST" != "$NORMALIZED_EXPECTED" ]; then
+                echo "::error::AAB ($aab) certificate digest mismatch! Got '$AAB_CERT_DIGEST', expected '$NORMALIZED_EXPECTED'"
+                exit 1
+              fi
+              echo "AAB ($aab) certificate digest matches EXPECTED_RELEASE_CERT_SHA256."
             done
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -288,10 +312,10 @@ jobs:
           if [ -f "mobile/app.json" ]; then
             APP_PKG="$(node -e 'const c = require("./mobile/app.json"); console.log(c.expo?.android?.package || "");')"
             if [ "$APP_PKG" != "com.hiralal.rewards" ]; then
-              echo "::error::Package name is '$APP_PKG', expected 'com.hiralal.rewards'!"
+              echo "::error::Package name in app.json is '$APP_PKG', expected 'com.hiralal.rewards'!"
               exit 1
             fi
-            echo "Verified package name: com.hiralal.rewards"
+            echo "Verified package name in mobile/app.json: com.hiralal.rewards"
           fi
 
           # 5. Generate and verify deterministic SHA-256 Checksums
@@ -316,5 +340,5 @@ jobs:
           KEYSTORE="${ANDROID_KEYSTORE_PATH:-}"
           if [ -n "$KEYSTORE" ] && [ -f "$KEYSTORE" ]; then
             shred -u -z -n 3 "$KEYSTORE" 2>/dev/null || rm -f "$KEYSTORE"
-            echo "Release keystore securely erased from runner filesystem."
+            echo "Release keystore securely erased from ephemeral runner filesystem."
           fi

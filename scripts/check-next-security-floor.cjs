@@ -5,17 +5,17 @@
  * Automated semantic-version security floor verification guard for Next.js.
  * Verifies that the resolved Next.js version in admin satisfies official security advisory floors.
  *
- * Advisories evaluated (as of October 2026 audit):
- * - GHSA-2xp9-vwfh-vxw4 (Critical AVIF / image optimization & Windows hosting memory corruption)
- * - GHSA-p293-qw3h-jr36 (Server Actions boundary & cache header spoofing)
- * - GHSA-p9j2-gv94-2wf4 (next/og remote code execution / buffer overflow)
- * - GHSA-vcvr-r3jv-pc5j (Middleware URL rewrite authorization bypass)
- * - CVE-2025-29927 (Middleware / router authorization cache poisoning)
+ * Advisories evaluated (per official maintainer advisories):
+ * - GHSA-2xp9-vwfh-vxw4 (Critical AVIF / image optimization & Windows hosting memory corruption) - Fixed in 15.5.24
+ * - GHSA-p293-qw3h-jr36 (Server Actions boundary & cache header spoofing) - Fixed in 15.5.24
+ * - GHSA-p9j2-gv94-2wf4 (SSRF in URL rewrites) - Fixed in 15.5.24
+ * - GHSA-vcvr-r3jv-pc5j (next/og ImageResponse critical remote code execution) - Fixed in 16.3.6
+ * - CVE-2025-29927 (Middleware / router authorization cache poisoning) - Fixed in 15.5.24
  *
  * Minimum Patched Floors:
  * - < 15.x: Unmaintained / vulnerable. All < 15 versions rejected.
  * - 15.x: >= 15.5.24 required.
- * - 16.x: >= 16.3.0 required.
+ * - 16.x: >= 16.3.6 required (addresses next/og ImageResponse RCE GHSA-vcvr-r3jv-pc5j).
  * - 17.x+: Unaudited future major versions. Fails closed (rejected).
  * - Prereleases (canary, rc, beta): Fails closed (rejected).
  */
@@ -75,20 +75,20 @@ const ADVISORY_RULES = {
   14: {
     status: 'DEPRECATED_VULNERABLE',
     minPatchedVersion: null,
-    reason: 'Next.js 14.x and below are affected by unpatched advisories (CVE-2025-29927, GHSA-2xp9-vwfh-vxw4, GHSA-p293-qw3h-jr36). Must upgrade to maintained 15.x patched line.',
-    advisories: ['CVE-2025-29927', 'GHSA-2xp9-vwfh-vxw4', 'GHSA-p293-qw3h-jr36', 'GHSA-p9j2-gv94-2wf4', 'GHSA-vcvr-r3jv-pc5j'],
+    reason: 'Next.js 14.x and below are unmaintained and affected by critical advisories (CVE-2025-29927, GHSA-2xp9-vwfh-vxw4, GHSA-p293-qw3h-jr36). Must upgrade to maintained 15.x patched line.',
+    advisories: ['CVE-2025-29927', 'GHSA-2xp9-vwfh-vxw4', 'GHSA-p293-qw3h-jr36', 'GHSA-p9j2-gv94-2wf4'],
   },
   15: {
     status: 'MAINTAINED',
     minPatchedVersion: '15.5.24',
-    reason: 'Versions below 15.5.24 are affected by GHSA-2xp9-vwfh-vxw4 (critical image-optimization and Windows-hosted advisories), GHSA-p293-qw3h-jr36, GHSA-p9j2-gv94-2wf4, GHSA-vcvr-r3jv-pc5j.',
-    advisories: ['GHSA-2xp9-vwfh-vxw4', 'GHSA-p293-qw3h-jr36', 'GHSA-p9j2-gv94-2wf4', 'GHSA-vcvr-r3jv-pc5j'],
+    reason: 'Versions below 15.5.24 are affected by GHSA-2xp9-vwfh-vxw4 (critical image-optimization & Windows-hosted advisories), GHSA-p293-qw3h-jr36, and GHSA-p9j2-gv94-2wf4 (SSRF in rewrites).',
+    advisories: ['GHSA-2xp9-vwfh-vxw4', 'GHSA-p293-qw3h-jr36', 'GHSA-p9j2-gv94-2wf4', 'CVE-2025-29927'],
   },
   16: {
     status: 'MAINTAINED',
-    minPatchedVersion: '16.3.0',
-    reason: 'Versions below 16.3.0 are affected by GHSA-p9j2-gv94-2wf4 (next/og critical remote code execution / buffer overflow advisory).',
-    advisories: ['GHSA-p9j2-gv94-2wf4'],
+    minPatchedVersion: '16.3.6',
+    reason: 'Versions below 16.3.6 are affected by GHSA-vcvr-r3jv-pc5j (next/og ImageResponse critical remote code execution / buffer overflow advisory).',
+    advisories: ['GHSA-vcvr-r3jv-pc5j'],
   },
 };
 
@@ -179,11 +179,30 @@ function findNextPackageJson() {
 
   for (const p of candidatePaths) {
     if (fs.existsSync(p)) {
-      return p;
+      return { resolvedPath: p, version: JSON.parse(fs.readFileSync(p, 'utf8')).version };
     }
   }
 
-  // Fallback: check admin package.json declared version if node_modules not yet installed
+  // Fallback 1: check package-lock.json for resolved version
+  const lockPaths = [
+    path.join(process.cwd(), 'admin', 'package-lock.json'),
+    path.join(process.cwd(), 'package-lock.json'),
+    path.join(__dirname, '..', 'admin', 'package-lock.json'),
+  ];
+
+  for (const lp of lockPaths) {
+    if (fs.existsSync(lp)) {
+      try {
+        const lockData = JSON.parse(fs.readFileSync(lp, 'utf8'));
+        const nextPkg = lockData.packages?.['node_modules/next'] || lockData.dependencies?.next;
+        if (nextPkg && nextPkg.version) {
+          return { fromLockfile: true, version: nextPkg.version, source: lp };
+        }
+      } catch {}
+    }
+  }
+
+  // Fallback 2: check admin package.json declared version
   const adminPkg = [
     path.join(process.cwd(), 'package.json'),
     path.join(process.cwd(), 'admin', 'package.json'),
@@ -192,8 +211,16 @@ function findNextPackageJson() {
 
   if (adminPkg) {
     const data = JSON.parse(fs.readFileSync(adminPkg, 'utf8'));
-    if (data.dependencies && data.dependencies.next) {
-      return { declaredOnly: true, version: data.dependencies.next.replace(/[\^~>=]/g, '') };
+    const declared = data.dependencies && data.dependencies.next;
+    if (declared) {
+      if (/[\^~><*]/.test(declared)) {
+        return {
+          unresolvedRange: true,
+          declaredVersion: declared,
+          error: `Package declaration contains version range "${declared}" without resolved package-lock.json or node_modules. Exact resolved version required.`,
+        };
+      }
+      return { declaredOnly: true, version: declared.trim() };
     }
   }
 
@@ -208,17 +235,21 @@ function runCheck() {
 
   const resolved = findNextPackageJson();
   if (!resolved) {
-    console.error('[ERROR] Unable to locate Next.js installation or package.json');
+    console.error('[ERROR] Unable to locate Next.js installation, package-lock.json, or package.json');
     process.exit(1);
   }
 
-  let nextVersion;
-  if (typeof resolved === 'string') {
-    const pkg = JSON.parse(fs.readFileSync(resolved, 'utf8'));
-    nextVersion = pkg.version;
-    console.log(`Resolved Next.js package: ${resolved}`);
+  if (resolved.unresolvedRange) {
+    console.error(`[FATAL ERROR] Next.js version resolution failed: ${resolved.error}`);
+    process.exit(1);
+  }
+
+  const nextVersion = resolved.version;
+  if (resolved.resolvedPath) {
+    console.log(`Resolved Next.js package: ${resolved.resolvedPath}`);
+  } else if (resolved.fromLockfile) {
+    console.log(`Resolved Next.js from lockfile: ${resolved.source}`);
   } else {
-    nextVersion = resolved.version;
     console.log(`Declared Next.js version in package.json: ${nextVersion}`);
   }
 
