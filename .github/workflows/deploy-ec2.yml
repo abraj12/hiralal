@@ -117,15 +117,29 @@ jobs:
             cd "${APP_DIR}"
             echo "Working directory: $(pwd)"
             
-            # Capture currently running release SHA before modifying working tree
+            # Capture currently running release SHA and container image IDs before modifying working tree
             PREVIOUS_SHA=$(git rev-parse HEAD 2>/dev/null || echo "NONE")
             echo "Previously running release SHA: ${PREVIOUS_SHA}"
 
+            STATE_DIR="${APP_DIR}/deployment-state"
+            RELEASES_DIR="${APP_DIR}/releases"
+            mkdir -p "${STATE_DIR}" "${RELEASES_DIR}/${TARGET_SHA}"
+
+            CURRENT_BACKEND_IMG=$(docker inspect --format='{{.Image}}' hiralal_backend 2>/dev/null || echo "")
+            CURRENT_WORKER_IMG=$(docker inspect --format='{{.Image}}' hiralal_worker 2>/dev/null || echo "")
+            CURRENT_ADMIN_IMG=$(docker inspect --format='{{.Image}}' hiralal_admin 2>/dev/null || echo "")
+
             # Tag existing application container images with PREVIOUS_SHA to ensure immutable retention
             if [ "${PREVIOUS_SHA}" != "NONE" ]; then
-              docker tag hiralal_backend:latest hiralal_backend:"${PREVIOUS_SHA}" 2>/dev/null || true
-              docker tag hiralal_worker:latest hiralal_worker:"${PREVIOUS_SHA}" 2>/dev/null || true
-              docker tag hiralal_admin:latest hiralal_admin:"${PREVIOUS_SHA}" 2>/dev/null || true
+              if [ -n "${CURRENT_BACKEND_IMG}" ]; then
+                docker tag "${CURRENT_BACKEND_IMG}" hiralal-backend:"${PREVIOUS_SHA}"
+              fi
+              if [ -n "${CURRENT_WORKER_IMG}" ]; then
+                docker tag "${CURRENT_WORKER_IMG}" hiralal-worker:"${PREVIOUS_SHA}"
+              fi
+              if [ -n "${CURRENT_ADMIN_IMG}" ]; then
+                docker tag "${CURRENT_ADMIN_IMG}" hiralal-admin:"${PREVIOUS_SHA}"
+              fi
             fi
 
             # Fetch origin and checkout the exact verified release commit
@@ -145,8 +159,9 @@ jobs:
               ./scripts/verify-nginx-ssl.sh ./nginx/ssl
             fi
             
-            # Build stack images
-            echo "Building application container images..."
+            # Build stack images with immutable release image tag
+            export HIRALAL_IMAGE_TAG="${TARGET_SHA}"
+            echo "Building application container images for release ${HIRALAL_IMAGE_TAG}..."
             docker compose build
 
             # Ensure data stores are online for backup and migration
@@ -225,37 +240,31 @@ jobs:
             if python3 scripts/verify-deployment-health.py "${HEALTH_JSON}" "${READY_JSON}"; then
               CANDIDATE_HEALTHY=true
               echo "==> Deployment SUCCESS: Release ${DEPLOYED_SHA} healthy and verified!"
+
+              # Record active release state metadata
+              cat <<STATE_JSON > "${STATE_DIR}/active-release.json"
+{
+  "releaseId": "${DEPLOYED_SHA}",
+  "gitSha": "${DEPLOYED_SHA}",
+  "deployedAt": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+  "status": "HEALTHY",
+  "images": {
+    "backend": "hiralal-backend:${DEPLOYED_SHA}",
+    "worker": "hiralal-worker:${DEPLOYED_SHA}",
+    "admin": "hiralal-admin:${DEPLOYED_SHA}"
+  }
+}
+STATE_JSON
+              cp "${STATE_DIR}/active-release.json" "${RELEASES_DIR}/${TARGET_SHA}/release.json"
             else
               echo "[FATAL ERROR] Candidate release ${TARGET_SHA} failed post-startup health verification."
             fi
 
             if [ "${CANDIDATE_HEALTHY}" != "true" ]; then
               echo "[ROLLBACK GATE] Candidate release failed health checks. Initiating safe application-image rollback..."
-              if [ "${PREVIOUS_SHA}" != "NONE" ] && [ "${PREVIOUS_SHA}" != "${TARGET_SHA}" ]; then
-                echo "Attempting application rollback to previous known-good SHA: ${PREVIOUS_SHA}..."
-                echo "Preserving database schema forward-only; NO destructive database restore will be executed over live writes."
-                git checkout "${PREVIOUS_SHA}"
-
-                # Restore previous image tags
-                docker tag hiralal_backend:"${PREVIOUS_SHA}" hiralal_backend:latest 2>/dev/null || true
-                docker tag hiralal_worker:"${PREVIOUS_SHA}" hiralal_worker:latest 2>/dev/null || true
-                docker tag hiralal_admin:"${PREVIOUS_SHA}" hiralal_admin:latest 2>/dev/null || true
-
-                docker compose up -d backend worker admin nginx
-                sleep 10
-
-                RESTORED_HEALTH="$(curl --fail --silent --show-error "${HEALTH_URL}" 2>/dev/null || echo '{"status":"down"}')"
-                RESTORED_READY="$(curl --fail --silent --show-error "${READY_URL}" 2>/dev/null || echo '{"status":"unready","checks":{}}')"
-
-                if python3 scripts/verify-deployment-health.py "${RESTORED_HEALTH}" "${RESTORED_READY}"; then
-                  echo "[ROLLBACK SUCCESS] Successfully restored previous release ${PREVIOUS_SHA} to healthy operational state."
-                  echo "[OPERATOR NOTICE] Candidate ${TARGET_SHA} failed deployment; previous application restored. Database retains forward migrations."
-                else
-                  echo "[CRITICAL ALERT] Rollback to ${PREVIOUS_SHA} failed health check. Operator manual triage required immediately!"
-                fi
-              else
-                echo "[ALERT] No prior release SHA exists or candidate matches previous SHA. Stack left for manual operator investigation."
-              fi
+              echo "Preserving database schema forward-only; NO destructive database restore will be executed over live writes."
+              chmod +x scripts/deploy/*.sh
+              ./scripts/deploy/rollback-release.sh "${PREVIOUS_SHA}" "${TARGET_SHA}"
               exit 1
             fi
           EOF

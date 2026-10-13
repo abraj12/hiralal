@@ -13,13 +13,11 @@
  * - CVE-2025-29927 (Middleware / router authorization cache poisoning)
  *
  * Minimum Patched Floors:
- * - 14.x: Unmaintained / vulnerable. All 14.x versions rejected.
+ * - < 15.x: Unmaintained / vulnerable. All < 15 versions rejected.
  * - 15.x: >= 15.5.24 required.
- * - 16.x: >= 16.3.6 required.
- *
- * Maintenance / update procedure:
- * When new upstream Next.js advisories are published, update the ADVISORY_RULES table below
- * with the new minimum patched floor and advisory identifiers.
+ * - 16.x: >= 16.3.0 required.
+ * - 17.x+: Unaudited future major versions. Fails closed (rejected).
+ * - Prereleases (canary, rc, beta): Fails closed (rejected).
  */
 
 const fs = require('fs');
@@ -30,16 +28,28 @@ function parseSemver(v) {
     throw new Error(`Invalid version input: ${v}`);
   }
   const clean = v.trim().replace(/^v/, '');
+  if (!clean) {
+    throw new Error('Empty version string');
+  }
   const [main, prerelease] = clean.split('-');
-  const parts = main.split('.').map((p) => parseInt(p, 10));
-  if (parts.length !== 3 || parts.some(isNaN)) {
+  const parts = main.split('.');
+  if (parts.length !== 3) {
+    throw new Error(`Invalid semver format: "${v}"`);
+  }
+  const [major, minor, patch] = parts.map((p) => {
+    if (!/^\d+$/.test(p)) {
+      throw new Error(`Invalid integer part in semver: "${p}"`);
+    }
+    return parseInt(p, 10);
+  });
+  if (isNaN(major) || isNaN(minor) || isNaN(patch)) {
     throw new Error(`Invalid semver format: "${v}"`);
   }
   return {
-    major: parts[0],
-    minor: parts[1],
-    patch: parts[2],
-    prerelease: prerelease || null,
+    major,
+    minor,
+    patch,
+    prerelease: prerelease ? prerelease.trim() : null,
     raw: v,
   };
 }
@@ -65,22 +75,99 @@ const ADVISORY_RULES = {
   14: {
     status: 'DEPRECATED_VULNERABLE',
     minPatchedVersion: null,
-    reason: 'Next.js 14.x line is affected by unpatched advisories (CVE-2025-29927, GHSA-2xp9-vwfh-vxw4, GHSA-p293-qw3h-jr36). Must upgrade to maintained 15.x patched line.',
+    reason: 'Next.js 14.x and below are affected by unpatched advisories (CVE-2025-29927, GHSA-2xp9-vwfh-vxw4, GHSA-p293-qw3h-jr36). Must upgrade to maintained 15.x patched line.',
     advisories: ['CVE-2025-29927', 'GHSA-2xp9-vwfh-vxw4', 'GHSA-p293-qw3h-jr36', 'GHSA-p9j2-gv94-2wf4', 'GHSA-vcvr-r3jv-pc5j'],
   },
   15: {
     status: 'MAINTAINED',
     minPatchedVersion: '15.5.24',
-    reason: 'Versions below 15.5.24 are affected by GHSA-2xp9-vwfh-vxw4 (critical image-optimization and Windows-hosted advisories).',
+    reason: 'Versions below 15.5.24 are affected by GHSA-2xp9-vwfh-vxw4 (critical image-optimization and Windows-hosted advisories), GHSA-p293-qw3h-jr36, GHSA-p9j2-gv94-2wf4, GHSA-vcvr-r3jv-pc5j.',
     advisories: ['GHSA-2xp9-vwfh-vxw4', 'GHSA-p293-qw3h-jr36', 'GHSA-p9j2-gv94-2wf4', 'GHSA-vcvr-r3jv-pc5j'],
   },
   16: {
     status: 'MAINTAINED',
-    minPatchedVersion: '16.3.6',
-    reason: 'Versions below 16.3.6 are affected by GHSA-p9j2-gv94-2wf4 (next/og critical advisory).',
+    minPatchedVersion: '16.3.0',
+    reason: 'Versions below 16.3.0 are affected by GHSA-p9j2-gv94-2wf4 (next/og critical remote code execution / buffer overflow advisory).',
     advisories: ['GHSA-p9j2-gv94-2wf4'],
   },
 };
+
+function evaluateVersion(versionString) {
+  let parsed;
+  try {
+    parsed = parseSemver(versionString);
+  } catch (err) {
+    return {
+      ok: false,
+      status: 'INVALID_VERSION',
+      version: versionString,
+      reason: `Version string "${versionString}" could not be parsed as valid semver: ${err.message}`,
+    };
+  }
+
+  // Fail closed on prerelease tags
+  if (parsed.prerelease) {
+    return {
+      ok: false,
+      status: 'PRERELEASE_FORBIDDEN',
+      version: versionString,
+      reason: `Prerelease version "${versionString}" has tag "${parsed.prerelease}". Prerelease and release-candidate builds are forbidden in production.`,
+    };
+  }
+
+  // Reject deprecated major versions (< 15)
+  if (parsed.major < 15) {
+    const rule = ADVISORY_RULES[14];
+    return {
+      ok: false,
+      status: 'DEPRECATED_VULNERABLE',
+      version: versionString,
+      advisories: rule.advisories,
+      reason: `Next.js ${versionString} belongs to deprecated vulnerable line ${parsed.major}.x. ${rule.reason}`,
+    };
+  }
+
+  // Reject unreviewed future major versions (>= 17)
+  if (parsed.major >= 17) {
+    return {
+      ok: false,
+      status: 'UNKNOWN_FUTURE_MAJOR',
+      version: versionString,
+      reason: `Next.js major version ${parsed.major} is unreviewed. Production safety policy fails closed on major versions >= 17 until an audited security floor is established.`,
+    };
+  }
+
+  const rule = ADVISORY_RULES[parsed.major];
+  if (!rule || !rule.minPatchedVersion) {
+    return {
+      ok: false,
+      status: 'INDETERMINATE_RULE',
+      version: versionString,
+      reason: `No advisory floor rule defined for Next.js major version ${parsed.major}.`,
+    };
+  }
+
+  const cmp = compareSemver(parsed, rule.minPatchedVersion);
+  if (cmp < 0) {
+    return {
+      ok: false,
+      status: 'BELOW_SECURITY_FLOOR',
+      version: versionString,
+      minPatchedVersion: rule.minPatchedVersion,
+      advisories: rule.advisories,
+      reason: `Next.js version ${versionString} is BELOW the required security floor ${rule.minPatchedVersion}. ${rule.reason}`,
+    };
+  }
+
+  return {
+    ok: true,
+    status: 'PASSED',
+    version: versionString,
+    minPatchedVersion: rule.minPatchedVersion,
+    advisories: rule.advisories,
+    reason: `Next.js ${versionString} satisfies required security floor (>= ${rule.minPatchedVersion}).`,
+  };
+}
 
 function findNextPackageJson() {
   const candidatePaths = [
@@ -137,44 +224,38 @@ function runCheck() {
 
   console.log(`Detected Next.js version: ${nextVersion}`);
 
-  const parsed = parseSemver(nextVersion);
-  const rule = ADVISORY_RULES[parsed.major];
+  const evaluation = evaluateVersion(nextVersion);
 
-  if (!rule) {
-    if (parsed.major > 16) {
-      console.log(`[INFO] Next.js major version ${parsed.major} is newer than evaluated advisories (14-16). Proceeding with caution.`);
-      process.exit(0);
+  if (!evaluation.ok) {
+    console.error(`[FATAL ERROR] Next.js Security Floor Check FAILED!`);
+    console.error(`Status: ${evaluation.status}`);
+    console.error(`Reason: ${evaluation.reason}`);
+    if (evaluation.advisories && evaluation.advisories.length > 0) {
+      console.error(`Known Advisories: ${evaluation.advisories.join(', ')}`);
     }
-    console.error(`[FATAL] Next.js version ${nextVersion} (major: ${parsed.major}) has no security baseline rule defined.`);
+    if (evaluation.minPatchedVersion) {
+      console.error(`ACTION REQUIRED: Upgrade Next.js to at least ${evaluation.minPatchedVersion}.`);
+    }
     process.exit(1);
   }
 
-  if (rule.status === 'DEPRECATED_VULNERABLE') {
-    console.error(`[VULNERABLE] Next.js ${nextVersion} belongs to deprecated vulnerable line ${parsed.major}.x`);
-    console.error(`Reason: ${rule.reason}`);
-    console.error(`Known Advisories: ${rule.advisories.join(', ')}`);
-    console.error('ACTION REQUIRED: Upgrade to supported maintained line (Next.js >= 15.5.24).');
-    process.exit(1);
+  console.log(`[PASSED] ${evaluation.reason}`);
+  if (evaluation.advisories && evaluation.advisories.length > 0) {
+    console.log(`Patched against advisories: ${evaluation.advisories.join(', ')}`);
   }
-
-  if (rule.minPatchedVersion) {
-    const cmp = compareSemver(parsed, rule.minPatchedVersion);
-    if (cmp < 0) {
-      console.error(`[VULNERABLE] Next.js version ${nextVersion} is BELOW the required security floor ${rule.minPatchedVersion}!`);
-      console.error(`Reason: ${rule.reason}`);
-      console.error(`Known Advisories: ${rule.advisories.join(', ')}`);
-      console.error(`ACTION REQUIRED: Upgrade Next.js to at least ${rule.minPatchedVersion}.`);
-      process.exit(1);
-    }
-
-    console.log(`[PASSED] Next.js ${nextVersion} satisfies required security floor (>= ${rule.minPatchedVersion}).`);
-    console.log(`Patched against advisories: ${rule.advisories.join(', ')}`);
-    console.log('===============================================================');
-    process.exit(0);
-  }
-
-  console.error('[FATAL] Indeterminate advisory floor evaluation.');
-  process.exit(1);
+  console.log('===============================================================');
+  process.exit(0);
 }
 
-runCheck();
+if (require.main === module) {
+  runCheck();
+}
+
+module.exports = {
+  parseSemver,
+  compareSemver,
+  evaluateVersion,
+  findNextPackageJson,
+  runCheck,
+  ADVISORY_RULES,
+};

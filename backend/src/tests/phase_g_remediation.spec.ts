@@ -1861,6 +1861,34 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
     }
   });
 
+  function mockApplicationClockOffset(msOffset: number) {
+    const RealDate = Date;
+    const originalNow = RealDate.now.bind(RealDate);
+    const getOffsetTime = () => originalNow() + msOffset;
+
+    const spyNow = jest.spyOn(Date, 'now').mockImplementation(getOffsetTime);
+
+    class MockDate extends RealDate {
+      constructor(...args: any[]) {
+        if (args.length === 0) {
+          super(getOffsetTime());
+        } else {
+          super(...(args as [any]));
+        }
+      }
+    }
+
+    (global as any).Date = MockDate;
+    MockDate.now = getOffsetTime;
+    MockDate.UTC = RealDate.UTC;
+    MockDate.parse = RealDate.parse;
+
+    return () => {
+      spyNow.mockRestore();
+      (global as any).Date = RealDate;
+    };
+  }
+
   test('Phase G.5 Test K — DB-clock cooldown calculation is immune to application clock skew', async () => {
     const mobile = G5_USER_K_MOBILE;
     const user = await createG3TestUser(mobile);
@@ -1873,9 +1901,8 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
         WHERE "id" = ${user.id}
       `;
 
-      // 2. Skew application clock forward by +45 days
-      const realDateNow = Date.now;
-      jest.spyOn(Date, 'now').mockReturnValue(realDateNow() + 45 * 24 * 3600 * 1000);
+      // 2. Skew application clock forward by +45 days (both Date.now and new Date())
+      const restoreClock = mockApplicationClockOffset(45 * 24 * 3600 * 1000);
 
       try {
         // App clock says 45 days passed, but DB clock says only 10 days passed (< 30 days cooldown).
@@ -1884,7 +1911,7 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
           AccountDeletionService.requestDeletion(user.id, TEST_PASSWORD, '127.0.0.1')
         ).rejects.toThrow(/cannot be submitted within 30 days/i);
       } finally {
-        (Date.now as any).mockRestore();
+        restoreClock();
       }
 
       // 3. Simulate user requested deletion 31 days ago (in PostgreSQL clock)
@@ -1894,8 +1921,8 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
         WHERE "id" = ${user.id}
       `;
 
-      // 4. Skew application clock backward by -15 days (app clock says only 16 days passed)
-      jest.spyOn(Date, 'now').mockReturnValue(realDateNow() - 15 * 24 * 3600 * 1000);
+      // 4. Skew application clock backward by -15 days (both Date.now and new Date())
+      const restoreClock2 = mockApplicationClockOffset(-15 * 24 * 3600 * 1000);
 
       try {
         // Even though app clock says only 16 days passed, DB clock confirms 31 days passed (> 30 days).
@@ -1904,7 +1931,7 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
         expect(result.success).toBe(true);
         expect(result.message).toMatch(/OTP has been sent/i);
       } finally {
-        (Date.now as any).mockRestore();
+        restoreClock2();
       }
     } finally {
       await cleanG3User(mobile);
@@ -1934,9 +1961,8 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
         data: { otpHash, attemptsCount: 0 },
       });
 
-      // Skew app clock forward by +1 year (365 days)
-      const realDateNow = Date.now;
-      jest.spyOn(Date, 'now').mockReturnValue(realDateNow() + 365 * 24 * 3600 * 1000);
+      // Skew app clock forward by +1 year (365 days) across both Date.now and new Date()
+      const restoreClock = mockApplicationClockOffset(365 * 24 * 3600 * 1000);
 
       try {
         // Confirm deletion with OTP
@@ -1964,7 +1990,7 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
         expect(status.isPendingDeletion).toBe(true);
         expect(status.gracePeriodDays).toBe(7);
       } finally {
-        (Date.now as any).mockRestore();
+        restoreClock();
       }
     } finally {
       await cleanG3User(mobile);
@@ -1989,9 +2015,8 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
         VALUES (gen_random_uuid(), ${user.id}, 'PENDING', (clock_timestamp() AT TIME ZONE 'UTC') + interval '1 day', clock_timestamp() AT TIME ZONE 'UTC', clock_timestamp() AT TIME ZONE 'UTC')
       `;
 
-      // Skew app clock forward by +10 days (app clock says grace period expired 9 days ago!)
-      const realDateNow = Date.now;
-      jest.spyOn(Date, 'now').mockReturnValue(realDateNow() + 10 * 24 * 3600 * 1000);
+      // Skew app clock forward by +10 days across both Date.now and new Date()
+      const restoreClock = mockApplicationClockOffset(10 * 24 * 3600 * 1000);
 
       try {
         // App clock is in the future, but DB clock knows user is still within grace period (+1 day).
@@ -2009,7 +2034,7 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
         expect(opAfter?.status).toBe('CANCELLED');
         expect(opAfter?.completedAt).toBeDefined();
       } finally {
-        (Date.now as any).mockRestore();
+        restoreClock();
       }
 
       // 2. Now set user deletionScheduledAt to 1 hour ago according to PostgreSQL
@@ -2028,8 +2053,8 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
         WHERE "userId" = ${user.id}
       `;
 
-      // Skew app clock backward by -10 days (app clock claims user is well within grace period!)
-      jest.spyOn(Date, 'now').mockReturnValue(realDateNow() - 10 * 24 * 3600 * 1000);
+      // Skew app clock backward by -10 days across both Date.now and new Date()
+      const restoreClock2 = mockApplicationClockOffset(-10 * 24 * 3600 * 1000);
 
       try {
         // App clock says within grace period, but DB clock knows grace period expired 1 hour ago.
@@ -2038,7 +2063,7 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
           AuthService.login(mobile, TEST_PASSWORD)
         ).rejects.toThrow(/Account deletion grace period has expired/i);
       } finally {
-        (Date.now as any).mockRestore();
+        restoreClock2();
       }
     } finally {
       await cleanG3User(mobile);

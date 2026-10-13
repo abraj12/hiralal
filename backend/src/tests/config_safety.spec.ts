@@ -550,6 +550,25 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
         delete env.FIREBASE_PRIVATE_KEY;
         expect(() => validateProductionFcm(env)).toThrow(/file does not exist at specified path/);
       });
+
+      it('validates FCM credentials for worker service role', () => {
+        const workerEnv = { ...validBaseEnv };
+        delete workerEnv.FIREBASE_PROJECT_ID;
+        delete workerEnv.FIREBASE_CLIENT_EMAIL;
+        delete workerEnv.FIREBASE_PRIVATE_KEY;
+        delete workerEnv.FIREBASE_SERVICE_ACCOUNT_KEY;
+
+        expect(() => validateProductionFcm(workerEnv, 'worker')).toThrow(
+          /Production startup halted for role "worker". Missing required Firebase Cloud Messaging/
+        );
+        expect(() => validateProductionConfig('worker', workerEnv)).toThrow(
+          /Production startup halted for role "worker". Missing required Firebase Cloud Messaging/
+        );
+
+        // Succeeds when valid credentials are provided for worker
+        expect(() => validateProductionFcm(validBaseEnv, 'worker')).not.toThrow();
+        expect(() => validateProductionConfig('worker', validBaseEnv)).not.toThrow();
+      });
     });
 
     describe('Test K — Play Integrity Fail-Closed Enforcement', () => {

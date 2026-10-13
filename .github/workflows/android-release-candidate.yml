@@ -202,6 +202,7 @@ jobs:
         env:
           RELEASE_SHA: ${{ env.VALIDATED_RELEASE_SHA }}
           BUILD_TARGET: ${{ env.VALIDATED_BUILD_TARGET }}
+          EXPECTED_RELEASE_CERT_SHA256: ${{ secrets.EXPECTED_RELEASE_CERT_SHA256 || vars.EXPECTED_RELEASE_CERT_SHA256 || '' }}
         run: |
           set -euo pipefail
           mkdir -p release-artifacts
@@ -222,31 +223,68 @@ jobs:
             find "$AAB_SRC" -name "*.aab" -exec cp {} release-artifacts/ \;
           fi
 
-          # Signature verification for APKs using apksigner
-          APKS="$(find release-artifacts -name "*.apk" 2>/dev/null || true)"
+          # 1. Enforce existence of requested artifact set
+          APK_COUNT=0
+          AAB_COUNT=0
+          APKS="$(find release-artifacts -maxdepth 1 -name "*.apk" 2>/dev/null || true)"
+          AABS="$(find release-artifacts -maxdepth 1 -name "*.aab" 2>/dev/null || true)"
+
+          [ -n "$APKS" ] && APK_COUNT=$(echo "$APKS" | wc -w)
+          [ -n "$AABS" ] && AAB_COUNT=$(echo "$AABS" | wc -w)
+
+          if [ "$BUILD_TARGET" = "both" ]; then
+            if [ "$APK_COUNT" -eq 0 ] || [ "$AAB_COUNT" -eq 0 ]; then
+              echo "::error::Target 'both' selected, but expected artifacts missing! (APKs: $APK_COUNT, AABs: $AAB_COUNT)"
+              exit 1
+            fi
+          elif [ "$BUILD_TARGET" = "apk" ]; then
+            if [ "$APK_COUNT" -eq 0 ]; then
+              echo "::error::Target 'apk' selected, but no APK artifact found!"
+              exit 1
+            fi
+          elif [ "$BUILD_TARGET" = "aab" ]; then
+            if [ "$AAB_COUNT" -eq 0 ]; then
+              echo "::error::Target 'aab' selected, but no AAB artifact found!"
+              exit 1
+            fi
+          fi
+
+          # 2. Signature verification for APKs using apksigner
           if [ -n "$APKS" ]; then
             echo "#### APK Signature Verification" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             for apk in $APKS; do
-              echo "Verifying $apk:" >> "$GITHUB_STEP_SUMMARY"
-              apksigner verify --verbose --print-certs "$apk" >> "$GITHUB_STEP_SUMMARY" 2>&1
+              echo "Verifying $apk with apksigner:" >> "$GITHUB_STEP_SUMMARY"
+              APK_VERIFY_OUTPUT="$(apksigner verify --verbose --print-certs "$apk")"
+              echo "$APK_VERIFY_OUTPUT" >> "$GITHUB_STEP_SUMMARY"
+
+              # Match certificate SHA-256 fingerprint against EXPECTED_RELEASE_CERT_SHA256 if configured
+              if [ -n "${EXPECTED_RELEASE_CERT_SHA256:-}" ]; then
+                echo "Validating APK certificate fingerprint against EXPECTED_RELEASE_CERT_SHA256..."
+                CERT_DIGEST="$(echo "$APK_VERIFY_OUTPUT" | grep -i "Signer #1 certificate SHA-256 digest:" | awk '{print $NF}' | tr '[:upper:]' '[:lower:]' || echo "")"
+                EXPECTED_DIGEST="$(echo "$EXPECTED_RELEASE_CERT_SHA256" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
+                if [ -z "$CERT_DIGEST" ] || [ "$CERT_DIGEST" != "$EXPECTED_DIGEST" ]; then
+                  echo "::error::APK certificate digest mismatch! Got '$CERT_DIGEST', expected '$EXPECTED_DIGEST'"
+                  exit 1
+                fi
+                echo "APK certificate digest matches EXPECTED_RELEASE_CERT_SHA256."
+              fi
             done
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          # Signature verification for AABs using jarsigner
-          AABS="$(find release-artifacts -name "*.aab" 2>/dev/null || true)"
+          # 3. Signature verification for AABs using jarsigner
           if [ -n "$AABS" ]; then
             echo "#### AAB Signature Verification" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             for aab in $AABS; do
               echo "Verifying $aab with jarsigner:" >> "$GITHUB_STEP_SUMMARY"
-              jarsigner -verify -verbose -certs "$aab" >> "$GITHUB_STEP_SUMMARY" 2>&1
+              jarsigner -verify -verbose -certs "$aab" >> "$GITHUB_STEP_SUMMARY"
             done
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          # Verify package name in mobile/app.json
+          # 4. Verify package name in mobile/app.json
           if [ -f "mobile/app.json" ]; then
             APP_PKG="$(node -e 'const c = require("./mobile/app.json"); console.log(c.expo?.android?.package || "");')"
             if [ "$APP_PKG" != "com.hiralal.rewards" ]; then
@@ -256,9 +294,10 @@ jobs:
             echo "Verified package name: com.hiralal.rewards"
           fi
 
-          # Generate SHA-256 Checksums for all release outputs
+          # 5. Generate and verify deterministic SHA-256 Checksums
           cd release-artifacts
-          find . -maxdepth 1 -type f ! -name "SHA256SUMS.txt" -exec sha256sum {} + > SHA256SUMS.txt
+          find . -maxdepth 1 -type f ! -name "SHA256SUMS.txt" -exec sha256sum {} + | sort -k2 > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
           echo "#### Artifact SHA-256 Checksums" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cat SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
@@ -276,6 +315,6 @@ jobs:
         run: |
           KEYSTORE="${ANDROID_KEYSTORE_PATH:-}"
           if [ -n "$KEYSTORE" ] && [ -f "$KEYSTORE" ]; then
-            shred -u "$KEYSTORE" 2>/dev/null || rm -f "$KEYSTORE"
+            shred -u -z -n 3 "$KEYSTORE" 2>/dev/null || rm -f "$KEYSTORE"
             echo "Release keystore securely erased from runner filesystem."
           fi

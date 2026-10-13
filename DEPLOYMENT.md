@@ -230,6 +230,10 @@ The production deployment workflow is strictly manual (`workflow_dispatch`). Aut
 5. **Strict Host Key Checking**: Enforces `StrictHostKeyChecking=yes` using provisioned `known_hosts`.
 6. **Pre-Migration Database Backup**: Executes `scripts/backup-db.sh` before running migrations (fails closed).
 7. **Isolated Migration Runner**: Builds and runs migrations via dedicated container (`docker compose --profile tools run --rm migrate`).
+8. **Immutable Container Image Tagging**: Tags application images explicitly with `${RELEASE_SHA}` (`hiralal-backend:${RELEASE_SHA}`, `hiralal-worker:${RELEASE_SHA}`, `hiralal-admin:${RELEASE_SHA}`).
+9. **Deployment State Records**: Writes release record to `/opt/hiralal/deployment-state/active-release.json` and archives in `/opt/hiralal/releases/${RELEASE_SHA}/release.json`.
+10. **Automated Rollback Helper**: On candidate health check failure, executes `./scripts/deploy/rollback-release.sh` to evaluate migration compatibility via `backend/prisma/migrations/deployment-compatibility.json`. If safe, restores previous immutable image tags without rebuild. If breaking migrations were applied, halts and alerts operators.
+11. **Forward-Only Database Invariant**: Database backups are never restored over live writes or active user sessions. All database schema fixes must roll forward.
 
 ---
 

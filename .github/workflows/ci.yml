@@ -80,6 +80,10 @@ jobs:
         working-directory: backend
         run: npm audit --omit=dev --audit-level=high
 
+      - name: Migration Runner Dependency Audit
+        working-directory: backend/migration-runner
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Prisma Schema Validation
         working-directory: backend
         env:
@@ -209,6 +213,9 @@ jobs:
 
       - name: Verify Next.js Security Floor
         run: node scripts/check-next-security-floor.cjs
+
+      - name: Run Next.js Security Floor Regression Tests
+        run: node scripts/test-next-security-floor.cjs
 
       - name: Production Dependency Audit
         working-directory: admin

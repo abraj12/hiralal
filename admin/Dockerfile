@@ -8,6 +8,8 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 FROM node:22-alpine AS runner
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.revision="${VCS_REF}"
 WORKDIR /app
 COPY package*.json ./
 COPY --from=builder /app/node_modules ./node_modules

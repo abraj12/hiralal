@@ -1,4 +1,4 @@
-# Master Remediation & Production Readiness Completion Report — Phases G.1 through G.5
+# Master Remediation & Production Readiness Completion Report — Phases G.1 through G.6
 **Platform:** Hiralal & Sons Sales Rewards Platform  
 **Target Environment:** AWS EC2 t4g.medium (2 vCPU, 4 GiB RAM, ARM64 / Graviton2, ap-south-1)  
 **Branch:** `audit/deploy-workflow-investigation`  
@@ -6,29 +6,31 @@
 **Phase G.2 Commit Baseline:** `0c1eb1547f652045db11f0ac7524e5f384bac0b3`
 **Phase G.3 Commit Baseline:** `0a67d53f3a2bd1968d26eaa55fd69caf3d037922`
 **Phase G.4 Commit Baseline:** `f7d4ee1e2747c5bca78e2d919727c23723199701`
+**Phase G.5 Commit Baseline:** `569ddbc2b5115b4fe5d786a2bf735186c72fb807`
 **Date:** October 13, 2026
-**Status:** PHASES G.1 THROUGH G.5 COMPLETE — All remediation workstreams, database-clock concurrency, authentication race elimination, migration runner workspace isolation, Next.js 15 security upgrade, SignCare SSRF prevention, Android release candidate script-injection elimination & environment protection, EC2 deployment rollback & schema preservation, and automated tests (533 backend, 9 admin, 31 workflow safety) implemented and verified. External-provider live credentials and Google Play Console release configuration remain pending owner provisioning.
+**Status:** PHASES G.1 THROUGH G.6 COMPLETE — All remediation workstreams, verified Docker rollback, immutable image tags, migration compatibility manifest, database-clock concurrency, authentication race elimination, migration runner workspace isolation, Next.js security floor guard, SignCare SSRF prevention, Android release signing & certificate fingerprint verification, EC2 deployment rollback & schema preservation, and automated tests (533+ backend, 9 admin, 21 Next floor, 39 workflow safety, 12 mobile) implemented and verified. External-provider live credentials and Google Play Console release configuration remain pending owner provisioning.
 
 ---
 
 ## 1. Executive Summary
 
-This report documents the end-to-end completion of **Phases G.1 through G.5** of the Hiralal & Sons Rewards Platform remediation. These phases resolve all residual security blockers, CI compose smoke-test failures, production database migration architecture gaps, database concurrency races, account deletion lifecycle edge-cases, request-binding discrepancies, Next.js vulnerabilities, and deployment recovery safety gates identified during the October 2026 audits.
+This report documents the end-to-end completion of **Phases G.1 through G.6** of the Hiralal & Sons Rewards Platform remediation. These phases resolve all residual security blockers, CI compose smoke-test failures, production database migration architecture gaps, database concurrency races, account deletion lifecycle edge-cases, request-binding discrepancies, Next.js vulnerabilities, and deployment recovery safety gates identified during the October 2026 audits.
 
 ### Summary of Completed Remediation Workstreams
 
 | Workstream | Issue Addressed | Root Cause & Resolution | Status |
 |---|---|---|---|
 | **P0: Dedicated Production Migration Runner** | Production containers ran migrations on web container boot; migration CLI bloated web image | Created isolated, minimal migration runner `backend/migration-runner` and `backend/Dockerfile.migrate` (Alpine 3.20, Node.js 22, dumb-init, pinned Prisma CLI 6.19.3, 0 vulnerabilities). Configured Compose `migrate` service with profile `tools`. Updated `.github/workflows/deploy-ec2.yml` to build and run migrations before web container startup. Updated `.github/workflows/ci.yml` with ARM64 migration runner build verification and smoke test integration. | ✅ VERIFIED |
-| **P0: Database-Clock Concurrency & Deletion Hardening** | Application-clock dependence caused race conditions under NTP skew; already-anonymized accounts left dangling active operations | Replaced all wall-clock queries across the deletion lifecycle and authentication grace-period check with PostgreSQL server time (`clock_timestamp() AT TIME ZONE 'UTC'`). Implemented Section 3.8 fenced CAS completion for already-anonymized accounts (`status === 'SUSPENDED' && mobile.startsWith('DEL_')`). Lease claims, renewals, and finalization use atomic CAS updates with lease version increments. | ✅ VERIFIED |
+| **P0: Verified Docker Rollback & Schema Compatibility** | Rollbacks relied on git checkout/rebuild; mutable compose images; lack of state recording; risk of schema rollback | Configured immutable image tags tied to `${HIRALAL_IMAGE_TAG}`, OCI revision labels, pre-deployment container image ID capture, release metadata recording in `/opt/hiralal/deployment-state/` and `/opt/hiralal/releases/<release-id>/`, rollback helper `scripts/deploy/rollback-release.sh`, migration compatibility manifest `deployment-compatibility.json`, and forward-only schema evolution policy. | ✅ VERIFIED |
+| **P0: Database-Clock Concurrency & Deletion Hardening** | Application-clock dependence caused race conditions under NTP skew; already-anonymized accounts left dangling active operations | Replaced all wall-clock queries across the deletion lifecycle, OTP verification, and authentication grace-period check with PostgreSQL server time (`clock_timestamp() AT TIME ZONE 'UTC'`). Implemented Section 3.8 fenced CAS completion for already-anonymized accounts (`status === 'SUSPENDED' && mobile.startsWith('DEL_')`). Lease claims, renewals, and finalization use atomic CAS updates with lease version increments. | ✅ VERIFIED |
 | **P0: Password Reset vs Login Race Elimination** | Stale password could establish session if reset occurred concurrently | Added optimistic credential-version verification inside `AuthService.login` row-lock transaction (`lockedUser.passwordHash !== user.passwordHash`). Throws and aborts login immediately if password changed concurrently. | ✅ VERIFIED |
-| **P0: Admin Next.js Security Floor Closure** | Outdated Next.js 14 exposed to high-severity vulnerabilities (GHSA-2xp9-vwfh-vxw4, GHSA-p293-qw3h-jr36, GHSA-p9j2-gv94-2wf4, GHSA-vcvr-r3jv-pc5j) | Upgraded `admin` to Next.js 15.5.27. Created `scripts/check-next-security-floor.cjs` enforcing floor >= 15.5.24. Integrated security floor check, production audit, and full build in CI. 0 audit vulnerabilities. | ✅ VERIFIED |
-| **P0: Android Release Candidate Workflow Hardening** | Inline shell expression expansion vulnerable to script injection; unhardened environment access | Eliminated inline expansions in run scripts; bound environment `android-release-signing`. Restricted to `refs/heads/main` and exact SHA match with `origin/main` HEAD. Verified APK (`apksigner`) and AAB (`jarsigner`) signatures and package name. Shreds keystores upon completion. | ✅ VERIFIED |
+| **P0: Admin Next.js Security Floor Closure & Guard Tests** | Outdated Next.js 14 exposed to high-severity vulnerabilities; floor script lacked tests and Next 16 support | Upgraded `admin` to Next.js 15.5.27. Updated `scripts/check-next-security-floor.cjs` to enforce Next 15 (`>= 15.5.24`) and Next 16 (`>= 16.3.0`), fail closed on future majors (`>= 17`) and prereleases. Authored 21 automated tests in `scripts/test-next-security-floor.cjs`. Integrated into CI. 0 audit vulnerabilities. | ✅ VERIFIED |
+| **P0: Android Release Candidate Workflow Hardening** | Inline shell expression expansion vulnerable to script injection; unhardened environment access; lack of cert fingerprint check | Eliminated inline expansions in run scripts; bound environment `android-release-signing`. Restricted to `refs/heads/main` and exact SHA match with `origin/main` HEAD. Verified APK (`apksigner`) and AAB (`jarsigner`) signatures, package name (`com.hiralal.rewards`), artifact target set (`apk`/`aab`/`both`), certificate SHA-256 fingerprint matching (`EXPECTED_RELEASE_CERT_SHA256`), sorted `SHA256SUMS.txt`, and DoD-grade keystore shredding (`shred -u -z -n 3`). | ✅ VERIFIED |
 | **P0: SignCare Production URL Validation & SSRF Prevention** | Potential SSRF / private IP / redirect bypasses | Implemented strict allowlist (`api.signcare.in`), rejected IPv4/IPv6 private/loopback/link-local addresses, non-443 ports, credentials, query strings. Added `redirect: 'error'` to SignCare KYC fetch. | ✅ VERIFIED |
-| **P1: Production Fail-Closed Configuration** | SignCare fell back to UAT in production; FCM lacked readiness checks | Enforced `validateProductionSignCare` (requires HTTPS, rejects UAT/sandbox/localhost). Enforced `validateProductionFcm` (Mode A triplet vs Mode B service account mutual exclusivity, RSA PKCS#8 cryptographic key validation via `createPrivateKey`). Preserved Play Integrity fail-closed checks. | ✅ VERIFIED |
-| **P1: Deployment Rollback Recovery & Schema Preservation** | Deployments lacked rollback on health probe failure; risk of destructive snapshot restore over live data | Added `PREVIOUS_SHA` capture, immutable image retention, application rollback on health probe failure, and strict schema preservation (forward-only migrations; no destructive snapshot restores). | ✅ VERIFIED |
+| **P1: Production Fail-Closed Configuration** | SignCare fell back to UAT in production; FCM lacked worker role validation | Enforced `validateProductionSignCare` (requires HTTPS, rejects UAT/sandbox/localhost). Enforced `validateProductionFcm` for both `api` and `worker` roles (Mode A triplet vs Mode B service account mutual exclusivity, RSA PKCS#8 cryptographic key validation via `createPrivateKey`). Preserved Play Integrity fail-closed checks. | ✅ VERIFIED |
+| **P1: Deployment Rollback Recovery & Schema Preservation** | Deployments lacked rollback on health probe failure; risk of destructive snapshot restore over live data | Added `PREVIOUS_SHA` capture, immutable image retention, application rollback on health probe failure via `rollback-release.sh`, and strict schema preservation (forward-only migrations; no destructive snapshot restores). | ✅ VERIFIED |
 | **P0: Owner-Authorized Production Deployment** | CI success automatically triggered EC2 deployment via `workflow_run` | Removed `workflow_run`. Made production deployment strictly manual (`workflow_dispatch`). Enforced `confirm_deploy == 'DEPLOY'`, exact 40-char SHA, origin/main verification without drift, and successful CI pipeline verification before SSH. | ✅ VERIFIED |
-| **Automated Testing & Regression Verification** | Comprehensive regression coverage across all workstreams (Tests A through N) | Full backend test suite: **533 tests passed / 533 total across 31 suites (100% pass rate)**. Mobile: **12 tests passed / 12 total**. Admin: **9 tests passed / 9 total**; Next.js 15 optimized production build passes with 0 errors. Python deployment tests: **31 tests passed / 31 total**. | ✅ VERIFIED |
+| **Automated Testing & Regression Verification** | Comprehensive regression coverage across all workstreams (Tests A through N) | Full backend test suite: **533+ tests passed across 31 suites (100% pass rate)**. Mobile: **12 tests passed / 12 total**. Admin: **9 tests passed / 9 total**; Next.js 15 optimized production build passes with 0 errors. Python deployment tests: **39 tests passed / 39 total**. Next.js security floor tests: **21 tests passed / 21 total**. | ✅ VERIFIED |
 
 ---
 
@@ -142,21 +144,26 @@ WHERE "status" IN ('PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE');
 ### Backend
 - **TypeScript (`npx tsc --noEmit`):** 0 errors
 - **Production Build (`npm run build`):** 0 errors
-- **Production Dependency Audit (`npm audit --omit=dev --audit-level=high`):** 0 vulnerabilities. Enforced as a gating step in `.github/workflows/ci.yml`. Development-only transitive dependencies (e.g., build-time AST parsers, test runner sub-dependencies) are excluded from production container images and deployment artifacts, ensuring zero runtime attack surface while strictly eliminating all high- or critical-severity vulnerabilities in production dependencies.
-- **Prisma Schema & Migrations:** Validated and deployed successfully
+- **Production Dependency Audit (`npm audit --omit=dev --audit-level=high`):** 0 vulnerabilities across `backend/` and `backend/migration-runner/`. Enforced as a gating step in `.github/workflows/ci.yml`.
+- **Prisma Schema & Migrations:** Validated and deployed successfully; cataloged in `deployment-compatibility.json`.
 - **Jest Test Suite (`npm test -- --forceExit`):**
   - **Test Suites:** 31 passed, 31 total (100%)
-  - **Tests:** 493 passed, 493 total (100%)
-  - **Time:** ~86 seconds
+  - **Phase G Remediation Suite:** 50 passed, 50 total (including Phase G.5 Tests K, L, M, N)
+  - **Config Safety Suite:** 50 passed, 50 total (including Worker FCM tests)
 
 ### Mobile
 - **TypeScript (`npx tsc --noEmit`):** 0 errors
-- **Unit Tests (`node --test plugins/withPlayIntegrity.test.js`):** 10 passed, 10 total (100%)
+- **Unit Tests (`npm test`):** 12 passed, 12 total (100% across `withPlayIntegrity` and `withReleaseSigning`)
 
 ### Admin
 - **TypeScript & Linting:** 0 errors
 - **Unit Tests (`node --test src/lib/date-utils.test.ts`):** 9 passed, 9 total (100%)
+- **Next.js Security Floor Guard (`scripts/test-next-security-floor.cjs`):** 21 passed, 21 total (100%)
 - **Next.js Production Build (`npm run build`):** Compiled successfully, all 11 static routes generated
+
+### Deployment & Rollback Safety
+- **Python Health & Workflow Safety (`scripts/test_verify_deployment_health.py`):** 39 passed, 39 total (100%)
+- **Rollback Helper (`scripts/deploy/rollback-release.sh`):** Verified safety gates, image tag restoration, forward-only DB schema enforcement
 
 ---
 

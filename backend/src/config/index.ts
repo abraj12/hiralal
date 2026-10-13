@@ -378,7 +378,9 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
 
     validateProductionPlayIntegrity(env);
     validateProductionSignCare(env);
-    validateProductionFcm(env);
+    validateProductionFcm(env, 'api');
+  } else if (role === 'worker') {
+    validateProductionFcm(env, 'worker');
   }
 }
 
@@ -593,7 +595,7 @@ export function validateFcmPrivateKey(configuredValue: string | undefined): void
   }
 }
 
-export function validateProductionFcm(env: Record<string, string | undefined>): void {
+export function validateProductionFcm(env: Record<string, string | undefined>, role: string = 'api'): void {
   const saKey = (env.FIREBASE_SERVICE_ACCOUNT_KEY || env.FCM_SERVICE_ACCOUNT_KEY)?.trim();
   const projectId = (env.FIREBASE_PROJECT_ID || env.FCM_PROJECT_ID)?.trim();
   const clientEmail = (env.FIREBASE_CLIENT_EMAIL || env.FCM_CLIENT_EMAIL)?.trim();
@@ -611,7 +613,7 @@ export function validateProductionFcm(env: Record<string, string | undefined>): 
   // If neither Mode A nor Mode B is configured
   if (!saKey && !hasAnyIndividual) {
     throw new Error(
-      '[FATAL] Production startup halted for role "api". Missing required Firebase Cloud Messaging (FCM) credentials: configure either individual credentials (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) or service-account configuration (FIREBASE_SERVICE_ACCOUNT_KEY).'
+      `[FATAL] Production startup halted for role "${role}". Missing required Firebase Cloud Messaging (FCM) credentials: configure either individual credentials (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) or service-account configuration (FIREBASE_SERVICE_ACCOUNT_KEY).`
     );
   }
 

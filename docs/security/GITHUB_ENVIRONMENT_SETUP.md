@@ -34,12 +34,13 @@ Navigate to **Settings -> Environments -> android-release-signing -> Environment
 | `ANDROID_KEYSTORE_PASSWORD` | Passphrase protecting the keystore file | High-entropy passphrase |
 | `ANDROID_KEY_ALIAS` | Key alias inside the keystore | `hiralal-release-key` |
 | `ANDROID_KEY_PASSWORD` | Passphrase protecting the specific private key | High-entropy passphrase |
+| `EXPECTED_RELEASE_CERT_SHA256` | (Optional Secret or Variable) SHA-256 certificate digest | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
 
 > [!CAUTION]
 > **Secret Hygiene Safeguards:**
 > - NEVER store these secrets in Repository Secrets or Organization Secrets where ordinary CI runs could access them.
 > - Scope them exclusively to `android-release-signing`.
-> - Keystore material is decoded only into `$RUNNER_TEMP` during build and securely wiped (`shred -u || rm -f`) in an `always()` post-step.
+> - Keystore material is decoded only into `$RUNNER_TEMP` during build and securely wiped (`shred -u -z -n 3 || rm -f`) in an `always()` post-step.
 
 ### Required Environment Protection Rules
 Navigate to **Settings -> Environments -> android-release-signing -> Deployment protection rules**:
@@ -60,7 +61,7 @@ Navigate to **Settings -> Environments -> android-release-signing -> Deployment 
 ## 3. Environment B: `production`
 
 ### Purpose
-Governs live deployment to AWS EC2 Graviton2 ARM64 instances, pre-migration database backup execution, migration runner invocation, and stack startup.
+Governs live deployment to AWS EC2 Graviton2 ARM64 instances, pre-migration database backup execution, migration runner invocation, deployment state recording, and stack startup.
 
 ### Required Environment Secrets
 Navigate to **Settings -> Environments -> production -> Environment secrets**:
@@ -84,6 +85,12 @@ Navigate to **Settings -> Environments -> production -> Deployment protection ru
    - Rule: `main` only.
 3. **Environment variables (Optional/Non-secret)**:
    - `APP_DIR`: `/opt/hiralal`
+
+### Production Release and Rollback Safety Policy
+1. **Immutable Docker Image Tags**: Every release build assigns explicit, immutable image tags (`hiralal-backend:${TARGET_SHA}`, `hiralal-worker:${TARGET_SHA}`, `hiralal-admin:${TARGET_SHA}`).
+2. **Deployment State Records**: Non-secret metadata is written to `/opt/hiralal/deployment-state/active-release.json` and archived in `/opt/hiralal/releases/<release-sha>/release.json`.
+3. **Automated Rollback Helper**: On failure of candidate health checks, `./scripts/deploy/rollback-release.sh` evaluates database migration compatibility via `backend/prisma/migrations/deployment-compatibility.json`. If breaking migrations were applied, automatic application rollback fails closed and alerts the operator. If compatible, application containers are safely restored to `PREVIOUS_SHA` without rebuilding from source.
+4. **Forward-Only Database Invariant**: Database backups are never restored over live writes or active user sessions. All database schema fixes must roll forward.
 
 ---
 

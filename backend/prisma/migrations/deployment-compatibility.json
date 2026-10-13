@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "platform": "Hiralal & Sons Rewards Platform",
+  "description": "Authoritative database migration rollback compatibility manifest. Defines backward compatibility and application rollback safety for all applied Prisma migrations.",
+  "policy": {
+    "forwardOnlyDatabaseSchema": true,
+    "neverRestoreSnapshotOverLiveWrites": true,
+    "blockAppRollbackOnBreakingMigrations": true
+  },
+  "migrations": [
+    {
+      "id": "20261005160000_init_production_schema",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Initial production baseline schema: users, bills, transactions, rewards, KYC, audits."
+    },
+    {
+      "id": "20261005230000_dynamic_business_rules_profession_separation",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive tables and columns for profession separation and dynamic business rules."
+    },
+    {
+      "id": "20261010110000_bill_file_hash_unique",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Adds unique index on billFileHash to prevent duplicate invoice uploads."
+    },
+    {
+      "id": "20261010120000_pan_protection_webhook_lease_payout_reconciliation",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive columns and indexes for PAN protection, webhook idempotency leases, and payout reconciliation."
+    },
+    {
+      "id": "20261010160000_structured_names_kyc_consent_payout_admin_approval",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive columns for structured KYC names, consent tracking, and payout admin approval workflows."
+    },
+    {
+      "id": "20261010180000_admin_roles_and_single_active_session",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive columns and AdminSession table for dual admin roles and single-active session enforcement."
+    },
+    {
+      "id": "20261011100000_global_reward_pool_and_provider_registered_name",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive GlobalRewardPool table and providerRegisteredName column."
+    },
+    {
+      "id": "20261011110000_payment_account_provider_name_verified",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive providerNameVerified column on PaymentAccount."
+    },
+    {
+      "id": "20261011123000_remove_active_reward_pools_and_pool_limits",
+      "isBackwardCompatible": false,
+      "destructive": true,
+      "breakingChanges": [
+        "DROP TABLE RewardPool",
+        "DROP TABLE GlobalRewardPool",
+        "ALTER TABLE RewardRule DROP COLUMN monthlyPoolLimit"
+      ],
+      "allowsApplicationRollback": false,
+      "description": "Destructive schema migration: removes obsolete RewardPool and GlobalRewardPool tables and monthlyPoolLimit column."
+    },
+    {
+      "id": "20261011180000_remove_obsolete_redemption_amount_limits",
+      "isBackwardCompatible": false,
+      "destructive": true,
+      "breakingChanges": [
+        "ALTER TABLE RewardRule DROP COLUMN minRedemptionAmount",
+        "ALTER TABLE RewardRule DROP COLUMN maxRedemptionAmount",
+        "ALTER TABLE RedemptionSettings DROP COLUMN minimumAmount",
+        "ALTER TABLE RedemptionSettings DROP COLUMN maximumAmount"
+      ],
+      "allowsApplicationRollback": false,
+      "description": "Destructive schema migration: removes deprecated min/max redemption amount limits from RewardRule and RedemptionSettings."
+    },
+    {
+      "id": "20261011193000_notification_system_push_tokens_campaigns",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive PushToken and PushCampaign tables for notification subsystem."
+    },
+    {
+      "id": "20261012110000_reward_rule_profession_version_unique",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive unique compound index on RewardRule(profession, version)."
+    },
+    {
+      "id": "20261012190000_remove_reward_default_and_add_redemption_min_and_account_deletion",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Drops default percentage on RewardRule, adds minimumRedemptionAmount, adds account deletion fields to User, and enforces two-admin uniqueness."
+    },
+    {
+      "id": "20261012210000_safe_removal_of_legacy_admin_role",
+      "isBackwardCompatible": false,
+      "destructive": true,
+      "breakingChanges": [
+        "DROP VALUE 'ADMIN' from UserRole enum"
+      ],
+      "allowsApplicationRollback": false,
+      "description": "Destructive enum migration: removes legacy 'ADMIN' value from UserRole PostgreSQL enum, enforcing strict separation of BILL_ADMIN and OPERATIONS_ADMIN."
+    },
+    {
+      "id": "20261012220000_installation_and_deletion_operations",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive tables AppInstallation and AccountDeletionOperation for installation tracking and asynchronous deletion state machine."
+    },
+    {
+      "id": "20261013000000_welcome_claim_and_deletion_fencing",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Adds claim tracking columns to AppInstallation and database-level lease fencing fields (leaseOwner, leaseVersion, leaseExpiresAt) to AccountDeletionOperation."
+    },
+    {
+      "id": "20261013010000_destructive_started_at_and_active_op_index",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Adds destructiveStartedAt column and partial unique index on AccountDeletionOperation for active operations per user."
+    }
+  ]
+}

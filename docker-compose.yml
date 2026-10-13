@@ -81,9 +81,12 @@ services:
         max-file: '5'
 
   backend:
+    image: hiralal-backend:${HIRALAL_IMAGE_TAG:?HIRALAL_IMAGE_TAG is required}
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        VCS_REF: ${HIRALAL_IMAGE_TAG:-unknown}
     container_name: hiralal_backend
     restart: unless-stopped
     command: node dist/server.js
@@ -144,6 +147,7 @@ services:
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
       FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
       FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
+      FIREBASE_SERVICE_ACCOUNT_KEY: ${FIREBASE_SERVICE_ACCOUNT_KEY:-}
     expose:
       - '5000'
     volumes:
@@ -165,9 +169,12 @@ services:
   migrate:
     profiles:
       - tools
+    image: hiralal-migrate:${HIRALAL_IMAGE_TAG:-local}
     build:
       context: ./backend
       dockerfile: Dockerfile.migrate
+      args:
+        VCS_REF: ${HIRALAL_IMAGE_TAG:-unknown}
     container_name: hiralal_migrate
     restart: "no"
     depends_on:
@@ -184,9 +191,12 @@ services:
         max-file: '3'
 
   worker:
+    image: hiralal-worker:${HIRALAL_IMAGE_TAG:?HIRALAL_IMAGE_TAG is required}
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        VCS_REF: ${HIRALAL_IMAGE_TAG:-unknown}
     container_name: hiralal_worker
     restart: unless-stopped
     command: node dist/worker/index.js
@@ -221,6 +231,10 @@ services:
       RAZORPAYX_KEY_ID: ${RAZORPAYX_KEY_ID:?RAZORPAYX_KEY_ID is required}
       RAZORPAYX_KEY_SECRET: ${RAZORPAYX_KEY_SECRET:?RAZORPAYX_KEY_SECRET is required}
       RAZORPAYX_ACCOUNT_NUMBER: ${RAZORPAYX_ACCOUNT_NUMBER:?RAZORPAYX_ACCOUNT_NUMBER is required}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
+      FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
+      FIREBASE_SERVICE_ACCOUNT_KEY: ${FIREBASE_SERVICE_ACCOUNT_KEY:-}
     networks:
       - hiralal_net
     logging:
@@ -230,9 +244,12 @@ services:
         max-file: '5'
 
   admin:
+    image: hiralal-admin:${HIRALAL_IMAGE_TAG:?HIRALAL_IMAGE_TAG is required}
     build:
       context: ./admin
       dockerfile: Dockerfile
+      args:
+        VCS_REF: ${HIRALAL_IMAGE_TAG:-unknown}
     container_name: hiralal_admin
     restart: unless-stopped
     deploy:

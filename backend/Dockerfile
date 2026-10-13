@@ -28,6 +28,9 @@ RUN npm prune --omit=dev && npm cache clean --force
 # Stage 2: Production Runner
 FROM node:22-alpine AS runner
 
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.revision="${VCS_REF}"
+
 WORKDIR /app
 
 RUN apk add --no-cache openssl libc6-compat dumb-init

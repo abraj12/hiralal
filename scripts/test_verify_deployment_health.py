@@ -260,5 +260,92 @@ class TestDeploymentWorkflowSafety(unittest.TestCase):
             self.assertNotIn('echo "${{ secrets.ANDROID_KEY_PASSWORD }}"', content)
 
 
+class TestRollbackAndReleaseIntegrity(unittest.TestCase):
+    """
+    Automated verification of Docker rollback, image immutability, migration compatibility,
+    and release candidate verification in Phase G.6.
+    """
+    def setUp(self):
+        self.repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.compose_path = os.path.join(self.repo_root, "docker-compose.yml")
+        self.env_example_path = os.path.join(self.repo_root, ".env.example")
+        self.manifest_path = os.path.join(self.repo_root, "backend", "prisma", "migrations", "deployment-compatibility.json")
+        self.rollback_script_path = os.path.join(self.repo_root, "scripts", "deploy", "rollback-release.sh")
+        self.backend_dockerfile = os.path.join(self.repo_root, "backend", "Dockerfile")
+        self.admin_dockerfile = os.path.join(self.repo_root, "admin", "Dockerfile")
+        self.migrate_dockerfile = os.path.join(self.repo_root, "backend", "Dockerfile.migrate")
+        self.android_workflow = os.path.join(self.repo_root, ".github", "workflows", "android-release-candidate.yml")
+        self.deploy_workflow = os.path.join(self.repo_root, ".github", "workflows", "deploy-ec2.yml")
+
+        with open(self.compose_path, "r", encoding="utf-8") as f:
+            self.compose_content = f.read()
+        with open(self.env_example_path, "r", encoding="utf-8") as f:
+            self.env_example_content = f.read()
+        with open(self.manifest_path, "r", encoding="utf-8") as f:
+            self.manifest_content = f.read()
+        with open(self.rollback_script_path, "r", encoding="utf-8") as f:
+            self.rollback_script_content = f.read()
+        with open(self.android_workflow, "r", encoding="utf-8") as f:
+            self.android_workflow_content = f.read()
+        with open(self.deploy_workflow, "r", encoding="utf-8") as f:
+            self.deploy_workflow_content = f.read()
+
+    def test_docker_compose_immutable_image_tags(self):
+        """docker-compose.yml must define explicit, immutable image tags tied to HIRALAL_IMAGE_TAG."""
+        self.assertIn("hiralal-backend:${HIRALAL_IMAGE_TAG:?HIRALAL_IMAGE_TAG is required}", self.compose_content)
+        self.assertIn("hiralal-worker:${HIRALAL_IMAGE_TAG:?HIRALAL_IMAGE_TAG is required}", self.compose_content)
+        self.assertIn("hiralal-admin:${HIRALAL_IMAGE_TAG:?HIRALAL_IMAGE_TAG is required}", self.compose_content)
+
+    def test_docker_compose_vcs_ref_build_args(self):
+        """docker-compose.yml services must pass VCS_REF build args."""
+        self.assertIn("VCS_REF: ${HIRALAL_IMAGE_TAG:-unknown}", self.compose_content)
+
+    def test_dockerfiles_have_oci_revision_labels(self):
+        """All production Dockerfiles must declare OCI revision labels in runner stages."""
+        for path in [self.backend_dockerfile, self.admin_dockerfile, self.migrate_dockerfile]:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.assertIn("LABEL org.opencontainers.image.revision", content)
+
+    def test_env_example_has_image_tag_default(self):
+        """env.example must define default HIRALAL_IMAGE_TAG=local for dev/CI compose execution."""
+        self.assertIn("HIRALAL_IMAGE_TAG=local", self.env_example_content)
+
+    def test_migration_compatibility_manifest_integrity(self):
+        """deployment-compatibility.json must catalog all migrations with breaking change designations."""
+        import json
+        manifest = json.loads(self.manifest_content)
+        self.assertEqual(manifest.get("version"), "1.0.0")
+        migrations = manifest.get("migrations", [])
+        self.assertGreaterEqual(len(migrations), 17)
+
+        # Verify breaking migrations are marked properly
+        breaking_ids = [m["id"] for m in migrations if not m.get("isBackwardCompatible", True)]
+        self.assertIn("20261011123000_remove_active_reward_pools_and_pool_limits", breaking_ids)
+        self.assertIn("20261011180000_remove_obsolete_redemption_amount_limits", breaking_ids)
+        self.assertIn("20261012210000_safe_removal_of_legacy_admin_role", breaking_ids)
+
+    def test_rollback_script_safety_invariants(self):
+        """Rollback helper script must enforce forward-only database schema, compatibility gate, and health checks."""
+        self.assertIn("FORWARD-ONLY", self.rollback_script_content)
+        self.assertIn("deployment-compatibility.json", self.rollback_script_content)
+        self.assertIn("verify-deployment-health.py", self.rollback_script_content)
+        self.assertIn("hiralal-backend", self.rollback_script_content)
+
+    def test_android_release_workflow_verifies_all_requested_targets(self):
+        """Android release workflow must enforce existence of requested artifact set based on target."""
+        self.assertIn("APK_COUNT", self.android_workflow_content)
+        self.assertIn("AAB_COUNT", self.android_workflow_content)
+        self.assertIn("EXPECTED_RELEASE_CERT_SHA256", self.android_workflow_content)
+        self.assertIn("sort -k2 > SHA256SUMS.txt", self.android_workflow_content)
+        self.assertIn("sha256sum --check SHA256SUMS.txt", self.android_workflow_content)
+
+    def test_deploy_workflow_stores_release_metadata_and_calls_rollback(self):
+        """deploy-ec2.yml must capture running container IDs, store active release metadata, and call rollback-release.sh."""
+        self.assertIn("active-release.json", self.deploy_workflow_content)
+        self.assertIn("rollback-release.sh", self.deploy_workflow_content)
+        self.assertIn("CURRENT_BACKEND_IMG", self.deploy_workflow_content)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

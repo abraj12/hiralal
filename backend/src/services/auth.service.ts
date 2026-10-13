@@ -772,39 +772,33 @@ export class AuthService {
       };
     }
 
-    const now = new Date();
+    // Look up latest unused, non-expired OTP record using database clock with row-level lock
+    const latestRows = await tx.$queryRaw<Array<{
+      id: string;
+      otpHash: string;
+      attemptsCount: number;
+      isUsed: boolean;
+      expiresAt: Date;
+    }>>`
+      SELECT "id", "otpHash", "attemptsCount", "isUsed", "expiresAt"
+      FROM "OtpRequest"
+      WHERE "mobile" = ${cleanMobile}
+        AND "purpose" = ${params.purpose}::"OtpPurpose"
+        AND "isUsed" = false
+        AND "expiresAt" > (clock_timestamp() AT TIME ZONE 'UTC')
+      ORDER BY "createdAt" DESC
+      LIMIT 1
+      FOR UPDATE
+    `;
 
-    // Look up latest unused, non-expired OTP record
-    const latest = await tx.otpRequest.findFirst({
-      where: {
-        mobile: cleanMobile,
-        purpose: params.purpose as OtpPurpose,
-        isUsed: false,
-        expiresAt: { gt: now },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    if (!latest) {
+    if (!latestRows || latestRows.length === 0) {
       return {
         success: false,
         message: 'Verification code has expired or is invalid. Please request a new code.',
       };
     }
 
-    // Lock row FOR UPDATE to protect attempt limit against concurrent requests
-    await tx.$queryRaw`SELECT "id" FROM "OtpRequest" WHERE "id" = ${latest.id} FOR UPDATE`;
-
-    const record = await tx.otpRequest.findUnique({
-      where: { id: latest.id },
-    });
-
-    if (!record || record.isUsed || record.expiresAt <= new Date()) {
-      return {
-        success: false,
-        message: 'Verification code has expired or is invalid. Please request a new code.',
-      };
-    }
+    const record = latestRows[0];
 
     if (record.attemptsCount >= 5) {
       await tx.otpRequest.update({
@@ -858,7 +852,7 @@ export class AuthService {
     // Generate short-lived verificationToken (32 bytes hex)
     const verificationToken = generateSecureToken(32);
     const tokenHash = sha256Hash(verificationToken);
-    const tokenExpiresAt = new Date(now.getTime() + 15 * 60 * 1000); // 15 mins
+    const tokenExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
 
     await tx.verificationToken.create({
       data: {
