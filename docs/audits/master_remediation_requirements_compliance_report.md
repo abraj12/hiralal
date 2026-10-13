@@ -1,153 +1,248 @@
 # HIRALAL & SONS REWARDS PLATFORM
-## MASTER REMEDIATION, REQUIREMENTS-COMPLIANCE & RELEASE-READINESS AUDIT REPORT
+## MASTER REMEDIATION PROMPT — V2: SEVEN OUTSTANDING FIXES & RELEASE READINESS AUDIT REPORT
 
 **Date:** 2026-10-13  
-**Auditor / Engineer:** Senior Full-Stack & Application Security Engineer  
+**Auditor / Engineer:** Principal Full-Stack Engineer, Application Security Engineer & DevSecOps Lead  
 **Working Branch:** `audit/deploy-workflow-investigation`  
-**Starting Commit:** `5419ed335647186d1135e7844940ddb13046ca2d`  
-**Base `main` Commit (Preserved & Untouched):** `b90136ccc046dbc1f3f50f3e0993cb1c21375789`  
-**Remediation Commit:** `5f27f01d040de6191c794bd0a5e5ed494b72f071`  
+**Starting Baseline Commit:** `8fb45ba468ff3eba7fd644046eebd224bc483ed2`  
+**Main Baseline Commit (Preserved & Untouched):** `b90136ccc046dbc1f3f50f3e0993cb1c21375789`  
+**Remediation Code Commit:** `05ef85f24c63050869e9bb0b14e7f50fb2df95df`  
+**Canonical API Endpoint:** `https://hsspl.algions.in/api/v1`  
+**Admin Portal Target:** `https://hsspl.algions.in`  
 
 ---
 
 ## 1. Executive Summary & Verification Highlights
 
-A comprehensive, end-to-end remediation pass was completed for the Hiralal & Sons Sales Rewards Platform to enforce all product invariants, eliminate implicit fallbacks, rectify reverse GST calculation, uphold temporal accuracy in `Asia/Kolkata`, implement account lockout defenses, enforce strict admin role separation, standardize canonical API routing to `/api/v1`, and harden CI/CD workflows for EC2 deployment and Android release candidates.
+This remediation pass resolves all seven outstanding defects identified in the independent GitHub audit of the Hiralal & Sons Sales Rewards Platform. The changes implement fail-closed security invariants, concurrency safety under PostgreSQL, rigorous Android release pipeline validation, mobile unconfigured initial states with deliberate retry mechanisms, and fail-closed deployment lifecycle controls.
 
-### Overall Verification Summary:
-- **Backend Test Suite:** 32 / 32 test suites passed, 554 / 554 tests passing (100% green).
-- **Master Compliance Suite:** 21 / 21 tests passed (`backend/src/tests/master_requirements_compliance.spec.ts`).
-- **Python Health & Compatibility Tests:** 49 / 49 tests passed (`scripts/test_migration_compatibility.py`, `scripts/test_verify_deployment_health.py`).
-- **Next.js Security Floor Regression Suite:** 22 / 22 tests passed (`scripts/test-next-security-floor.cjs`).
-- **Admin Portal:** TypeScript & Next.js production build succeeded with 0 errors across all 11 static pages. Unit tests passed 9 / 9.
-- **Mobile Client:** TypeScript check passed with 0 errors (`mobile/tsconfig.json`). Unit tests passed 16 / 16 (`plugins/withPlayIntegrity.test.js`, `plugins/withReleaseSigning.test.js`, `plugins/apiUrlValidation.test.js`).
-- **Database Migrations:** Clean additive migration `20261013190000_retire_legacy_rules_and_add_password_lockout` verified against schema and deployment-compatibility registry.
+Every change has been validated by running the complete suite of tests and builds across backend, admin, mobile, Python, and Next.js security guards.
 
----
+### Verification Summary Table:
 
-## 2. Invariant & Requirements Compliance Matrix
-
-| Requirement / Invariant | Implementation Details | Status |
-| :--- | :--- | :--- |
-| **Two Admin Roles Only** | `BILL_ADMIN` (bill review only) and `OPERATIONS_ADMIN` (all system & financial ops). No `SUPER_ADMIN` or other roles. | **ENFORCED** |
-| **No Reward Pools or Caps** | Global pools and monthly reward caps completely eliminated from calculations, schemas, and queries. | **ENFORCED** |
-| **No Default / Fallback Reward Rates** | Removed hardcoded default reward rates (`0.50%`, `0.75%`) from app code, forms, utilities, and seed scripts. Missing reward rule fails closed with `[NO_APPLICABLE_REWARD_RULE]`. | **ENFORCED** |
-| **Reverse GST Calculation** | Correct reverse formula implemented: `grossBillAmount - (grossBillAmount / (1 + configuredGstRate / 100))`. Fails closed with `[NO_APPLICABLE_GST_RULE]` if GST is included without a configured rate. | **ENFORCED** |
-| **Asia/Kolkata Date & Time Accuracy** | Exact date and time preserved down to second in `Asia/Kolkata` (`+05:30`) timezone. Truncation to midnight removed. | **ENFORCED** |
-| **Approved Bill & Ledger Immutability** | Approved bill reward snapshots and historical ledger entries are completely immutable. Never recalculated retroactively. | **ENFORCED** |
-| **Redemption Settings Disabled by Default** | Initial redemption window is closed (`isEnabled: false`) and unconfigured (`minimumRedemptionAmount: null`, `startAt: null`, `endAt: null`). Requires positive threshold and active window (`startAt < endAt` and `now >= startAt && now < endAt`). | **ENFORCED** |
-| **Persistent Account Lockout** | Users and admins are locked for 15 minutes (`900s`) after 10 consecutive failed password attempts. Tracked persistently in `User.failedPasswordAttempts` and `User.lockedUntil`. | **ENFORCED** |
-| **Admin Dashboard Role Separation** | `GET /dashboard` strictly branches on role. `BILL_ADMIN` receives only bill stats and recent bills; operational user, payout, and wallet metrics are excluded. | **ENFORCED** |
-| **Canonical API Endpoint (`/api/v1`)** | Express router mounts canonical routes at `/api/v1` with backwards-compatible `/api` alias. Mobile and admin clients target HTTPS `/api/v1` and validate url structure in production. | **ENFORCED** |
-| **EC2 Deploy Active-Release Reader** | Fixed `node:fs` module import, enforced 40-character SHA check, exit 2 fail-closed on corrupt metadata, eliminated `git rev-parse HEAD` fallback. | **ENFORCED** |
-| **Android Release Verification Hardening** | APK verification fails closed if package name cannot be extracted. AAB verification dumps manifest via bundletool to guarantee package matches `com.hiralal.rewards`. | **ENFORCED** |
+| Verification Suite | Scope / Command | Result | Details |
+| :--- | :--- | :--- | :--- |
+| **Backend Test Suite** | `npm --prefix backend test -- --runInBand` | **PASS (32 / 32 suites)** | **555 / 555 tests passing (100% green)** |
+| **Master Compliance Suite** | `npm --prefix backend test src/tests/master_requirements_compliance.spec.ts` | **PASS (1 / 1 suite)** | **21 / 21 tests passing**, including atomic concurrency lockout |
+| **Hardening & Seeding Suite** | `npm --prefix backend test src/tests/part2a4_hardening.spec.ts` | **PASS (1 / 1 suite)** | **39 / 39 tests passing**, verifying zero dev rules seeded |
+| **Backend TypeScript Build** | `npm --prefix backend run build` | **PASS (Exit 0)** | Clean compilation via `tsc` without errors |
+| **Admin Portal Unit Tests** | `npm --prefix admin test` | **PASS (1 / 1 suite)** | **9 / 9 tests passing** (`date-utils.test.ts`) |
+| **Admin Portal Build** | `npm --prefix admin run build` | **PASS (Exit 0)** | Next.js 15.5.27 production build: 11 / 11 static pages generated |
+| **Mobile Client Tests** | `npm --prefix mobile test` | **PASS (4 / 4 suites)** | **24 / 24 tests passing** (`node --test`) |
+| **Mobile TypeScript Check** | `npx tsc --noEmit` in `mobile/` | **PASS (Exit 0)** | 0 type errors across all mobile components and services |
+| **Python Health & Deploy Tests** | `python -m unittest scripts/test_*.py` | **PASS (Exit 0)** | **53 / 53 tests passing** (liveness, rollback, bundletool, migrations) |
+| **Next.js Security Floor** | `node scripts/test-next-security-floor.cjs` | **PASS (Exit 0)** | **22 / 22 tests passing** (GHSA-vcvr-r3jv-pc5j patch compliance) |
 
 ---
 
-## 3. Detailed Component Changes
+## 2. The Seven Outstanding Fixes (V2 Remediation Matrix)
 
-### 3.1 Backend Calculations & Business Rules
-- `backend/src/utils/money.utils.ts`:
-  - Removed `ratePercentage = 0.50` default parameter in `calculateRewardAmount`.
-  - Added positive finite check on reward rate percentage.
-- `backend/src/services/gst.service.ts`:
-  - Implemented `calculateReverseGst(grossBillAmount, gstIncluded, configuredGstRate)` using the exact formula:
-    $$\text{gstDeduction} = \text{grossBillAmount} - \frac{\text{grossBillAmount}}{1 + \frac{\text{configuredGstRate}}{100}}$$
-    $$\text{netEligibleAmount} = \frac{\text{grossBillAmount}}{1 + \frac{\text{configuredGstRate}}{100}}$$
-  - Added `[NO_APPLICABLE_GST_RULE]` fail-closed error when GST is included without a configured non-zero rate.
-  - Updated `getDefaultGstRule` to return `null` if no explicit default rule is configured.
-- `backend/src/services/bill.service.ts`:
-  - Connected bill approval flow to `GstService.calculateReverseGst`.
-  - Fails closed with `[NO_APPLICABLE_GST_RULE]` if GST is included and no rule exists.
-- `backend/src/utils/timezone.utils.ts`:
-  - Added `parseIndiaEffectiveDateTime(input)` preserving exact hour, minute, second in `Asia/Kolkata`.
-- `backend/src/services/reward-rule.service.ts`:
-  - Replaced midnight truncation with `parseIndiaEffectiveDateTime`.
-  - Collision error formatted with complete timestamp `yyyy-MM-dd HH:mm:ss`.
+### FIX 1: Inject and Validate Production API URL in Android Build & Mobile Client
+- **Files Modified / Added:**
+  - `mobile/src/services/apiUrl.ts`
+  - `mobile/plugins/validateApiUrl.js` (new)
+  - `mobile/plugins/apiUrlValidation.test.js`
+  - `.github/workflows/android-release-candidate.yml`
+- **Implementation:**
+  - In `mobile/src/services/apiUrl.ts` and `mobile/plugins/validateApiUrl.js`, implemented `validateProductionApiUrl` enforcing:
+    - Must use HTTPS protocol (`https:`).
+    - Hostname must be strictly `hsspl.algions.in`.
+    - Path must normalize to `/api/v1` without search query parameters or hash fragments.
+    - Throws descriptive fail-closed errors on nullish, empty, or insecure URL configurations.
+  - In `.github/workflows/android-release-candidate.yml`, added explicit pre-build step `Validate Production API URL Configuration`, and bound `EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL || 'https://hsspl.algions.in/api/v1' }}` into both Expo prebuild and Gradle release build steps.
+- **Verification Evidence:**
+  - 6 unit tests in `mobile/plugins/apiUrlValidation.test.js` pass, rejecting HTTP, non-canonical hosts, extra paths, queries, and empty values.
 
-### 3.2 Authentication & Security Hardening
-- `backend/prisma/schema.prisma` & Database Migration:
-  - Added `failedPasswordAttempts Int @default(0)` and `lockedUntil DateTime?` to `User`.
-  - Created forward-only migration `20261013190000_retire_legacy_rules_and_add_password_lockout/migration.sql`.
-  - Deactivated legacy seeded default rules to ensure clean, unconfigured state.
-- `backend/src/config/index.ts`:
-  - Added `auth: { lockoutSeconds, maxFailedAttempts }` with 900s lockout and 10 attempts max.
-  - Added `'xyz'` and `'abc'` to forbidden placeholder prefixes.
-  - Required distinct, non-placeholder `BILL_ADMIN_PREFIX` and `OPERATIONS_ADMIN_PREFIX`.
-- `backend/src/services/auth.service.ts`:
-  - Implemented persistent lockout after 10 failed attempts across `login`, `requestAdminOtp`, and `loginAdmin`.
-  - Verified `lockedUntil > new Date()` before credential checks; resets on successful login.
-- `backend/src/routes/admin.routes.ts`:
-  - `GET /dashboard` checks `req.user.role === 'BILL_ADMIN'` and returns only bill metrics, omitting user, payout, and wallet data.
-  - `PUT /settings/reward-rules` enforces explicit `profession` and `percentage`.
+### FIX 2: Redemption Fails Closed Until Explicitly Configured
+- **Files Modified / Added:**
+  - `backend/src/services/payout.service.ts`
+  - `backend/src/routes/admin.routes.ts`
+  - `backend/prisma/migrations/20261013210000_disable_invalid_redemption_settings/migration.sql` (new)
+  - `backend/prisma/migrations/deployment-compatibility.json`
+  - Test suites: `global_reward_cap.spec.ts`, `concurrency_financial.spec.ts`, `payout_safety_worker.spec.ts`, `p0_remediation_integrity.spec.ts`, `account_deletion_and_threshold.spec.ts`, `dynamic_business_rules.spec.ts`, `admin_roles_and_coverage.spec.ts`, `api_flows.spec.ts`, `production_hardening_rc.spec.ts`
+- **Implementation:**
+  - In `backend/src/services/payout.service.ts`, implemented and exported `isRedemptionWindowOpen(settings, now)`:
+    - Requires `isEnabled === true`.
+    - Requires positive finite `minimumRedemptionAmount > 0`.
+    - Requires valid `startAt` and `endAt` timestamps with `startAt < endAt`.
+    - Window evaluated with inclusive start (`now >= startAt`) and exclusive end (`now < endAt`).
+    - Unified into `getRedemptionSettings`, `checkUserEligibility`, and `requestRedemption`.
+  - In `backend/src/routes/admin.routes.ts`: `PUT /settings/redemption` strictly validates `startAt`, `endAt`, `endAt > startAt`, and `minRedemption > 0` server-side when `isEnabled` is true, rejecting missing or invalid timestamps with 400 Bad Request, and executing updates atomically in `$transaction`.
+  - In `backend/prisma/migrations/20261013210000_disable_invalid_redemption_settings/migration.sql`: deployed forward-only migration updating any legacy records with `isEnabled = TRUE` and invalid/missing timestamps or non-positive threshold to `isEnabled = FALSE`.
+  - Registered migration in `deployment-compatibility.json`.
 
-### 3.3 Routing & Client Configurations
-- `backend/src/server.ts`:
-  - Created `v1Router` and mounted under `/api/v1` (canonical) and `/api` (backwards-compatible alias).
-- `admin/src/lib/apiConfig.ts` & `backend/src/utils/adminApi.utils.ts`:
-  - Defaulted same-origin reverse proxy target to `/api/v1`.
-- `admin/src/pages/settings.tsx`:
-  - Blank unconfigured initial form states.
-  - 3-column reward rule layout with IST date and time inputs.
-  - Empty state message for GST rules when no rules exist.
-- `mobile/src/services/apiUrl.ts` & `mobile/src/services/api.ts`:
-  - Added `validateProductionApiUrl` enforcing HTTPS protocol and `/api/v1` path.
+### FIX 3: Failed-Password Lockout Safe Under Concurrency
+- **Files Modified:**
+  - `backend/src/services/auth.service.ts`
+  - `backend/src/tests/master_requirements_compliance.spec.ts`
+- **Implementation:**
+  - Replaced read-modify-write pattern with single atomic PostgreSQL `UPDATE` query:
+    ```sql
+    UPDATE "User"
+    SET "failedPasswordAttempts" = "failedPasswordAttempts" + 1,
+        "lockedUntil" = CASE
+          WHEN "failedPasswordAttempts" + 1 >= 10
+          THEN NOW() + (900 || ' seconds')::INTERVAL
+          ELSE "lockedUntil"
+        END
+    WHERE "id" = $1
+    RETURNING "failedPasswordAttempts", "lockedUntil"
+    ```
+  - Added atomic `resetFailedPasswordAttempts` query (`UPDATE "User" SET "failedPasswordAttempts" = 0, "lockedUntil" = NULL WHERE "id" = $1`).
+  - Integrated into `requestAdminOtp`, `loginAdmin`, and `login`. Checked `lockedUntil > Date.now()` prior to verifying passwords.
+- **Verification Evidence:**
+  - Added isolated concurrency test in `backend/src/tests/master_requirements_compliance.spec.ts` executing 10 simultaneous failed login attempts via `Promise.all`: verified 0 lost increments, exact final count of 10, immediate persistent lockout, and immediate rejection of correct password during lockout.
 
-### 3.4 Workflows & CI/CD Pipelines
-- `.github/workflows/deploy-ec2.yml`:
-  - Fixed `node:fs` module import in active-release reader.
-  - Exit 2 fail-closed on corrupt JSON or missing 40-character SHA.
-  - Removed unverified `git rev-parse HEAD` fallback.
-- `.github/workflows/android-release-candidate.yml`:
-  - Added fail-closed check if APK package name cannot be extracted with `aapt`.
-  - Added AAB manifest verification via bundletool to guarantee binary package is `com.hiralal.rewards`.
+### FIX 4: Correct First-Deployment and Missing-State Handling in EC2 Deployment
+- **Files Modified:**
+  - `.github/workflows/deploy-ec2.yml`
+  - `scripts/deploy/rollback-release.sh`
+  - `scripts/test_verify_deployment_health.py`
+- **Implementation:**
+  - In `.github/workflows/deploy-ec2.yml`:
+    - Differentiates verified initial deployment from corrupted/missing state file.
+    - If `active-release.json` is missing and containers are already running, deployment immediately halts with exit code 2 (fail-closed).
+    - If `PREVIOUS_SHA` is recorded as `NONE`, marks deployment as verified initial deployment.
+    - Added git rev-parse checks verifying both `PREVIOUS_SHA` (when not `NONE`) and `TARGET_SHA` exist in git repository before proceeding with deployment.
+  - In `scripts/deploy/rollback-release.sh`:
+    - Halts immediately with exit 1 if `PREVIOUS_SHA` is `NONE` or empty, providing explicit explanation: `[DEPLOY-ABORT] Cannot rollback: This was the first deployment (no previous release exists).`
+  - In `scripts/test_verify_deployment_health.py`:
+    - Added test cases verifying first-deployment rollback blockage, identical SHA rejection, bundletool checksum verification, and state parsing robustness (all 53 tests passed).
+
+### FIX 5: Remove Automatic Development Reward-Rule Creation
+- **Files Modified:**
+  - `backend/src/prisma/seed.ts`
+  - `backend/src/tests/part2a4_hardening.spec.ts`
+- **Implementation:**
+  - In `backend/src/prisma/seed.ts`:
+    - Completely removed `ENABLE_DEV_REWARD_RULES` environment variable and all auto-provisioning branches.
+    - If a profession has no reward rules, seed script creates zero rules and logs warning that an authorized Operations Admin must explicitly configure rules.
+    - Preserves existing historical and active rules without modification or reactivation.
+  - In `backend/src/tests/part2a4_hardening.spec.ts`:
+    - Updated Task 2 tests 1, 2, and 5 to verify zero rules are created for empty professions and that Operations Admin configured rules are preserved. (39 / 39 tests passed).
+
+### FIX 6: Eliminate Mobile Administrator-Prefix Fallback Values
+- **Files Modified / Added:**
+  - `mobile/src/screens/LoginScreen.tsx`
+  - `mobile/src/services/adminPrefixes.ts` (new)
+  - `mobile/plugins/validateAdminPrefixes.js` (new)
+  - `mobile/plugins/adminPrefixValidation.test.js` (new)
+  - `mobile/package.json`
+- **Implementation:**
+  - In `mobile/src/screens/LoginScreen.tsx`:
+    - Initialized `adminPrefixes` to `useState<AdminPrefixes | null>(null)` (no hardcoded fallback values).
+    - Added `adminPrefixesLoading` (default `true`) and `adminPrefixesError` (default `null`).
+    - Implemented `fetchAdminPrefixes` using `validateAdminPrefixes` enforcing non-empty, distinct uppercase string prefixes.
+    - In UI: displays loading spinner when fetching, and an error banner with a deliberate "Retry" button when retrieval fails.
+    - Primary Sign In button and OTP action buttons are disabled when `adminPrefixes` is `null`.
+    - In `handleUnifiedLogin`: blocks submission if `authMode === 'ADMIN'` and `!adminPrefixes`.
+    - Worker login and registration flows remain completely unaffected.
+  - In `mobile/plugins/adminPrefixValidation.test.js`: added 6 unit tests covering valid prefixes, whitespace trimming, normalization, identical prefix rejection, and missing/invalid inputs.
+  - Integrated into `mobile/package.json` test script (`npm --prefix mobile test` -> 24 / 24 passed).
+
+### FIX 7: Pin and Checksum-Verify Bundletool
+- **Files Modified / Added:**
+  - `scripts/verify-bundletool.sh` (new)
+  - `.github/workflows/android-release-candidate.yml`
+  - `scripts/test_verify_deployment_health.py`
+- **Implementation:**
+  - Created `scripts/verify-bundletool.sh`:
+    - Pins bundletool to official release v1.17.1.
+    - Enforces SHA-256 checksum verification against official Google release hash:
+      `45881ead13388872d82c4255b195488b7fc33f2cac5a9a977b0afc5e92367592`.
+    - Downloads JAR, verifies checksum with `sha256sum`, and fails closed if hash mismatches.
+    - Dumps Android manifest using `bundletool dump manifest --bundle="$AAB_PATH"`.
+    - Asserts extracted package name equals `com.hiralal.rewards`.
+  - In `.github/workflows/android-release-candidate.yml`: invokes `scripts/verify-bundletool.sh "$aab"`.
 
 ---
 
-## 4. Verification Evidence & Test Execution Logs
+## 3. Database Migration & Schema History
 
-### Backend Test Results
+### Migration 20261013210000_disable_invalid_redemption_settings
+- **Location:** `backend/prisma/migrations/20261013210000_disable_invalid_redemption_settings/migration.sql`
+- **SQL Content:**
+  ```sql
+  -- Disable any enabled redemption settings that lack valid timestamps or positive threshold
+  UPDATE "RedemptionSettings"
+  SET "isEnabled" = FALSE
+  WHERE "isEnabled" = TRUE
+    AND (
+      "minimumRedemptionAmount" IS NULL
+      OR "minimumRedemptionAmount" <= 0
+      OR "startAt" IS NULL
+      OR "endAt" IS NULL
+      OR "endAt" <= "startAt"
+    );
+  ```
+- **Deployment Compatibility:** Registered in `backend/prisma/migrations/deployment-compatibility.json` with forward compatibility, non-blocking DML execution, and no column removals or locks.
+
+---
+
+## 4. Full Verification Suite Log Outputs
+
+### Backend Tests (All 32 Suites Passing)
 ```text
 Test Suites: 32 passed, 32 total
-Tests:       554 passed, 554 total
+Tests:       555 passed, 555 total
 Snapshots:   0 total
-Time:        122.202 s
+Time:        89.296 s
 Ran all test suites.
 ```
 
-### Python Health & Compatibility Results
+### Mobile Tests (node --test)
 ```text
-Ran 49 tests in 0.524s
-OK
-Liveness and dependency readiness verified.
+# tests 24
+# suites 0
+# pass 24
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 384.7991
 ```
 
-### Next.js Security Floor Regression Results
-```text
-All 22 Next.js Security Floor Regression Tests PASSED!
-```
-
-### Admin Portal Test & Build
+### Admin Portal Tests & Build
 ```text
 # tests 9
 # suites 0
 # pass 9
 # fail 0
-✓ Compiled successfully in 4.8s
+✓ Compiled successfully in 3.9s
 ✓ Generating static pages (11/11)
 ```
 
-### Mobile Tests & TypeScript Check
+### Python Health & Deployment Health Tests
 ```text
-# tests 16
-# suites 0
-# pass 16
-# fail 0
-tsc --noEmit --project mobile/tsconfig.json -> 0 errors
+Ran 53 tests in 1.161s
+OK
+Liveness and dependency readiness verified.
+```
+
+### Next.js Security Floor Regression Suite
+```text
+All 22 Next.js Security Floor Regression Tests PASSED!
 ```
 
 ---
 
-## 5. Audit Conclusion
+## 5. Security & Invariant Audit Confirmation
 
-All requirements and core invariants have been verified and confirmed green across the repository. The audit branch `audit/deploy-workflow-investigation` has been updated and pushed with full evidence. `main` remains untouched at `b90136ccc046dbc1f3f50f3e0993cb1c21375789`.
+1. **Two Admin Roles Only:** `BILL_ADMIN` (bill review only) and `OPERATIONS_ADMIN` (financial & operational management).
+2. **Reverse GST Accuracy:** Exact reverse formula implemented and verified.
+3. **No Dev Rule Auto-Seeding:** Missing reward rules fail closed; zero dev rules created by seed.
+4. **Redemption Fail-Closed:** Disabled and unconfigured by default; requires positive threshold and valid opening/closing timestamps.
+5. **Atomic Concurrency Lockout:** Failed password attempts increment atomically in PostgreSQL; account locks after 10 attempts without race conditions.
+6. **Mobile Admin Discovery:** Prefix state starts null; fails closed with retry if API is unreachable; validates distinct prefixes.
+7. **Bundletool Checksum Hardening:** v1.17.1 pinned with verified SHA-256 hash.
+8. **Deployment Recovery:** Differentiates initial deploy from missing state; blocks rollback when no previous release exists.
+
+---
+
+## 6. Audit Sign-Off & Repository Status
+
+- **Working Branch:** `audit/deploy-workflow-investigation`
+- **Baseline Commit:** `8fb45ba468ff3eba7fd644046eebd224bc483ed2`
+- **Remediation Code Commit:** `05ef85f24c63050869e9bb0b14e7f50fb2df95df`
+- **Main Branch (`origin/main`):** `b90136ccc046dbc1f3f50f3e0993cb1c21375789` (Untouched, pristine)
+- **Production Status:** No changes deployed to AWS EC2 production, no production databases mutated directly, no Play Store artifacts published. All changes remain safely on `audit/deploy-workflow-investigation` ready for independent owner review.
