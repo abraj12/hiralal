@@ -64,18 +64,20 @@ SIGNCARE_API_KEY="<your_signcare_api_key>"
 SIGNCARE_APP_ID="<your_signcare_app_id>"
 ```
 
-*Note: Encrypted at rest using AES-256-GCM via `FIELD_ENCRYPTION_KEY`.*
+*Note: In production, `SIGNCARE_BASE_URL` is mandatory, must use HTTPS, and strictly rejects localhost, loopback, and UAT/sandbox URLs (fails closed).*
 
 ---
 
 ### 5. Firebase Cloud Messaging (FCM HTTP v1) Push Notifications
 
-Configure Google Service Account credentials for push delivery:
+Configure Google Service Account credentials for push delivery via Mode A (triplet) or Mode B (service account JSON):
 ```env
+# Mode A: Triplet
 FIREBASE_PROJECT_ID="<your_firebase_project_id>"
 FIREBASE_CLIENT_EMAIL="<service_account_client_email>"
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-# Alternatively, specify the absolute path to service-account JSON:
+
+# Mode B: Service Account JSON file path or string
 # FIREBASE_SERVICE_ACCOUNT_KEY="/etc/hiralal/firebase-service-account.json"
 ```
 
@@ -88,13 +90,38 @@ Deploy the full stack:
 docker compose up -d --build
 ```
 
-Execute database migration & seed:
+Execute database migration using dedicated migration runner container:
 ```bash
-docker compose run --rm backend npx prisma migrate deploy
+docker compose --profile tools build migrate
+docker compose --profile tools run --rm migrate
 docker compose exec backend npm run seed
 ```
 
 Validate deployment health using the Python verification script:
 ```bash
-python3 scripts/verify-deployment-health.py '{"status":"ok"}' '{"ready":true}'
+python3 scripts/verify-deployment-health.py '{"status":"ok"}' '{"status":"ready","checks":{"database":"healthy","redis":"healthy"}}'
 ```
+
+---
+
+### 7. GitHub Actions Production Deployment & Release Workflows
+
+#### Production EC2 Deployment (`.github/workflows/deploy-ec2.yml`)
+- **Trigger**: Manual only (`workflow_dispatch`).
+- **Required Inputs**:
+  - `confirm_deploy`: Must equal `DEPLOY` exactly.
+  - `release_sha`: Exact 40-character hexadecimal Git commit SHA on `origin/main`.
+- **Pre-deployment Safety Gates**:
+  - Target commit must be on `origin/main` without drift (`RELEASE_SHA == MAIN_HEAD`).
+  - Target commit must have a completed, successful CI run (`ci.yml`).
+  - Mandatory secrets (`EC2_HOST`, `EC2_SSH_KEY`, `EC2_SSH_KNOWN_HOSTS`) fail closed before SSH.
+  - Pre-migration database backup (`scripts/backup-db.sh`) is mandatory.
+
+#### Signed Android Release Candidate (`.github/workflows/android-release-candidate.yml`)
+- **Trigger**: Manual only (`workflow_dispatch`).
+- **Required Inputs**:
+  - `release_sha`: Exact 40-character Git commit SHA on `origin/main`.
+  - `confirm_release`: Must equal `RELEASE` exactly.
+  - `build_target`: `both`, `aab`, or `apk`.
+- **Signing Secrets**: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`.
+- **Output**: Verified signed `.aab` / `.apk`, `apksigner verify` signature summary, and `SHA256SUMS.txt`. Keystore material is securely erased after build.

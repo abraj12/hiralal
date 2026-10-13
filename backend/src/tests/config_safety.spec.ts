@@ -1,5 +1,11 @@
 import crypto from 'crypto';
-import { isUnsafeProductionValue, validateProductionConfig } from '../config';
+import {
+  isUnsafeProductionValue,
+  validateProductionConfig,
+  validateProductionSignCare,
+  validateProductionFcm,
+  validateProductionPlayIntegrity,
+} from '../config';
 
 const validTestRsaKey = crypto.generateKeyPairSync('rsa', {
   modulusLength: 2048,
@@ -80,6 +86,7 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       R2_BUCKET_NAME: 'hiralal-invoices-private',
       R2_ACCOUNT_ID: 'cf_prod_account_id_0123456789abcdef',
       R2_ENDPOINT: 'https://cf_prod_account_id_0123456789abcdef.r2.cloudflarestorage.com',
+      SIGNCARE_BASE_URL: 'https://api.signcare.in',
       SIGNCARE_API_KEY: 'sc_live_api_key_1234567890abcdef',
       SIGNCARE_APP_ID: 'sc_live_app_id_9876543210fedcba',
       RAZORPAYX_KEY_ID: 'rzp_live_key_id_1234567890abcdef',
@@ -97,6 +104,9 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       BILL_ADMIN_PREFIX: 'BADM',
       OPERATIONS_ADMIN_PREFIX: 'OADM',
       REDIS_PASSWORD: 'redis_prod_strong_secret_key_min_24_chars_2026',
+      FIREBASE_PROJECT_ID: 'hiralal-rewards-prod',
+      FIREBASE_CLIENT_EMAIL: 'firebase-adminsdk@hiralal-rewards-prod.iam.gserviceaccount.com',
+      FIREBASE_PRIVATE_KEY: validTestRsaKey,
       PLAY_INTEGRITY_CLIENT_EMAIL: 'play-integrity@hiralal-rewards.iam.gserviceaccount.com',
       PLAY_INTEGRITY_PRIVATE_KEY: validTestRsaKey,
       PLAY_INTEGRITY_PACKAGE_NAME: 'com.hiralal.rewards',
@@ -307,6 +317,133 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
         delete env.R2_ACCOUNT_ID;
         env.R2_ENDPOINT = 'https://custom-r2.cloudflarestorage.com';
         expect(() => validateProductionConfig('api', env)).not.toThrow();
+      });
+    });
+
+    describe('Test K — SignCare Production Configuration Safety', () => {
+      it('rejects missing SIGNCARE_BASE_URL', () => {
+        const env = { ...validBaseEnv };
+        delete env.SIGNCARE_BASE_URL;
+        expect(() => validateProductionSignCare(env)).toThrow(/Explicit SIGNCARE_BASE_URL is required in production/);
+      });
+
+      it('rejects placeholder SIGNCARE_BASE_URL', () => {
+        const env = { ...validBaseEnv, SIGNCARE_BASE_URL: 'https://placeholder.example.com' };
+        expect(() => validateProductionSignCare(env)).toThrow(/SIGNCARE_BASE_URL contains an insecure placeholder/);
+      });
+
+      it('rejects non-https SIGNCARE_BASE_URL', () => {
+        const env = { ...validBaseEnv, SIGNCARE_BASE_URL: 'http://api.signcare.in' };
+        expect(() => validateProductionSignCare(env)).toThrow(/SIGNCARE_BASE_URL must use https: protocol/);
+      });
+
+      it('rejects localhost and loopback SIGNCARE_BASE_URL', () => {
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://localhost:8080' })).toThrow(
+          /cannot use localhost, loopback, or UAT\/sandbox endpoints/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://127.0.0.1:8080' })).toThrow(
+          /cannot use localhost, loopback, or UAT\/sandbox endpoints/
+        );
+      });
+
+      it('rejects UAT and sandbox SIGNCARE_BASE_URL in production', () => {
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://uat.signcare.in' })).toThrow(
+          /cannot use localhost, loopback, or UAT\/sandbox endpoints/
+        );
+        expect(() => validateProductionSignCare({ ...validBaseEnv, SIGNCARE_BASE_URL: 'https://sandbox.signcare.in' })).toThrow(
+          /cannot use localhost, loopback, or UAT\/sandbox endpoints/
+        );
+      });
+
+      it('accepts approved production endpoint https://api.signcare.in', () => {
+        const env = { ...validBaseEnv, SIGNCARE_BASE_URL: 'https://api.signcare.in' };
+        expect(() => validateProductionSignCare(env)).not.toThrow();
+      });
+    });
+
+    describe('Test K — Firebase Cloud Messaging (FCM) Production Configuration Safety', () => {
+      it('rejects missing FCM credentials when neither Mode A nor Mode B is present', () => {
+        const env = { ...validBaseEnv };
+        delete env.FIREBASE_PROJECT_ID;
+        delete env.FIREBASE_CLIENT_EMAIL;
+        delete env.FIREBASE_PRIVATE_KEY;
+        delete env.FIREBASE_SERVICE_ACCOUNT_KEY;
+        expect(() => validateProductionFcm(env)).toThrow(/Missing required Firebase Cloud Messaging \(FCM\) credentials/);
+      });
+
+      it('rejects incomplete Mode A credentials triplet', () => {
+        const env = { ...validBaseEnv };
+        delete env.FIREBASE_PRIVATE_KEY;
+        expect(() => validateProductionFcm(env)).toThrow(/Incomplete FCM credentials: Mode A requires all three variables/);
+      });
+
+      it('rejects placeholder values in Mode A credentials', () => {
+        expect(() =>
+          validateProductionFcm({ ...validBaseEnv, FIREBASE_PROJECT_ID: 'your_project_id_placeholder' })
+        ).toThrow(/FIREBASE_PROJECT_ID contains an insecure placeholder/);
+
+        expect(() =>
+          validateProductionFcm({ ...validBaseEnv, FIREBASE_CLIENT_EMAIL: 'invalid-email-address' })
+        ).toThrow(/FIREBASE_CLIENT_EMAIL must be a valid service-account email address/);
+
+        expect(() =>
+          validateProductionFcm({ ...validBaseEnv, FIREBASE_PRIVATE_KEY: 'not_a_pem_private_key' })
+        ).toThrow(/FIREBASE_PRIVATE_KEY is missing or contains an invalid\/placeholder private key/);
+      });
+
+      it('accepts valid Mode A triplet', () => {
+        expect(() => validateProductionFcm(validBaseEnv)).not.toThrow();
+      });
+
+      it('accepts valid Mode B service-account JSON string', () => {
+        const env = { ...validBaseEnv };
+        delete env.FIREBASE_PROJECT_ID;
+        delete env.FIREBASE_CLIENT_EMAIL;
+        delete env.FIREBASE_PRIVATE_KEY;
+        env.FIREBASE_SERVICE_ACCOUNT_KEY = JSON.stringify({
+          project_id: 'hiralal-sa-prod',
+          client_email: 'sa@hiralal-sa-prod.iam.gserviceaccount.com',
+          private_key: validTestRsaKey,
+        });
+        expect(() => validateProductionFcm(env)).not.toThrow();
+      });
+
+      it('rejects malformed service-account JSON in Mode B', () => {
+        const env = {
+          ...validBaseEnv,
+          FIREBASE_SERVICE_ACCOUNT_KEY: '{ malformed_json: true ',
+        };
+        expect(() => validateProductionFcm(env)).toThrow(/FIREBASE_SERVICE_ACCOUNT_KEY contains invalid JSON/);
+      });
+
+      it('rejects non-existent file path in Mode B', () => {
+        const env = {
+          ...validBaseEnv,
+          FIREBASE_SERVICE_ACCOUNT_KEY: '/nonexistent/path/to/service-account.json',
+        };
+        expect(() => validateProductionFcm(env)).toThrow(/file does not exist at specified path/);
+      });
+    });
+
+    describe('Test K — Play Integrity Fail-Closed Enforcement', () => {
+      it('rejects allowMock=true in production', () => {
+        const env = { ...validBaseEnv, PLAY_INTEGRITY_ALLOW_MOCK: 'true' };
+        expect(() => validateProductionPlayIntegrity(env)).toThrow(/Play Integrity mocks must be disabled in production/);
+      });
+
+      it('rejects requireLicensing=false in production', () => {
+        const env = { ...validBaseEnv, PLAY_INTEGRITY_REQUIRE_LICENSING: 'false' };
+        expect(() => validateProductionPlayIntegrity(env)).toThrow(/Play Integrity licensing enforcement must be enabled/);
+      });
+
+      it('rejects enforceActions=false in production', () => {
+        const env = { ...validBaseEnv, PLAY_INTEGRITY_ENFORCE_ACTIONS: 'false' };
+        expect(() => validateProductionPlayIntegrity(env)).toThrow(/Play Integrity protected-action enforcement must be enabled/);
+      });
+
+      it('rejects invalid or empty certificate digests in production', () => {
+        const env = { ...validBaseEnv, PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS: 'short_invalid_digest' };
+        expect(() => validateProductionPlayIntegrity(env)).toThrow(/A non-empty, valid SHA-256 certificate allowlist is required/);
       });
     });
   });

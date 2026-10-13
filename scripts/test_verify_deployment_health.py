@@ -140,5 +140,107 @@ class TestVerifyDeploymentHealth(unittest.TestCase):
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("Usage:", res.stderr)
 
+
+class TestDeploymentWorkflowSafety(unittest.TestCase):
+    """
+    Test L: Automated static verification of release and deployment workflow safety gates.
+    Validates deploy-ec2.yml and android-release-candidate.yml against authoritative security constraints.
+    """
+    def setUp(self):
+        self.repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.deploy_workflow_path = os.path.join(self.repo_root, ".github", "workflows", "deploy-ec2.yml")
+        self.android_workflow_path = os.path.join(self.repo_root, ".github", "workflows", "android-release-candidate.yml")
+
+        with open(self.deploy_workflow_path, "r", encoding="utf-8") as f:
+            self.deploy_content = f.read()
+
+        with open(self.android_workflow_path, "r", encoding="utf-8") as f:
+            self.android_content = f.read()
+
+    def test_ec2_deployment_not_triggered_by_ci_success(self):
+        """Production deployment must not be automatically triggered on CI success (no workflow_run)."""
+        self.assertNotIn("workflow_run:", self.deploy_content)
+        self.assertNotIn("types: [completed]", self.deploy_content)
+
+    def test_ec2_deployment_manual_only(self):
+        """Production deployment trigger must be workflow_dispatch only."""
+        self.assertIn("workflow_dispatch:", self.deploy_content)
+        self.assertNotIn("push:", self.deploy_content)
+        self.assertNotIn("pull_request:", self.deploy_content)
+
+    def test_ec2_deployment_refuses_non_main_refs(self):
+        """Production deployment workflow must refuse execution on non-main branches."""
+        self.assertIn("github.ref == 'refs/heads/main'", self.deploy_content)
+        self.assertIn("confirm_deploy == 'DEPLOY'", self.deploy_content)
+
+    def test_ec2_deployment_enforces_exact_sha_and_drift_check(self):
+        """Production deployment requires a 40-char hex commit SHA and checks for drift against origin/main."""
+        self.assertIn("^[0-9a-f]{40}$", self.deploy_content)
+        self.assertIn('"${RELEASE_SHA}" != "${MAIN_HEAD}"', self.deploy_content)
+        self.assertIn("Release drift detected", self.deploy_content)
+
+    def test_ec2_deployment_verifies_successful_ci_run(self):
+        """Production deployment verifies that the target SHA passed the CI pipeline."""
+        self.assertIn('CI_CONCLUSION=$(gh run list --commit "${RELEASE_SHA}"', self.deploy_content)
+        self.assertIn('"${CI_CONCLUSION}" != "success"', self.deploy_content)
+
+    def test_ec2_deployment_fails_closed_on_missing_secrets(self):
+        """Production deployment halts before SSH connection if mandatory secrets are missing."""
+        self.assertIn('if [ -z "${EC2_HOST}" ] || [ -z "${EC2_SSH_KEY}" ] || [ -z "${EC2_SSH_KNOWN_HOSTS}" ]', self.deploy_content)
+        self.assertIn("Mandatory EC2 deployment secrets", self.deploy_content)
+
+    def test_ec2_deployment_mandates_strict_host_key_checking(self):
+        """SSH invocation must enforce StrictHostKeyChecking=yes with known_hosts."""
+        self.assertIn("StrictHostKeyChecking=yes", self.deploy_content)
+        self.assertIn("known_hosts", self.deploy_content)
+
+    def test_ec2_deployment_runs_pre_migration_backup_gate(self):
+        """Pre-deployment database backup gate is mandatory before applying migrations."""
+        self.assertIn("./scripts/backup-db.sh", self.deploy_content)
+        self.assertIn("Pre-deployment database backup gate", self.deploy_content)
+
+    def test_android_release_workflow_manual_only(self):
+        """Android release candidate build trigger must be workflow_dispatch only."""
+        self.assertIn("workflow_dispatch:", self.android_content)
+        self.assertNotIn("push:", self.android_content)
+        self.assertNotIn("pull_request:", self.android_content)
+
+    def test_android_release_workflow_requires_confirmation_and_sha(self):
+        """Android release candidate requires 'RELEASE' confirmation and 40-char hex SHA."""
+        self.assertIn('confirm_release }}" != "RELEASE"', self.android_content)
+        self.assertIn('^[0-9a-fA-F]{40}$', self.android_content)
+
+    def test_android_release_workflow_verifies_origin_main(self):
+        """Android release candidate verifies target commit is on origin/main."""
+        self.assertIn("git merge-base --is-ancestor", self.android_content)
+        self.assertIn("origin/main", self.android_content)
+
+    def test_android_release_workflow_fails_closed_on_missing_signing_secrets(self):
+        """Android release candidate fails before build if signing secrets are missing."""
+        for secret_name in [
+            "ANDROID_KEYSTORE_BASE64",
+            "ANDROID_KEYSTORE_PASSWORD",
+            "ANDROID_KEY_ALIAS",
+            "ANDROID_KEY_PASSWORD"
+        ]:
+            self.assertIn(secret_name, self.android_content)
+        self.assertIn("Missing required Android signing secrets", self.android_content)
+
+    def test_android_release_workflow_verifies_signature_and_erases_keystore(self):
+        """Android release candidate runs apksigner verify and securely erases keystore file."""
+        self.assertIn("apksigner verify", self.android_content)
+        self.assertIn("sha256sum", self.android_content)
+        self.assertIn("shred -u", self.android_content)
+
+    def test_no_secret_material_echoed_in_workflow_logs(self):
+        """Neither release nor deployment workflow should echo private keys or passwords."""
+        for content in [self.deploy_content, self.android_content]:
+            self.assertNotIn('echo "${EC2_SSH_KEY}"', content)
+            self.assertNotIn('echo "$KEYSTORE_PASS"', content)
+            self.assertNotIn('echo "$KEY_PASS"', content)
+            self.assertNotIn('echo "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"', content)
+            self.assertNotIn('echo "${{ secrets.ANDROID_KEY_PASSWORD }}"', content)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

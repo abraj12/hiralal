@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db';
@@ -322,17 +323,18 @@ export class AccountDeletionService {
     processedCount: number;
     errors: Array<{ userId: string; error: string }>;
   }> {
-    const now = new Date();
     const leaseOwner = workerInstanceId || `del-worker-${process.pid}-${Date.now()}`;
-    const dueUsers = await prismaClient.user.findMany({
-      where: {
-        deletionScheduledAt: { lte: now },
-        status: { not: 'SUSPENDED' },
-      },
-      include: {
-        bills: { select: { id: true, fileKey: true } },
-      },
-    });
+    const dueUsers = await prismaClient.$queryRaw<Array<{ id: string }>>`
+      SELECT DISTINCT u."id"
+      FROM "User" u
+      LEFT JOIN "AccountDeletionOperation" op ON op."userId" = u."id" AND op."status" IN ('PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE')
+      WHERE (
+        (u."deletionScheduledAt" <= (clock_timestamp() AT TIME ZONE 'UTC') AND u."status" <> 'SUSPENDED')
+        OR
+        (u."status" = 'SUSPENDED' AND u."mobile" LIKE 'DEL_%' AND op."id" IS NOT NULL)
+      )
+      ORDER BY u."id" ASC
+    `;
 
     let processedCount = 0;
     const errors: Array<{ userId: string; error: string }> = [];
@@ -342,36 +344,68 @@ export class AccountDeletionService {
         // Step 1: Atomic Claim Transaction with PostgreSQL row-level locks
         const claimResult = await prismaClient.$transaction(async (tx: any) => {
           // 1. Lock the target User row with PostgreSQL SELECT ... FOR UPDATE
-          const lockedUsers = await tx.$queryRaw`
+          const lockedUsers = await tx.$queryRaw<Array<{
+            id: string;
+            mobile: string;
+            status: string;
+            deletionScheduledAt: Date | null;
+            deletionRequestedAt: Date | null;
+          }>>`
             SELECT "id", "mobile", "status", "deletionScheduledAt", "deletionRequestedAt"
             FROM "User"
             WHERE "id" = ${u.id}
             FOR UPDATE
           `;
 
-          if (!lockedUsers || (lockedUsers as any[]).length === 0) {
+          if (!lockedUsers || lockedUsers.length === 0) {
             return { claimed: false, reason: 'USER_NOT_FOUND' };
           }
 
-          const lockedUser = (lockedUsers as any[])[0];
+          const lockedUser = lockedUsers[0];
+          const isAlreadyAnonymized = lockedUser.status === 'SUSPENDED' && lockedUser.mobile.startsWith('DEL_');
 
-          // Check if cancelled, grace period still active, or already suspended
-          if (
-            !lockedUser.deletionScheduledAt ||
-            new Date(lockedUser.deletionScheduledAt) > now ||
-            lockedUser.status === 'SUSPENDED'
-          ) {
-            if (!lockedUser.deletionScheduledAt || lockedUser.status === 'SUSPENDED') {
-              await tx.accountDeletionOperation.updateMany({
-                where: { userId: u.id, status: { in: ['PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE'] } },
-                data: { status: 'CANCELLED', completedAt: now, leaseExpiresAt: null },
-              });
+          // Re-evaluate eligibility against database clock under row lock
+          const eligibilityCheck = await tx.$queryRaw<Array<{
+            isDue: boolean;
+            isCancelledOrSuspended: boolean;
+          }>>`
+            WITH clock AS (
+              SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now
+            )
+            SELECT
+              ((${isAlreadyAnonymized}) OR ("deletionScheduledAt" IS NOT NULL AND "deletionScheduledAt" <= clock.now AND "status" <> 'SUSPENDED')) AS "isDue",
+              (NOT (${isAlreadyAnonymized}) AND ("deletionScheduledAt" IS NULL OR "status" = 'SUSPENDED')) AS "isCancelledOrSuspended"
+            FROM "User", clock
+            WHERE "id" = ${u.id}
+          `;
+
+          const { isDue, isCancelledOrSuspended } = eligibilityCheck[0] || { isDue: false, isCancelledOrSuspended: true };
+
+          if (!isDue) {
+            if (isCancelledOrSuspended) {
+              await tx.$queryRaw`
+                UPDATE "AccountDeletionOperation"
+                SET "status" = 'CANCELLED',
+                    "completedAt" = (clock_timestamp() AT TIME ZONE 'UTC'),
+                    "leaseExpiresAt" = NULL
+                WHERE "userId" = ${u.id}
+                  AND "status" IN ('PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE')
+              `;
             }
             return { claimed: false, reason: 'CANCELLED_OR_INACTIVE' };
           }
 
-          // 2. Lock the operation row where it exists
-          const lockedOps = await tx.$queryRaw`
+          // 2. Lock active operation row where it exists
+          const lockedOps = await tx.$queryRaw<Array<{
+            id: string;
+            status: string;
+            attemptCount: number;
+            nextRetryAt: Date | null;
+            leaseOwner: string | null;
+            leaseVersion: number;
+            leaseExpiresAt: Date | null;
+            destructiveStartedAt: Date | null;
+          }>>`
             SELECT "id", "status", "attemptCount", "nextRetryAt", "leaseOwner", "leaseVersion", "leaseExpiresAt", "destructiveStartedAt"
             FROM "AccountDeletionOperation"
             WHERE "userId" = ${u.id}
@@ -381,61 +415,93 @@ export class AccountDeletionService {
             FOR UPDATE
           `;
 
-          const leaseExpiry = new Date(now.getTime() + 60000); // 60-second claim lease
           let opId: string;
           let opVersion = 1;
           let attemptCount = 1;
 
-          if (!lockedOps || (lockedOps as any[]).length === 0) {
-            // Create initial operation record atomically
-            const newOp = await tx.accountDeletionOperation.create({
-              data: {
-                userId: u.id,
-                status: 'IN_PROGRESS',
-                scheduledFor: lockedUser.deletionScheduledAt,
-                startedAt: now,
-                destructiveStartedAt: now,
-                attemptCount: 1,
-                leaseOwner,
-                leaseVersion: 1,
-                leaseExpiresAt: leaseExpiry,
-              },
-            });
-            opId = newOp.id;
-            opVersion = 1;
-            attemptCount = 1;
+          if (!lockedOps || lockedOps.length === 0) {
+            // Initial operation creation under locked user using database-derived timestamps
+            const initialId = crypto.randomUUID();
+            const created = await tx.$queryRaw<Array<{
+              id: string;
+              leaseOwner: string | null;
+              leaseVersion: number;
+              attemptCount: number;
+              leaseExpiresAt: Date | null;
+            }>>`
+              WITH clock AS (
+                SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now
+              )
+              INSERT INTO "AccountDeletionOperation" (
+                "id", "userId", "status", "scheduledFor", "startedAt", "destructiveStartedAt",
+                "attemptCount", "leaseOwner", "leaseVersion", "leaseExpiresAt", "createdAt", "updatedAt"
+              )
+              SELECT
+                ${initialId},
+                ${u.id},
+                'IN_PROGRESS'::"DeletionOperationStatus",
+                ${lockedUser.deletionScheduledAt},
+                clock.now,
+                clock.now,
+                1,
+                ${leaseOwner},
+                1,
+                clock.now + INTERVAL '60 seconds',
+                clock.now,
+                clock.now
+              FROM clock
+              RETURNING "id", "leaseOwner", "leaseVersion", "attemptCount", "leaseExpiresAt"
+            `;
+
+            if (!created || created.length !== 1) {
+              return { claimed: false, reason: 'FAILED_INITIAL_CREATION' };
+            }
+            opId = created[0].id;
+            opVersion = created[0].leaseVersion;
+            attemptCount = created[0].attemptCount;
           } else {
-            const op = (lockedOps as any[])[0];
+            const op = lockedOps[0];
 
-            // If in retry backoff window, skip
-            if (op.nextRetryAt && new Date(op.nextRetryAt) > now) {
-              return { claimed: false, reason: 'RETRY_BACKOFF' };
+            // Atomic database-clock claim and fencing update
+            const claimed = await tx.$queryRaw<Array<{
+              id: string;
+              leaseOwner: string | null;
+              leaseVersion: number;
+              attemptCount: number;
+              leaseExpiresAt: Date | null;
+            }>>`
+              WITH clock AS (
+                SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now
+              )
+              UPDATE "AccountDeletionOperation" AS op
+              SET
+                "status" = 'IN_PROGRESS',
+                "startedAt" = COALESCE(op."startedAt", clock.now),
+                "destructiveStartedAt" = COALESCE(op."destructiveStartedAt", clock.now),
+                "attemptCount" = op."attemptCount" + 1,
+                "leaseOwner" = ${leaseOwner},
+                "leaseVersion" = op."leaseVersion" + 1,
+                "leaseExpiresAt" = clock.now + INTERVAL '60 seconds'
+              FROM clock
+              WHERE op."id" = ${op.id}
+                AND op."status" IN ('PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE')
+                AND (op."nextRetryAt" IS NULL OR op."nextRetryAt" <= clock.now)
+                AND (op."leaseExpiresAt" IS NULL OR op."leaseExpiresAt" <= clock.now)
+              RETURNING
+                op."id",
+                op."leaseOwner",
+                op."leaseVersion",
+                op."attemptCount",
+                op."leaseExpiresAt"
+            `;
+
+            if (!claimed || claimed.length !== 1) {
+              return { claimed: false, reason: 'LEASE_CONFLICT_OR_BACKOFF' };
             }
 
-            // Check lease ownership / expiry
-            const isExpired = !op.leaseExpiresAt || new Date(op.leaseExpiresAt) <= now;
-            const isOwner = op.leaseOwner === leaseOwner;
-
-            if (!isExpired && !isOwner) {
-              // Active unexpired lease held by another worker
-              return { claimed: false, reason: 'LEASE_CONFLICT' };
-            }
-
-            opVersion = (op.leaseVersion || 0) + 1;
-            attemptCount = (op.attemptCount || 0) + 1;
-            await tx.accountDeletionOperation.update({
-              where: { id: op.id },
-              data: {
-                status: 'IN_PROGRESS',
-                startedAt: now,
-                destructiveStartedAt: op.destructiveStartedAt || now,
-                attemptCount,
-                leaseOwner,
-                leaseVersion: opVersion,
-                leaseExpiresAt: leaseExpiry,
-              },
-            });
-            opId = op.id;
+            opId = claimed[0].id;
+            opVersion = claimed[0].leaseVersion;
+            attemptCount = claimed[0].attemptCount;
           }
 
           // Fetch bills to delete
@@ -513,22 +579,25 @@ export class AccountDeletionService {
         // set status = 'FAILED_RETRYABLE' with exponential backoff, DO NOT anonymize user or mark complete.
         if (failedFileKeys.length > 0) {
           const backoffMs = Math.min(5 * 60 * 1000 * Math.pow(2, attemptCount - 1), 24 * 60 * 60 * 1000);
-          const nextRetryAt = new Date(Date.now() + backoffMs);
 
-          const updated = await prismaClient.$queryRaw<Array<{ id: string }>>`
-            UPDATE "AccountDeletionOperation"
+          const updated = await prismaClient.$queryRaw<Array<{ id: string; nextRetryAt: Date }>>`
+            WITH clock AS (
+              SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now
+            )
+            UPDATE "AccountDeletionOperation" AS op
             SET "status" = 'FAILED_RETRYABLE',
-                "nextRetryAt" = ${nextRetryAt},
+                "nextRetryAt" = clock.now + (${backoffMs} * INTERVAL '1 millisecond'),
                 "lastError" = ${`Failed to delete ${failedFileKeys.length} invoice file(s) from storage: ${failedFileKeys.join(', ')}`},
                 "failedFileKeys" = ${JSON.stringify(failedFileKeys)}::jsonb,
                 "deletedFilesCount" = ${deletedFilesCount},
                 "leaseExpiresAt" = NULL
-            WHERE "id" = ${operationId}
-              AND "leaseOwner" = ${leaseOwner}
-              AND "leaseVersion" = ${currentLeaseVersion}
-              AND "status" = 'IN_PROGRESS'
-              AND "leaseExpiresAt" > (clock_timestamp() AT TIME ZONE 'UTC')
-            RETURNING "id"
+            FROM clock
+            WHERE op."id" = ${operationId}
+              AND op."leaseOwner" = ${leaseOwner}
+              AND op."leaseVersion" = ${currentLeaseVersion}
+              AND op."status" = 'IN_PROGRESS'
+              AND op."leaseExpiresAt" > clock.now
+            RETURNING op."id", op."nextRetryAt"
           `;
 
           if (!updated || updated.length !== 1) {
@@ -544,7 +613,7 @@ export class AccountDeletionService {
 
           errors.push({
             userId: u.id,
-            error: `Storage file deletion failed for ${failedFileKeys.length} file(s); scheduled for retry at ${nextRetryAt.toISOString()}`,
+            error: `Storage file deletion failed for ${failedFileKeys.length} file(s); scheduled for retry at ${updated[0].nextRetryAt.toISOString()}`,
           });
           continue;
         }
@@ -573,17 +642,84 @@ export class AccountDeletionService {
 
           const lockedUser = lockedUsers[0];
 
-          // Check if user remains due for deletion and not already cancelled
-          if (!lockedUser.deletionScheduledAt) {
-            throw new Error(`[ACCOUNT-DELETION] User ${u.id} deletion schedule is not set or was cancelled.`);
+          // Check if user remains due for deletion according to database time
+          const finalEligibility = await tx.$queryRaw<Array<{
+            isDue: boolean;
+            isAlreadyAnonymized: boolean;
+          }>>`
+            WITH clock AS (
+              SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now
+            )
+            SELECT
+              ("deletionScheduledAt" IS NOT NULL AND "deletionScheduledAt" <= clock.now) AS "isDue",
+              ("status" = 'SUSPENDED' AND "mobile" LIKE 'DEL_%') AS "isAlreadyAnonymized"
+            FROM "User", clock
+            WHERE "id" = ${u.id}
+          `;
+
+          const { isDue, isAlreadyAnonymized } = finalEligibility[0] || { isDue: false, isAlreadyAnonymized: false };
+
+          if (!isDue && !isAlreadyAnonymized) {
+            throw new Error(`[ACCOUNT-DELETION] User ${u.id} deletion grace period has not expired or schedule is not set.`);
           }
 
-          if (new Date(lockedUser.deletionScheduledAt) > new Date()) {
-            throw new Error(`[ACCOUNT-DELETION] User ${u.id} deletion grace period has not expired.`);
-          }
+          // Section 3.8: Explicit fenced idempotency path for already-anonymized accounts
+          if (isAlreadyAnonymized) {
+            // Lock operation row FOR UPDATE second and verify lease fencing with DB clock
+            const lockedOps = await tx.$queryRaw<Array<{ id: string }>>`
+              SELECT "id"
+              FROM "AccountDeletionOperation"
+              WHERE "id" = ${operationId}
+                AND "leaseOwner" = ${leaseOwner}
+                AND "leaseVersion" = ${currentLeaseVersion}
+                AND "status" = 'IN_PROGRESS'
+                AND "leaseExpiresAt" > (clock_timestamp() AT TIME ZONE 'UTC')
+              FOR UPDATE
+            `;
 
-          if (lockedUser.status === 'SUSPENDED' && lockedUser.mobile.startsWith('DEL_')) {
-            // Already anonymized
+            if (!lockedOps || lockedOps.length !== 1) {
+              throw new Error(
+                `[ACCOUNT-DELETION] Lease fencing failed for already-anonymized account: ownership lost or lease expired for operation ${operationId}`
+              );
+            }
+
+            // Transition operation to COMPLETED through CAS
+            const completedOps = await tx.$queryRaw<Array<{ id: string }>>`
+              UPDATE "AccountDeletionOperation"
+              SET "status" = 'COMPLETED',
+                  "completedAt" = (clock_timestamp() AT TIME ZONE 'UTC'),
+                  "deletedFilesCount" = ${deletedFilesCount},
+                  "failedFileKeys" = NULL,
+                  "leaseExpiresAt" = NULL
+              WHERE "id" = ${operationId}
+                AND "leaseOwner" = ${leaseOwner}
+                AND "leaseVersion" = ${currentLeaseVersion}
+                AND "status" = 'IN_PROGRESS'
+                AND "leaseExpiresAt" > (clock_timestamp() AT TIME ZONE 'UTC')
+              RETURNING "id"
+            `;
+
+            if (!completedOps || completedOps.length !== 1) {
+              throw new Error(
+                `[ACCOUNT-DELETION] CAS completion failed for already-anonymized account: operation ${operationId}`
+              );
+            }
+
+            await tx.auditLog.create({
+              data: {
+                action: 'ACCOUNT_DELETION_EXECUTED',
+                entityType: 'User',
+                entityId: u.id,
+                newValue: JSON.stringify({
+                  userId: u.id,
+                  operationId,
+                  executedAt: new Date(),
+                  deletedFilesCount,
+                  policy: 'ALREADY_ANONYMIZED_IDEMPOTENT_COMPLETION',
+                }),
+              },
+            });
+
             return;
           }
 

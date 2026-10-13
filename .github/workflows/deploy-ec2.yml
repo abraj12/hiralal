@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       confirm_deploy:
-        description: 'Type "DEPLOY" to confirm production release'
+        description: 'Type DEPLOY to authorize a production release'
         required: true
-        default: 'DEPLOY'
-  workflow_run:
-    workflows: ['Production CI Pipeline - Hiralal & Sons Rewards Platform']
-    types: [completed]
-    branches: [main]
+        type: string
+      release_sha:
+        description: 'Exact full commit SHA approved for production'
+        required: true
+        type: string
 
 concurrency:
   group: deploy-production
@@ -25,12 +25,61 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_deploy == 'DEPLOY' && (github.ref == 'refs/heads/main' || github.ref_name == 'main')) ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      github.event_name == 'workflow_dispatch' &&
+      (github.ref == 'refs/heads/main' || github.ref_name == 'main') &&
+      github.event.inputs.confirm_deploy == 'DEPLOY'
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Release Authorization, Target SHA & CI Status
+        env:
+          CONFIRM_DEPLOY: ${{ github.event.inputs.confirm_deploy }}
+          RELEASE_SHA: ${{ github.event.inputs.release_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "Validating production deployment authorization and parameters..."
+
+          # 1. Validate confirmation string
+          if [ "${CONFIRM_DEPLOY}" != "DEPLOY" ]; then
+            echo "[FATAL ERROR] Production release not authorized: confirm_deploy must be exactly 'DEPLOY'." >&2
+            exit 1
+          fi
+
+          # 2. Validate release_sha format (strict 40-character hex string)
+          if ! [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "[FATAL ERROR] Invalid release_sha format: must be a 40-character hexadecimal commit SHA." >&2
+            exit 1
+          fi
+
+          # 3. Verify SHA exists on origin/main and matches origin/main without drift
+          git fetch origin main
+          if ! git rev-parse --verify "${RELEASE_SHA}^{commit}" >/dev/null 2>&1; then
+            echo "[FATAL ERROR] Target release SHA ${RELEASE_SHA} does not exist in commit history." >&2
+            exit 1
+          fi
+
+          MAIN_HEAD=$(git rev-parse origin/main)
+          echo "Target Release SHA: ${RELEASE_SHA}"
+          echo "origin/main Head:   ${MAIN_HEAD}"
+
+          if [ "${RELEASE_SHA}" != "${MAIN_HEAD}" ]; then
+            echo "[FATAL ERROR] Release drift detected: release_sha (${RELEASE_SHA}) does not match origin/main head (${MAIN_HEAD})." >&2
+            exit 1
+          fi
+
+          # 4. Verify CI workflow completed successfully for this exact SHA
+          echo "Verifying CI pipeline status for commit ${RELEASE_SHA}..."
+          CI_CONCLUSION=$(gh run list --commit "${RELEASE_SHA}" --workflow "ci.yml" --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "")
+          if [ "${CI_CONCLUSION}" != "success" ]; then
+            echo "[FATAL ERROR] Production CI workflow did not succeed for commit ${RELEASE_SHA} (status: '${CI_CONCLUSION}'). Deployment blocked." >&2
+            exit 1
+          fi
+          echo "Verified: CI pipeline passed with conclusion 'success' for commit ${RELEASE_SHA}."
 
       - name: Configure SSH Key and Verify Host Key
         env:
@@ -43,16 +92,16 @@ jobs:
             exit 1
           fi
           mkdir -p ~/.ssh
-          echo "${EC2_SSH_KEY}" > ~/.ssh/id_ed25519
+          printf '%s\n' "${EC2_SSH_KEY}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          echo "${EC2_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          printf '%s\n' "${EC2_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
       - name: Execute Remote Deployment on EC2
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER || 'ubuntu' }}
-          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          TARGET_SHA: ${{ github.event.inputs.release_sha }}
         run: |
           echo "Target deployment commit: ${TARGET_SHA}"
 

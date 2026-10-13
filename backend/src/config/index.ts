@@ -177,6 +177,7 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     'R2_ACCESS_KEY_ID',
     'R2_SECRET_ACCESS_KEY',
     'R2_BUCKET_NAME',
+    'SIGNCARE_BASE_URL',
     'SIGNCARE_API_KEY',
     'SIGNCARE_APP_ID',
     'RAZORPAYX_KEY_ID',
@@ -375,6 +376,8 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     }
 
     validateProductionPlayIntegrity(env);
+    validateProductionSignCare(env);
+    validateProductionFcm(env);
   }
 }
 
@@ -449,6 +452,128 @@ export function validateProductionPlayIntegrity(env: Record<string, string | und
 
   if (enforceActions !== 'true') {
     throw new Error('[FATAL] Play Integrity protected-action enforcement must be enabled in production.');
+  }
+}
+
+export function validateProductionSignCare(env: Record<string, string | undefined>): void {
+  const baseUrl = env.SIGNCARE_BASE_URL?.trim();
+  if (!baseUrl) {
+    throw new Error('[FATAL] Explicit SIGNCARE_BASE_URL is required in production.');
+  }
+
+  if (isPlaceholderCredential(baseUrl)) {
+    throw new Error('[FATAL] SIGNCARE_BASE_URL contains an insecure placeholder or example value.');
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new Error('[FATAL] SIGNCARE_BASE_URL is not a valid parseable URL.');
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error('[FATAL] SIGNCARE_BASE_URL must use https: protocol.');
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname.includes('uat') ||
+    hostname.includes('sandbox')
+  ) {
+    throw new Error(
+      `[FATAL] SIGNCARE_BASE_URL cannot use localhost, loopback, or UAT/sandbox endpoints (${hostname}) in production.`
+    );
+  }
+
+  const apiKey = env.SIGNCARE_API_KEY?.trim();
+  const appId = env.SIGNCARE_APP_ID?.trim();
+  if (!apiKey || isPlaceholderCredential(apiKey)) {
+    throw new Error('[FATAL] Valid SIGNCARE_API_KEY is required in production.');
+  }
+  if (!appId || isPlaceholderCredential(appId)) {
+    throw new Error('[FATAL] Valid SIGNCARE_APP_ID is required in production.');
+  }
+}
+
+export function validateProductionFcm(env: Record<string, string | undefined>): void {
+  const saKey = (env.FIREBASE_SERVICE_ACCOUNT_KEY || env.FCM_SERVICE_ACCOUNT_KEY)?.trim();
+  const projectId = (env.FIREBASE_PROJECT_ID || env.FCM_PROJECT_ID)?.trim();
+  const clientEmail = (env.FIREBASE_CLIENT_EMAIL || env.FCM_CLIENT_EMAIL)?.trim();
+  const privateKey = (env.FIREBASE_PRIVATE_KEY || env.FCM_PRIVATE_KEY)?.trim();
+
+  // Mode B: Service Account Key (JSON string or file path)
+  if (saKey) {
+    if (isPlaceholderCredential(saKey)) {
+      throw new Error('[FATAL] FIREBASE_SERVICE_ACCOUNT_KEY contains an insecure placeholder or example value.');
+    }
+
+    let parsed: any = null;
+    if (saKey.startsWith('{')) {
+      try {
+        parsed = JSON.parse(saKey);
+      } catch {
+        throw new Error('[FATAL] FIREBASE_SERVICE_ACCOUNT_KEY contains invalid JSON.');
+      }
+    } else {
+      if (!fs.existsSync(saKey)) {
+        throw new Error('[FATAL] FIREBASE_SERVICE_ACCOUNT_KEY file does not exist at specified path.');
+      }
+      try {
+        parsed = JSON.parse(fs.readFileSync(saKey, 'utf8'));
+      } catch {
+        throw new Error('[FATAL] FIREBASE_SERVICE_ACCOUNT_KEY file contains invalid JSON.');
+      }
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('[FATAL] FIREBASE_SERVICE_ACCOUNT_KEY must parse to a valid JSON object.');
+    }
+
+    const saProjectId = parsed.project_id?.trim();
+    const saClientEmail = parsed.client_email?.trim();
+    const saPrivateKey = parsed.private_key?.replace(/\\n/g, '\n').trim();
+
+    if (!saProjectId || isPlaceholderCredential(saProjectId)) {
+      throw new Error('[FATAL] Service account configuration missing or invalid project_id.');
+    }
+    if (!saClientEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(saClientEmail) || isPlaceholderCredential(saClientEmail)) {
+      throw new Error('[FATAL] Service account configuration missing or invalid client_email.');
+    }
+    if (!saPrivateKey || !saPrivateKey.includes('PRIVATE KEY') || isPlaceholderCredential(saPrivateKey)) {
+      throw new Error('[FATAL] Service account configuration missing or invalid private_key.');
+    }
+    return;
+  }
+
+  // Mode A: Individual triplet
+  const hasAnyIndividual = Boolean(projectId || clientEmail || privateKey);
+  if (!hasAnyIndividual) {
+    throw new Error(
+      '[FATAL] Production startup halted for role "api". Missing required Firebase Cloud Messaging (FCM) credentials: configure either individual credentials (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) or service-account configuration (FIREBASE_SERVICE_ACCOUNT_KEY).'
+    );
+  }
+
+  if (!projectId || !clientEmail || !privateKey) {
+    throw new Error(
+      '[FATAL] Incomplete FCM credentials: Mode A requires all three variables (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY).'
+    );
+  }
+
+  if (isPlaceholderCredential(projectId)) {
+    throw new Error('[FATAL] FIREBASE_PROJECT_ID contains an insecure placeholder or example value.');
+  }
+
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clientEmail) || isPlaceholderCredential(clientEmail)) {
+    throw new Error('[FATAL] FIREBASE_CLIENT_EMAIL must be a valid service-account email address.');
+  }
+
+  const cleanPem = privateKey.replace(/\\n/g, '\n').trim();
+  if (!cleanPem.includes('PRIVATE KEY') || isPlaceholderCredential(cleanPem)) {
+    throw new Error('[FATAL] FIREBASE_PRIVATE_KEY is missing or contains an invalid/placeholder private key.');
   }
 }
 
@@ -556,7 +681,7 @@ export const config: AppConfig = {
   },
 
   signcare: {
-    baseUrl: process.env.SIGNCARE_BASE_URL || 'https://uat.signcare.in',
+    baseUrl: process.env.SIGNCARE_BASE_URL || (isProduction ? '' : 'https://uat.signcare.in'),
     apiKey: process.env.SIGNCARE_API_KEY || '',
     appId: process.env.SIGNCARE_APP_ID || '',
   },

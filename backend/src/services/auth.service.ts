@@ -1085,14 +1085,15 @@ export class AuthService {
     let deletionCancelled = false;
 
     await prisma.$transaction(async (tx) => {
-      // 1. Lock user row FOR UPDATE to prevent race with deletion worker
+      // 1. Lock user row FOR UPDATE to prevent race with deletion worker and stale credentials
       const lockedUsers = await tx.$queryRaw<Array<{
         id: string;
         status: string;
+        passwordHash: string;
         deletionScheduledAt: Date | null;
         deletionRequestedAt: Date | null;
       }>>`
-        SELECT "id", "status", "deletionScheduledAt", "deletionRequestedAt"
+        SELECT "id", "status", "passwordHash", "deletionScheduledAt", "deletionRequestedAt"
         FROM "User"
         WHERE "id" = ${user.id}
         FOR UPDATE
@@ -1102,6 +1103,11 @@ export class AuthService {
         throw new Error('User not found.');
       }
       const lockedUser = lockedUsers[0];
+
+      // Optimistic credential-version verification under row lock
+      if (lockedUser.passwordHash !== user.passwordHash) {
+        throw new Error('Invalid mobile number or password.');
+      }
 
       if (lockedUser.status === 'SUSPENDED') {
         throw new Error('Your account has been suspended. Please contact customer support.');

@@ -27,6 +27,7 @@
     "plugins": [
       "expo-asset",
       "./plugins/withPlayIntegrity",
+      "./plugins/withReleaseSigning",
       [
         "expo-notifications",
         {

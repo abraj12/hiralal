@@ -211,3 +211,47 @@ curl -k -s https://localhost/health
 # API Endpoints
 curl -k -s https://localhost/api/health
 ```
+
+---
+
+## 7. Production AWS Deployment Pipeline (`deploy-ec2.yml`)
+
+The production deployment workflow is strictly manual (`workflow_dispatch`). Automatic triggers on CI completion (`workflow_run`) are disabled.
+
+### Required Inputs
+- **`confirm_deploy`**: Must be typed exactly as `DEPLOY`.
+- **`release_sha`**: Exact 40-character hexadecimal Git commit SHA.
+
+### Pre-Deployment Safety Gates
+1. **Branch Ref Enforcement**: Deployment executes only on `refs/heads/main`.
+2. **Commit Lineage & Drift Verification**: The target commit must exist on `origin/main` and match `origin/main` HEAD (`RELEASE_SHA == MAIN_HEAD`).
+3. **CI Pipeline Status Verification**: Queries the GitHub API to assert that `ci.yml` passed with conclusion `success` for the exact `release_sha`.
+4. **Mandatory Secret Validation**: Asserts `EC2_HOST`, `EC2_SSH_KEY`, and `EC2_SSH_KNOWN_HOSTS` are configured before initiating SSH.
+5. **Strict Host Key Checking**: Enforces `StrictHostKeyChecking=yes` using provisioned `known_hosts`.
+6. **Pre-Migration Database Backup**: Executes `scripts/backup-db.sh` before running migrations (fails closed).
+7. **Isolated Migration Runner**: Builds and runs migrations via dedicated container (`docker compose --profile tools run --rm migrate`).
+
+---
+
+## 8. Android Release Candidate Pipeline (`android-release-candidate.yml`)
+
+The production Android release build is decoupled from CI debug builds and executes manually on demand.
+
+### Required Inputs
+- **`release_sha`**: Exact 40-character Git commit SHA on `origin/main`.
+- **`confirm_release`**: Must be typed exactly as `RELEASE`.
+- **`build_target`**: `both`, `aab` (Google Play Store), or `apk` (direct test installation).
+
+### Required GitHub Secrets
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+### Build & Verification Process
+1. Executes `expo prebuild --platform android --no-install --clean`.
+2. Expo plugins (`withReleaseSigning.js` and `withPlayIntegrity.js`) inject reproducible signing and attestation settings into Gradle.
+3. Builds signed `.aab` / `.apk` artifacts using Gradle.
+4. Verifies signatures with `apksigner verify --verbose --print-certs`.
+5. Generates SHA-256 digests (`SHA256SUMS.txt`) and uploads artifacts with 30-day retention.
+6. Keystore file is securely shredded and deleted from the runner filesystem.

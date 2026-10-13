@@ -42,6 +42,10 @@ const G3_USER_D_MOBILE = '9833300094';
 const G3_USER_E_MOBILE = '9833300095';
 const G3_USER_F_MOBILE = '9833300096';
 const G3_USER_G_MOBILE = '9833300097';
+const G4_USER_H1_MOBILE = '9833300098';
+const G4_USER_H2_MOBILE = '9833300099';
+const G4_USER_I_MOBILE = '9833300100';
+const G4_USER_J_MOBILE = '9833300101';
 const TEST_PASSWORD = 'PhaseG_Test@2026';
 
 const validRsaKey = crypto.generateKeyPairSync('rsa', {
@@ -72,8 +76,12 @@ const validProductionEnv: Record<string, string> = {
   R2_SECRET_ACCESS_KEY: 'valid_r2_secret_key',
   R2_BUCKET_NAME: 'my-bucket',
   R2_ENDPOINT: 'https://abc123.r2.cloudflarestorage.com',
+  SIGNCARE_BASE_URL: 'https://api.signcare.in/v1',
   SIGNCARE_API_KEY: 'valid_signcare_key',
   SIGNCARE_APP_ID: 'valid_signcare_app',
+  FIREBASE_PROJECT_ID: 'hiralal-rewards-prod',
+  FIREBASE_CLIENT_EMAIL: 'firebase-adminsdk@hiralal-rewards-prod.iam.gserviceaccount.com',
+  FIREBASE_PRIVATE_KEY: validRsaKey,
   RAZORPAYX_KEY_ID: 'rzp_live_validkey',
   RAZORPAYX_KEY_SECRET: 'valid_rzp_secret',
   RAZORPAYX_ACCOUNT_NUMBER: '2323230041123456',
@@ -105,17 +113,84 @@ async function cleanTestData() {
     G3_USER_E_MOBILE,
     G3_USER_F_MOBILE,
     G3_USER_G_MOBILE,
+    G4_USER_H1_MOBILE,
+    G4_USER_H2_MOBILE,
+    G4_USER_I_MOBILE,
+    G4_USER_J_MOBILE,
   ];
-  await prisma.accountDeletionOperation.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
-  await prisma.appInstallation.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
-  await prisma.pushDeviceToken.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
-  await prisma.authSession.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+  await prisma.accountDeletionOperation.deleteMany({
+    where: {
+      OR: [
+        { user: { mobile: { in: mobiles } } },
+        { user: { mobile: { startsWith: 'DEL_9833300' } } },
+      ],
+    },
+  });
+  await prisma.appInstallation.deleteMany({
+    where: {
+      OR: [
+        { user: { mobile: { in: mobiles } } },
+        { user: { mobile: { startsWith: 'DEL_9833300' } } },
+      ],
+    },
+  });
+  await prisma.pushDeviceToken.deleteMany({
+    where: {
+      OR: [
+        { user: { mobile: { in: mobiles } } },
+        { user: { mobile: { startsWith: 'DEL_9833300' } } },
+      ],
+    },
+  });
+  await prisma.authSession.deleteMany({
+    where: {
+      OR: [
+        { user: { mobile: { in: mobiles } } },
+        { user: { mobile: { startsWith: 'DEL_9833300' } } },
+      ],
+    },
+  });
   await prisma.otpRequest.deleteMany({ where: { mobile: { in: mobiles } } });
-  await prisma.bill.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
-  await prisma.walletTransaction.deleteMany({ where: { wallet: { user: { mobile: { in: mobiles } } } } });
-  await prisma.wallet.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
-  await prisma.notification.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
-  await prisma.user.deleteMany({ where: { mobile: { in: mobiles } } });
+  await prisma.bill.deleteMany({
+    where: {
+      OR: [
+        { user: { mobile: { in: mobiles } } },
+        { user: { mobile: { startsWith: 'DEL_9833300' } } },
+      ],
+    },
+  });
+  await prisma.walletTransaction.deleteMany({
+    where: {
+      OR: [
+        { wallet: { user: { mobile: { in: mobiles } } } },
+        { wallet: { user: { mobile: { startsWith: 'DEL_9833300' } } } },
+      ],
+    },
+  });
+  await prisma.wallet.deleteMany({
+    where: {
+      OR: [
+        { user: { mobile: { in: mobiles } } },
+        { user: { mobile: { startsWith: 'DEL_9833300' } } },
+      ],
+    },
+  });
+  await prisma.notification.deleteMany({
+    where: {
+      OR: [
+        { user: { mobile: { in: mobiles } } },
+        { user: { mobile: { startsWith: 'DEL_9833300' } } },
+      ],
+    },
+  });
+  await prisma.user.deleteMany({
+    where: {
+      OR: [
+        { mobile: { in: mobiles } },
+        { mobile: { startsWith: 'DEL_9833300' } },
+      ],
+    },
+  });
 }
 
 async function createG3TestUser(mobile: string, fullName = 'Phase G3 User') {
@@ -138,8 +213,15 @@ async function createG3TestUser(mobile: string, fullName = 'Phase G3 User') {
 }
 
 async function cleanG3User(mobile: string) {
-  const user = await prisma.user.findUnique({ where: { mobile } });
-  if (user) {
+  const users = await prisma.user.findMany({
+    where: {
+      OR: [
+        { mobile },
+        { mobile: { startsWith: `DEL_${mobile}_` } },
+      ],
+    },
+  });
+  for (const user of users) {
     await prisma.accountDeletionOperation.deleteMany({ where: { userId: user.id } });
     await prisma.appInstallation.deleteMany({ where: { userId: user.id } });
     await prisma.pushDeviceToken.deleteMany({ where: { userId: user.id } });
@@ -1517,6 +1599,256 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
       // Even correct OTP now rejected because OTP is invalidated
       await expect(AccountDeletionService.confirmDeletion(user.id, correctOtp)).rejects.toThrow();
     } finally {
+      await cleanG3User(mobile);
+    }
+  });
+
+  test('Phase G.4 Test H — Worker/database clock skew: DB-clock claim decisions are immune to app wall-clock offset', async () => {
+    const realDateNow = Date.now;
+
+    // Case 1: App clock ahead of DB clock
+    // User scheduled for deletion 1 hour in the FUTURE according to DB clock
+    const mobileH1 = G4_USER_H1_MOBILE;
+    const userH1 = await createG3TestUser(mobileH1);
+
+    const [futureRow] = await prisma.$queryRaw<Array<{ future_time: Date }>>`
+      SELECT (clock_timestamp() AT TIME ZONE 'UTC' + interval '1 hour') as future_time
+    `;
+    const dbFuture = new Date(futureRow.future_time);
+
+    await prisma.user.update({
+      where: { id: userH1.id },
+      data: {
+        deletionRequestedAt: new Date(),
+        deletionScheduledAt: dbFuture,
+        lastDeletionRequestAt: new Date(),
+      },
+    });
+
+    await prisma.accountDeletionOperation.create({
+      data: {
+        userId: userH1.id,
+        status: 'PENDING',
+        scheduledFor: dbFuture,
+      },
+    });
+
+    try {
+      // Simulate app clock running 48 hours ahead of the database
+      Date.now = () => realDateNow() + 48 * 3600 * 1000;
+
+      // Because selection and eligibility check are governed by DB clock (clock_timestamp() AT TIME ZONE 'UTC'),
+      // the operation must NOT be processed yet!
+      const resAhead = await AccountDeletionService.processScheduledDeletions(prisma, undefined, 'worker-H1-ahead');
+      expect(resAhead.processedCount).toBe(0);
+
+      const opCheck = await prisma.accountDeletionOperation.findFirst({
+        where: { userId: userH1.id },
+      });
+      expect(opCheck?.status).toBe('PENDING');
+      expect(opCheck?.leaseOwner).toBeNull();
+    } finally {
+      Date.now = realDateNow;
+      await cleanG3User(mobileH1);
+    }
+
+    // Case 2: App clock behind DB clock
+    // User scheduled for deletion 1 hour in the PAST according to DB clock
+    const mobileH2 = G4_USER_H2_MOBILE;
+    const userH2 = await createG3TestUser(mobileH2);
+
+    const [pastRow] = await prisma.$queryRaw<Array<{ past_time: Date }>>`
+      SELECT (clock_timestamp() AT TIME ZONE 'UTC' - interval '1 hour') as past_time
+    `;
+    const dbPast = new Date(pastRow.past_time);
+
+    await prisma.user.update({
+      where: { id: userH2.id },
+      data: {
+        deletionRequestedAt: dbPast,
+        deletionScheduledAt: dbPast,
+        lastDeletionRequestAt: dbPast,
+      },
+    });
+
+    await prisma.accountDeletionOperation.create({
+      data: {
+        userId: userH2.id,
+        status: 'PENDING',
+        scheduledFor: dbPast,
+      },
+    });
+
+    try {
+      // Simulate app clock running 48 hours BEHIND the database
+      Date.now = () => realDateNow() - 48 * 3600 * 1000;
+
+      // App clock thinks scheduledFor is in the future, but PostgreSQL clock knows it is past due.
+      // Therefore, the worker must successfully claim and execute the deletion.
+      const resBehind = await AccountDeletionService.processScheduledDeletions(prisma, undefined, 'worker-H2-behind');
+      expect(resBehind.processedCount).toBe(1);
+
+      const userAfter = await prisma.user.findUnique({ where: { id: userH2.id } });
+      expect(userAfter?.status).toBe('SUSPENDED');
+      expect(userAfter?.fullName).toBe('Deleted User');
+    } finally {
+      Date.now = realDateNow;
+      await cleanG3User(mobileH2);
+    }
+  });
+
+  test('Phase G.4 Test I — Password reset races with login: old password cannot establish a session after new hash is committed', async () => {
+    const mobile = G4_USER_I_MOBILE;
+    const oldPassword = 'OldPassword@2026';
+    const newPassword = 'NewPassword@2026';
+
+    await cleanG3User(mobile);
+    const oldHash = await bcrypt.hash(oldPassword, 10);
+    const user = await prisma.user.create({
+      data: {
+        mobile,
+        fullName: 'Phase G4 Race User',
+        firstName: 'PhaseG4',
+        lastName: 'Race',
+        passwordHash: oldHash,
+        role: 'USER',
+        status: 'ACTIVE',
+        profession: 'PLUMBER',
+        isVerified: true,
+        wallet: { create: { availableBalance: 50.0, totalRedeemed: 0.0 } },
+      },
+    });
+
+    try {
+      // 1. Initial login with old password succeeds
+      const initialLogin = await AuthService.login(mobile, oldPassword);
+      expect(initialLogin.accessToken).toBeDefined();
+
+      // 2. Simulate concurrent reset: update password hash right as a login transaction starts
+      const newHash = await bcrypt.hash(newPassword, 10);
+
+      // Hook bcrypt.compare to simulate concurrent password reset committing right before the transaction lock
+      const originalCompare = bcrypt.compare;
+      let intercepted = false;
+      jest.spyOn(bcrypt, 'compare').mockImplementation(async (data: any, encrypted: string) => {
+        const result = await (originalCompare as any)(data, encrypted);
+        if (result && !intercepted) {
+          intercepted = true;
+          // Concurrently update password hash in DB before login transaction executes FOR UPDATE
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { passwordHash: newHash },
+          });
+        }
+        return result;
+      });
+
+      // Login attempt with old password must fail due to lockedUser.passwordHash comparison inside transaction lock
+      await expect(
+        AuthService.login(mobile, oldPassword)
+      ).rejects.toThrow(/invalid mobile number or password/i);
+
+      (bcrypt.compare as any).mockRestore();
+
+      // 3. Confirm old password rejected on subsequent login attempt
+      await expect(
+        AuthService.login(mobile, oldPassword)
+      ).rejects.toThrow(/invalid mobile number or password/i);
+
+      // 4. Confirm new password succeeds and establishes a valid session
+      const newLogin = await AuthService.login(mobile, newPassword);
+      expect(newLogin.accessToken).toBeDefined();
+      expect(newLogin.user.id).toBe(user.id);
+    } finally {
+      (bcrypt.compare as any).mockRestore?.();
+      await cleanG3User(mobile);
+    }
+  });
+
+  test('Phase G.4 Test J — Already-anonymized account deletion is idempotently completed via fenced CAS', async () => {
+    const mobile = G4_USER_J_MOBILE;
+    const user = await createG3TestUser(mobile);
+    const pastDate = new Date(Date.now() - 10 * 24 * 3600 * 1000);
+    const dueDate = new Date(Date.now() - 1 * 24 * 3600 * 1000);
+
+    // Pre-scramble the user as if previous worker crashed right after anonymizing user table
+    const scrambledMobile = `DEL_${mobile}_${Date.now()}`;
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        status: 'SUSPENDED',
+        mobile: scrambledMobile,
+        fullName: 'Deleted User',
+        firstName: null,
+        lastName: null,
+        deletionRequestedAt: pastDate,
+        deletionScheduledAt: dueDate,
+        lastDeletionRequestAt: pastDate,
+      },
+    });
+
+    // Create recoverable active operation with expired lease from previous worker
+    const op = await prisma.accountDeletionOperation.create({
+      data: {
+        userId: user.id,
+        status: 'IN_PROGRESS',
+        scheduledFor: dueDate,
+        destructiveStartedAt: pastDate,
+        leaseOwner: 'crashed-worker-old',
+        leaseExpiresAt: new Date(Date.now() - 30 * 1000), // Expired lease
+        leaseVersion: 1,
+        attemptCount: 1,
+      },
+    });
+
+    try {
+      // 1. Verify that a stale worker with invalid fencing token cannot complete it
+      const staleCas = await prisma.$executeRaw`
+        UPDATE "AccountDeletionOperation"
+        SET "status" = 'COMPLETED',
+            "completedAt" = clock_timestamp() AT TIME ZONE 'UTC',
+            "updatedAt" = clock_timestamp() AT TIME ZONE 'UTC'
+        WHERE "id" = ${op.id}
+          AND "leaseOwner" = 'wrong-worker'
+          AND "leaseVersion" = 1
+      `;
+      expect(staleCas).toBe(0);
+
+      // 2. Active worker runs scheduled deletions
+      const res = await AccountDeletionService.processScheduledDeletions(prisma, undefined, 'worker-J-recovery');
+      expect(res.processedCount).toBe(1);
+
+      // 3. Verify operation transitioned to COMPLETED
+      const opAfter = await prisma.accountDeletionOperation.findUnique({
+        where: { id: op.id },
+      });
+      expect(opAfter?.status).toBe('COMPLETED');
+      expect(opAfter?.completedAt).toBeDefined();
+
+      // 4. Verify no user data was restored or corrupted
+      const userAfter = await prisma.user.findUnique({
+        where: { id: user.id },
+      });
+      expect(userAfter?.status).toBe('SUSPENDED');
+      expect(userAfter?.fullName).toBe('Deleted User');
+      expect(userAfter?.mobile).toBe(scrambledMobile);
+
+      // 5. Verify audit log was written
+      const auditLog = await prisma.auditLog.findFirst({
+        where: {
+          entityId: user.id,
+          action: 'ACCOUNT_DELETION_EXECUTED',
+        },
+      });
+      expect(auditLog).toBeDefined();
+
+      // 6. Verify subsequent run does not process anything (idempotent terminal state)
+      const resSubsequent = await AccountDeletionService.processScheduledDeletions(prisma, undefined, 'worker-J-again');
+      expect(resSubsequent.processedCount).toBe(0);
+    } finally {
+      await prisma.accountDeletionOperation.deleteMany({ where: { userId: user.id } });
+      await prisma.auditLog.deleteMany({ where: { entityId: user.id } });
+      await prisma.user.deleteMany({ where: { id: user.id } });
       await cleanG3User(mobile);
     }
   });
