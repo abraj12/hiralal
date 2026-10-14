@@ -159,11 +159,13 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     await closeRedis();
   });
 
-  test('GET /health returns 200 OK with service details', async () => {
-    const res = await request(app).get('/health');
-    expect(res.status).toBe(200);
-    expect(res.body.status).toBe('ok');
-    expect(res.body.service).toContain('Hiralal & Sons');
+  test('GET /health, /api/health, /api/v1/health return 200 OK with service details', async () => {
+    for (const path of ['/health', '/api/health', '/api/v1/health']) {
+      const res = await request(app).get(path);
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('ok');
+      expect(res.body.service).toContain('Hiralal & Sons');
+    }
   });
 
   test('POST /api/auth/send-otp and registration flow', async () => {

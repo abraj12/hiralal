@@ -205,13 +205,16 @@ export default function OpsAdminDashboardScreen({
       <View style={styles.quickGrid}>
         <TouchableOpacity
           style={styles.quickBtn}
-          onPress={() => onNavigateTab?.('BILLS')}
+          onPress={() => {
+            onNavigateTab?.('MORE');
+            onNavigateMoreSubtab?.('REWARDS');
+          }}
           activeOpacity={0.7}
         >
           <View style={[styles.quickIcon, { backgroundColor: '#EFF6FF' }]}>
-            <FileCheck size={20} color="#2563EB" />
+            <Award size={20} color="#2563EB" />
           </View>
-          <Text style={styles.quickLabel}>Verify Bills</Text>
+          <Text style={styles.quickLabel}>Reward Rules</Text>
         </TouchableOpacity>
 
         <TouchableOpacity

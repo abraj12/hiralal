@@ -200,16 +200,8 @@ Admin authentication requires prefix-based identifiers (`BILL_ADMIN_PREFIX` or `
     "gstRate": 18.0
   }
   ```
-- **Approve with Manual GST Override**:
-  ```json
-  {
-    "action": "APPROVE",
-    "gstIncluded": true,
-    "gstRate": 12.0,
-    "gstOverrideReason": "Concessional tax rate verified on physical tax invoice"
-  }
-  ```
-- **Approve without GST Deduction**:
+  *(Note: When `gstIncluded` is `true`, a valid `gstRuleId` configured by Operations Admin is required. Bill Review Administrators cannot arbitrarily apply unconfigured GST rates).*
+- **Approve without GST Deduction (Zero-Rated / Exempt Goods)**:
   ```json
   {
     "action": "APPROVE",
@@ -261,7 +253,7 @@ Admin authentication requires prefix-based identifiers (`BILL_ADMIN_PREFIX` or `
   ```
 
 #### 3.2 Request Reward Redemption (Craftsman)
-Requests 100% full available balance redemption. Has no minimum or maximum threshold:
+Requests 100% full available balance redemption. Requires redemption window to be open and available balance to satisfy the configured `minimumRedemptionAmount` threshold set by Operations Administration:
 - **Method**: `POST`
 - **Path**: `/payouts/redeem` (alias: `/payouts/request`)
 - **Headers**: `Authorization: Bearer <USER_TOKEN>`

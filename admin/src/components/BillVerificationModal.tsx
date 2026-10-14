@@ -35,7 +35,13 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   // Dynamic GST & Financial Verification Controls
   const [gstIncluded, setGstIncluded] = useState(Boolean(bill.gstIncluded));
   const [gstRules, setGstRules] = useState<any[]>([]);
-  const [selectedGstRate, setSelectedGstRate] = useState<number>(Number(bill.gstRate) || 18.0);
+  const [selectedGstRate, setSelectedGstRate] = useState<number>(
+    typeof bill.gstRate === 'number'
+      ? bill.gstRate
+      : (bill.gstRate !== null && bill.gstRate !== undefined && !isNaN(Number(bill.gstRate)))
+      ? Number(bill.gstRate)
+      : 0
+  );
   const [selectedGstRuleId, setSelectedGstRuleId] = useState<string>(bill.gstRuleId || '');
 
   const [rewardPercentage, setRewardPercentage] = useState<number | null>(

@@ -11,7 +11,7 @@ import {
 import { useApp } from '../context/AppContext';
 
 export type BillAdminTab = 'DASHBOARD' | 'BILLS';
-export type OpsAdminTab = 'DASHBOARD' | 'BILLS' | 'USERS' | 'PAYOUTS' | 'MORE';
+export type OpsAdminTab = 'DASHBOARD' | 'USERS' | 'PAYOUTS' | 'MORE';
 
 interface AdminBottomNavProps {
   currentTab: string;
@@ -34,7 +34,6 @@ export default function AdminBottomNav({
 
   const opsAdminTabs = [
     { key: 'DASHBOARD', label: 'Overview', icon: LayoutDashboard },
-    { key: 'BILLS', label: 'Bills', icon: FileCheck },
     { key: 'USERS', label: 'Craftsmen', icon: Users },
     { key: 'PAYOUTS', label: 'Payouts', icon: CreditCard, badge: pendingCount },
     { key: 'MORE', label: 'More', icon: Sliders },

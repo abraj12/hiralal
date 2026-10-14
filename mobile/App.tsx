@@ -27,11 +27,11 @@ import OpsAdminMoreScreen from './src/screens/admin/OpsAdminMoreScreen';
 const OperationsDashboardScreen = OpsAdminDashboardScreen;
 
 function MainAppNavigator() {
-  const { currentScreen, activeTab, user, logout } = useApp();
+  const { currentScreen, activeTab, user } = useApp();
 
   // Admin Tab State
   const [billAdminTab, setBillAdminTab] = useState<'DASHBOARD' | 'BILLS'>('DASHBOARD');
-  const [opsAdminTab, setOpsAdminTab] = useState<'DASHBOARD' | 'BILLS' | 'USERS' | 'PAYOUTS' | 'MORE'>('DASHBOARD');
+  const [opsAdminTab, setOpsAdminTab] = useState<'DASHBOARD' | 'USERS' | 'PAYOUTS' | 'MORE'>('DASHBOARD');
   const [opsAdminMoreSubtab, setOpsAdminMoreSubtab] = useState<'REWARDS' | 'BROADCAST' | 'AUDIT' | 'SETTINGS'>('REWARDS');
   const [adminRefreshKey, setAdminRefreshKey] = useState(0);
 
@@ -81,8 +81,6 @@ function MainAppNavigator() {
               }}
             />
           );
-        case 'BILLS':
-          return <BillReviewScreen key={`ops-bills-${adminRefreshKey}`} showStandaloneHeader={false} />;
         case 'USERS':
           return <OpsAdminUsersScreen key={`ops-users-${adminRefreshKey}`} />;
         case 'PAYOUTS':
@@ -97,21 +95,6 @@ function MainAppNavigator() {
         default:
           return <OperationsDashboardScreen />;
       }
-    }
-
-    // Fail closed for legacy ADMIN: require role migration
-    if (user?.role === 'ADMIN') {
-      return (
-        <View style={styles.legacyNoticeContainer}>
-          <Text style={styles.legacyNoticeTitle}>Role Migration Required</Text>
-          <Text style={styles.legacyNoticeText}>
-            Legacy administrator accounts have been deprecated. Please contact system administration to migrate your account to Bill Admin or Operations Admin.
-          </Text>
-          <TouchableOpacity style={styles.legacyNoticeBtn} onPress={logout}>
-            <Text style={styles.legacyNoticeBtnText}>Sign Out</Text>
-          </TouchableOpacity>
-        </View>
-      );
     }
 
     // Main bottom-tabs navigation for regular craftsman users
@@ -200,37 +183,5 @@ const styles = StyleSheet.create({
   },
   screenWrapper: {
     flex: 1,
-  },
-  legacyNoticeContainer: {
-    flex: 1,
-    padding: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-  },
-  legacyNoticeTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#0F172A',
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  legacyNoticeText: {
-    fontSize: 14,
-    color: '#64748B',
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
-  },
-  legacyNoticeBtn: {
-    backgroundColor: '#0284C7',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  legacyNoticeBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 14,
   },
 });

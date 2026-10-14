@@ -92,22 +92,22 @@ const sharedAssetsPath = path.join(__dirname, '../../shared/assets');
 app.use('/assets', express.static(sharedAssetsPath));
 
 // Health Check Endpoints
-app.get('/health', (_req: Request, res: Response) => {
+const healthHandler = (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     service: 'Hiralal & Sons Rewards Management API',
     version: '1.0.0',
     timestamp: new Date().toISOString(),
   });
-});
+};
 
-app.get('/health/live', (_req: Request, res: Response) => {
+const liveHandler = (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     uptime: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
   });
-});
+};
 
 const readyHandler = async (_req: Request, res: Response) => {
   try {
@@ -132,11 +132,16 @@ const readyHandler = async (_req: Request, res: Response) => {
   }
 };
 
+app.get('/health', healthHandler);
+app.get('/health/live', liveHandler);
 app.get('/health/ready', readyHandler);
 app.get('/ready', readyHandler);
 
 // API Routes - Canonical /api/v1 with /api backward-compatibility alias
 const v1Router = express.Router();
+v1Router.get('/health', healthHandler);
+v1Router.get('/health/live', liveHandler);
+v1Router.get('/health/ready', readyHandler);
 v1Router.use('/auth', authRoutes);
 v1Router.use('/bills', billRoutes);
 v1Router.use('/rewards', rewardRoutes);

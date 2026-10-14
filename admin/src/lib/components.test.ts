@@ -85,3 +85,12 @@ test('filterNavItemsByRole: rejects legacy ADMIN, USER, or missing role', () => 
   assert.deepStrictEqual(filterNavItemsByRole(sampleItems, null), []);
   assert.deepStrictEqual(filterNavItemsByRole(sampleItems, undefined), []);
 });
+
+test('calculateBillFinancials: handles float GST rates with paise precision', () => {
+  // Gross: 1075, 7.5% GST => GST: 1075 * 7.5 / 107.5 = 75, Eligible: 1000, 1.25% reward => 12.5
+  const result = calculateBillFinancials(1075.0, true, 7.5, 1.25);
+  assert.strictEqual(result.gstAmount, 75.0);
+  assert.strictEqual(result.eligibleRewardAmount, 1000.0);
+  assert.strictEqual(result.calculatedReward, 12.5);
+});
+
