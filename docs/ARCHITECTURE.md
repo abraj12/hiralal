@@ -63,11 +63,14 @@ To maintain commercial-grade accounting integrity:
 
 ### 4. Authoritative Reward Rules & Reverse GST Calculation Basis
 
-1. **Standard Reward Percentage**: The default business rule is **0.50% of the approved bill** for both `PLUMBER` and `TILE_INSTALLER`.
-2. **Effective-Dated Database Rules**:
-   - The database table `RewardRule` is authoritative for historical calculations.
-   - When a bill is approved, the rule active on the bill's `invoiceDate` is resolved:
-     `effectiveFrom <= invoiceDate AND (effectiveUntil IS NULL OR effectiveUntil > invoiceDate)`.
+1. **Dynamic Reward Rules (No Hardcoded Fallback)**:
+   - Reward percentages are dynamically configured per profession (`PLUMBER`, `TILE_INSTALLER`) by Operations Administrators via effective-dated database records.
+   - There is no hardcoded fallback percentage or hidden default rate.
+2. **Effective-Dated Database Rules & Anti-Arbitrage**:
+   - The database table `RewardRule` is authoritative for calculations.
+   - When a bill is approved, the rule active on the bill's server submission timestamp (`createdAt`) is resolved:
+     `effectiveFrom <= bill.createdAt AND (effectiveUntil IS NULL OR effectiveUntil > bill.createdAt)`.
+   - Resolving against the server-recorded `createdAt` timestamp (rather than the claimed invoice date) eliminates rate arbitrage and backdated invoice manipulation.
    - The rate snapshot (`rewardRateSnapshot`) is immutably recorded on the `Bill`.
 3. **GST Reverse-Calculation Formula**:
    - **GST-Excluded / Zero GST**:

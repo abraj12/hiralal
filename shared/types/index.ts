@@ -5,7 +5,8 @@ export enum Profession {
 
 export enum UserRole {
   USER = 'USER',
-  ADMIN = 'ADMIN'
+  BILL_ADMIN = 'BILL_ADMIN',
+  OPERATIONS_ADMIN = 'OPERATIONS_ADMIN'
 }
 
 export enum UserStatus {
@@ -51,8 +52,10 @@ export enum PayoutStatus {
 
 export enum OtpPurpose {
   REGISTRATION = 'REGISTRATION',
+  LOGIN = 'LOGIN',
+  ADMIN_LOGIN = 'ADMIN_LOGIN',
   FORGOT_PASSWORD = 'FORGOT_PASSWORD',
-  LOGIN = 'LOGIN'
+  ACCOUNT_DELETION = 'ACCOUNT_DELETION'
 }
 
 export interface UserDto {

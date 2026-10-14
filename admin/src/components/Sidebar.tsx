@@ -27,7 +27,7 @@ export default function Sidebar({ pendingBillsCount = 0 }: SidebarProps) {
     setUser(AdminApiClient.getUser());
   }, []);
 
-  const role = user?.role; // 'BILL_ADMIN' | 'OPERATIONS_ADMIN' | 'ADMIN'
+  const role = user?.role; // 'BILL_ADMIN' | 'OPERATIONS_ADMIN'
 
   // Dynamic role-based navigation filtering:
   // BILL_ADMIN: Reviews & approves bills, views dashboard
