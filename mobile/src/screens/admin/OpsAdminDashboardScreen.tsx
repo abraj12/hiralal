@@ -25,7 +25,7 @@ import {
 import { MobileApiClient } from '../../services/api';
 
 interface OpsAdminDashboardProps {
-  onNavigateTab: (tab: string) => void;
+  onNavigateTab?: (tab: string) => void;
   onNavigateMoreSubtab?: (subtab: string) => void;
 }
 
@@ -93,7 +93,7 @@ export default function OpsAdminDashboardScreen({
           </Text>
           <TouchableOpacity
             style={styles.heroBtn}
-            onPress={() => onNavigateTab('PAYOUTS')}
+            onPress={() => onNavigateTab?.('PAYOUTS')}
             activeOpacity={0.8}
           >
             <Text style={styles.heroBtnText}>Manage Disbursements</Text>
@@ -125,7 +125,7 @@ export default function OpsAdminDashboardScreen({
         {/* Pending Payouts */}
         <TouchableOpacity
           style={[styles.statBox, styles.statBoxRed]}
-          onPress={() => onNavigateTab('PAYOUTS')}
+          onPress={() => onNavigateTab?.('PAYOUTS')}
           activeOpacity={0.7}
         >
           <View style={styles.statHeaderRow}>
@@ -167,7 +167,7 @@ export default function OpsAdminDashboardScreen({
       <Text style={styles.sectionHeading}>Craftsmen Network</Text>
       <TouchableOpacity
         style={styles.networkCard}
-        onPress={() => onNavigateTab('USERS')}
+        onPress={() => onNavigateTab?.('USERS')}
         activeOpacity={0.8}
       >
         <View style={styles.networkTop}>
@@ -205,7 +205,7 @@ export default function OpsAdminDashboardScreen({
       <View style={styles.quickGrid}>
         <TouchableOpacity
           style={styles.quickBtn}
-          onPress={() => onNavigateTab('BILLS')}
+          onPress={() => onNavigateTab?.('BILLS')}
           activeOpacity={0.7}
         >
           <View style={[styles.quickIcon, { backgroundColor: '#EFF6FF' }]}>
@@ -216,7 +216,7 @@ export default function OpsAdminDashboardScreen({
 
         <TouchableOpacity
           style={styles.quickBtn}
-          onPress={() => onNavigateTab('USERS')}
+          onPress={() => onNavigateTab?.('USERS')}
           activeOpacity={0.7}
         >
           <View style={[styles.quickIcon, { backgroundColor: '#F0FDF4' }]}>
@@ -227,7 +227,7 @@ export default function OpsAdminDashboardScreen({
 
         <TouchableOpacity
           style={styles.quickBtn}
-          onPress={() => onNavigateTab('PAYOUTS')}
+          onPress={() => onNavigateTab?.('PAYOUTS')}
           activeOpacity={0.7}
         >
           <View style={[styles.quickIcon, { backgroundColor: '#FEF2F2' }]}>
@@ -239,8 +239,8 @@ export default function OpsAdminDashboardScreen({
         <TouchableOpacity
           style={styles.quickBtn}
           onPress={() => {
-            onNavigateTab('MORE');
-            if (onNavigateMoreSubtab) onNavigateMoreSubtab('BROADCAST');
+            onNavigateTab?.('MORE');
+            onNavigateMoreSubtab?.('BROADCAST');
           }}
           activeOpacity={0.7}
         >
@@ -253,8 +253,8 @@ export default function OpsAdminDashboardScreen({
         <TouchableOpacity
           style={styles.quickBtn}
           onPress={() => {
-            onNavigateTab('MORE');
-            if (onNavigateMoreSubtab) onNavigateMoreSubtab('SETTINGS');
+            onNavigateTab?.('MORE');
+            onNavigateMoreSubtab?.('SETTINGS');
           }}
           activeOpacity={0.7}
         >
