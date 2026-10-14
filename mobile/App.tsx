@@ -24,6 +24,8 @@ import OpsAdminUsersScreen from './src/screens/admin/OpsAdminUsersScreen';
 import OpsAdminPayoutsScreen from './src/screens/admin/OpsAdminPayoutsScreen';
 import OpsAdminMoreScreen from './src/screens/admin/OpsAdminMoreScreen';
 
+const OperationsDashboardScreen = OpsAdminDashboardScreen;
+
 function MainAppNavigator() {
   const { currentScreen, activeTab, user, logout } = useApp();
 
@@ -49,7 +51,7 @@ function MainAppNavigator() {
     if (currentScreen === 'NOTIFICATIONS') return <NotificationScreen />;
 
     // 1. BILL_ADMIN Mobile Portal
-    if (isBillAdmin) {
+    if (user?.role === 'BILL_ADMIN') {
       switch (billAdminTab) {
         case 'DASHBOARD':
           return (
@@ -61,16 +63,16 @@ function MainAppNavigator() {
         case 'BILLS':
           return <BillReviewScreen key={`bill-review-${adminRefreshKey}`} showStandaloneHeader={false} />;
         default:
-          return <BillAdminDashboardScreen onNavigateToBills={() => setBillAdminTab('BILLS')} />;
+          return <BillReviewScreen />;
       }
     }
 
     // 2. OPERATIONS_ADMIN Mobile Portal
-    if (isOpsAdmin) {
+    if (user?.role === 'OPERATIONS_ADMIN') {
       switch (opsAdminTab) {
         case 'DASHBOARD':
           return (
-            <OpsAdminDashboardScreen
+            <OperationsDashboardScreen
               key={`ops-dash-${adminRefreshKey}`}
               onNavigateTab={tab => setOpsAdminTab(tab as any)}
               onNavigateMoreSubtab={st => {
@@ -93,15 +95,7 @@ function MainAppNavigator() {
             />
           );
         default:
-          return (
-            <OpsAdminDashboardScreen
-              onNavigateTab={tab => setOpsAdminTab(tab as any)}
-              onNavigateMoreSubtab={st => {
-                setOpsAdminMoreSubtab(st as any);
-                setOpsAdminTab('MORE');
-              }}
-            />
-          );
+          return <OperationsDashboardScreen />;
       }
     }
 
