@@ -12,7 +12,7 @@ const router = Router();
  * Verifies webhook signature against raw byte payload, deduplicates via WebhookEvent table,
  * and executes safe idempotent state transitions.
  */
-router.post('/razorpayx', async (req: Request, res: Response): Promise<void> => {
+export async function handleRazorpayXWebhook(req: Request, res: Response): Promise<void> {
   try {
     const signature = req.headers['x-razorpay-signature'] as string;
 
@@ -204,6 +204,9 @@ router.post('/razorpayx', async (req: Request, res: Response): Promise<void> => 
     console.error('[WEBHOOK-ERROR]', err);
     res.status(500).json({ error: err.message || 'Webhook processing failed' });
   }
-});
+}
+
+router.post('/razorpayx', handleRazorpayXWebhook);
+router.post('/webhook', handleRazorpayXWebhook);
 
 export default router;

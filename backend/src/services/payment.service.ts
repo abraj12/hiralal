@@ -1,7 +1,7 @@
 import { prisma } from '../db';
 import { config } from '../config';
 import { PaymentType } from '@prisma/client';
-import { encryptSensitive } from '../utils/crypto.utils';
+import { encryptSensitive, decryptSensitive } from '../utils/crypto.utils';
 
 export function readProviderRegisteredName(value: unknown): string | null {
   if (typeof value !== 'string') {
@@ -218,17 +218,36 @@ export class PaymentService {
 
     const maskedInfo = this.maskPaymentInfo('BANK_ACCOUNT', cleanAccount, params.bankName);
 
-    // Prevent cross-user duplicate registration
-    const existingOther = await prisma.paymentAccount.findFirst({
+    // Prevent cross-user duplicate registration using exact normalized account number + IFSC
+    const existingOthers = await prisma.paymentAccount.findMany({
       where: {
-        maskedInfo,
         ifscCode: cleanIfsc,
         userId: { not: params.userId },
         isVerified: true,
       },
+      select: {
+        id: true,
+        accountNumberEncrypted: true,
+        maskedInfo: true,
+      },
     });
-    if (existingOther) {
-      throw new Error('This bank account is already registered and verified with another user account.');
+
+    for (const other of existingOthers) {
+      if (other.accountNumberEncrypted) {
+        try {
+          const decrypted = decryptSensitive(other.accountNumberEncrypted);
+          if (decrypted === cleanAccount) {
+            throw new Error('This bank account is already registered and verified with another user account.');
+          }
+        } catch (e: any) {
+          if (e.message && e.message.includes('already registered')) throw e;
+          if (other.maskedInfo === maskedInfo) {
+            throw new Error('This bank account is already registered and verified with another user account.');
+          }
+        }
+      } else if (other.maskedInfo === maskedInfo) {
+        throw new Error('This bank account is already registered and verified with another user account.');
+      }
     }
 
     let isValid = false;

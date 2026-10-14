@@ -280,6 +280,28 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
     expect(unmatchedRes.body.status).toBe('unmatched_held_for_retry');
   });
 
+  test('3b. Payouts Webhook Alias: POST /api/v1/payouts/webhook safely processes callbacks', async () => {
+    const aliasEventId = `evt_alias_${Date.now()}`;
+    const aliasRes = await request(app)
+      .post('/api/v1/payouts/webhook')
+      .set('x-razorpay-event-id', aliasEventId)
+      .send({
+        id: aliasEventId,
+        event: 'payout.processed',
+        payload: {
+          payout: {
+            entity: {
+              id: 'pout_alias_test',
+              reference_id: 'ref_dummy_alias',
+            },
+          },
+        },
+      });
+
+    expect(aliasRes.status).toBe(200);
+    expect(aliasRes.body.status).toBe('unmatched_held_for_retry');
+  });
+
   test('4. Reconciliation Worker: Gracefully handles offline or mock gateway sync', async () => {
     const report = await ReconciliationWorker.reconcileStuckPayouts();
     expect(typeof report.reconciledCount).toBe('number');

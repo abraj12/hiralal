@@ -24,10 +24,11 @@ export class LocalStorageProvider implements StorageProvider {
     const fullPath = this.getFullPath(params.key);
     fs.writeFileSync(fullPath, params.buffer);
     const fileHash = sha256Hash(params.buffer);
+    const signedUrl = await this.getSignedUrl(params.key);
 
     return {
       fileKey: params.key,
-      fileUrl: `/uploads/${path.basename(fullPath)}`,
+      fileUrl: signedUrl,
       fileHash,
       fileSize: params.buffer.length,
       mimeType: params.mimeType,
@@ -46,9 +47,9 @@ export class LocalStorageProvider implements StorageProvider {
     return fs.existsSync(fullPath);
   }
 
-  async getSignedUrl(key: string): Promise<string> {
-    const fullPath = this.getFullPath(key);
-    return `/uploads/${path.basename(fullPath)}`;
+  async getSignedUrl(key: string, expiresInSeconds = 1800): Promise<string> {
+    const { StorageService } = await import('./index');
+    return StorageService.generateSignedUrl(key, Math.ceil(expiresInSeconds / 60));
   }
 
   async getStream(key: string): Promise<Readable> {

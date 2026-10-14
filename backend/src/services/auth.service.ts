@@ -1343,17 +1343,30 @@ export class AuthService {
       throw new Error('Registration verification token is required.');
     }
 
-    // 1. Consume verificationToken (atomic validation)
+    // 1. Pre-validate verification token prior to expensive bcrypt password hashing
     const tokenHash = sha256Hash(params.verificationToken);
-    const now = new Date();
+    const existingToken = await prisma.verificationToken.findFirst({
+      where: {
+        tokenHash,
+        mobile: cleanMobile,
+        purpose: 'REGISTRATION',
+        isUsed: false,
+        expiresAt: { gt: new Date() },
+      },
+    });
 
-    // 2. Hash password with bcrypt salt 12
+    if (!existingToken) {
+      throw new Error('Invalid or expired registration verification token. Please verify OTP again.');
+    }
+
+    // 2. Hash password with bcrypt salt 12 only after token is confirmed valid
     const passwordHash = await bcrypt.hash(params.password, 12);
 
     // 3. Single active session ID
     const sessionId = crypto.randomUUID();
     const refreshToken = generateSecureToken(40);
     const refreshTokenHash = sha256Hash(refreshToken);
+    const now = new Date();
     const sessionExpiresAt = new Date(now.getTime() + 30 * 24 * 3600 * 1000); // 30 days
 
     const { user, wallet } = await prisma.$transaction(async (tx) => {

@@ -32,7 +32,7 @@
    RAZORPAYX_WEBHOOK_SECRET="<generate_strong_webhook_secret>"
    ```
 2. Configure Webhook in RazorpayX Dashboard:
-   - **URL**: `https://hsspl.algions.in/api/v1/payouts/webhook` (or `/api/payouts/webhook` compatibility alias)
+   - **URL**: `https://hsspl.algions.in/api/v1/webhooks/razorpayx` (or `https://hsspl.algions.in/api/v1/payouts/webhook` compatibility alias)
    - **Secret**: Must match `RAZORPAYX_WEBHOOK_SECRET`
    - **Subscribed Events**:
      - `payout.processed` (triggers transition to `SUCCESS` in wallet ledger)

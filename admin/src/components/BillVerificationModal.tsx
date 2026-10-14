@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, CheckCircle2, XCircle, FileText, ExternalLink, AlertTriangle, ShieldCheck, Calculator, RefreshCw } from 'lucide-react';
 import { AdminApiClient } from '../lib/api';
+import { calculateBillFinancials } from '../lib/financial-utils';
 
 interface BillVerificationModalProps {
   bill: any;
@@ -101,17 +102,12 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
     loadReviewConfig();
   }, [bill.id]);
 
-  // Live Reverse GST Calculation (paise-rounded)
-  const gstAmount = gstIncluded && selectedGstRate > 0
-    ? Math.round(((grossAmount * selectedGstRate) / (100 + selectedGstRate)) * 100) / 100
-    : 0.0;
-
-  const eligibleRewardAmount = Math.max(0, Math.round((grossAmount - gstAmount) * 100) / 100);
-
-  // Exact reward rate from authoritative database rule - no fallback guessing
-  const calculatedReward = rewardPercentage !== null
-    ? Math.round(eligibleRewardAmount * (rewardPercentage / 100) * 100) / 100
-    : 0.0;
+  const { gstAmount, eligibleRewardAmount, calculatedReward } = calculateBillFinancials(
+    grossAmount,
+    gstIncluded,
+    selectedGstRate,
+    rewardPercentage
+  );
 
   const handleApprove = async () => {
     setIsSubmitting(true);

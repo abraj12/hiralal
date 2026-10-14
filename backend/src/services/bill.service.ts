@@ -238,7 +238,7 @@ export class BillService {
   /**
    * Approves a bill atomically:
    * 1. Loads user's authoritative profession.
-   * 2. Resolves applicable active RewardRule for that profession and invoice date.
+   * 2. Resolves applicable active RewardRule for that profession and bill submission timestamp (createdAt).
    * 3. Calculates GST and tax-exclusive eligible reward amount.
    * 4. Calculates final reward.
    * 5. Pool-free direct cashback reward model (no monthly or global pool caps).

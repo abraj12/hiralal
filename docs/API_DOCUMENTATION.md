@@ -263,7 +263,7 @@ Admin authentication requires prefix-based identifiers (`BILL_ADMIN_PREFIX` or `
 #### 3.2 Request Reward Redemption (Craftsman)
 Requests 100% full available balance redemption. Has no minimum or maximum threshold:
 - **Method**: `POST`
-- **Path**: `/payouts/request`
+- **Path**: `/payouts/redeem` (alias: `/payouts/request`)
 - **Headers**: `Authorization: Bearer <USER_TOKEN>`
 - **Body**:
   ```json
@@ -304,7 +304,7 @@ Requests 100% full available balance redemption. Has no minimum or maximum thres
 
 #### 3.4 RazorpayX Gateway Webhook
 - **Method**: `POST`
-- **Path**: `/payouts/webhook`
+- **Path**: `/webhooks/razorpayx` (alias: `/payouts/webhook`)
 - **Headers**: `x-razorpay-signature: <HMAC_SHA256_HEX>`
 - **Body**: RazorpayX event payload (`payout.processed`, `payout.reversed`, `payout.failed`).
 

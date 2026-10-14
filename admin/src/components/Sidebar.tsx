@@ -14,6 +14,7 @@ import {
   Bell,
 } from 'lucide-react';
 import { AdminApiClient } from '../lib/api';
+import { filterNavItemsByRole } from '../lib/nav-utils';
 
 interface SidebarProps {
   pendingBillsCount?: number;
@@ -84,7 +85,7 @@ export default function Sidebar({ pendingBillsCount = 0 }: SidebarProps) {
     },
   ];
 
-  const navItems = allNavItems.filter(item => !role || item.roles.includes(role));
+  const navItems = filterNavItemsByRole(allNavItems, role);
 
   const handleLogout = async () => {
     await AdminApiClient.logout();

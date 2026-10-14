@@ -3,6 +3,7 @@ import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/a
 import { PayoutService } from '../services/payout.service';
 import { payoutRedeemLimiter } from '../middleware/rateLimit.middleware';
 import { requireActionIntegrity } from '../middleware/integrity.middleware';
+import { handleRazorpayXWebhook } from './webhook.routes';
 import { prisma } from '../db';
 
 const router = Router();
@@ -24,8 +25,9 @@ router.get('/eligibility', authenticate, requireUser, async (req: AuthenticatedR
  * Request Reward Redemption
  * Enforces 100% full-balance redemption computed from database available balance.
  * Awaiting admin approval before dispatch.
+ * Supports canonical /redeem and legacy/documented /request alias.
  */
-router.post('/redeem', authenticate, requireUser, payoutRedeemLimiter, requireActionIntegrity('PAYOUT_REDEEM'), async (req: AuthenticatedRequest, res: Response) => {
+const handleRedeemRequest = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const idempotencyRaw: unknown = req.body?.idempotencyKey;
@@ -54,7 +56,10 @@ router.post('/redeem', authenticate, requireUser, payoutRedeemLimiter, requireAc
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }
-});
+};
+
+router.post('/redeem', authenticate, requireUser, payoutRedeemLimiter, requireActionIntegrity('PAYOUT_REDEEM'), handleRedeemRequest);
+router.post('/request', authenticate, requireUser, payoutRedeemLimiter, requireActionIntegrity('PAYOUT_REDEEM'), handleRedeemRequest);
 
 /**
  * Get user payout disbursement history
@@ -91,5 +96,11 @@ router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res
     res.status(500).json({ success: false, message: err.message });
   }
 });
+
+/**
+ * RazorpayX Webhook Compatibility Alias
+ * Dispatches directly to authoritative RazorpayX webhook handler
+ */
+router.post('/webhook', handleRazorpayXWebhook);
 
 export default router;

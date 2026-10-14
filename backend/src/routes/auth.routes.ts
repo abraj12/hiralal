@@ -619,6 +619,13 @@ router.patch('/me', authenticate, requireUser, async (req: AuthenticatedRequest,
           message: 'Profile is locked following KYC verification. Profession cannot be altered.',
         });
       }
+      const existingBillsCount = await prisma.bill.count({ where: { userId: user.id } });
+      if (existingBillsCount > 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'Profession cannot be changed after bills have been submitted. Contact Operations Admin for corrections.',
+        });
+      }
       if (!['PLUMBER', 'TILE_INSTALLER'].includes(profession)) {
         return res.status(400).json({ success: false, message: 'Invalid profession. Must be PLUMBER or TILE_INSTALLER.' });
       }

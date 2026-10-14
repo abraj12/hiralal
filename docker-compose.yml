@@ -151,6 +151,7 @@ services:
       - '5000'
     volumes:
       - uploads:/app/uploads
+      - ./shared/assets:/shared/assets:ro
     networks:
       - hiralal_net
     healthcheck:

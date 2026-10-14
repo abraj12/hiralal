@@ -106,6 +106,10 @@ export class MobileApiClient {
     this.token = token;
     try {
       if (Platform.OS === 'web') {
+        // In production web builds, do not persist access tokens in localStorage
+        if (process.env.NODE_ENV === 'production') {
+          return;
+        }
         if (typeof window !== 'undefined' && window.localStorage) {
           if (token) {
             window.localStorage.setItem(STORAGE_KEY, token);
