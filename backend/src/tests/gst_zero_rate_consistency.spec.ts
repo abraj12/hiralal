@@ -575,4 +575,118 @@ describe('HIR-V4-04: GST Zero-Rate Consistency & Bill Approval Regression Suite'
       expect(from18Rate).toEqual(fromReverse);
     });
   });
+
+  // 19. Strict Rate Validation Exhaustive Edge Cases
+  describe('19. parseStrictGstRate: Comprehensive Unit Edge Cases', () => {
+    test('accepts valid boundary numbers and formatted strings', () => {
+      expect(parseStrictGstRate(0)).toBe(0);
+      expect(parseStrictGstRate(0.0)).toBe(0);
+      expect(parseStrictGstRate('0')).toBe(0);
+      expect(parseStrictGstRate('0.0')).toBe(0);
+      expect(parseStrictGstRate('0.00')).toBe(0);
+
+      expect(parseStrictGstRate(100)).toBe(100);
+      expect(parseStrictGstRate(100.0)).toBe(100);
+      expect(parseStrictGstRate('100')).toBe(100);
+      expect(parseStrictGstRate('100.0')).toBe(100);
+      expect(parseStrictGstRate('100.00')).toBe(100);
+
+      expect(parseStrictGstRate(18)).toBe(18);
+      expect(parseStrictGstRate(18.5)).toBe(18.5);
+      expect(parseStrictGstRate(18.75)).toBe(18.75);
+      expect(parseStrictGstRate('18.75')).toBe(18.75);
+    });
+
+    test('neutralizes JavaScript negative zero', () => {
+      const res = parseStrictGstRate(-0);
+      expect(res).toBe(0);
+      expect(Object.is(res, -0)).toBe(false);
+      expect(Object.is(res, 0)).toBe(true);
+    });
+
+    test('rejects negative numbers and negative numeric strings', () => {
+      expect(() => parseStrictGstRate(-1)).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate(-0.01)).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate('-1')).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate('-0.01')).toThrow(/between 0.00% and 100.00%/i);
+    });
+
+    test('rejects overflow rates above 100%', () => {
+      expect(() => parseStrictGstRate(100.01)).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate(101)).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate('100.01')).toThrow(/between 0.00% and 100.00%/i);
+      expect(() => parseStrictGstRate('101')).toThrow(/between 0.00% and 100.00%/i);
+    });
+
+    test('rejects excess fractional precision greater than 2 decimal places', () => {
+      expect(() => parseStrictGstRate(18.123)).toThrow(/more than 2 decimal places/i);
+      expect(() => parseStrictGstRate('18.123')).toThrow(/more than 2 decimal places/i);
+      expect(() => parseStrictGstRate(0.001)).toThrow(/more than 2 decimal places/i);
+      expect(() => parseStrictGstRate('0.001')).toThrow(/more than 2 decimal places/i);
+    });
+
+    test('rejects scientific notation and infinitesimal floats', () => {
+      expect(() => parseStrictGstRate(1e-7)).toThrow(/more than 2 decimal places/i);
+      expect(() => parseStrictGstRate('1e-7')).toThrow(/between 0.00% and 100.00%/i);
+    });
+
+    test('rejects non-numeric strings, empty inputs, null, undefined, NaN, Infinity', () => {
+      expect(() => parseStrictGstRate('')).toThrow();
+      expect(() => parseStrictGstRate('   ')).toThrow();
+      expect(() => parseStrictGstRate('18%')).toThrow();
+      expect(() => parseStrictGstRate('18.00foo')).toThrow();
+      expect(() => parseStrictGstRate('abc')).toThrow();
+      expect(() => parseStrictGstRate(null)).toThrow();
+      expect(() => parseStrictGstRate(undefined)).toThrow();
+      expect(() => parseStrictGstRate(NaN)).toThrow();
+      expect(() => parseStrictGstRate(Infinity)).toThrow();
+      expect(() => parseStrictGstRate(-Infinity)).toThrow();
+    });
+  });
+
+  // 20. Concurrent Default Rule Mutation & Target Existence Atomicity
+  describe('20. Concurrency & Atomicity: Advisory Lock Serialization for Default Rules', () => {
+    test('serializes concurrent default rule designations with exactly one default rule prevailing', async () => {
+      const promises = [
+        GstService.createGstRule(opsAdminId, { ratePercentage: 5.0, description: 'Concurrent Default 5%', isDefault: true }),
+        GstService.createGstRule(opsAdminId, { ratePercentage: 12.0, description: 'Concurrent Default 12%', isDefault: true }),
+      ];
+
+      const results = await Promise.allSettled(promises);
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      expect(fulfilled.length).toBe(2);
+
+      for (const f of fulfilled) {
+        createdRuleIds.push((f as PromiseFulfilledResult<any>).value.id);
+      }
+
+      // Assert in database: exactly ONE active rule has isDefault === true among these
+      const defaultRules = await prisma.gstRule.findMany({
+        where: { id: { in: createdRuleIds }, isDefault: true },
+      });
+      expect(defaultRules.length).toBe(1);
+    });
+
+    test('updating a non-existent rule throws 404 without modifying any existing default rules', async () => {
+      // Create an established default rule
+      const initialDefault = await GstService.createGstRule(opsAdminId, {
+        ratePercentage: 18.0,
+        description: 'Established Default Rule',
+        isDefault: true,
+      });
+      createdRuleIds.push(initialDefault.id);
+
+      // Attempt to update non-existent rule to be default
+      const nonExistentId = '00000000-0000-0000-0000-000000000000';
+      await expect(
+        GstService.updateGstRule(opsAdminId, nonExistentId, { isDefault: true })
+      ).rejects.toThrow(/not found/i);
+
+      // Verify established default rule is still default!
+      const currentDefault = await prisma.gstRule.findUnique({
+        where: { id: initialDefault.id },
+      });
+      expect(currentDefault!.isDefault).toBe(true);
+    });
+  });
 });

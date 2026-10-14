@@ -1115,7 +1115,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
       expect(billResetRes.status).toBe(200);
       expect(billResetRes.body.success).toBe(true);
-      expect(billResetRes.body.message).toMatch(/If an account is associated with this mobile number/i);
+      expect(billResetRes.body.message).toMatch(/If an eligible account exists, a verification code will be sent/i);
 
       // Verify NO OTP row was inserted in database
       const billOtpCount = await prisma.otpRequest.count({
@@ -1130,7 +1130,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
       expect(opsResetRes.status).toBe(200);
       expect(opsResetRes.body.success).toBe(true);
-      expect(opsResetRes.body.message).toMatch(/If an account is associated with this mobile number/i);
+      expect(opsResetRes.body.message).toMatch(/If an eligible account exists, a verification code will be sent/i);
 
       const opsOtpCount = await prisma.otpRequest.count({
         where: { mobile: opsAdminMobile, purpose: 'FORGOT_PASSWORD' },
@@ -1146,7 +1146,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
       expect(verifyRes.status).toBe(400);
       expect(verifyRes.body.success).toBe(false);
-      expect(verifyRes.body.message).toMatch(/Password recovery is available only for worker accounts/i);
+      expect(verifyRes.body.message).toMatch(/The verification request is invalid or expired\. Please restart password recovery/i);
 
       // Even if an attacker synthesizes a valid verification token in DB for admin mobile
       const adminToken = crypto.randomBytes(32).toString('hex');
@@ -1187,7 +1187,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.message).toMatch(/If an account is associated with this mobile number/i);
+      expect(res.body.message).toMatch(/If an eligible account exists, a verification code will be sent/i);
 
       const rows = await prisma.otpRequest.count({
         where: { mobile: nonExistentMobile },
@@ -1298,6 +1298,152 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
         expect(res.body.nonce).toBeDefined();
         expect(res.body.action).toBe(action);
       }
+    });
+
+    test('C2. Version 2 recovery request hash binds to integrityRequestSalt', async () => {
+      const { computeIntegrityRequestHash } = await import('../utils/integrityRequestHash');
+      const salt = 'a1b2c3d4e5f6789012345678abcdef01';
+
+      // 1. FORGOT_PASSWORD_REQUEST
+      const reqMockRequest = {
+        body: {
+          mobile: '9876543203',
+          integrityRequestSalt: salt,
+        },
+        headers: {},
+      } as any;
+      const expectedReqHash = crypto
+        .createHash('sha256')
+        .update(
+          JSON.stringify({
+            version: 2,
+            action: 'FORGOT_PASSWORD_REQUEST',
+            mobile: '9876543203',
+            integrityRequestSalt: salt,
+          }),
+          'utf8'
+        )
+        .digest('hex');
+      expect(computeIntegrityRequestHash('FORGOT_PASSWORD_REQUEST', reqMockRequest)).toBe(expectedReqHash);
+
+      // 2. FORGOT_PASSWORD_VERIFY
+      const reqMockVerify = {
+        body: {
+          mobile: '9876543203',
+          otpCode: '654321',
+          integrityRequestSalt: salt,
+        },
+        headers: {},
+      } as any;
+      const expectedVerifyHash = crypto
+        .createHash('sha256')
+        .update(
+          JSON.stringify({
+            version: 2,
+            action: 'FORGOT_PASSWORD_VERIFY',
+            mobile: '9876543203',
+            otpCode: '654321',
+            integrityRequestSalt: salt,
+          }),
+          'utf8'
+        )
+        .digest('hex');
+      expect(computeIntegrityRequestHash('FORGOT_PASSWORD_VERIFY', reqMockVerify)).toBe(expectedVerifyHash);
+
+      // 3. FORGOT_PASSWORD_COMPLETE
+      const reqMockComplete = {
+        body: {
+          mobile: '9876543203',
+          verificationToken: 'token_abc_123',
+          newPassword: 'NewPassword@123',
+          integrityRequestSalt: salt,
+        },
+        headers: {},
+      } as any;
+      const expectedCompleteHash = crypto
+        .createHash('sha256')
+        .update(
+          JSON.stringify({
+            version: 2,
+            action: 'FORGOT_PASSWORD_COMPLETE',
+            mobile: '9876543203',
+            verificationToken: 'token_abc_123',
+            newPassword: 'NewPassword@123',
+            integrityRequestSalt: salt,
+          }),
+          'utf8'
+        )
+        .digest('hex');
+      expect(computeIntegrityRequestHash('FORGOT_PASSWORD_COMPLETE', reqMockComplete)).toBe(expectedCompleteHash);
+    });
+
+    test('C3. Advisory transaction locks serialize concurrent OTP requests and enforce cooldown', async () => {
+      const concurrentMobile = '9876500099';
+      await prisma.otpRequest.deleteMany({ where: { mobile: concurrentMobile } });
+
+      // Parallel requests for the same mobile number
+      const promises = [
+        AuthService.requestOtp({ mobile: concurrentMobile, purpose: 'LOGIN' }),
+        AuthService.requestOtp({ mobile: concurrentMobile, purpose: 'LOGIN' }),
+      ];
+
+      const results = await Promise.allSettled(promises);
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason.message).toMatch(/Please wait \d+ seconds before requesting a new verification code/i);
+
+      // Verify exactly one OTP record was created in DB
+      const count = await prisma.otpRequest.count({ where: { mobile: concurrentMobile } });
+      expect(count).toBe(1);
+
+      await prisma.otpRequest.deleteMany({ where: { mobile: concurrentMobile } });
+    });
+
+    test('C4. verifyPasswordResetOtp returns uniform generic failure message across all failure scenarios', async () => {
+      const uniformFailure = 'The verification request is invalid or expired. Please restart password recovery.';
+
+      // Case 1: Non-existent mobile
+      await expect(
+        AuthService.verifyPasswordResetOtp({ mobile: '9999900000', otpCode: '123456' })
+      ).rejects.toThrow(uniformFailure);
+
+      // Case 2: Admin mobile
+      await expect(
+        AuthService.verifyPasswordResetOtp({ mobile: billAdminMobile, otpCode: '123456' })
+      ).rejects.toThrow(uniformFailure);
+
+      // Case 3: Suspended / inactive worker
+      const suspendedMobile = '9876500088';
+      await prisma.user.deleteMany({ where: { mobile: suspendedMobile } });
+      await prisma.user.create({
+        data: {
+          mobile: suspendedMobile,
+          fullName: 'Suspended Worker',
+          passwordHash: 'dummy',
+          role: 'USER',
+          status: 'SUSPENDED',
+          isVerified: true,
+        },
+      });
+
+      await expect(
+        AuthService.verifyPasswordResetOtp({ mobile: suspendedMobile, otpCode: '123456' })
+      ).rejects.toThrow(uniformFailure);
+
+      await prisma.user.deleteMany({ where: { mobile: suspendedMobile } });
+
+      // Case 4: Valid worker but invalid OTP code
+      await expect(
+        AuthService.verifyPasswordResetOtp({ mobile: freshRecoveryWorkerMobile, otpCode: '999999' })
+      ).rejects.toThrow(uniformFailure);
+
+      // Case 5: Malformed OTP code (length !== 6)
+      await expect(
+        AuthService.verifyPasswordResetOtp({ mobile: freshRecoveryWorkerMobile, otpCode: '12' })
+      ).rejects.toThrow(uniformFailure);
     });
   });
 });

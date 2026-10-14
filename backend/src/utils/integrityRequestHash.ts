@@ -315,16 +315,70 @@ export function computeIntegrityRequestHash(
       return computeSha256Json(payload);
     }
 
-    case 'FORGOT_PASSWORD':
-    case 'FORGOT_PASSWORD_REQUEST':
-    case 'FORGOT_PASSWORD_VERIFY':
-    case 'FORGOT_PASSWORD_COMPLETE': {
+    case 'FORGOT_PASSWORD': {
       const payload = {
         version: 1,
-        action,
+        action: 'FORGOT_PASSWORD',
         mobile: String(req.body?.mobile || '').trim(),
       };
       return computeSha256Json(payload);
+    }
+
+    case 'FORGOT_PASSWORD_REQUEST': {
+      const salt = String(req.body?.integrityRequestSalt || req.headers['x-integrity-request-salt'] || '').trim().toLowerCase();
+      const mobile = String(req.body?.mobile || '').replace(/\D/g, '').slice(-10);
+      if (salt) {
+        return computeSha256Json({
+          version: 2,
+          action: 'FORGOT_PASSWORD_REQUEST',
+          mobile,
+          integrityRequestSalt: salt,
+        });
+      }
+      return computeSha256Json({
+        version: 1,
+        action: 'FORGOT_PASSWORD_REQUEST',
+        mobile: String(req.body?.mobile || '').trim(),
+      });
+    }
+
+    case 'FORGOT_PASSWORD_VERIFY': {
+      const salt = String(req.body?.integrityRequestSalt || req.headers['x-integrity-request-salt'] || '').trim().toLowerCase();
+      const mobile = String(req.body?.mobile || '').replace(/\D/g, '').slice(-10);
+      if (salt) {
+        return computeSha256Json({
+          version: 2,
+          action: 'FORGOT_PASSWORD_VERIFY',
+          mobile,
+          otpCode: String(req.body?.otpCode || '').trim(),
+          integrityRequestSalt: salt,
+        });
+      }
+      return computeSha256Json({
+        version: 1,
+        action: 'FORGOT_PASSWORD_VERIFY',
+        mobile: String(req.body?.mobile || '').trim(),
+      });
+    }
+
+    case 'FORGOT_PASSWORD_COMPLETE': {
+      const salt = String(req.body?.integrityRequestSalt || req.headers['x-integrity-request-salt'] || '').trim().toLowerCase();
+      const mobile = String(req.body?.mobile || '').replace(/\D/g, '').slice(-10);
+      if (salt) {
+        return computeSha256Json({
+          version: 2,
+          action: 'FORGOT_PASSWORD_COMPLETE',
+          mobile,
+          verificationToken: String(req.body?.verificationToken || '').trim(),
+          newPassword: String(req.body?.newPassword || '').trim(),
+          integrityRequestSalt: salt,
+        });
+      }
+      return computeSha256Json({
+        version: 1,
+        action: 'FORGOT_PASSWORD_COMPLETE',
+        mobile: String(req.body?.mobile || '').trim(),
+      });
     }
 
     case 'GENERAL': {

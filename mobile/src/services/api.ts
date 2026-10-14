@@ -7,6 +7,12 @@ export interface RequiredActionAttestation {
   integrityNonce: string;
 }
 
+export interface PreAuthRecoveryAttestation {
+  integrityToken: string;
+  integrityNonce: string;
+  integrityRequestSalt: string;
+}
+
 import { validateProductionApiUrl } from './apiUrl';
 export { validateProductionApiUrl };
 
@@ -671,29 +677,39 @@ export class MobileApiClient {
   }
 
   // Real Backend Password Reset Flow
-  static requestPasswordReset(mobile: string, attestation?: RequiredActionAttestation) {
+  static requestPasswordReset(mobile: string, attestation?: PreAuthRecoveryAttestation | RequiredActionAttestation) {
     const extraHeaders: Record<string, string> = {};
+    const body: Record<string, any> = { mobile };
     if (attestation && attestation.integrityToken?.trim()) {
       extraHeaders['x-integrity-token'] = attestation.integrityToken.trim();
       extraHeaders['x-integrity-nonce'] = attestation.integrityNonce?.trim() || '';
+      if ('integrityRequestSalt' in attestation && attestation.integrityRequestSalt) {
+        extraHeaders['x-integrity-request-salt'] = attestation.integrityRequestSalt.trim();
+        body.integrityRequestSalt = attestation.integrityRequestSalt.trim();
+      }
     }
     return this.request('/auth/password-reset/request', {
       method: 'POST',
       headers: extraHeaders,
-      body: JSON.stringify({ mobile }),
+      body: JSON.stringify(body),
     });
   }
 
-  static verifyPasswordResetOtp(mobile: string, otpCode: string, attestation?: RequiredActionAttestation) {
+  static verifyPasswordResetOtp(mobile: string, otpCode: string, attestation?: PreAuthRecoveryAttestation | RequiredActionAttestation) {
     const extraHeaders: Record<string, string> = {};
+    const body: Record<string, any> = { mobile, otpCode };
     if (attestation && attestation.integrityToken?.trim()) {
       extraHeaders['x-integrity-token'] = attestation.integrityToken.trim();
       extraHeaders['x-integrity-nonce'] = attestation.integrityNonce?.trim() || '';
+      if ('integrityRequestSalt' in attestation && attestation.integrityRequestSalt) {
+        extraHeaders['x-integrity-request-salt'] = attestation.integrityRequestSalt.trim();
+        body.integrityRequestSalt = attestation.integrityRequestSalt.trim();
+      }
     }
     return this.request('/auth/password-reset/verify', {
       method: 'POST',
       headers: extraHeaders,
-      body: JSON.stringify({ mobile, otpCode }),
+      body: JSON.stringify(body),
     });
   }
 
@@ -703,17 +719,22 @@ export class MobileApiClient {
       verificationToken: string;
       newPassword: string;
     },
-    attestation?: RequiredActionAttestation
+    attestation?: PreAuthRecoveryAttestation | RequiredActionAttestation
   ) {
     const extraHeaders: Record<string, string> = {};
+    const body: Record<string, any> = { ...data };
     if (attestation && attestation.integrityToken?.trim()) {
       extraHeaders['x-integrity-token'] = attestation.integrityToken.trim();
       extraHeaders['x-integrity-nonce'] = attestation.integrityNonce?.trim() || '';
+      if ('integrityRequestSalt' in attestation && attestation.integrityRequestSalt) {
+        extraHeaders['x-integrity-request-salt'] = attestation.integrityRequestSalt.trim();
+        body.integrityRequestSalt = attestation.integrityRequestSalt.trim();
+      }
     }
     return this.request('/auth/password-reset/complete', {
       method: 'POST',
       headers: extraHeaders,
-      body: JSON.stringify(data),
+      body: JSON.stringify(body),
     });
   }
 

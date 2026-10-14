@@ -10,9 +10,20 @@ export type ProtectedAction =
   | 'ACCOUNT_DELETION_CONFIRM'
   | 'BENEFICIARY_VERIFY';
 
+export type PasswordRecoveryIntegrityAction =
+  | 'FORGOT_PASSWORD_REQUEST'
+  | 'FORGOT_PASSWORD_VERIFY'
+  | 'FORGOT_PASSWORD_COMPLETE';
+
 export interface ActionAttestation {
   integrityToken: string;
   integrityNonce: string;
+}
+
+export interface PreAuthRecoveryAttestation {
+  integrityToken: string;
+  integrityNonce: string;
+  integrityRequestSalt: string;
 }
 
 /**
@@ -90,4 +101,41 @@ export class MobileIntegrityService {
       integrityNonce: nonce,
     };
   }
+
+  /**
+   * Performs complete pre-auth action attestation flow for worker password recovery:
+   * 1. Validates the 64-character hexadecimal SHA-256 requestHash
+   * 2. Requests unauthenticated, single-use nonce from backend (/auth/integrity/pre-auth/nonce)
+   * 3. Requests genuine device token from Google Play Integrity API on device
+   * 4. Returns { integrityToken, integrityNonce, integrityRequestSalt }
+   */
+  static async performPreAuthActionAttestation(
+    action: PasswordRecoveryIntegrityAction,
+    requestHash: string,
+    integrityRequestSalt: string
+  ): Promise<PreAuthRecoveryAttestation> {
+    if (!requestHash || typeof requestHash !== 'string' || !/^[a-f0-9]{64}$/i.test(requestHash)) {
+      throw new Error('A valid 64-character hexadecimal SHA-256 requestHash is required for action attestation.');
+    }
+
+    // 1. Obtain pre-auth server nonce
+    const nonceRes = await MobileApiClient.getPreAuthIntegrityNonce({
+      action,
+      requestHash: requestHash.toLowerCase(),
+    });
+    if (!nonceRes?.success || !nonceRes?.nonce) {
+      throw new Error(nonceRes?.message || 'Failed to acquire pre-auth integrity nonce from server.');
+    }
+    const nonce = nonceRes.nonce;
+
+    // 2. Obtain genuine device token from native Play Integrity
+    const integrityToken = await this.requestDeviceIntegrityToken(nonce);
+
+    return {
+      integrityToken,
+      integrityNonce: nonce,
+      integrityRequestSalt,
+    };
+  }
 }
+

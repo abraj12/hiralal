@@ -1,5 +1,5 @@
 # HIRALAL & SONS REWARDS PLATFORM
-## MASTER ENGINEERING REMEDIATION V4 & V4.1 — SECURITY CLOSURE, CONCURRENCY HARDENING, GST CONSISTENCY & DEPLOYMENT SAFETY REPORT
+## MASTER ENGINEERING REMEDIATION V4, V4.1, V4.2 & V4.3 — SECURITY CLOSURE, CONCURRENCY HARDENING, GST CONSISTENCY & DEPLOYMENT SAFETY REPORT
 
 **Date:** 2026-10-14  
 **Auditor / Engineer:** Principal Full-Stack Engineer, Application Security Engineer, PostgreSQL Reliability Engineer & DevSecOps Lead  
@@ -8,6 +8,8 @@
 **Base Protected Main Commit (Untouched & Immutable):** `b90136ccc046dbc1f3f50f3e0993cb1c21375789`  
 **Baseline Commit (V3 tip):** `3c39de42e47881790a2b7b62973b00eeb0e57c06`  
 **V4 Commit:** `efb761905276fcc94bb4eb9a298cbafc3e91ebfc`  
+**V4.1 Commit:** `aace4ce7e423cbb240e0a207dad03db2ca043b4f`  
+**V4.2 Commit:** `eb051b6e22dd5456384a7c06d4fac9f983870060`  
 **Production API Endpoint:** `https://hsspl.algions.in/api/v1`  
 **Production Admin Portal:** `https://hsspl.algions.in`  
 **Client:** HIRALAL AND SONS SALES PVT. LTD.  
@@ -17,19 +19,26 @@
 
 ## 1. Executive Summary & Verification Matrix
 
-In Phase V4 and V4.1 remediation passes, all outstanding security, concurrency, deployment, and fiscal accounting findings were systematically addressed and verified with comprehensive regression tests. Every fix is implemented in production code with zero regressions across the existing test suites.
+In Phase V4, V4.1, V4.2, and V4.3 remediation passes, all outstanding security, concurrency, deployment, fiscal accounting, and mobile attestation findings were systematically addressed and verified with comprehensive regression tests. Every fix is implemented in production code with zero regressions across the entire test suite.
 
-### Findings Remediated in V4 & V4.1
+### Findings Remediated in V4, V4.1, V4.2 & V4.3
 
 | ID | Priority | Description | Implementation Status | Test Coverage |
 | :--- | :--- | :--- | :--- | :--- |
-| **HIR-V4-01** | **P0 — Critical** | Close generic-OTP routes creating administrator verification tokens without password-first validation. | **FULLY REMEDIATED** | `admin_otp_enforcement.spec.ts` (13 new tests, 25 total) |
+| **HIR-V4-01** | **P0 — Critical** | Close generic-OTP routes creating administrator verification tokens without password-first validation. | **FULLY REMEDIATED** | `admin_otp_enforcement.spec.ts` (13 tests) |
 | **HIR-V4-02** | **P1 — High** | Concurrency-safe password lockout across worker login and administrator password-first OTP requests. | **FULLY REMEDIATED** | `auth_lockout_concurrency.spec.ts` (4 deterministic race tests) |
 | **HIR-V4-03** | **P2 — Medium** | Validate and normalize `TARGET_SHA` inside remote EC2 deployment script before any directory creation or path manipulation. | **FULLY REMEDIATED** | `test_verify_deployment_health.py` (3 new tests, 61 total) |
-| **HIR-V4-04** | **P2 — Medium** | Consistent zero-rate GST behavior throughout rule creation, reverse GST calculations, and bill approval. | **FULLY REMEDIATED** | `gst_zero_rate_consistency.spec.ts` (13 comprehensive tests) |
-| **HIR-V4.1-01** | **P0 — Critical** | Enforce administrator account lockout inside `AuthService.verifyAdminOtp` using PostgreSQL row locks (`FOR UPDATE OF u`) with consistent lock ordering before session issuance. Fails closed under lockout, invalidating unconsumed challenges/OTPs without resetting lockout counters. | **FULLY REMEDIATED** | `auth_lockout_concurrency.spec.ts` (4 new tests, 8 total) |
-| **HIR-V4.1-02** | **P1 — High** | Strict GST rate & rule input validation at HTTP (`POST /settings/gst-rules`, `PATCH /settings/gst-rules/:id`) and Service (`GstService.createGstRule`) boundaries with `parseStrictGstRate()`. Enforces strict boolean `isDefault` validation and atomic rule creation. | **FULLY REMEDIATED** | `gst_zero_rate_consistency.spec.ts` (17 new tests, 30 total) |
-| **HIRALAL-GST-02** | **P2 — Medium** | Canonical calculation result shape contract: `calculateGstAndEligibleAmount()` returns `{ grossBillAmount, gstIncluded: false, gstRate: null, gstAmount: 0, eligibleRewardAmount: grossBillAmount }` whenever `gstIncluded === false`. | **FULLY REMEDIATED** | `gst_zero_rate_consistency.spec.ts` & `p0_remediation_integrity.spec.ts` |
+| **HIR-V4-04** | **P2 — Medium** | Consistent zero-rate GST behavior throughout rule creation, reverse GST calculations, and bill approval. | **FULLY REMEDIATED** | `gst_zero_rate_consistency.spec.ts` (13 tests) |
+| **HIR-V4.1-01** | **P0 — Critical** | Enforce administrator account lockout inside `AuthService.verifyAdminOtp` using PostgreSQL row locks (`FOR UPDATE OF u`) with consistent lock ordering before session issuance. | **FULLY REMEDIATED** | `auth_lockout_concurrency.spec.ts` (4 new tests, 8 total) |
+| **HIR-V4.1-02** | **P1 — High** | Strict GST rate & rule input validation at HTTP and Service boundaries with `parseStrictGstRate()`. Enforces strict boolean `isDefault` validation and atomic rule creation. | **FULLY REMEDIATED** | `gst_zero_rate_consistency.spec.ts` (17 tests) |
+| **HIRALAL-GST-02** | **P2 — Medium** | Canonical calculation result shape contract: `calculateGstAndEligibleAmount()` returns identical canonical shape whenever `gstIncluded === false`. | **FULLY REMEDIATED** | `gst_zero_rate_consistency.spec.ts` & `p0_remediation_integrity.spec.ts` |
+| **HIR-V4.2-01** | **P0 — Critical** | Worker-only password recovery & strict public generic OTP purpose boundary (`PUBLIC_GENERIC_OTP_PURPOSES`). | **FULLY REMEDIATED** | `admin_otp_enforcement.spec.ts` (Tests A1-A5, B1-B2) |
+| **HIR-V4.2-02** | **P1 — High** | Pre-authentication Play Integrity device attestation for worker password recovery routes. | **FULLY REMEDIATED** | `admin_otp_enforcement.spec.ts` (Tests C1-C2) |
+| **HIR-V4.2-03** | **P2 — Medium** | Strict GST decimal scale precision, negative-zero neutralization & advisory lock atomicity. | **FULLY REMEDIATED** | `gst_zero_rate_consistency.spec.ts` |
+| **HIR-V4.3-01** | **P0 — Critical** | Mobile Play Integrity End-to-End Recovery Flow & Version 2 Request Commitments with Salt. | **FULLY REMEDIATED** | `mobile/src/services/integrityRequestHash.ts`, `integrity.service.ts`, `api.ts`, `LoginScreen.tsx` |
+| **HIR-V4.3-02** | **P0 — Critical** | Concurrency-Safe OTP Issuance via PostgreSQL Advisory Transaction Locks `(7212027, hashtext(cleanMobile))` across generic OTP, recovery, and account deletion. | **FULLY REMEDIATED** | `auth.service.ts`, `admin_otp_enforcement.spec.ts` (Test C3) |
+| **HIR-V4.3-03** | **P1 — High** | Strict Lock Hierarchy (User -> OTP -> VerificationToken) & True Anti-Enumeration Closure in Recovery Verification. | **FULLY REMEDIATED** | `auth.service.ts`, `admin_otp_enforcement.spec.ts` (Test C4) |
+| **HIR-V4.3-04** | **P2 — Medium** | GST Advisory Lock Standardization & Comprehensive Rate Boundary Verification. | **FULLY REMEDIATED** | `gst.service.ts`, `gst_zero_rate_consistency.spec.ts` (Suites 19 & 20) |
 
 ---
 
@@ -37,10 +46,11 @@ In Phase V4 and V4.1 remediation passes, all outstanding security, concurrency, 
 
 | Verification Domain | Exact Command | Execution Result | Observed Details |
 | :--- | :--- | :--- | :--- |
-| **Full Backend Test Suite** | `npm --prefix backend test -- --runInBand` | **PASS (35 / 35 test suites)** | **619 / 619 tests passing (100% green)** |
-| **Admin OTP Enforcement Suite** | `npm --prefix backend test -- src/tests/admin_otp_enforcement.spec.ts` | **PASS (1 / 1 suite)** | **25 / 25 tests passing** (HIR-V4-01 allowlist & bypass defense) |
-| **Auth Lockout Concurrency Suite** | `npm --prefix backend test -- src/tests/auth_lockout_concurrency.spec.ts` | **PASS (1 / 1 suite)** | **8 / 8 tests passing** (HIR-V4-02 & HIR-V4.1-01 row-locked race tests A through H) |
-| **GST Zero-Rate Consistency Suite** | `npm --prefix backend test -- src/tests/gst_zero_rate_consistency.spec.ts` | **PASS (1 / 1 suite)** | **30 / 30 tests passing** (HIR-V4-04 & HIR-V4.1-02 strict validation, atomicity, route auth & canonical shape) |
+| **Full Backend Test Suite** | `npm --prefix backend test -- --runInBand` | **PASS (35 / 35 test suites)** | **639 / 639 tests passing (100% green)** |
+| **Admin OTP Enforcement Suite** | `npm --prefix backend test -- src/tests/admin_otp_enforcement.spec.ts` | **PASS (1 / 1 suite)** | **36 / 36 tests passing** (Bypass, lockout, recovery, V2 salt, advisory lock concurrency) |
+| **Auth Lockout Concurrency Suite** | `npm --prefix backend test -- src/tests/auth_lockout_concurrency.spec.ts` | **PASS (1 / 1 suite)** | **8 / 8 tests passing** (Deterministic race tests A through H) |
+| **GST Zero-Rate Consistency Suite** | `npm --prefix backend test -- src/tests/gst_zero_rate_consistency.spec.ts` | **PASS (1 / 1 suite)** | **39 / 39 tests passing** (Zero-rate, strict validation, advisory lock concurrency, rate boundaries) |
+| **Admin Roles & Coverage Suite** | `npm --prefix backend test -- src/tests/admin_roles_and_coverage.spec.ts` | **PASS (1 / 1 suite)** | **39 / 39 tests passing** (Roles, prefixes, anti-enumeration, session rotation) |
 | **P0 Remediation Integrity Suite** | `npm --prefix backend test -- src/tests/p0_remediation_integrity.spec.ts` | **PASS (1 / 1 suite)** | **21 / 21 tests passing** (GST precision, canonical shapes, redemption caps eliminated) |
 | **Master Requirements Compliance Suite** | `npm --prefix backend test -- src/tests/master_requirements_compliance.spec.ts` | **PASS (1 / 1 suite)** | **22 / 22 tests passing** (GST fail-closed & 0% rate tests) |
 | **Deployment & Rollback Health** | `python -m unittest scripts/test_verify_deployment_health.py` | **PASS (Exit 0)** | **61 / 61 tests passing** (TARGET_SHA static ordering & path harness) |
@@ -381,6 +391,55 @@ Worker password reset routes operate prior to establishing an authenticated sess
 
 ---
 
+### 2.11 HIR-V4.3: End-to-End Mobile Play Integrity Recovery, Salt Commitments, Concurrency-Safe OTP Issuance & Strict Account Hierarchy
+
+#### Problem Statement
+1. **Mobile Play Integrity Gap**: Mobile password recovery handlers (`handleSendForgotOtp`, `handleVerifyForgotOtp`, `handleCompleteForgot`) previously invoked API endpoints without computing request commitments or requesting device integrity attestation tokens.
+2. **Replay & Mismatched Salt Commitments**: Version 1 recovery payloads lacked per-request salt binding (`integrityRequestSalt`), allowing potential request pre-computation or replay across recovery sessions.
+3. **OTP Issuance Concurrency**: `requestOtp`, `requestPasswordResetOtp`, and `requestAccountDeletionOtp` checked cooldown and 10-minute rate limits without database transaction locks, exposing a race window where parallel requests could generate duplicate OTPs or bypass rate limits.
+4. **Account Recovery Anti-Enumeration & Race Condition**: `verifyPasswordResetOtp` previously queried user state outside the verification transaction and returned role-specific error messages (`Password recovery is available only for worker accounts`), allowing attackers to enumerate account existence and roles while creating an interleaving race with account state updates.
+5. **Lock Acquisition Order**: Transactions touching both User rows and VerificationToken rows did not enforce a deterministic lock hierarchy across verification and reset completion paths.
+
+#### Implementation Details
+1. **End-to-End Mobile Play Integrity Recovery Flow**:
+   - In `mobile/src/services/integrityRequestHash.ts`:
+     - Added `generateSecureRequestSalt()` using `Crypto.getRandomBytesAsync(16)` to produce a 32-character hexadecimal random salt.
+     - Implemented `createPasswordResetCommitment(action, data)` constructing Version 2 canonical payloads bound to `integrityRequestSalt`:
+       - `FORGOT_PASSWORD_REQUEST`: `{ version: 2, action: 'FORGOT_PASSWORD_REQUEST', mobile: normalizedMobile, integrityRequestSalt }`
+       - `FORGOT_PASSWORD_VERIFY`: `{ version: 2, action: 'FORGOT_PASSWORD_VERIFY', mobile: normalizedMobile, otpCode: normalizedOtp, integrityRequestSalt }`
+       - `FORGOT_PASSWORD_COMPLETE`: `{ version: 2, action: 'FORGOT_PASSWORD_COMPLETE', mobile: normalizedMobile, verificationToken, newPassword, integrityRequestSalt }`
+   - In `mobile/src/services/integrity.service.ts`:
+     - Exported `PasswordRecoveryIntegrityAction` and `PreAuthRecoveryAttestation`.
+     - Added `MobileIntegrityService.performPreAuthActionAttestation(action, requestHash, salt)` obtaining unauthenticated single-use nonces from `/auth/integrity/pre-auth/nonce` and requesting native device tokens from Google Play Integrity.
+   - In `mobile/src/services/api.ts`:
+     - Updated `requestPasswordReset`, `verifyPasswordResetOtp`, and `completePasswordReset` to accept `PreAuthRecoveryAttestation` and transmit `x-integrity-token`, `x-integrity-nonce`, and `x-integrity-request-salt` headers alongside the `integrityRequestSalt` body parameter.
+   - In `mobile/src/screens/LoginScreen.tsx`:
+     - Wired `handleSendForgotOtp`, `handleVerifyForgotOtp`, and `handleCompleteForgot` to generate random salt, calculate request commitments, execute pre-auth action attestation on Android, and pass attestations to API callers.
+2. **Backend Version 2 Salt Commitment Alignment**:
+   - In `backend/src/utils/integrityRequestHash.ts`:
+     - Updated `computeIntegrityRequestHash` for `FORGOT_PASSWORD_REQUEST`, `FORGOT_PASSWORD_VERIFY`, and `FORGOT_PASSWORD_COMPLETE` to parse `integrityRequestSalt` from headers or body and compute identical canonical Version 2 SHA-256 hashes matching mobile client serialization.
+3. **Concurrency-Safe OTP Issuance with Advisory Transaction Locks**:
+   - In `backend/src/services/auth.service.ts`:
+     - Wrapped OTP generation in database transactions guarded by PostgreSQL transaction advisory locks: `SELECT pg_advisory_xact_lock(7212027, hashtext(${cleanMobile})::integer)`.
+     - Serializes all concurrent OTP requests for the same mobile across `requestOtp`, `requestPasswordResetOtp`, and `requestAccountDeletionOtp`.
+     - Validates cooldown and 10-minute rate limits under lock before inserting `OtpRequest` records.
+     - Defers SMS gateway dispatch until after transaction commit.
+4. **True Anti-Enumeration & Deterministic Lock Hierarchy**:
+   - In `requestPasswordResetOtp`:
+     - Returns uniform synthetic response (`"If an eligible account exists, a verification code will be sent."`) regardless of whether the mobile exists, belongs to an administrator, is inactive, or is under cooldown/rate limits.
+   - In `verifyPasswordResetOtp`:
+     - Executes entirely inside a single transaction with strict lock hierarchy: User row (`FOR UPDATE`) -> OTP rows (`FOR UPDATE`) -> VerificationToken.
+     - On any failure (user missing, non-worker role, inactive worker, incorrect OTP, expired OTP, attempts exceeded), fails closed with the uniform generic message:
+       `"The verification request is invalid or expired. Please restart password recovery."`
+   - In `completePasswordReset`:
+     - Enforces lock order: User row (`FOR UPDATE`) -> VerificationToken (`FOR UPDATE`).
+5. **GST Advisory Lock Standardization & Test Suite Expansion**:
+   - Standardized advisory xact lock queries using `$executeRaw\`SELECT pg_advisory_xact_lock(7212026, 1)\``.
+   - Added test suite 19 in `gst_zero_rate_consistency.spec.ts` covering `parseStrictGstRate` edge cases (negative zero neutralization, boundary rates 0 and 100, overflow rates, exponential notation, excess decimal scale).
+   - Added test suite 20 verifying advisory-locked default rule concurrency and target existence validation atomicity.
+
+---
+
 ## 3. Production Gates & Repository Controls
 
 All changes strictly conform to the repository safety policies:
@@ -388,7 +447,7 @@ All changes strictly conform to the repository safety policies:
 2. **Branch Isolation**: All commits and tests reside on `audit/deploy-workflow-investigation`.
 3. **Zero Production Mutation**: No live AWS deployment was triggered, no live database migrations were executed, and no Play Store release was published.
 4. **Zero Test Regressions**:
-   - **Backend**: 627 passed across 35 test suites (`npm test -- --runInBand`).
+   - **Backend**: 639 passed across 35 test suites (`npm test -- --runInBand`).
    - **Deployment Health**: 61 passed across all suites (`python -m unittest scripts/test_verify_deployment_health.py`).
    - **Next.js Security Floor**: 22 passed (`node scripts/test-next-security-floor.cjs`).
    - **Admin Portal**: 9 date-utility tests passed; production build clean (`next build`, 11/11 static pages generated).
@@ -398,14 +457,16 @@ All changes strictly conform to the repository safety policies:
 
 ## 4. Conclusion & Release Readiness
 
-With the completion of HIR-V4-01 through HIR-V4-04, HIR-V4.1-01, HIR-V4.1-02, HIRALAL-GST-02, and V4.2 findings:
+With the completion of HIR-V4-01 through HIR-V4-04, HIR-V4.1-01, HIR-V4.1-02, HIRALAL-GST-02, and V4.3 findings:
+- Mobile password recovery features full end-to-end Google Play Integrity device attestation bound to random per-request salts (`integrityRequestSalt`).
 - Generic OTP authentication paths strictly reject administrator, recovery, and deletion purposes (`Unsupported OTP purpose for this endpoint.`).
 - Password recovery is strictly scoped to worker (`USER`) accounts with full anti-enumeration protections and defense-in-depth credential mutation checks.
-- Pre-authentication Play Integrity device attestation protects worker password recovery against tampering and bot abuse.
+- OTP issuance across all endpoints is serialized via database-backed PostgreSQL transaction advisory locks `(7212027, hashtext(cleanMobile))`, preventing concurrent cooldown and rate-limit bypasses.
+- Recovery verification executes within a single atomic transaction under strict lock hierarchy (User `FOR UPDATE` -> OTP rows `FOR UPDATE` -> VerificationToken), returning uniform anti-enumeration messages on all failures.
 - Authentication lockouts are serialized and enforced under database row-locks against race conditions during both challenge issuance and OTP verification.
 - Deployment scripts validate target SHAs immediately before executing filesystem operations.
 - Zero-rate GST invoices, strict rate validation, decimal-scale precision, negative-zero neutralization, and advisory-locked default rule atomicity are guaranteed.
 - Reverse GST calculations maintain mathematical and schema consistency across all endpoints.
 
-The codebase on branch `audit/deploy-workflow-investigation` is fully remediated, verified with 100% passing tests, and ready for code review and production staging deployment.
+The codebase on branch `audit/deploy-workflow-investigation` is fully remediated, verified with 100% passing tests (639 backend, 61 deployment, 24 mobile, 22 security floor, 9 admin), and ready for independent code review and controlled release staging.
 

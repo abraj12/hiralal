@@ -9,6 +9,7 @@ import {
   Image,
   ActivityIndicator,
   Modal,
+  Platform,
 } from 'react-native';
 import {
   ArrowLeft,
@@ -25,6 +26,8 @@ import {
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
 import { AdminPrefixes, validateAdminPrefixes } from '../services/adminPrefixes';
+import { MobileIntegrityService, PreAuthRecoveryAttestation } from '../services/integrity.service';
+import { generateSecureRequestSalt, createPasswordResetCommitment } from '../services/integrityRequestHash';
 
 type LoginState =
   | 'IDLE'
@@ -274,9 +277,28 @@ export default function LoginScreen() {
     setForgotMsg(null);
 
     try {
-      const res = await MobileApiClient.requestPasswordReset(clean);
+      let attestation: PreAuthRecoveryAttestation | undefined;
+      if (Platform.OS === 'android') {
+        try {
+          const salt = await generateSecureRequestSalt();
+          const requestHash = await createPasswordResetCommitment('FORGOT_PASSWORD_REQUEST', {
+            mobile: clean,
+            integrityRequestSalt: salt,
+          });
+          attestation = await MobileIntegrityService.performPreAuthActionAttestation(
+            'FORGOT_PASSWORD_REQUEST',
+            requestHash,
+            salt
+          );
+        } catch (integrityErr: any) {
+          console.error('[MOBILE-INTEGRITY] Pre-auth recovery request attestation failed:', integrityErr?.message);
+          throw new Error(`Device integrity attestation failed: ${integrityErr?.message || 'Unknown error'}`);
+        }
+      }
+
+      const res = await MobileApiClient.requestPasswordReset(clean, attestation);
       setForgotStep(2);
-      setForgotMsg(res.message || 'Verification OTP sent to your mobile number.');
+      setForgotMsg(res.message || 'If an eligible account exists, a verification code will be sent.');
     } catch (e: any) {
       setForgotError(e.message || 'Failed to send OTP.');
     } finally {
@@ -295,7 +317,27 @@ export default function LoginScreen() {
     setForgotMsg(null);
 
     try {
-      const res = await MobileApiClient.verifyPasswordResetOtp(clean, forgotOtp.trim());
+      let attestation: PreAuthRecoveryAttestation | undefined;
+      if (Platform.OS === 'android') {
+        try {
+          const salt = await generateSecureRequestSalt();
+          const requestHash = await createPasswordResetCommitment('FORGOT_PASSWORD_VERIFY', {
+            mobile: clean,
+            otpCode: forgotOtp.trim(),
+            integrityRequestSalt: salt,
+          });
+          attestation = await MobileIntegrityService.performPreAuthActionAttestation(
+            'FORGOT_PASSWORD_VERIFY',
+            requestHash,
+            salt
+          );
+        } catch (integrityErr: any) {
+          console.error('[MOBILE-INTEGRITY] Pre-auth recovery verify attestation failed:', integrityErr?.message);
+          throw new Error(`Device integrity attestation failed: ${integrityErr?.message || 'Unknown error'}`);
+        }
+      }
+
+      const res = await MobileApiClient.verifyPasswordResetOtp(clean, forgotOtp.trim(), attestation);
       setForgotToken(res.verificationToken);
       setForgotStep(3);
       setForgotMsg('Code verified. Enter your new password below.');
@@ -317,11 +359,32 @@ export default function LoginScreen() {
     setForgotMsg(null);
 
     try {
+      let attestation: PreAuthRecoveryAttestation | undefined;
+      if (Platform.OS === 'android') {
+        try {
+          const salt = await generateSecureRequestSalt();
+          const requestHash = await createPasswordResetCommitment('FORGOT_PASSWORD_COMPLETE', {
+            mobile: clean,
+            verificationToken: forgotToken,
+            newPassword,
+            integrityRequestSalt: salt,
+          });
+          attestation = await MobileIntegrityService.performPreAuthActionAttestation(
+            'FORGOT_PASSWORD_COMPLETE',
+            requestHash,
+            salt
+          );
+        } catch (integrityErr: any) {
+          console.error('[MOBILE-INTEGRITY] Pre-auth recovery complete attestation failed:', integrityErr?.message);
+          throw new Error(`Device integrity attestation failed: ${integrityErr?.message || 'Unknown error'}`);
+        }
+      }
+
       const res = await MobileApiClient.completePasswordReset({
         mobile: clean,
         verificationToken: forgotToken,
         newPassword,
-      });
+      }, attestation);
       setShowForgot(false);
       setInfoMsg(res.message || 'Password reset successfully. Please login.');
       setIdentifier(clean);

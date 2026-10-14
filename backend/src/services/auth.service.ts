@@ -739,6 +739,7 @@ export class AuthService {
   /**
    * Generates and dispatches cryptographically secure 6-digit OTP.
    * Enforces 60-second cooldown, 10-minute rate limiting, and OTP TTL <= 300s.
+   * Serializes concurrent requests per mobile number using PostgreSQL transaction advisory locks.
    */
   static async requestOtp(params: {
     mobile: string;
@@ -752,62 +753,66 @@ export class AuthService {
     }
 
     const now = new Date();
-
-    // 1. Business purpose validation
-    if (validatedPurpose === 'REGISTRATION') {
-      const existingUser = await prisma.user.findUnique({
-        where: { mobile: cleanMobile },
-      });
-      if (existingUser) {
-        throw new Error('This mobile number is already registered. Please proceed to login.');
-      }
-    }
-
-    // 2. Cooldown enforcement: prevent rapid resend within 60 seconds
-    const activeCooldown = await prisma.otpRequest.findFirst({
-      where: {
-        mobile: cleanMobile,
-        purpose: validatedPurpose as OtpPurpose,
-        cooldownUntil: { gt: now },
-      },
-    });
-
-    if (activeCooldown && activeCooldown.cooldownUntil) {
-      const remainingSec = Math.ceil((activeCooldown.cooldownUntil.getTime() - now.getTime()) / 1000);
-      throw new Error(`Please wait ${remainingSec} seconds before requesting a new verification code.`);
-    }
-
-    // 3. Rate-limiting: max 5 requests per 10 minutes per mobile
-    const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
-    const recentRequests = await prisma.otpRequest.count({
-      where: {
-        mobile: cleanMobile,
-        createdAt: { gt: tenMinutesAgo },
-      },
-    });
-
-    if (recentRequests >= 5) {
-      throw new Error('Too many verification requests. Please try again after 10 minutes.');
-    }
-
-    // 4. Generate cryptographically secure OTP & Hash (server-secret-keyed HMAC)
-    const otpCode = generateSecureOtp();
-    const otpHash = hmacHashOtp(otpCode);
     const ttlMs = config.otp.ttlSeconds * 1000;
     const expiresAt = new Date(now.getTime() + ttlMs);
     const cooldownUntil = new Date(now.getTime() + 60 * 1000);
+    const otpCode = generateSecureOtp();
+    const otpHash = hmacHashOtp(otpCode);
 
-    await prisma.otpRequest.create({
-      data: {
-        mobile: cleanMobile,
-        otpHash,
-        purpose: validatedPurpose as OtpPurpose,
-        expiresAt,
-        cooldownUntil,
-      },
+    await prisma.$transaction(async (tx) => {
+      // Advisory xact lock per mobile number: (7212027, hashtext(cleanMobile))
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(7212027, hashtext(${cleanMobile})::integer)`;
+
+      // 1. Business purpose validation
+      if (validatedPurpose === 'REGISTRATION') {
+        const existingUser = await tx.user.findUnique({
+          where: { mobile: cleanMobile },
+        });
+        if (existingUser) {
+          throw new Error('This mobile number is already registered. Please proceed to login.');
+        }
+      }
+
+      // 2. Cooldown enforcement: prevent rapid resend within 60 seconds
+      const activeCooldown = await tx.otpRequest.findFirst({
+        where: {
+          mobile: cleanMobile,
+          purpose: validatedPurpose as OtpPurpose,
+          cooldownUntil: { gt: now },
+        },
+      });
+
+      if (activeCooldown && activeCooldown.cooldownUntil) {
+        const remainingSec = Math.ceil((activeCooldown.cooldownUntil.getTime() - now.getTime()) / 1000);
+        throw new Error(`Please wait ${remainingSec} seconds before requesting a new verification code.`);
+      }
+
+      // 3. Rate-limiting: max 5 requests per 10 minutes per mobile
+      const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
+      const recentRequests = await tx.otpRequest.count({
+        where: {
+          mobile: cleanMobile,
+          createdAt: { gt: tenMinutesAgo },
+        },
+      });
+
+      if (recentRequests >= 5) {
+        throw new Error('Too many verification requests. Please try again after 10 minutes.');
+      }
+
+      // 4. Record OTP Request
+      await tx.otpRequest.create({
+        data: {
+          mobile: cleanMobile,
+          otpHash,
+          purpose: validatedPurpose as OtpPurpose,
+          expiresAt,
+          cooldownUntil,
+        },
+      });
     });
 
-    // 5. Secure SMS dispatch via configured provider (MSG91 in production)
+    // 5. Secure SMS dispatch outside transaction via configured provider (MSG91 in production)
     const smsResult = await SmsService.sendOtp({
       mobile: cleanMobile,
       otpCode,
@@ -826,9 +831,10 @@ export class AuthService {
 
   /**
    * Dedicated OTP request for worker password recovery.
-   * Enforces worker (USER) role requirement and anti-enumeration:
-   * non-existent users, non-USER accounts, and inactive accounts
-   * receive a synthetic response without OTP dispatch or database writes.
+   * Enforces worker (USER) role requirement and true anti-enumeration:
+   * non-existent users, non-USER accounts, inactive accounts, or cooldown/rate limits
+   * receive the identical uniform message without OTP dispatch or database writes.
+   * Serializes concurrent requests per mobile using PostgreSQL transaction advisory locks.
    */
   static async requestPasswordResetOtp(params: {
     mobile: string;
@@ -841,86 +847,91 @@ export class AuthService {
 
     const now = new Date();
     const ttlMs = config.otp.ttlSeconds * 1000;
-    const antiEnumerationResponse = {
-      message: 'If an account is associated with this mobile number, a verification code has been dispatched.',
-      cooldownSeconds: 60,
-      expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
-    };
-
-    // Check account existence and role
-    const existingUser = await prisma.user.findUnique({
-      where: { mobile: cleanMobile },
-    });
-
-    // Anti-enumeration: If user does not exist, is not role 'USER', or is not ACTIVE,
-    // silently return generic response without generating OTP or sending SMS.
-    if (!existingUser || existingUser.role !== 'USER' || existingUser.status !== 'ACTIVE') {
-      return antiEnumerationResponse;
-    }
-
-    // 1. Cooldown enforcement: prevent rapid resend within 60 seconds
-    const activeCooldown = await prisma.otpRequest.findFirst({
-      where: {
-        mobile: cleanMobile,
-        purpose: 'FORGOT_PASSWORD',
-        cooldownUntil: { gt: now },
-      },
-    });
-
-    if (activeCooldown && activeCooldown.cooldownUntil) {
-      const remainingSec = Math.ceil((activeCooldown.cooldownUntil.getTime() - now.getTime()) / 1000);
-      throw new Error(`Please wait ${remainingSec} seconds before requesting a new verification code.`);
-    }
-
-    // 2. Rate-limiting: max 5 requests per 10 minutes per mobile
-    const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
-    const recentRequests = await prisma.otpRequest.count({
-      where: {
-        mobile: cleanMobile,
-        createdAt: { gt: tenMinutesAgo },
-      },
-    });
-
-    if (recentRequests >= 5) {
-      throw new Error('Too many verification requests. Please try again after 10 minutes.');
-    }
-
-    // 3. Generate cryptographically secure OTP & Hash
-    const otpCode = generateSecureOtp();
-    const otpHash = hmacHashOtp(otpCode);
     const expiresAt = new Date(now.getTime() + ttlMs);
     const cooldownUntil = new Date(now.getTime() + 60 * 1000);
-
-    await prisma.otpRequest.create({
-      data: {
-        mobile: cleanMobile,
-        otpHash,
-        purpose: 'FORGOT_PASSWORD',
-        expiresAt,
-        cooldownUntil,
-      },
-    });
-
-    // 4. Secure SMS dispatch
-    const smsResult = await SmsService.sendOtp({
-      mobile: cleanMobile,
-      otpCode,
-    });
-
-    if (!smsResult.success && config.isProduction) {
-      throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
-    }
-
-    return {
-      message: 'Verification code dispatched successfully to your mobile number.',
+    const antiEnumerationResponse = {
+      message: 'If an eligible account exists, a verification code will be sent.',
       cooldownSeconds: 60,
       expiresAt: expiresAt.toISOString(),
     };
+
+    const otpCode = generateSecureOtp();
+    const otpHash = hmacHashOtp(otpCode);
+
+    const txResult = await prisma.$transaction(async (tx) => {
+      // Advisory xact lock per mobile number: (7212027, hashtext(cleanMobile))
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(7212027, hashtext(${cleanMobile})::integer)`;
+
+      // Check account existence and role
+      const existingUser = await tx.user.findUnique({
+        where: { mobile: cleanMobile },
+      });
+
+      // Anti-enumeration: If user does not exist, is not role 'USER', or is not ACTIVE,
+      // silently return synthetic response without generating OTP or sending SMS.
+      if (!existingUser || existingUser.role !== 'USER' || existingUser.status !== 'ACTIVE') {
+        return { shouldSendSms: false };
+      }
+
+      // 1. Cooldown enforcement: prevent rapid resend within 60 seconds
+      const activeCooldown = await tx.otpRequest.findFirst({
+        where: {
+          mobile: cleanMobile,
+          purpose: 'FORGOT_PASSWORD',
+          cooldownUntil: { gt: now },
+        },
+      });
+
+      if (activeCooldown && activeCooldown.cooldownUntil) {
+        return { shouldSendSms: false };
+      }
+
+      // 2. Rate-limiting: max 5 requests per 10 minutes per mobile
+      const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
+      const recentRequests = await tx.otpRequest.count({
+        where: {
+          mobile: cleanMobile,
+          createdAt: { gt: tenMinutesAgo },
+        },
+      });
+
+      if (recentRequests >= 5) {
+        return { shouldSendSms: false };
+      }
+
+      // 3. Record OTP Request
+      await tx.otpRequest.create({
+        data: {
+          mobile: cleanMobile,
+          otpHash,
+          purpose: 'FORGOT_PASSWORD',
+          expiresAt,
+          cooldownUntil,
+        },
+      });
+
+      return { shouldSendSms: true };
+    });
+
+    // 4. Secure SMS dispatch outside transaction
+    if (txResult.shouldSendSms) {
+      const smsResult = await SmsService.sendOtp({
+        mobile: cleanMobile,
+        otpCode,
+      });
+
+      if (!smsResult.success && config.isProduction) {
+        throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
+      }
+    }
+
+    return antiEnumerationResponse;
   }
 
   /**
    * Dedicated OTP request for authenticated worker account deletion.
    * Enforces 60-second cooldown and 10-minute rate limiting.
+   * Serializes concurrent requests per mobile using PostgreSQL transaction advisory locks.
    */
   static async requestAccountDeletionOtp(params: {
     mobile: string;
@@ -932,52 +943,56 @@ export class AuthService {
     }
 
     const now = new Date();
-
-    // 1. Cooldown enforcement: prevent rapid resend within 60 seconds
-    const activeCooldown = await prisma.otpRequest.findFirst({
-      where: {
-        mobile: cleanMobile,
-        purpose: 'ACCOUNT_DELETION',
-        cooldownUntil: { gt: now },
-      },
-    });
-
-    if (activeCooldown && activeCooldown.cooldownUntil) {
-      const remainingSec = Math.ceil((activeCooldown.cooldownUntil.getTime() - now.getTime()) / 1000);
-      throw new Error(`Please wait ${remainingSec} seconds before requesting a new verification code.`);
-    }
-
-    // 2. Rate-limiting: max 5 requests per 10 minutes per mobile
-    const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
-    const recentRequests = await prisma.otpRequest.count({
-      where: {
-        mobile: cleanMobile,
-        createdAt: { gt: tenMinutesAgo },
-      },
-    });
-
-    if (recentRequests >= 5) {
-      throw new Error('Too many verification requests. Please try again after 10 minutes.');
-    }
-
-    // 3. Generate cryptographically secure OTP & Hash
-    const otpCode = generateSecureOtp();
-    const otpHash = hmacHashOtp(otpCode);
     const ttlMs = config.otp.ttlSeconds * 1000;
     const expiresAt = new Date(now.getTime() + ttlMs);
     const cooldownUntil = new Date(now.getTime() + 60 * 1000);
+    const otpCode = generateSecureOtp();
+    const otpHash = hmacHashOtp(otpCode);
 
-    await prisma.otpRequest.create({
-      data: {
-        mobile: cleanMobile,
-        otpHash,
-        purpose: 'ACCOUNT_DELETION',
-        expiresAt,
-        cooldownUntil,
-      },
+    await prisma.$transaction(async (tx) => {
+      // Advisory xact lock per mobile number: (7212027, hashtext(cleanMobile))
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(7212027, hashtext(${cleanMobile})::integer)`;
+
+      // 1. Cooldown enforcement: prevent rapid resend within 60 seconds
+      const activeCooldown = await tx.otpRequest.findFirst({
+        where: {
+          mobile: cleanMobile,
+          purpose: 'ACCOUNT_DELETION',
+          cooldownUntil: { gt: now },
+        },
+      });
+
+      if (activeCooldown && activeCooldown.cooldownUntil) {
+        const remainingSec = Math.ceil((activeCooldown.cooldownUntil.getTime() - now.getTime()) / 1000);
+        throw new Error(`Please wait ${remainingSec} seconds before requesting a new verification code.`);
+      }
+
+      // 2. Rate-limiting: max 5 requests per 10 minutes per mobile
+      const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
+      const recentRequests = await tx.otpRequest.count({
+        where: {
+          mobile: cleanMobile,
+          createdAt: { gt: tenMinutesAgo },
+        },
+      });
+
+      if (recentRequests >= 5) {
+        throw new Error('Too many verification requests. Please try again after 10 minutes.');
+      }
+
+      // 3. Create OtpRequest record
+      await tx.otpRequest.create({
+        data: {
+          mobile: cleanMobile,
+          otpHash,
+          purpose: 'ACCOUNT_DELETION',
+          expiresAt,
+          cooldownUntil,
+        },
+      });
     });
 
-    // 4. Secure SMS dispatch
+    // 4. Secure SMS dispatch outside transaction
     const smsResult = await SmsService.sendOtp({
       mobile: cleanMobile,
       otpCode,
@@ -1173,37 +1188,50 @@ export class AuthService {
 
   /**
    * Dedicated OTP verification for worker password recovery.
-   * Atomically verifies the OTP and returns a single-use verification token.
-   * Fails closed if the associated account is not a worker (USER) or is inactive.
+   * Atomically verifies the OTP and returns a single-use verification token inside a single transaction.
+   * Enforces strict lock hierarchy: User row (FOR UPDATE) -> OTP rows (FOR UPDATE) -> VerificationToken.
+   * Fails closed with uniform anti-enumeration message on any failure.
    */
   static async verifyPasswordResetOtp(params: {
     mobile: string;
     otpCode: string;
   }) {
+    const genericFailure = 'The verification request is invalid or expired. Please restart password recovery.';
     const cleanOtp = (params.otpCode || '').trim();
     if (!cleanOtp || cleanOtp.length !== 6) {
-      throw new Error('Please enter a valid 6-digit verification code.');
+      throw new Error(genericFailure);
     }
 
     const cleanMobile = (params.mobile || '').replace(/\D/g, '').slice(-10);
     if (cleanMobile.length !== 10) {
-      throw new Error('Please enter a valid 10-digit Indian mobile number.');
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { mobile: cleanMobile },
-    });
-
-    if (user && user.role !== 'USER') {
-      throw new Error('Password recovery is available only for worker accounts.');
-    }
-
-    if (user && user.status !== 'ACTIVE') {
-      throw new Error('Account is inactive or suspended.');
+      throw new Error(genericFailure);
     }
 
     const txResult = await prisma.$transaction(async (tx) => {
-      return this.verifyOtpInTransaction(
+      // 1. Lock user row FOR UPDATE first to eliminate race conditions and establish strict lock hierarchy
+      const userRows = await tx.$queryRaw<Array<{
+        id: string;
+        role: string;
+        status: string;
+      }>>`
+        SELECT "id", "role", "status"
+        FROM "User"
+        WHERE "mobile" = ${cleanMobile}
+        LIMIT 1
+        FOR UPDATE
+      `;
+
+      if (!userRows || userRows.length === 0) {
+        return { success: false, message: genericFailure };
+      }
+
+      const lockedUser = userRows[0];
+      if (lockedUser.role !== 'USER' || lockedUser.status !== 'ACTIVE') {
+        return { success: false, message: genericFailure };
+      }
+
+      // 2. Lock and verify latest OTP row FOR UPDATE inside the same transaction
+      const otpResult = await this.verifyOtpInTransaction(
         tx,
         {
           mobile: cleanMobile,
@@ -1212,14 +1240,20 @@ export class AuthService {
         },
         { createVerificationToken: true }
       );
+
+      if (!otpResult.success) {
+        return { success: false, message: genericFailure };
+      }
+
+      return otpResult;
     });
 
     if (!txResult.success) {
-      throw new Error(txResult.message);
+      throw new Error(txResult.message || genericFailure);
     }
 
     return {
-      message: txResult.message,
+      message: 'Code verified successfully.',
       verificationToken: txResult.verificationToken!,
       expiresAt: txResult.expiresAt!,
     };
@@ -1760,6 +1794,33 @@ export class AuthService {
     const newHash = await bcrypt.hash(params.newPassword, 12);
 
     await prisma.$transaction(async (tx) => {
+      // 1. Lock user row FOR UPDATE first to establish strict lock hierarchy
+      const userRows = await tx.$queryRaw<Array<{
+        id: string;
+        role: string;
+        status: string;
+      }>>`
+        SELECT "id", "role", "status"
+        FROM "User"
+        WHERE "mobile" = ${cleanMobile}
+        LIMIT 1
+        FOR UPDATE
+      `;
+
+      if (!userRows || userRows.length !== 1) {
+        throw new Error('User not found.');
+      }
+
+      const user = userRows[0];
+      if (user.role !== 'USER') {
+        throw new Error('Password recovery is available only for worker accounts.');
+      }
+
+      if (user.status !== 'ACTIVE') {
+        throw new Error('Account is inactive or suspended.');
+      }
+
+      // 2. Lock and verify verification token FOR UPDATE
       const targetRows = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
         FROM "VerificationToken"
@@ -1774,22 +1835,6 @@ export class AuthService {
 
       if (!targetRows || targetRows.length !== 1) {
         throw new Error('Invalid or expired password reset token. Please verify OTP again.');
-      }
-
-      const user = await tx.user.findUnique({
-        where: { mobile: cleanMobile },
-      });
-
-      if (!user) {
-        throw new Error('User not found.');
-      }
-
-      if (user.role !== 'USER') {
-        throw new Error('Password recovery is available only for worker accounts.');
-      }
-
-      if (user.status !== 'ACTIVE') {
-        throw new Error('Account is inactive or suspended.');
       }
 
       await tx.verificationToken.update({

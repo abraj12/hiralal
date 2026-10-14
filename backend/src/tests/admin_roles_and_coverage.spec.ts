@@ -239,7 +239,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       const privacyRes = await AuthService.requestPasswordResetOtp({
         mobile: '9111199999',
       });
-      expect(privacyRes.message).toMatch(/If an account is associated with this mobile/i);
+      expect(privacyRes.message).toMatch(/If an eligible account exists, a verification code will be sent/i);
     });
   });
 

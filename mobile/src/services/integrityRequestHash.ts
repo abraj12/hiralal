@@ -236,14 +236,103 @@ export async function createAuthRequestHash(data: {
 }
 
 /**
+ * Generates a cryptographically secure 16-byte (32-hex character) request salt.
+ */
+export async function generateSecureRequestSalt(): Promise<string> {
+  const bytes = await Crypto.getRandomBytesAsync(16);
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+export type PasswordRecoveryIntegrityAction =
+  | 'FORGOT_PASSWORD_REQUEST'
+  | 'FORGOT_PASSWORD_VERIFY'
+  | 'FORGOT_PASSWORD_COMPLETE';
+
+/**
+ * Computes canonical Version 2 request commitment hash for password recovery actions bound to integrityRequestSalt.
+ */
+export async function createPasswordResetCommitment(
+  action: PasswordRecoveryIntegrityAction,
+  data: {
+    mobile: string;
+    otpCode?: string;
+    verificationToken?: string;
+    newPassword?: string;
+    integrityRequestSalt: string;
+  }
+): Promise<string> {
+  const mobile = String(data.mobile || '').replace(/\D/g, '').slice(-10);
+  const salt = String(data.integrityRequestSalt || '').trim().toLowerCase();
+
+  if (!salt || salt.length < 16) {
+    throw new Error('A valid integrityRequestSalt (at least 16 hex characters) is required.');
+  }
+
+  if (action === 'FORGOT_PASSWORD_REQUEST') {
+    const canonicalPayload = {
+      version: 2 as const,
+      action: 'FORGOT_PASSWORD_REQUEST' as const,
+      mobile,
+      integrityRequestSalt: salt,
+    };
+    return sha256Json(canonicalPayload);
+  }
+
+  if (action === 'FORGOT_PASSWORD_VERIFY') {
+    const otpCode = String(data.otpCode || '').trim();
+    const canonicalPayload = {
+      version: 2 as const,
+      action: 'FORGOT_PASSWORD_VERIFY' as const,
+      mobile,
+      otpCode,
+      integrityRequestSalt: salt,
+    };
+    return sha256Json(canonicalPayload);
+  }
+
+  if (action === 'FORGOT_PASSWORD_COMPLETE') {
+    const verificationToken = String(data.verificationToken || '').trim();
+    const newPassword = String(data.newPassword || '').trim();
+    const canonicalPayload = {
+      version: 2 as const,
+      action: 'FORGOT_PASSWORD_COMPLETE' as const,
+      mobile,
+      verificationToken,
+      newPassword,
+      integrityRequestSalt: salt,
+    };
+    return sha256Json(canonicalPayload);
+  }
+
+  throw new Error(`Unsupported recovery integrity action "${action}".`);
+}
+
+/**
  * Computes canonical request hash for mobile password recovery actions.
+ * Supports both Version 2 (with integrityRequestSalt) and Version 1 (legacy).
  */
 export async function createPasswordResetRequestHash(
   action: 'FORGOT_PASSWORD' | 'FORGOT_PASSWORD_REQUEST' | 'FORGOT_PASSWORD_VERIFY' | 'FORGOT_PASSWORD_COMPLETE',
   data: {
     mobile: string;
+    otpCode?: string;
+    verificationToken?: string;
+    newPassword?: string;
+    integrityRequestSalt?: string;
   }
 ): Promise<string> {
+  if (data.integrityRequestSalt && action !== 'FORGOT_PASSWORD') {
+    return createPasswordResetCommitment(action as PasswordRecoveryIntegrityAction, {
+      mobile: data.mobile,
+      otpCode: data.otpCode,
+      verificationToken: data.verificationToken,
+      newPassword: data.newPassword,
+      integrityRequestSalt: data.integrityRequestSalt,
+    });
+  }
+
   const canonicalPayload = {
     version: 1,
     action,
@@ -251,4 +340,5 @@ export async function createPasswordResetRequestHash(
   };
   return sha256Json(canonicalPayload);
 }
+
 
