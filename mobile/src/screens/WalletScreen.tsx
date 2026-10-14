@@ -145,7 +145,23 @@ export default function WalletScreen() {
           ) : (
             <View style={styles.txList}>
               {transactions.map((t: any) => {
-                const isCredit = t.type === 'CREDIT' || t.type === 'REWARD' || t.type === 'REFUND';
+                const isCredit =
+                  t.type === 'REWARD_CREDIT' ||
+                  t.type === 'PAYOUT_REVERSAL' ||
+                  t.type === 'REFUND' ||
+                  t.type === 'CREDIT' ||
+                  t.type === 'REWARD' ||
+                  (t.type === 'MANUAL_ADJUSTMENT' && Number(t.amount) >= 0);
+
+                const getTitle = () => {
+                  if (t.type === 'REWARD_CREDIT' || t.type === 'CREDIT' || t.type === 'REWARD') return 'Reward Credited';
+                  if (t.type === 'PAYOUT_REVERSAL') return 'Payout Reversed';
+                  if (t.type === 'REFUND') return 'Refund Credited';
+                  if (t.type === 'PAYOUT_DEBIT') return 'Payout Disbursed';
+                  if (t.type === 'MANUAL_ADJUSTMENT') return 'Balance Adjustment';
+                  return String(t.type || 'Transaction').replace(/_/g, ' ');
+                };
+
                 return (
                   <View key={t.id} style={styles.txItem}>
                     <View
@@ -161,15 +177,9 @@ export default function WalletScreen() {
                       )}
                     </View>
                     <View style={styles.txInfo}>
-                      <Text style={styles.txTitle}>
-                        {t.type === 'CREDIT' || t.type === 'REWARD'
-                          ? 'Reward Credited'
-                          : t.type === 'REFUND'
-                          ? 'Payout Reversed / Refunded'
-                          : 'Payout Disbursed'}
-                      </Text>
+                      <Text style={styles.txTitle}>{getTitle()}</Text>
                       <Text style={styles.txDesc} numberOfLines={1}>
-                        {t.description || (isCredit ? 'Reward earned' : 'Transferred to account')}
+                        {t.description || (isCredit ? 'Credited to wallet' : 'Transferred to account')}
                       </Text>
                     </View>
                     <View style={styles.txAmountCol}>
@@ -179,7 +189,7 @@ export default function WalletScreen() {
                           { color: isCredit ? '#16A34A' : '#0F172A' },
                         ]}
                       >
-                        {isCredit ? '+' : '-'}₹{Number(t.amount).toFixed(2)}
+                        {isCredit ? '+' : '-'}₹{Math.abs(Number(t.amount)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </Text>
                       <Text style={styles.txDate}>
                         {new Date(t.createdAt).toLocaleDateString('en-IN', {
@@ -188,6 +198,11 @@ export default function WalletScreen() {
                           year: 'numeric',
                         })}
                       </Text>
+                      {typeof t.balanceAfter === 'number' && (
+                        <Text style={styles.txBalAfter}>
+                          Bal: ₹{Number(t.balanceAfter).toLocaleString('en-IN')}
+                        </Text>
+                      )}
                     </View>
                   </View>
                 );
@@ -392,5 +407,11 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#94A3B8',
     marginTop: 2,
+  },
+  txBalAfter: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 2,
+    fontWeight: '600',
   },
 });

@@ -80,3 +80,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 scripts/__pycache__/
+
+# Test results
+test-results/

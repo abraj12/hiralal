@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import {
   ArrowLeft,
@@ -186,9 +187,11 @@ export default function NotificationScreen() {
           }
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <View style={styles.emptyIconCircle}>
-                <Bell size={32} color="#94A3B8" />
-              </View>
+              <Image
+                source={require('../../assets/state_no_notifications.png')}
+                style={styles.emptyImage}
+                resizeMode="contain"
+              />
               <Text style={styles.emptyTitle}>No Notifications Yet</Text>
               <Text style={styles.emptySubtitle}>
                 Important updates on your approved bills, rewards, and payouts will appear here.
@@ -334,17 +337,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   emptyContainer: {
-    paddingTop: 80,
+    paddingTop: 60,
     alignItems: 'center',
     paddingHorizontal: 32,
   },
-  emptyIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#F1F5F9',
-    justifyContent: 'center',
-    alignItems: 'center',
+  emptyImage: {
+    width: 130,
+    height: 130,
     marginBottom: 16,
   },
   emptyTitle: {

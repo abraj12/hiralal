@@ -166,10 +166,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     async function checkExistingSession() {
       try {
         const token = await MobileApiClient.initToken();
+        const storedUser = await MobileApiClient.getStoredUser();
+
+        if (token && storedUser && (storedUser.role === 'BILL_ADMIN' || storedUser.role === 'OPERATIONS_ADMIN')) {
+          if (mounted) {
+            setUser(storedUser);
+            setCurrentScreen('MAIN');
+          }
+          return;
+        }
+
         if (token) {
           const profileRes = await MobileApiClient.getProfile();
           if (profileRes && profileRes.user && mounted) {
             setUser(profileRes.user);
+            await MobileApiClient.setStoredUser(profileRes.user);
             if (profileRes.user.profession && (profileRes.user.profession === 'PLUMBER' || profileRes.user.profession === 'TILE_INSTALLER')) {
               setProfessionState(profileRes.user.profession as ProfessionType);
             }
@@ -249,6 +260,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const loginAdminSession = async (adminUser: any, token: string) => {
     await MobileApiClient.setToken(token);
+    await MobileApiClient.setStoredUser(adminUser);
     setUser(adminUser);
     NotificationsService.registerDeviceToken().catch(() => {});
     setCurrentScreen('MAIN');

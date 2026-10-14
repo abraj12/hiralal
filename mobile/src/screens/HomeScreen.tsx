@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, RefreshControl } from 'react-native';
 import { ArrowUpRight, CheckCircle2, Clock, XCircle, FileText } from 'lucide-react-native';
 import Header from '../components/Header';
 import RewardCard from '../components/RewardCard';
@@ -9,7 +9,14 @@ import ProfessionHeroBanner from '../components/ProfessionHeroBanner';
 import { useApp } from '../context/AppContext';
 
 export default function HomeScreen() {
-  const { theme, bills, setActiveTab, setCurrentScreen } = useApp();
+  const { theme, bills, setActiveTab, setCurrentScreen, refreshData } = useApp();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await refreshData();
+    setRefreshing(false);
+  };
 
   const handleOpenUpload = () => {
     setCurrentScreen('UPLOAD_BILL');
@@ -19,7 +26,12 @@ export default function HomeScreen() {
     <View style={styles.container}>
       <Header />
 
-      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 30 }}>
+      <ScrollView
+        style={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 30 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
         {/* Main Reward Card */}
         <RewardCard onPress={() => setActiveTab('WALLET')} />
 
@@ -87,7 +99,11 @@ export default function HomeScreen() {
 
                   <View style={styles.billRight}>
                     <Text style={[styles.rewardAmount, { color: isApproved ? '#16A34A' : '#64748B' }]}>
-                      +₹{item.calculatedReward}
+                      {isApproved
+                        ? `+₹${Number(item.calculatedReward || 0).toLocaleString('en-IN')}`
+                        : isRejected
+                        ? 'Rejected'
+                        : 'Under Review'}
                     </Text>
                     <View
                       style={[

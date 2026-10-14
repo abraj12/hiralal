@@ -6,6 +6,7 @@ import {
   Animated,
   Easing,
   Dimensions,
+  Platform,
 } from 'react-native';
 
 const { width } = Dimensions.get('window');
@@ -27,6 +28,11 @@ export default function AnimatedSplashScreen({ onFinish }: AnimatedSplashScreenP
   const pulseScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
+    const isNativeDriver = Platform.OS !== 'web';
+    const fallback = setTimeout(() => {
+      onFinish();
+    }, 1500);
+
     // 1. Entrance animation sequence
     Animated.sequence([
       // Stage A: Logo pops in smoothly
@@ -34,14 +40,14 @@ export default function AnimatedSplashScreen({ onFinish }: AnimatedSplashScreenP
         Animated.timing(logoOpacity, {
           toValue: 1,
           duration: 650,
-          useNativeDriver: true,
+          useNativeDriver: isNativeDriver,
           easing: Easing.out(Easing.cubic),
         }),
         Animated.spring(logoScale, {
           toValue: 1,
           friction: 6,
           tension: 45,
-          useNativeDriver: true,
+          useNativeDriver: isNativeDriver,
         }),
       ]),
 
@@ -50,13 +56,13 @@ export default function AnimatedSplashScreen({ onFinish }: AnimatedSplashScreenP
         Animated.timing(textOpacity, {
           toValue: 1,
           duration: 450,
-          useNativeDriver: true,
+          useNativeDriver: isNativeDriver,
           easing: Easing.out(Easing.cubic),
         }),
         Animated.timing(textTranslateY, {
           toValue: 0,
           duration: 450,
-          useNativeDriver: true,
+          useNativeDriver: isNativeDriver,
           easing: Easing.out(Easing.cubic),
         }),
       ]),
@@ -66,19 +72,19 @@ export default function AnimatedSplashScreen({ onFinish }: AnimatedSplashScreenP
         Animated.timing(subtextOpacity, {
           toValue: 1,
           duration: 400,
-          useNativeDriver: true,
+          useNativeDriver: isNativeDriver,
           easing: Easing.out(Easing.cubic),
         }),
         Animated.timing(subtextTranslateY, {
           toValue: 0,
           duration: 400,
-          useNativeDriver: true,
+          useNativeDriver: isNativeDriver,
           easing: Easing.out(Easing.cubic),
         }),
         Animated.timing(badgeOpacity, {
           toValue: 1,
           duration: 500,
-          useNativeDriver: true,
+          useNativeDriver: isNativeDriver,
           easing: Easing.out(Easing.cubic),
         }),
       ]),
@@ -88,13 +94,13 @@ export default function AnimatedSplashScreen({ onFinish }: AnimatedSplashScreenP
         Animated.timing(pulseScale, {
           toValue: 1.04,
           duration: 350,
-          useNativeDriver: true,
+          useNativeDriver: isNativeDriver,
           easing: Easing.inOut(Easing.ease),
         }),
         Animated.timing(pulseScale, {
           toValue: 1.0,
           duration: 350,
-          useNativeDriver: true,
+          useNativeDriver: isNativeDriver,
           easing: Easing.inOut(Easing.ease),
         }),
       ]),
@@ -104,12 +110,15 @@ export default function AnimatedSplashScreen({ onFinish }: AnimatedSplashScreenP
       Animated.timing(containerOpacity, {
         toValue: 0,
         duration: 450,
-        useNativeDriver: true,
+        useNativeDriver: isNativeDriver,
         easing: Easing.inOut(Easing.ease),
       }),
     ]).start(() => {
+      clearTimeout(fallback);
       onFinish();
     });
+
+    return () => clearTimeout(fallback);
   }, []);
 
   return (

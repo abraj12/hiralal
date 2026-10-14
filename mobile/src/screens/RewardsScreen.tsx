@@ -1,27 +1,83 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, Image } from 'react-native';
-import { Gift, CheckCircle2, Clock, FileCheck, DollarSign } from 'lucide-react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
+import { Gift, CheckCircle2, Clock, FileCheck, ArrowDownRight, ArrowUpRight, DollarSign } from 'lucide-react-native';
 import Header from '../components/Header';
 import { useApp } from '../context/AppContext';
+import { MobileApiClient } from '../services/api';
 
 export default function RewardsScreen() {
-  const { theme, wallet, bills } = useApp();
+  const { theme, wallet, bills, transactions, refreshData } = useApp();
+  const [rewardsData, setRewardsData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<'APPROVED' | 'LEDGER'>('APPROVED');
 
-  const totalRewards = wallet.lifetimeCashback ?? (wallet.availableBalance + wallet.totalRedeemed + wallet.processingAmount);
-  const approvedBills = bills.filter(b => b.status === 'APPROVED');
-  const pendingBills = bills.filter(b => b.status === 'PENDING' || b.status === 'UNDER_REVIEW');
+  const fetchRewards = useCallback(async () => {
+    try {
+      const res = await MobileApiClient.getRewards();
+      if (res && res.success) {
+        setRewardsData(res);
+      }
+    } catch (e: any) {
+      console.warn('Failed to load rewards from backend:', e.message);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchRewards();
+  }, [fetchRewards]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([refreshData(), fetchRewards()]);
+    setRefreshing(false);
+  };
+
+  const summary = rewardsData?.summary;
+  const totalRewards = summary?.lifetimeCashback ?? wallet.lifetimeCashback ?? (wallet.availableBalance + wallet.totalRedeemed);
+  const processingAmount = summary?.processingAmount ?? wallet.processingAmount;
+  const availableBalance = summary?.availableBalance ?? wallet.availableBalance;
+
+  const localApprovedBills = bills.filter(b => b.status === 'APPROVED');
+  const localPendingBills = bills.filter(b => b.status === 'PENDING' || b.status === 'UNDER_REVIEW');
+
+  const approvedCount = summary?.billsApprovedCount ?? localApprovedBills.length;
+  const pendingCount = summary?.billsPendingCount ?? localPendingBills.length;
+
+  const recentRewards = rewardsData?.recentRewards && rewardsData.recentRewards.length > 0
+    ? rewardsData.recentRewards
+    : localApprovedBills.map(b => ({
+        id: b.id,
+        invoiceNumber: b.invoiceNumber,
+        invoiceDate: b.invoiceDate,
+        billAmount: Number(b.billAmount),
+        rewardAmount: Number(b.calculatedReward || 0),
+        status: b.status,
+        createdAt: b.createdAt,
+      }));
+
+  const ledgerList = rewardsData?.ledger && rewardsData.ledger.length > 0
+    ? rewardsData.ledger
+    : transactions;
 
   return (
     <View style={styles.container}>
       <Header />
 
-      <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 30 }}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={{ paddingBottom: 34 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
         {/* Top Summary Card */}
         <View style={[styles.heroSummaryCard, { backgroundColor: theme.primaryColor }]}>
           <View style={styles.heroRow}>
             <View>
               <Text style={styles.heroSub}>{theme.myRewardsTitle}</Text>
-              <Text style={styles.heroValue}>₹{totalRewards.toLocaleString('en-IN')}</Text>
+              <Text style={styles.heroValue}>₹{Number(totalRewards).toLocaleString('en-IN')}</Text>
             </View>
             <Image
               source={require('../../assets/rewards_illustration.png')}
@@ -34,69 +90,172 @@ export default function RewardsScreen() {
           <View style={styles.heroMetricsGrid}>
             <View style={styles.metricItem}>
               <Text style={styles.metricLabel}>Processing</Text>
-              <Text style={styles.metricVal}>₹{wallet.processingAmount.toLocaleString('en-IN')}</Text>
+              <Text style={styles.metricVal}>₹{Number(processingAmount).toLocaleString('en-IN')}</Text>
             </View>
             <View style={styles.metricItem}>
               <Text style={styles.metricLabel}>Available</Text>
-              <Text style={styles.metricVal}>₹{wallet.availableBalance.toLocaleString('en-IN')}</Text>
+              <Text style={styles.metricVal}>₹{Number(availableBalance).toLocaleString('en-IN')}</Text>
             </View>
             <View style={styles.metricItem}>
               <Text style={styles.metricLabel}>Approved Bills</Text>
-              <Text style={styles.metricVal}>{approvedBills.length}</Text>
+              <Text style={styles.metricVal}>{approvedCount}</Text>
             </View>
             <View style={styles.metricItem}>
               <Text style={styles.metricLabel}>Pending Bills</Text>
-              <Text style={styles.metricVal}>{pendingBills.length}</Text>
+              <Text style={styles.metricVal}>{pendingCount}</Text>
             </View>
           </View>
         </View>
 
-        {/* Reward History Section */}
-        <View style={styles.historySection}>
-          <Text style={styles.historySectionTitle}>Reward Ledger History</Text>
-
-          {bills.length === 0 ? (
-            <View style={styles.emptyBox}>
-              <Image
-                source={require('../../assets/state_no_transactions.png')}
-                style={styles.emptyImg}
-                resizeMode="contain"
-              />
-              <Text style={styles.emptyText}>No reward credits yet</Text>
-            </View>
-          ) : (
-            bills.map((item: any) => {
-              const isApproved = item.status === 'APPROVED';
-              return (
-                <View key={item.id} style={styles.historyCard}>
-                  <View style={styles.cardHeaderRow}>
-                    <View style={styles.cardHeaderLeft}>
-                      <Gift size={16} color={theme.primaryColor} />
-                      <Text style={styles.cardInvoice}>{item.invoiceNumber}</Text>
-                    </View>
-                    <Text style={[styles.cardReward, { color: isApproved ? '#16A34A' : '#EA580C' }]}>
-                      +₹{item.calculatedReward}
-                    </Text>
-                  </View>
-
-                  <View style={styles.cardFooterRow}>
-                    <Text style={styles.cardBillAmount}>
-                      Bill Amount: ₹{item.billAmount.toLocaleString('en-IN')}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.cardStatus,
-                        { color: isApproved ? '#16A34A' : '#EA580C' },
-                      ]}
-                    >
-                      {item.status}
-                    </Text>
-                  </View>
-                </View>
-              );
-            })
-          )}
+        {/* Section View Tabs */}
+        <View style={styles.tabSwitchContainer}>
+          <TouchableOpacity
+            style={[styles.tabSwitchBtn, activeTab === 'APPROVED' && styles.tabSwitchBtnActive]}
+            onPress={() => setActiveTab('APPROVED')}
+          >
+            <Text style={[styles.tabSwitchText, activeTab === 'APPROVED' && styles.tabSwitchTextActive]}>
+              Approved Rewards ({recentRewards.length})
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tabSwitchBtn, activeTab === 'LEDGER' && styles.tabSwitchBtnActive]}
+            onPress={() => setActiveTab('LEDGER')}
+          >
+            <Text style={[styles.tabSwitchText, activeTab === 'LEDGER' && styles.tabSwitchTextActive]}>
+              Reward Ledger ({ledgerList.length})
+            </Text>
+          </TouchableOpacity>
         </View>
+
+        {/* Tab 1: Approved Rewards */}
+        {activeTab === 'APPROVED' && (
+          <View style={styles.historySection}>
+            <Text style={styles.historySectionTitle}>Approved Cashback Rewards</Text>
+
+            {recentRewards.length === 0 ? (
+              <View style={styles.emptyBox}>
+                <Image
+                  source={require('../../assets/state_no_transactions.png')}
+                  style={styles.emptyImg}
+                  resizeMode="contain"
+                />
+                <Text style={styles.emptyText}>No approved rewards yet</Text>
+                <Text style={styles.emptySubtext}>Submit your bills to earn rewards once verified</Text>
+              </View>
+            ) : (
+              recentRewards.map((item: any) => {
+                const amount = Number(item.rewardAmount || item.calculatedReward || 0);
+                return (
+                  <View key={item.id} style={styles.historyCard}>
+                    <View style={styles.cardHeaderRow}>
+                      <View style={styles.cardHeaderLeft}>
+                        <Gift size={16} color={theme.primaryColor} />
+                        <Text style={styles.cardInvoice}>{item.invoiceNumber}</Text>
+                      </View>
+                      <Text style={styles.cardRewardGreen}>
+                        +₹{amount.toLocaleString('en-IN')}
+                      </Text>
+                    </View>
+
+                    <View style={styles.cardFooterRow}>
+                      <Text style={styles.cardBillAmount}>
+                        Bill: ₹{Number(item.billAmount || 0).toLocaleString('en-IN')} • {new Date(item.invoiceDate || item.createdAt).toLocaleDateString('en-IN')}
+                      </Text>
+                      <View style={styles.approvedPill}>
+                        <Text style={styles.approvedPillText}>APPROVED</Text>
+                      </View>
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </View>
+        )}
+
+        {/* Tab 2: Reward Ledger */}
+        {activeTab === 'LEDGER' && (
+          <View style={styles.historySection}>
+            <Text style={styles.historySectionTitle}>Wallet & Reward Ledger</Text>
+
+            {ledgerList.length === 0 ? (
+              <View style={styles.emptyBox}>
+                <Image
+                  source={require('../../assets/state_no_transactions.png')}
+                  style={styles.emptyImg}
+                  resizeMode="contain"
+                />
+                <Text style={styles.emptyText}>No ledger transactions yet</Text>
+                <Text style={styles.emptySubtext}>Approved credits and payouts will record here</Text>
+              </View>
+            ) : (
+              ledgerList.map((t: any) => {
+                const isCredit =
+                  t.type === 'REWARD_CREDIT' ||
+                  t.type === 'PAYOUT_REVERSAL' ||
+                  t.type === 'REFUND' ||
+                  t.type === 'CREDIT' ||
+                  t.type === 'REWARD' ||
+                  (t.type === 'MANUAL_ADJUSTMENT' && Number(t.amount) >= 0);
+
+                const getTitle = () => {
+                  if (t.type === 'REWARD_CREDIT' || t.type === 'CREDIT' || t.type === 'REWARD') return 'Reward Credited';
+                  if (t.type === 'PAYOUT_REVERSAL') return 'Payout Reversed';
+                  if (t.type === 'REFUND') return 'Refund Credited';
+                  if (t.type === 'PAYOUT_DEBIT') return 'Payout Disbursed';
+                  if (t.type === 'MANUAL_ADJUSTMENT') return 'Balance Adjustment';
+                  return String(t.type || 'Transaction').replace(/_/g, ' ');
+                };
+
+                return (
+                  <View key={t.id} style={styles.historyCard}>
+                    <View style={styles.cardHeaderRow}>
+                      <View style={styles.cardHeaderLeft}>
+                        <View
+                          style={[
+                            styles.ledgerIconCircle,
+                            { backgroundColor: isCredit ? '#F0FDF4' : '#EFF6FF' },
+                          ]}
+                        >
+                          {isCredit ? (
+                            <ArrowDownRight size={15} color="#16A34A" />
+                          ) : (
+                            <ArrowUpRight size={15} color="#2563EB" />
+                          )}
+                        </View>
+                        <View>
+                          <Text style={styles.cardInvoice}>{getTitle()}</Text>
+                          <Text style={styles.cardBillAmount} numberOfLines={1}>
+                            {t.description || (isCredit ? 'Credited to wallet' : 'Transferred to account')}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={[styles.cardReward, { color: isCredit ? '#16A34A' : '#0F172A' }]}>
+                          {isCredit ? '+' : '-'}₹{Math.abs(Number(t.amount)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </Text>
+                        <Text style={styles.ledgerDate}>
+                          {new Date(t.createdAt).toLocaleDateString('en-IN', {
+                            day: '2-digit',
+                            month: 'short',
+                            year: 'numeric',
+                          })}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {typeof t.balanceAfter === 'number' && (
+                      <View style={styles.cardFooterRow}>
+                        <Text style={styles.balanceAfterText}>
+                          Balance After: ₹{Number(t.balanceAfter).toLocaleString('en-IN')}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                );
+              })
+            )}
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -164,9 +323,40 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     marginTop: 2,
   },
+  tabSwitchContainer: {
+    flexDirection: 'row',
+    marginHorizontal: 20,
+    marginTop: 20,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 14,
+    padding: 4,
+  },
+  tabSwitchBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 11,
+  },
+  tabSwitchBtnActive: {
+    backgroundColor: '#ffffff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  tabSwitchText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  tabSwitchTextActive: {
+    color: '#0F172A',
+    fontWeight: '800',
+  },
   historySection: {
     paddingHorizontal: 20,
-    marginTop: 24,
+    marginTop: 20,
   },
   historySectionTitle: {
     fontSize: 16,
@@ -197,15 +387,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    flex: 1,
   },
   cardInvoice: {
     fontSize: 13,
     fontWeight: '800',
     color: '#0F172A',
   },
-  cardReward: {
+  cardRewardGreen: {
     fontSize: 16,
     fontWeight: '900',
+    color: '#16A34A',
+  },
+  cardReward: {
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  ledgerDate: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  ledgerIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   cardFooterRow: {
     flexDirection: 'row',
@@ -220,23 +428,40 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontWeight: '500',
   },
-  cardStatus: {
+  balanceAfterText: {
     fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  approvedPill: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  approvedPillText: {
+    color: '#15803D',
+    fontSize: 10,
     fontWeight: '800',
-    textTransform: 'uppercase',
   },
   emptyBox: {
     alignItems: 'center',
-    paddingVertical: 30,
+    paddingVertical: 36,
   },
   emptyImg: {
     width: 100,
     height: 90,
-    marginBottom: 8,
+    marginBottom: 12,
   },
   emptyText: {
-    fontSize: 13,
+    fontSize: 14,
+    color: '#0F172A',
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  emptySubtext: {
+    fontSize: 12,
     color: '#64748B',
-    fontWeight: '600',
+    textAlign: 'center',
   },
 });

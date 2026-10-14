@@ -76,6 +76,7 @@ export default function AdminSettingsPage() {
   const [showAddGstModal, setShowAddGstModal] = useState(false);
 
   // Redemption Window State (Start disabled and unconfigured)
+  const [redemptionProfession, setRedemptionProfession] = useState<'ALL' | 'PLUMBER' | 'TILE_INSTALLER'>('ALL');
   const [isRedemptionEnabled, setIsRedemptionEnabled] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [startTime, setStartTime] = useState('');
@@ -88,6 +89,49 @@ export default function AdminSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const fetchRedemptionData = async (prof: string) => {
+    try {
+      const redRes = await AdminApiClient.getRedemptionSettings(prof);
+      if (redRes.settings) {
+        const s = redRes.settings;
+        setIsRedemptionEnabled(Boolean(s.isEnabled));
+        if (s.message) setUserMessage(s.message);
+        if (s.minimumRedemptionAmount !== undefined && s.minimumRedemptionAmount !== null) {
+          setMinimumRedemptionAmount(s.minimumRedemptionAmount.toString());
+        } else {
+          setMinimumRedemptionAmount('');
+        }
+
+        if (s.startAt) {
+          const d = new Date(s.startAt);
+          setStartDate(formatIndiaDateOnly(d));
+          setStartTime(formatIndiaTimeOnly(d));
+        } else {
+          setStartDate('');
+          setStartTime('');
+        }
+        if (s.endAt) {
+          const d = new Date(s.endAt);
+          setEndDate(formatIndiaDateOnly(d));
+          setEndTime(formatIndiaTimeOnly(d));
+        } else {
+          setEndDate('');
+          setEndTime('');
+        }
+      } else {
+        setIsRedemptionEnabled(false);
+        setStartDate('');
+        setStartTime('');
+        setEndDate('');
+        setEndTime('');
+        setMinimumRedemptionAmount('');
+        setUserMessage('Rewards redemption is currently open for verified craftsmen.');
+      }
+    } catch (err: any) {
+      console.error('Error fetching redemption settings:', err);
+    }
+  };
 
   const fetchAllData = async () => {
     try {
@@ -144,34 +188,7 @@ export default function AdminSettingsPage() {
       }
 
       // 4. Fetch Redemption Settings
-      const redRes = await AdminApiClient.getRedemptionSettings('ALL');
-      if (redRes.settings) {
-        const s = redRes.settings;
-        setIsRedemptionEnabled(Boolean(s.isEnabled));
-        if (s.message) setUserMessage(s.message);
-        if (s.minimumRedemptionAmount !== undefined && s.minimumRedemptionAmount !== null) {
-          setMinimumRedemptionAmount(s.minimumRedemptionAmount.toString());
-        } else {
-          setMinimumRedemptionAmount('');
-        }
-
-        if (s.startAt) {
-          const d = new Date(s.startAt);
-          setStartDate(formatIndiaDateOnly(d));
-          setStartTime(formatIndiaTimeOnly(d));
-        } else {
-          setStartDate('');
-          setStartTime('');
-        }
-        if (s.endAt) {
-          const d = new Date(s.endAt);
-          setEndDate(formatIndiaDateOnly(d));
-          setEndTime(formatIndiaTimeOnly(d));
-        } else {
-          setEndDate('');
-          setEndTime('');
-        }
-      }
+      await fetchRedemptionData(redemptionProfession);
     } catch (err: any) {
       console.error('Error fetching settings:', err);
       setErrorMsg(err.message || 'Failed to load configuration data');
@@ -257,6 +274,36 @@ export default function AdminSettingsPage() {
     }
   };
 
+  // Handle Toggling GST Rule Active Status
+  const handleToggleGstActive = async (id: string, currentActive: boolean) => {
+    try {
+      setSaving(true);
+      clearAlerts();
+      await AdminApiClient.updateGstRule(id, { isActive: !currentActive });
+      setSuccessMsg(`GST Rule ${!currentActive ? 'activated' : 'deactivated'} successfully.`);
+      await fetchAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to update GST rule status');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Handle Setting GST Rule as Default
+  const handleSetGstDefault = async (id: string) => {
+    try {
+      setSaving(true);
+      clearAlerts();
+      await AdminApiClient.updateGstRule(id, { isDefault: true });
+      setSuccessMsg('Default GST rule updated successfully.');
+      await fetchAllData();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to set default GST rule');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Handle Saving Redemption Settings
   const handleSaveRedemption = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -266,6 +313,7 @@ export default function AdminSettingsPage() {
     try {
       let startAt: string | null = null;
       let endAt: string | null = null;
+      const targetProf = redemptionProfession === 'ALL' ? undefined : redemptionProfession;
 
       if (isRedemptionEnabled) {
         if (!startDate || !startTime) {
@@ -290,6 +338,7 @@ export default function AdminSettingsPage() {
         }
 
         await AdminApiClient.updateRedemptionSettings({
+          profession: targetProf,
           isEnabled: true,
           startAt,
           endAt,
@@ -306,6 +355,7 @@ export default function AdminSettingsPage() {
         const parsedMin = minimumRedemptionAmount.trim() ? parseFloat(minimumRedemptionAmount.trim()) : null;
 
         await AdminApiClient.updateRedemptionSettings({
+          profession: targetProf,
           isEnabled: false,
           startAt,
           endAt,
@@ -314,7 +364,8 @@ export default function AdminSettingsPage() {
         });
       }
 
-      setSuccessMsg('Redemption window settings saved and enforced for mobile workers!');
+      setSuccessMsg(`Redemption window settings for ${redemptionProfession} saved and enforced for mobile workers!`);
+      await fetchRedemptionData(redemptionProfession);
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to save redemption window settings');
     } finally {
@@ -323,10 +374,10 @@ export default function AdminSettingsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
+    <div className="min-h-screen bg-slate-50 flex flex-col lg:flex-row">
       <Sidebar />
 
-      <main className="flex-1 ml-64 p-8 max-w-5xl">
+      <main className="flex-1 w-full lg:ml-64 p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen max-w-5xl">
         <div className="mb-8">
           <h1 className="text-2xl font-black text-slate-900 tracking-tight">
             Business Rules & System Configuration
@@ -337,7 +388,7 @@ export default function AdminSettingsPage() {
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-slate-200 mb-6 space-x-2">
+        <div className="flex border-b border-slate-200 mb-6 space-x-2 overflow-x-auto whitespace-nowrap custom-scrollbar">
           <button
             onClick={() => { setActiveTab('PLUMBER'); clearAlerts(); }}
             className={`pb-3 px-4 text-xs font-bold flex items-center space-x-2 border-b-2 transition ${
@@ -623,12 +674,13 @@ export default function AdminSettingsPage() {
                       <th className="py-3 px-4">Default</th>
                       <th className="py-3 px-4">Effective Date</th>
                       <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {gstRules.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="py-8 text-center text-slate-400 font-medium">
+                        <td colSpan={6} className="py-8 text-center text-slate-400 font-medium">
                           No GST tax rules configured. Please add a GST rate to enable bill processing with GST.
                         </td>
                       </tr>
@@ -655,6 +707,30 @@ export default function AdminSettingsPage() {
                             }`}>
                               {g.isActive ? 'ACTIVE' : 'INACTIVE'}
                             </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-right space-x-1.5 whitespace-nowrap">
+                            {!g.isDefault && (
+                              <button
+                                type="button"
+                                onClick={() => handleSetGstDefault(g.id)}
+                                disabled={saving}
+                                className="px-2.5 py-1 text-[11px] font-bold bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 rounded-lg transition disabled:opacity-50"
+                              >
+                                Set Default
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleGstActive(g.id, g.isActive)}
+                              disabled={saving}
+                              className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition disabled:opacity-50 ${
+                                g.isActive
+                                  ? 'bg-amber-50 hover:bg-amber-100 text-amber-800'
+                                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800'
+                              }`}
+                            >
+                              {g.isActive ? 'Deactivate' : 'Activate'}
+                            </button>
                           </td>
                         </tr>
                       ))
@@ -775,6 +851,32 @@ export default function AdminSettingsPage() {
                   </>
                 )}
               </button>
+            </div>
+
+            {/* Profession Scope Tabs */}
+            <div className="flex items-center space-x-2 mb-6 pb-4 border-b border-slate-100">
+              <span className="text-xs font-bold text-slate-500 mr-2">Target Trade Group:</span>
+              <div className="bg-slate-200/80 p-1 rounded-xl flex space-x-1 text-xs font-bold">
+                {[
+                  { id: 'ALL', label: 'All Craftsmen (Default)' },
+                  { id: 'PLUMBER', label: 'Plumbers Only' },
+                  { id: 'TILE_INSTALLER', label: 'Tile Installers Only' },
+                ].map(pf => (
+                  <button
+                    key={pf.id}
+                    type="button"
+                    onClick={() => {
+                      setRedemptionProfession(pf.id as any);
+                      fetchRedemptionData(pf.id);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg transition ${
+                      redemptionProfession === pf.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {pf.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <form onSubmit={handleSaveRedemption} className="space-y-5">

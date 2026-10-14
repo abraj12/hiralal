@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { View, StyleSheet, SafeAreaView, StatusBar, Platform, Text, TouchableOpacity } from 'react-native';
 import { AppProvider, useApp } from './src/context/AppContext';
 import BottomNav from './src/components/BottomNav';
+import AdminHeader from './src/components/AdminHeader';
+import AdminBottomNav from './src/components/AdminBottomNav';
 import AnimatedSplashScreen from './src/components/AnimatedSplashScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import BillsScreen from './src/screens/BillsScreen';
@@ -13,13 +15,31 @@ import WelcomeScreen from './src/screens/WelcomeScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
 import BillReviewScreen from './src/screens/BillReviewScreen';
-import OperationsDashboardScreen from './src/screens/OperationsDashboardScreen';
 import NotificationScreen from './src/screens/NotificationScreen';
+
+// Admin Mobile Screens
+import BillAdminDashboardScreen from './src/screens/admin/BillAdminDashboardScreen';
+import OpsAdminDashboardScreen from './src/screens/admin/OpsAdminDashboardScreen';
+import OpsAdminUsersScreen from './src/screens/admin/OpsAdminUsersScreen';
+import OpsAdminPayoutsScreen from './src/screens/admin/OpsAdminPayoutsScreen';
+import OpsAdminMoreScreen from './src/screens/admin/OpsAdminMoreScreen';
 
 function MainAppNavigator() {
   const { currentScreen, activeTab, user, logout } = useApp();
 
-  const isAdmin = user?.role === 'BILL_ADMIN' || user?.role === 'OPERATIONS_ADMIN';
+  // Admin Tab State
+  const [billAdminTab, setBillAdminTab] = useState<'DASHBOARD' | 'BILLS'>('DASHBOARD');
+  const [opsAdminTab, setOpsAdminTab] = useState<'DASHBOARD' | 'BILLS' | 'USERS' | 'PAYOUTS' | 'MORE'>('DASHBOARD');
+  const [opsAdminMoreSubtab, setOpsAdminMoreSubtab] = useState<'REWARDS' | 'BROADCAST' | 'AUDIT' | 'SETTINGS'>('REWARDS');
+  const [adminRefreshKey, setAdminRefreshKey] = useState(0);
+
+  const isBillAdmin = user?.role === 'BILL_ADMIN';
+  const isOpsAdmin = user?.role === 'OPERATIONS_ADMIN';
+  const isAdmin = isBillAdmin || isOpsAdmin;
+
+  const handleAdminRefresh = () => {
+    setAdminRefreshKey(k => k + 1);
+  };
 
   const renderActiveScreen = () => {
     if (currentScreen === 'WELCOME') return <WelcomeScreen />;
@@ -28,13 +48,61 @@ function MainAppNavigator() {
     if (currentScreen === 'UPLOAD_BILL') return <UploadBillScreen />;
     if (currentScreen === 'NOTIFICATIONS') return <NotificationScreen />;
 
-    // Role-specific screens when logged in
-    if (user?.role === 'BILL_ADMIN') {
-      return <BillReviewScreen />;
+    // 1. BILL_ADMIN Mobile Portal
+    if (isBillAdmin) {
+      switch (billAdminTab) {
+        case 'DASHBOARD':
+          return (
+            <BillAdminDashboardScreen
+              key={`bill-dash-${adminRefreshKey}`}
+              onNavigateToBills={() => setBillAdminTab('BILLS')}
+            />
+          );
+        case 'BILLS':
+          return <BillReviewScreen key={`bill-review-${adminRefreshKey}`} showStandaloneHeader={false} />;
+        default:
+          return <BillAdminDashboardScreen onNavigateToBills={() => setBillAdminTab('BILLS')} />;
+      }
     }
 
-    if (user?.role === 'OPERATIONS_ADMIN') {
-      return <OperationsDashboardScreen />;
+    // 2. OPERATIONS_ADMIN Mobile Portal
+    if (isOpsAdmin) {
+      switch (opsAdminTab) {
+        case 'DASHBOARD':
+          return (
+            <OpsAdminDashboardScreen
+              key={`ops-dash-${adminRefreshKey}`}
+              onNavigateTab={tab => setOpsAdminTab(tab as any)}
+              onNavigateMoreSubtab={st => {
+                setOpsAdminMoreSubtab(st as any);
+                setOpsAdminTab('MORE');
+              }}
+            />
+          );
+        case 'BILLS':
+          return <BillReviewScreen key={`ops-bills-${adminRefreshKey}`} showStandaloneHeader={false} />;
+        case 'USERS':
+          return <OpsAdminUsersScreen key={`ops-users-${adminRefreshKey}`} />;
+        case 'PAYOUTS':
+          return <OpsAdminPayoutsScreen key={`ops-payouts-${adminRefreshKey}`} />;
+        case 'MORE':
+          return (
+            <OpsAdminMoreScreen
+              key={`ops-more-${opsAdminMoreSubtab}-${adminRefreshKey}`}
+              initialSubTab={opsAdminMoreSubtab}
+            />
+          );
+        default:
+          return (
+            <OpsAdminDashboardScreen
+              onNavigateTab={tab => setOpsAdminTab(tab as any)}
+              onNavigateMoreSubtab={st => {
+                setOpsAdminMoreSubtab(st as any);
+                setOpsAdminTab('MORE');
+              }}
+            />
+          );
+      }
     }
 
     // Fail closed for legacy ADMIN: require role migration
@@ -73,11 +141,32 @@ function MainAppNavigator() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
       <View style={styles.appContainer}>
+        {/* Admin Persistent Header */}
+        {currentScreen === 'MAIN' && isAdmin && (
+          <AdminHeader onRefresh={handleAdminRefresh} />
+        )}
+
         <View style={styles.screenWrapper}>
           {renderActiveScreen()}
         </View>
 
+        {/* Worker Bottom Navigation */}
         {currentScreen === 'MAIN' && !isAdmin && <BottomNav />}
+
+        {/* Admin Bottom Navigation */}
+        {currentScreen === 'MAIN' && isBillAdmin && (
+          <AdminBottomNav
+            currentTab={billAdminTab}
+            onSelectTab={setBillAdminTab}
+          />
+        )}
+
+        {currentScreen === 'MAIN' && isOpsAdmin && (
+          <AdminBottomNav
+            currentTab={opsAdminTab}
+            onSelectTab={setOpsAdminTab}
+          />
+        )}
       </View>
     </SafeAreaView>
   );

@@ -10,7 +10,7 @@ interface RewardCardProps {
 export default function RewardCard({ onPress }: RewardCardProps) {
   const { theme, wallet } = useApp();
 
-  const totalRewards = wallet.availableBalance + wallet.totalRedeemed;
+  const totalRewards = wallet.lifetimeCashback ?? (wallet.availableBalance + wallet.totalRedeemed);
 
   return (
     <TouchableOpacity

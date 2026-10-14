@@ -44,8 +44,12 @@ export default function AdminNotificationsPage() {
       return;
     }
     setUser(adminUser);
+    if (router.query.userId) {
+      setActiveTab('direct');
+      setDirectUserId(String(router.query.userId));
+    }
     fetchCampaigns();
-  }, [router]);
+  }, [router, router.query.userId]);
 
   const fetchCampaigns = async () => {
     try {
@@ -119,10 +123,10 @@ export default function AdminNotificationsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
+    <div className="min-h-screen bg-slate-50 flex flex-col lg:flex-row">
       <Sidebar />
 
-      <main className="flex-1 ml-64 p-8">
+      <main className="flex-1 w-full lg:ml-64 p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen">
         <div className="mb-8">
           <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center space-x-2">
             <Bell className="w-6 h-6 text-red-600" />
@@ -348,8 +352,16 @@ export default function AdminNotificationsPage() {
                 </tr>
               ) : campaigns.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-slate-400">
-                    No broadcasts dispatched yet.
+                  <td colSpan={5} className="py-12 text-center">
+                    <img
+                      src="/assets/state_no_notifications.png"
+                      alt="No Broadcasts"
+                      className="w-24 h-24 mx-auto mb-2 object-contain"
+                    />
+                    <div className="text-xs font-bold text-slate-800">No Broadcasts Dispatched</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      Targeted messages sent to plumbers and tile installers will appear here.
+                    </div>
                   </td>
                 </tr>
               ) : (

@@ -232,6 +232,20 @@ export class AdminApiClient {
     });
   }
 
+  static updateGstRule(
+    id: string,
+    data: {
+      description?: string;
+      isDefault?: boolean;
+      isActive?: boolean;
+    }
+  ) {
+    return this.request(`/admin/settings/gst-rules/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
   // Redemption Settings
   static getRedemptionSettings(profession = 'ALL') {
     const params = new URLSearchParams({ profession });

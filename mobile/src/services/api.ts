@@ -75,6 +75,16 @@ const getBaseUrl = () => {
 export const API_BASE = getBaseUrl();
 console.log('📡 Mobile API configured at:', API_BASE);
 
+export function resolveDocumentUrl(url?: string | null): string | null {
+  if (!url || typeof url !== 'string' || !url.trim()) return null;
+  const clean = url.trim();
+  if (clean.startsWith('http://') || clean.startsWith('https://')) {
+    return clean;
+  }
+  const baseOrigin = API_BASE.replace(/\/api(\/v1)?\/?$/, '');
+  return `${baseOrigin}${clean.startsWith('/') ? '' : '/'}${clean}`;
+}
+
 const STORAGE_KEY = 'hiralal_jwt_token';
 const REFRESH_STORAGE_KEY = 'hiralal_refresh_token';
 
@@ -127,6 +137,37 @@ export class MobileApiClient {
     } catch (e) {
       console.warn('Storage write warning:', e);
     }
+  }
+
+  static async getStoredUser(): Promise<any | null> {
+    try {
+      let raw: string | null = null;
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          raw = window.localStorage.getItem('hiralal_user');
+        }
+      } else {
+        raw = await SecureStore.getItemAsync('hiralal_user');
+      }
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  static async setStoredUser(user: any | null): Promise<void> {
+    try {
+      const val = user ? JSON.stringify(user) : null;
+      if (Platform.OS === 'web') {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          if (val) window.localStorage.setItem('hiralal_user', val);
+          else window.localStorage.removeItem('hiralal_user');
+        }
+      } else {
+        if (val) await SecureStore.setItemAsync('hiralal_user', val);
+        else await SecureStore.deleteItemAsync('hiralal_user');
+      }
+    } catch {}
   }
 
   static async setRefreshToken(refreshToken: string | null): Promise<void> {
@@ -185,6 +226,7 @@ export class MobileApiClient {
   static async clearAllTokens(): Promise<void> {
     await this.setToken(null);
     await this.setRefreshToken(null);
+    await this.setStoredUser(null);
   }
 
   static async request<T = any>(endpoint: string, options: RequestInit = {}, isRetry = false): Promise<T> {
@@ -792,8 +834,14 @@ export class MobileApiClient {
   }
 
   // Mobile Admin Endpoints
-  static getAdminBills(status = 'ALL', profession = 'ALL') {
+  static getAdminDashboard(profession = 'ALL') {
+    const params = new URLSearchParams({ profession });
+    return this.request(`/admin/dashboard?${params.toString()}`);
+  }
+
+  static getAdminBills(status = 'ALL', profession = 'ALL', search = '') {
     const params = new URLSearchParams({ status, profession });
+    if (search && search.trim()) params.append('search', search.trim());
     return this.request(`/admin/bills?${params.toString()}`);
   }
 
@@ -805,8 +853,39 @@ export class MobileApiClient {
     return this.request(`/admin/bills/${encodeURIComponent(id)}/review-config`);
   }
 
+  static getAdminUsers(profession = 'ALL', status = 'ALL', search = '') {
+    const params = new URLSearchParams({ profession, status });
+    if (search && search.trim()) params.append('search', search.trim());
+    return this.request(`/admin/users?${params.toString()}`);
+  }
+
+  static getAdminUserDetails(id: string) {
+    return this.request(`/admin/users/${id}`);
+  }
+
+  static updateAdminUserName(id: string, data: { fullName: string; reason: string; firstName?: string; middleName?: string; lastName?: string }) {
+    return this.request(`/admin/users/${id}/name`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
   static getGstRules() {
     return this.request('/admin/settings/gst-rules');
+  }
+
+  static createAdminGstRule(data: { ratePercentage: number; description?: string; isDefault?: boolean }) {
+    return this.request('/admin/settings/gst-rules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  static updateAdminGstRule(id: string, data: { description?: string; isDefault?: boolean; isActive?: boolean }) {
+    return this.request(`/admin/settings/gst-rules/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
   }
 
   static verifyAdminBill(
@@ -845,6 +924,69 @@ export class MobileApiClient {
       method: 'POST',
       body: JSON.stringify({ action, reason }),
     });
+  }
+
+  static getAdminRewardRules(profession = 'ALL') {
+    const params = new URLSearchParams({ profession });
+    return this.request(`/admin/settings/reward-rules?${params.toString()}`);
+  }
+
+  static createAdminRewardRule(data: {
+    profession: 'PLUMBER' | 'TILE_INSTALLER';
+    rewardPercentage: number;
+    effectiveFrom?: string;
+    effectiveUntil?: string | null;
+  }) {
+    return this.request('/admin/settings/reward-rules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  static updateAdminRewardRules(data: { percentage?: number; profession?: string }) {
+    return this.request('/admin/settings/reward-rules', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  static getAdminRedemptionSettings(profession = 'ALL') {
+    const params = new URLSearchParams({ profession });
+    return this.request(`/admin/settings/redemption?${params.toString()}`);
+  }
+
+  static updateAdminRedemptionSettings(data: {
+    profession?: string;
+    isEnabled: boolean;
+    startAt?: string | null;
+    endAt?: string | null;
+    message?: string;
+    minimumRedemptionAmount?: number | null;
+  }) {
+    return this.request('/admin/settings/redemption', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  static getAdminAuditLogs() {
+    return this.request('/admin/audit-logs');
+  }
+
+  static broadcastAdminNotification(data: {
+    title: string;
+    message: string;
+    targetAudience?: 'ALL' | 'PLUMBER' | 'TILE_INSTALLER';
+    idempotencyKey?: string;
+  }) {
+    return this.request('/admin/notifications/broadcast', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  static getAdminNotificationHistory(page = 1, limit = 20) {
+    return this.request(`/admin/notifications/history?page=${page}&limit=${limit}`);
   }
 
   // ==========================================

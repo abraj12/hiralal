@@ -1,10 +1,25 @@
 import React, { useEffect, useState } from 'react';
-import { Gift, TrendingUp, DollarSign, AlertCircle, RefreshCw, Loader2, Wallet, ArrowUpRight, CheckCircle2 } from 'lucide-react';
+import Link from 'next/link';
+import {
+  Gift,
+  TrendingUp,
+  AlertCircle,
+  RefreshCw,
+  Loader2,
+  Wallet,
+  ArrowUpRight,
+  CheckCircle2,
+  Settings,
+  Wrench,
+  Grid,
+} from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import { AdminApiClient } from '../lib/api';
 
 export default function AdminRewardsPage() {
   const [data, setData] = useState<any>(null);
+  const [plumberRule, setPlumberRule] = useState<any>(null);
+  const [tileRule, setTileRule] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -12,8 +27,17 @@ export default function AdminRewardsPage() {
     try {
       setLoading(true);
       setError(null);
-      const res = await AdminApiClient.getDashboard();
-      setData(res);
+      const [dashRes, pRulesRes, tRulesRes] = await Promise.all([
+        AdminApiClient.getDashboard(),
+        AdminApiClient.getRewardRules('PLUMBER').catch(() => ({ rules: [] })),
+        AdminApiClient.getRewardRules('TILE_INSTALLER').catch(() => ({ rules: [] })),
+      ]);
+      setData(dashRes);
+
+      const activePlumber = (pRulesRes.rules || []).find((r: any) => r.isActive) || (pRulesRes.rules || [])[0];
+      const activeTile = (tRulesRes.rules || []).find((r: any) => r.isActive) || (tRulesRes.rules || [])[0];
+      setPlumberRule(activePlumber || null);
+      setTileRule(activeTile || null);
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Failed to fetch reward financial data.');
@@ -43,11 +67,11 @@ export default function AdminRewardsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
-      <Sidebar />
+    <div className="min-h-screen bg-slate-50 flex flex-col lg:flex-row">
+      <Sidebar pendingPayoutsCount={stats.pendingPayouts} />
 
-      <main className="flex-1 ml-64 p-8">
-        <div className="mb-8 flex items-center justify-between">
+      <main className="flex-1 w-full lg:ml-64 p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen">
+        <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">
               Reward Analytics & Financial Ledger
@@ -149,6 +173,59 @@ export default function AdminRewardsPage() {
                   ₹{Number(stats.totalRedeemed || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1">{stats.successfulPayouts || 0} successful payouts</p>
+              </div>
+            </div>
+
+            {/* Active Reward Rules Card */}
+            <div className="mb-8 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+              <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Active Versioned Incentive Rules</h3>
+                  <p className="text-xs text-slate-400">Current dynamic percentage rates applied upon bill approvals</p>
+                </div>
+                <Link
+                  href="/settings"
+                  className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center space-x-1"
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  <span>Configure In Settings</span>
+                </Link>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-blue-50/60 border border-blue-100 rounded-xl flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold">
+                      <Wrench className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="font-bold text-slate-900 text-xs">Plumbers Incentive Rate</div>
+                      <div className="text-[11px] text-slate-500">
+                        {plumberRule ? `Rule v${plumberRule.version} • Effective ${new Date(plumberRule.effectiveFrom).toLocaleDateString('en-IN')}` : 'Rule not yet deployed'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-xl font-black text-blue-600">
+                    {plumberRule ? `${plumberRule.rewardPercentage}%` : '—'}
+                  </div>
+                </div>
+
+                <div className="p-4 bg-orange-50/60 border border-orange-100 rounded-xl flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-9 h-9 rounded-xl bg-orange-600 text-white flex items-center justify-center font-bold">
+                      <Grid className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="font-bold text-slate-900 text-xs">Tile Installers Incentive Rate</div>
+                      <div className="text-[11px] text-slate-500">
+                        {tileRule ? `Rule v${tileRule.version} • Effective ${new Date(tileRule.effectiveFrom).toLocaleDateString('en-IN')}` : 'Rule not yet deployed'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-xl font-black text-orange-600">
+                    {tileRule ? `${tileRule.rewardPercentage}%` : '—'}
+                  </div>
+                </div>
               </div>
             </div>
 

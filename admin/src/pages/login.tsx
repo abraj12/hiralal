@@ -93,9 +93,11 @@ export default function AdminLoginPage() {
 
       <div className="max-w-md w-full bg-white rounded-3xl p-8 shadow-2xl relative z-10 border border-slate-100">
         <div className="text-center mb-6">
-          <div className="w-16 h-16 bg-red-600 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-4 shadow-lg shadow-red-200">
-            H
-          </div>
+          <img
+            src="/assets/brand_logo.png"
+            alt="Hiralal & Sons"
+            className="w-20 h-20 mx-auto mb-3 object-contain"
+          />
           <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
             HIRALAL AND SONS
           </h1>

@@ -20,12 +20,10 @@ import {
   Phone,
   Eye,
   EyeOff,
-  User,
   KeyRound,
 } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
-import { AdminPrefixes, validateAdminPrefixes } from '../services/adminPrefixes';
 import { MobileIntegrityService, PreAuthRecoveryAttestation } from '../services/integrity.service';
 import { generateSecureRequestSalt, createPasswordResetCommitment } from '../services/integrityRequestHash';
 
@@ -46,19 +44,12 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // Explicit Authentication State Machine
+  // Authentication State Machine
   const [loginState, setLoginState] = useState<LoginState>('IDLE');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
-  // Mode & Administrator Role Selection
-  const [authMode, setAuthMode] = useState<'WORKER' | 'ADMIN'>('WORKER');
-  const [adminRoleChoice, setAdminRoleChoice] = useState<'BILL_ADMIN' | 'OPERATIONS_ADMIN'>('BILL_ADMIN');
-  const [adminPrefixes, setAdminPrefixes] = useState<AdminPrefixes | null>(null);
-  const [adminPrefixesLoading, setAdminPrefixesLoading] = useState(true);
-  const [adminPrefixesError, setAdminPrefixesError] = useState<string | null>(null);
-
-  // Administrator OTP Verification State
+  // Administrator 2FA OTP Challenge State
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [adminOtp, setAdminOtp] = useState('');
   const [challengeToken, setChallengeToken] = useState<string | null>(null);
@@ -66,7 +57,7 @@ export default function LoginScreen() {
   const [otpInfo, setOtpInfo] = useState<string | null>(null);
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
 
-  // Forgot Password modal state (Real 3-step sequence)
+  // Forgot Password Modal State (3-Step Sequence)
   const [showForgot, setShowForgot] = useState(false);
   const [forgotStep, setForgotStep] = useState<1 | 2 | 3>(1);
   const [forgotMobile, setForgotMobile] = useState('');
@@ -76,31 +67,6 @@ export default function LoginScreen() {
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
   const [forgotError, setForgotError] = useState<string | null>(null);
   const [forgotLoading, setForgotLoading] = useState(false);
-
-  // Load configured administrator prefixes dynamically from server
-  const fetchAdminPrefixes = async () => {
-    setAdminPrefixesLoading(true);
-    setAdminPrefixesError(null);
-    try {
-      const res = await MobileApiClient.getAdminPrefixes();
-      if (!res || !res.prefixes) {
-        throw new Error('Failed to retrieve administrator prefix configuration.');
-      }
-      const validated = validateAdminPrefixes(res.prefixes);
-      setAdminPrefixes(validated);
-    } catch (err: any) {
-      setAdminPrefixes(null);
-      setAdminPrefixesError(
-        err.message || 'Unable to retrieve administrator prefix configuration. Please tap Retry.'
-      );
-    } finally {
-      setAdminPrefixesLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchAdminPrefixes();
-  }, []);
 
   // Cooldown countdown timer for OTP resend
   useEffect(() => {
@@ -115,16 +81,17 @@ export default function LoginScreen() {
 
   // ========================================================
   // UNIFIED LOGIN SUBMIT HANDLER
-  // Worker uses mobile directly; Admin builds identifier with configured role prefix
+  // Workers submit 10-digit mobile number + password.
+  // Admins submit prefix + 10-digit mobile number + password.
   // ========================================================
   const handleUnifiedLogin = async () => {
     if (loginState === 'VALIDATING' || loginState === 'SUBMITTING_CREDENTIALS') {
       return; // Prevent duplicate submissions
     }
 
-    const trimmedId = identifier.trim();
+    const trimmedId = identifier.trim().toUpperCase();
     if (!trimmedId) {
-      setErrorMsg(authMode === 'ADMIN' ? 'Please enter your administrator mobile number.' : 'Please enter your mobile number.');
+      setErrorMsg('Please enter your mobile number.');
       setLoginState('ERROR');
       return;
     }
@@ -135,36 +102,15 @@ export default function LoginScreen() {
       return;
     }
 
-    let finalId = trimmedId;
-    if (authMode === 'ADMIN') {
-      if (!adminPrefixes) {
-        setErrorMsg('Administrator prefix configuration is not loaded. Please tap Retry.');
-        setLoginState('ERROR');
-        return;
-      }
-      const activePrefix =
-        adminRoleChoice === 'BILL_ADMIN' ? adminPrefixes.billAdmin : adminPrefixes.operationsAdmin;
-      const cleanDigits = trimmedId.replace(/\D/g, '').slice(-10);
-      if (trimmedId.toUpperCase().startsWith(activePrefix.toUpperCase())) {
-        finalId = trimmedId.toUpperCase();
-      } else if (cleanDigits.length === 10) {
-        finalId = `${activePrefix}${cleanDigits}`;
-      } else {
-        setErrorMsg('Please enter a valid 10-digit registered mobile number.');
-        setLoginState('ERROR');
-        return;
-      }
-    }
-
     setErrorMsg(null);
     setInfoMsg(null);
     setLoginState('SUBMITTING_CREDENTIALS');
 
     try {
-      const res = await login(finalId, password);
+      const res = await login(trimmedId, password);
 
       if (res?.requiresOtp) {
-        // Backend detected valid admin identifier + verified password. Issued OTP challenge.
+        // Administrator candidate verified password. Issued 2FA OTP challenge.
         setChallengeToken(res.challengeToken || null);
         setAdminOtp('');
         setOtpError(null);
@@ -182,15 +128,10 @@ export default function LoginScreen() {
   };
 
   // ========================================================
-  // ADMIN OTP VERIFY HANDLER
+  // ADMIN 2FA OTP VERIFY HANDLER
   // ========================================================
   const handleVerifyAdminOtp = async () => {
     if (loginState === 'VERIFYING_OTP') return;
-
-    if (!adminPrefixes) {
-      setOtpError('Administrator prefix configuration is not loaded.');
-      return;
-    }
 
     const cleanOtp = adminOtp.trim();
     if (!cleanOtp || cleanOtp.length !== 6) {
@@ -198,12 +139,7 @@ export default function LoginScreen() {
       return;
     }
 
-    const activePrefix =
-      adminRoleChoice === 'BILL_ADMIN' ? adminPrefixes.billAdmin : adminPrefixes.operationsAdmin;
-    const cleanDigits = identifier.replace(/\D/g, '').slice(-10);
-    const cleanAdminId = identifier.toUpperCase().startsWith(activePrefix.toUpperCase())
-      ? identifier.trim().toUpperCase()
-      : `${activePrefix}${cleanDigits}`;
+    const cleanAdminId = identifier.trim().toUpperCase();
 
     setOtpError(null);
     setLoginState('VERIFYING_OTP');
@@ -228,32 +164,22 @@ export default function LoginScreen() {
   const handleResendAdminOtp = async () => {
     if (cooldownRemaining > 0) return;
 
-    if (!adminPrefixes) {
-      setOtpError('Administrator prefix configuration is not loaded.');
-      return;
-    }
-
-    const activePrefix =
-      adminRoleChoice === 'BILL_ADMIN' ? adminPrefixes.billAdmin : adminPrefixes.operationsAdmin;
-    const cleanDigits = identifier.replace(/\D/g, '').slice(-10);
-    const cleanAdminId = identifier.toUpperCase().startsWith(activePrefix.toUpperCase())
-      ? identifier.trim().toUpperCase()
-      : `${activePrefix}${cleanDigits}`;
+    const cleanAdminId = identifier.trim().toUpperCase();
 
     try {
-      setOtpError(null);
       setOtpInfo('Requesting a new verification code...');
       const res = await MobileApiClient.requestAdminOtp(cleanAdminId, password);
       const token = res.challengeToken || res.verificationToken;
       setChallengeToken(token);
       setCooldownRemaining(res.cooldownSeconds || 60);
       setOtpInfo(res.message || 'New verification code dispatched.');
+      setOtpError(null);
     } catch (err: any) {
       setOtpError(err.message || 'Failed to resend verification code.');
     }
   };
 
-  // Safe Cancel / Reset from Admin OTP Challenge
+  // Cancel / Reset from Admin OTP Challenge
   const handleCancelAdminOtp = () => {
     setShowOtpModal(false);
     setChallengeToken(null);
@@ -344,9 +270,9 @@ export default function LoginScreen() {
       const res = await MobileApiClient.verifyPasswordResetOtp(clean, forgotOtp.trim(), attestation);
       setForgotToken(res.verificationToken);
       setForgotStep(3);
-      setForgotMsg('Code verified. Enter your new password below.');
+      setForgotMsg(res.message || 'Code verified. Enter your new password.');
     } catch (e: any) {
-      setForgotError(e.message || 'Invalid or expired OTP code.');
+      setForgotError(e.message || 'Invalid or expired OTP.');
     } finally {
       setForgotLoading(false);
     }
@@ -355,7 +281,7 @@ export default function LoginScreen() {
   const handleCompleteForgot = async () => {
     const clean = forgotMobile.replace(/\D/g, '').slice(-10);
     if (!newPassword || newPassword.length < 6) {
-      setForgotError('New password must be at least 6 characters.');
+      setForgotError('Password must be at least 6 characters.');
       return;
     }
     setForgotLoading(true);
@@ -461,140 +387,14 @@ export default function LoginScreen() {
           </View>
         )}
 
-        {/* Mode Selector (Worker vs Administrator) */}
-        <View style={styles.modeSelectorContainer}>
-          <TouchableOpacity
-            style={[styles.modeTab, authMode === 'WORKER' && styles.modeTabActive]}
-            onPress={() => {
-              setAuthMode('WORKER');
-              setErrorMsg(null);
-            }}
-            activeOpacity={0.8}
-          >
-            <User size={16} color={authMode === 'WORKER' ? '#1E60D5' : '#64748B'} />
-            <Text style={[styles.modeTabText, authMode === 'WORKER' && styles.modeTabTextActive]}>
-              Worker
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.modeTab, authMode === 'ADMIN' && styles.modeTabActive]}
-            onPress={() => {
-              setAuthMode('ADMIN');
-              setErrorMsg(null);
-            }}
-            activeOpacity={0.8}
-          >
-            <Shield size={16} color={authMode === 'ADMIN' ? '#1E60D5' : '#64748B'} />
-            <Text style={[styles.modeTabText, authMode === 'ADMIN' && styles.modeTabTextActive]}>
-              Administrator
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* If Administrator Mode: Role Selection & Prefix Indicator */}
-        {authMode === 'ADMIN' && (
-          <View style={styles.adminRoleSection}>
-            <Text style={styles.adminRoleSectionTitle}>Select Administrator Role</Text>
-            {adminPrefixesLoading && (
-              <View style={styles.adminPrefixStateBox}>
-                <ActivityIndicator size="small" color="#1E60D5" />
-                <Text style={styles.adminPrefixStateText}>Loading administrator configuration...</Text>
-              </View>
-            )}
-            {adminPrefixesError && (
-              <View style={[styles.adminPrefixStateBox, styles.adminPrefixErrorBox]}>
-                <AlertCircle size={16} color="#DC2626" />
-                <Text style={styles.adminPrefixErrorText}>{adminPrefixesError}</Text>
-                <TouchableOpacity
-                  style={styles.adminRetryBtn}
-                  onPress={fetchAdminPrefixes}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.adminRetryBtnText}>Retry</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            {adminPrefixes && (
-              <>
-                <View style={styles.roleChipsRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.roleChip,
-                      adminRoleChoice === 'BILL_ADMIN' && styles.roleChipActive,
-                    ]}
-                    onPress={() => {
-                      setAdminRoleChoice('BILL_ADMIN');
-                      setErrorMsg(null);
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text
-                      style={[
-                        styles.roleChipText,
-                        adminRoleChoice === 'BILL_ADMIN' && styles.roleChipTextActive,
-                      ]}
-                    >
-                      Bill Review Admin
-                    </Text>
-                    <View style={[styles.prefixPill, adminRoleChoice === 'BILL_ADMIN' && styles.prefixPillActive]}>
-                      <Text style={[styles.prefixPillText, adminRoleChoice === 'BILL_ADMIN' && styles.prefixPillTextActive]}>
-                        {adminPrefixes.billAdmin}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.roleChip,
-                      adminRoleChoice === 'OPERATIONS_ADMIN' && styles.roleChipActive,
-                    ]}
-                    onPress={() => {
-                      setAdminRoleChoice('OPERATIONS_ADMIN');
-                      setErrorMsg(null);
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text
-                      style={[
-                        styles.roleChipText,
-                        adminRoleChoice === 'OPERATIONS_ADMIN' && styles.roleChipTextActive,
-                      ]}
-                    >
-                      Operations Admin
-                    </Text>
-                    <View style={[styles.prefixPill, adminRoleChoice === 'OPERATIONS_ADMIN' && styles.prefixPillActive]}>
-                      <Text style={[styles.prefixPillText, adminRoleChoice === 'OPERATIONS_ADMIN' && styles.prefixPillTextActive]}>
-                        {adminPrefixes.operationsAdmin}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                </View>
-                <Text style={styles.adminHintText}>
-                  Logging in as {adminRoleChoice === 'BILL_ADMIN' ? 'Bill Review' : 'Operations'} Administrator. Two-factor authentication required.
-                </Text>
-              </>
-            )}
-          </View>
-        )}
-
         {/* Unified Login Form */}
         <View style={styles.form}>
-          {/* 1. Unified Identifier Field */}
+          {/* 1. Mobile Number Field */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>
-              {authMode === 'WORKER' ? 'Mobile Number' : 'Administrator Mobile Number'}
-            </Text>
+            <Text style={styles.label}>Mobile Number</Text>
             <View style={styles.inputWrapper}>
               <View style={styles.prefixBox}>
-                <Text style={styles.prefixText}>
-                  {authMode === 'WORKER'
-                    ? '🇮🇳 +91'
-                    : adminPrefixes
-                    ? adminRoleChoice === 'BILL_ADMIN'
-                      ? adminPrefixes.billAdmin
-                      : adminPrefixes.operationsAdmin
-                    : '---'}
-                </Text>
+                <Text style={styles.prefixText}>🇮🇳 +91</Text>
               </View>
               <TextInput
                 style={styles.input}
@@ -604,16 +404,12 @@ export default function LoginScreen() {
                   setErrorMsg(null);
                   if (loginState === 'ERROR') setLoginState('IDLE');
                 }}
-                placeholder={
-                  authMode === 'WORKER'
-                    ? 'Enter your mobile number'
-                    : 'Enter registered 10-digit number'
-                }
+                placeholder="Enter your mobile number"
                 placeholderTextColor="#94A3B8"
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="default"
-                maxLength={30}
+                maxLength={25}
                 editable={!isSubmitting}
               />
             </View>
@@ -672,11 +468,10 @@ export default function LoginScreen() {
           <TouchableOpacity
             style={[
               styles.loginBtn,
-              (isSubmitting || (authMode === 'ADMIN' && (!adminPrefixes || adminPrefixesLoading))) &&
-                styles.loginBtnDisabled,
+              isSubmitting && styles.loginBtnDisabled,
             ]}
             onPress={handleUnifiedLogin}
-            disabled={isSubmitting || (authMode === 'ADMIN' && (!adminPrefixes || adminPrefixesLoading))}
+            disabled={isSubmitting}
             activeOpacity={0.85}
           >
             {isSubmitting ? (
@@ -686,22 +481,13 @@ export default function LoginScreen() {
             )}
           </TouchableOpacity>
 
-          {/* 5. Create Account Navigation (Workers only) */}
-          {authMode === 'WORKER' ? (
-            <View style={styles.createAccountRow}>
-              <Text style={styles.noAccountText}>Don't have an account yet? </Text>
-              <TouchableOpacity onPress={() => setCurrentScreen('REGISTER')}>
-                <Text style={styles.createAccountLink}>Register Now</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.adminNoticeRow}>
-              <Shield size={14} color="#64748B" />
-              <Text style={styles.adminNoticeText}>
-                Administrator accounts are strictly managed by system governance.
-              </Text>
-            </View>
-          )}
+          {/* 5. Create Account Navigation */}
+          <View style={styles.createAccountRow}>
+            <Text style={styles.noAccountText}>Don't have an account yet? </Text>
+            <TouchableOpacity onPress={() => setCurrentScreen('REGISTER')}>
+              <Text style={styles.createAccountLink}>Register Now</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
 
@@ -764,8 +550,8 @@ export default function LoginScreen() {
                   Resend code in {cooldownRemaining}s
                 </Text>
               ) : (
-                <TouchableOpacity onPress={handleResendAdminOtp} disabled={!adminPrefixes}>
-                  <Text style={[styles.resendActiveText, !adminPrefixes && { opacity: 0.5 }]}>
+                <TouchableOpacity onPress={handleResendAdminOtp}>
+                  <Text style={styles.resendActiveText}>
                     Resend Security Code
                   </Text>
                 </TouchableOpacity>
@@ -776,10 +562,10 @@ export default function LoginScreen() {
             <TouchableOpacity
               style={[
                 styles.modalBtn,
-                (loginState === 'VERIFYING_OTP' || !adminPrefixes) && styles.loginBtnDisabled,
+                loginState === 'VERIFYING_OTP' && styles.loginBtnDisabled,
               ]}
               onPress={handleVerifyAdminOtp}
-              disabled={loginState === 'VERIFYING_OTP' || !adminPrefixes}
+              disabled={loginState === 'VERIFYING_OTP'}
               activeOpacity={0.85}
             >
               {loginState === 'VERIFYING_OTP' ? (
@@ -802,7 +588,7 @@ export default function LoginScreen() {
       </Modal>
 
       {/* ======================================================== */}
-      {/* FORGOT PASSWORD MODAL (Real 3-Step Verification Sequence) */}
+      {/* FORGOT PASSWORD MODAL (3-Step Verification Sequence)     */}
       {/* ======================================================== */}
       {showForgot && (
         <Modal visible={true} transparent={true} animationType="slide">
@@ -835,7 +621,7 @@ export default function LoginScreen() {
                     style={styles.modalInput}
                     value={forgotMobile}
                     onChangeText={setForgotMobile}
-                    placeholder="Enter 10-digit mobile number"
+                    placeholder="Enter registered 10-digit mobile"
                     keyboardType="phone-pad"
                     maxLength={10}
                   />
@@ -1224,156 +1010,5 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 13,
     fontWeight: '600',
-  },
-  modeSelectorContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 12,
-    padding: 4,
-    marginBottom: 16,
-  },
-  modeTab: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 9,
-    gap: 6,
-  },
-  modeTabActive: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  modeTabText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#64748B',
-  },
-  modeTabTextActive: {
-    color: '#1E60D5',
-    fontWeight: '700',
-  },
-  adminRoleSection: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-  },
-  adminRoleSectionTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#475569',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 8,
-  },
-  roleChipsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  roleChip: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#FFFFFF',
-  },
-  roleChipActive: {
-    borderColor: '#1E60D5',
-    backgroundColor: '#EFF6FF',
-  },
-  roleChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  roleChipTextActive: {
-    color: '#1E60D5',
-    fontWeight: '700',
-  },
-  prefixPill: {
-    backgroundColor: '#E2E8F0',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  prefixPillActive: {
-    backgroundColor: '#DBEAFE',
-  },
-  prefixPillText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  prefixPillTextActive: {
-    color: '#1E60D5',
-  },
-  adminHintText: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 8,
-    lineHeight: 15,
-  },
-  adminNoticeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    marginTop: 16,
-    paddingHorizontal: 16,
-  },
-  adminNoticeText: {
-    fontSize: 12,
-    color: '#64748B',
-    textAlign: 'center',
-  },
-  adminPrefixStateBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 10,
-    backgroundColor: '#EFF6FF',
-    borderRadius: 8,
-    marginVertical: 4,
-    gap: 8,
-  },
-  adminPrefixStateText: {
-    fontSize: 12,
-    color: '#1E60D5',
-    fontWeight: '500',
-    flex: 1,
-  },
-  adminPrefixErrorBox: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
-    borderWidth: 1,
-  },
-  adminPrefixErrorText: {
-    fontSize: 12,
-    color: '#DC2626',
-    fontWeight: '500',
-    flex: 1,
-  },
-  adminRetryBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    backgroundColor: '#DC2626',
-    borderRadius: 6,
-  },
-  adminRetryBtnText: {
-    fontSize: 11,
-    color: '#FFFFFF',
-    fontWeight: '700',
   },
 });

@@ -25,6 +25,7 @@ import {
   X,
   ExternalLink,
   Eye,
+  Search,
 } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
@@ -51,11 +52,18 @@ interface BillReviewConfig {
   gstRules: GstRuleOption[];
 }
 
-export default function BillReviewScreen() {
+interface BillReviewScreenProps {
+  showStandaloneHeader?: boolean;
+}
+
+export default function BillReviewScreen({ showStandaloneHeader = false }: BillReviewScreenProps) {
   const { user, logout } = useApp();
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
+  const [professionFilter, setProfessionFilter] = useState<'ALL' | 'PLUMBER' | 'TILE_INSTALLER'>('ALL');
+  const [search, setSearch] = useState('');
 
   // Document preview state
   const [docUrl, setDocUrl] = useState<string | null>(null);
@@ -80,7 +88,7 @@ export default function BillReviewScreen() {
   const fetchBills = async () => {
     setLoading(true);
     try {
-      const res = await MobileApiClient.getAdminBills('ALL');
+      const res = await MobileApiClient.getAdminBills(statusFilter, professionFilter, search);
       if (res && res.bills) {
         setBills(res.bills);
       }
@@ -93,7 +101,7 @@ export default function BillReviewScreen() {
 
   useEffect(() => {
     fetchBills();
-  }, []);
+  }, [statusFilter, professionFilter]);
 
   const openReviewModal = async (bill: any) => {
     setReviewBill(bill);
@@ -296,20 +304,72 @@ export default function BillReviewScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Top Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>Bill Review Admin</Text>
-          <Text style={styles.headerSub}>Hiralal & Sons Portal • {user?.mobile || ''}</Text>
+      {/* Top Header (Only if standalone) */}
+      {showStandaloneHeader && (
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.headerTitle}>Bill Review Admin</Text>
+            <Text style={styles.headerSub}>Hiralal & Sons Portal • {user?.mobile || ''}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <TouchableOpacity style={styles.iconBtn} onPress={fetchBills}>
+              <RefreshCw size={18} color="#475569" />
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.iconBtn, { backgroundColor: '#FEE2E2' }]} onPress={logout}>
+              <LogOut size={18} color="#DC2626" />
+            </TouchableOpacity>
+          </View>
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <TouchableOpacity style={styles.iconBtn} onPress={fetchBills}>
-            <RefreshCw size={18} color="#475569" />
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.iconBtn, { backgroundColor: '#FEE2E2' }]} onPress={logout}>
-            <LogOut size={18} color="#DC2626" />
-          </TouchableOpacity>
+      )}
+
+      {/* Search Input Row */}
+      <View style={styles.searchRow}>
+        <View style={styles.searchInputWrap}>
+          <Search size={15} color="#94A3B8" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search invoice #, craftsman, phone..."
+            placeholderTextColor="#94A3B8"
+            value={search}
+            onChangeText={setSearch}
+            onSubmitEditing={fetchBills}
+            returnKeyType="search"
+          />
         </View>
+        <TouchableOpacity style={styles.searchBtn} onPress={fetchBills}>
+          <Text style={styles.searchBtnText}>Search</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Filter Tabs */}
+      <View style={styles.filterPillsRow}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+          {(['ALL', 'PENDING', 'APPROVED', 'REJECTED'] as const).map(s => (
+            <TouchableOpacity
+              key={s}
+              style={[styles.filterPill, statusFilter === s && styles.filterPillActive]}
+              onPress={() => setStatusFilter(s)}
+            >
+              <Text style={[styles.filterPillText, statusFilter === s && styles.filterPillTextActive]}>
+                {s === 'ALL' ? 'All Status' : s}
+              </Text>
+            </TouchableOpacity>
+          ))}
+
+          <View style={styles.filterDivider} />
+
+          {(['ALL', 'PLUMBER', 'TILE_INSTALLER'] as const).map(p => (
+            <TouchableOpacity
+              key={p}
+              style={[styles.filterPill, professionFilter === p && styles.filterPillActiveTrade]}
+              onPress={() => setProfessionFilter(p)}
+            >
+              <Text style={[styles.filterPillText, professionFilter === p && styles.filterPillTextActiveTrade]}>
+                {p === 'ALL' ? 'All Trades' : p === 'PLUMBER' ? 'Plumbers' : 'Tile Artisans'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       </View>
 
       {loading ? (
@@ -325,9 +385,13 @@ export default function BillReviewScreen() {
           contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <FileText size={48} color="#CBD5E1" />
-              <Text style={styles.emptyTitle}>No Bills to Review</Text>
-              <Text style={styles.emptyDesc}>All uploaded invoices have been verified.</Text>
+              <Image
+                source={require('../../assets/state_admin_bills_empty.png')}
+                style={{ width: 120, height: 120, marginBottom: 12 }}
+                resizeMode="contain"
+              />
+              <Text style={styles.emptyTitle}>Verification Queue Clear</Text>
+              <Text style={styles.emptyDesc}>No invoices match the selected status and trade criteria.</Text>
             </View>
           }
         />
@@ -1198,5 +1262,80 @@ const styles = StyleSheet.create({
   fullscreenImage: {
     width: '100%',
     height: '90%',
+  },
+  searchRow: {
+    flexDirection: 'row',
+    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    gap: 8,
+  },
+  searchInputWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    height: 38,
+    fontSize: 12.5,
+    color: '#0F172A',
+  },
+  searchBtn: {
+    backgroundColor: '#2563EB',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12.5,
+  },
+  filterPillsRow: {
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    paddingVertical: 8,
+  },
+  filterScroll: {
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    gap: 6,
+  },
+  filterPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+  },
+  filterPillActive: {
+    backgroundColor: '#2563EB',
+  },
+  filterPillText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  filterPillTextActive: {
+    color: '#FFFFFF',
+  },
+  filterPillActiveTrade: {
+    backgroundColor: '#0F172A',
+  },
+  filterPillTextActiveTrade: {
+    color: '#FFFFFF',
+  },
+  filterDivider: {
+    width: 1,
+    height: 18,
+    backgroundColor: '#CBD5E1',
+    marginHorizontal: 4,
   },
 });

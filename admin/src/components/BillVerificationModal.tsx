@@ -1,5 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { X, CheckCircle2, XCircle, FileText, ExternalLink, AlertTriangle, ShieldCheck, Calculator, RefreshCw } from 'lucide-react';
+import {
+  X,
+  CheckCircle2,
+  XCircle,
+  FileText,
+  ExternalLink,
+  AlertTriangle,
+  ShieldCheck,
+  Calculator,
+  RefreshCw,
+  ZoomIn,
+  ZoomOut,
+  Info,
+} from 'lucide-react';
 import { AdminApiClient } from '../lib/api';
 import { calculateBillFinancials } from '../lib/financial-utils';
 
@@ -10,21 +23,36 @@ interface BillVerificationModalProps {
 }
 
 export default function BillVerificationModal({ bill, onClose, onVerified }: BillVerificationModalProps) {
+  const isPending = bill.status === 'PENDING' || bill.status === 'UNDER_REVIEW';
+  const isApproved = bill.status === 'APPROVED';
+  const isRejected = bill.status === 'REJECTED';
+
   const [rejectMode, setRejectMode] = useState(false);
-  const [rejectionReason, setRejectionReason] = useState('');
+  const [rejectionReason, setRejectionReason] = useState(bill.rejectionReason || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Dynamic GST & Financial Verification Controls
-  const [gstIncluded, setGstIncluded] = useState(false);
+  const [gstIncluded, setGstIncluded] = useState(Boolean(bill.gstIncluded));
   const [gstRules, setGstRules] = useState<any[]>([]);
-  const [selectedGstRate, setSelectedGstRate] = useState<number>(18.0);
-  const [selectedGstRuleId, setSelectedGstRuleId] = useState<string>('');
+  const [selectedGstRate, setSelectedGstRate] = useState<number>(Number(bill.gstRate) || 18.0);
+  const [selectedGstRuleId, setSelectedGstRuleId] = useState<string>(bill.gstRuleId || '');
 
-  const [rewardPercentage, setRewardPercentage] = useState<number | null>(null);
-  const [ruleVersion, setRuleVersion] = useState<number | null>(null);
-  const [submissionTimestamp, setSubmissionTimestamp] = useState<string | null>(null);
+  const [rewardPercentage, setRewardPercentage] = useState<number | null>(
+    bill.rewardRateSnapshot !== null && bill.rewardRateSnapshot !== undefined
+      ? Number(bill.rewardRateSnapshot)
+      : bill.rewardPercentage !== null && bill.rewardPercentage !== undefined
+      ? Number(bill.rewardPercentage)
+      : null
+  );
+  const [ruleVersion, setRuleVersion] = useState<number | null>(bill.rewardRule?.version ?? null);
+  const [submissionTimestamp, setSubmissionTimestamp] = useState<string | null>(
+    bill.createdAt || null
+  );
   const [rulesUnavailable, setRulesUnavailable] = useState(false);
+
+  // Image zoom control
+  const [isZoomed, setIsZoomed] = useState(false);
 
   // Document Preview & Signed URL Refresh
   const [docUrl, setDocUrl] = useState<string | null>(bill.fileUrl || null);
@@ -60,11 +88,17 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
     targetUrl?.match(/\.(jpg|jpeg|png|webp)/i)
   );
 
-  const isPlumber = (bill.profession || bill.userProfession) === 'PLUMBER';
+  // Safe accessor for professional info
+  const workerFullName = bill.userFullName || bill.user?.fullName || 'Worker';
+  const workerMobile = bill.userMobile || bill.user?.mobile || '';
+  const profession = bill.profession || bill.user?.profession || bill.userProfession;
+  const isPlumber = profession === 'PLUMBER';
   const grossAmount = Number(bill.grossBillAmount || bill.billAmount || 0);
 
-  // Load bill-specific review config (Bill Admin authorized, server-recorded submission timestamp)
+  // Load bill-specific review config for pending verification
   useEffect(() => {
+    if (!isPending) return;
+
     async function loadReviewConfig() {
       try {
         setError(null);
@@ -96,18 +130,40 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
         }
       } catch (e: any) {
         setRulesUnavailable(true);
-        setError(e.message || 'Bill review configuration could not be loaded. Approval is disabled to preserve financial integrity.');
+        setError(
+          e.message ||
+            'Bill review configuration could not be loaded. Approval is disabled to preserve financial integrity.'
+        );
       }
     }
     loadReviewConfig();
-  }, [bill.id]);
+  }, [bill.id, isPending]);
 
-  const { gstAmount, eligibleRewardAmount, calculatedReward } = calculateBillFinancials(
-    grossAmount,
-    gstIncluded,
-    selectedGstRate,
-    rewardPercentage
-  );
+  // Financial calculations
+  let gstAmount = 0;
+  let eligibleRewardAmount = grossAmount;
+  let calculatedReward = 0;
+
+  if (isPending) {
+    const liveFinancials = calculateBillFinancials(
+      grossAmount,
+      gstIncluded,
+      selectedGstRate,
+      rewardPercentage
+    );
+    gstAmount = liveFinancials.gstAmount;
+    eligibleRewardAmount = liveFinancials.eligibleRewardAmount;
+    calculatedReward = liveFinancials.calculatedReward;
+  } else {
+    // Stored audited numbers for historical records
+    gstAmount = Number(bill.gstAmount || 0);
+    eligibleRewardAmount = Number(
+      bill.eligibleRewardAmount !== null && bill.eligibleRewardAmount !== undefined
+        ? bill.eligibleRewardAmount
+        : grossAmount
+    );
+    calculatedReward = Number(bill.calculatedReward || 0);
+  }
 
   const handleApprove = async () => {
     setIsSubmitting(true);
@@ -129,8 +185,8 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   };
 
   const handleReject = async () => {
-    if (!rejectionReason.trim()) {
-      setError('Please provide a specific rejection reason for the worker.');
+    if (!rejectionReason.trim() || rejectionReason.trim().length < 3) {
+      setError('Please provide a specific rejection reason for the worker (at least 3 characters).');
       return;
     }
 
@@ -152,16 +208,35 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
-      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-100">
+      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[92vh] overflow-y-auto shadow-2xl border border-slate-100 flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10">
           <div className="flex items-center space-x-3">
-            <div className={`p-2 rounded-xl ${isPlumber ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600'}`}>
+            <div
+              className={`p-2 rounded-xl ${
+                isPlumber ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600'
+              }`}
+            >
               <FileText className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900">Verify Invoice Document</h3>
-              <p className="text-xs text-slate-500">Invoice: {bill.invoiceNumber}</p>
+              <div className="flex items-center space-x-2">
+                <h3 className="text-base font-bold text-slate-900">
+                  {isPending ? 'Verify Invoice Document' : 'Invoice Record Details'}
+                </h3>
+                <span
+                  className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
+                    isApproved
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : isRejected
+                      ? 'bg-red-100 text-red-800'
+                      : 'bg-amber-100 text-amber-800'
+                  }`}
+                >
+                  {bill.status}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500">Invoice: #{bill.invoiceNumber}</p>
             </div>
           </div>
           <button
@@ -179,19 +254,40 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
           </div>
         )}
 
-        <div className="p-6 space-y-6">
+        <div className="p-6 space-y-6 flex-1">
+          {/* Historical Status Alert for Approved/Rejected */}
+          {isApproved && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl flex items-center space-x-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+              <span>
+                <strong>Verified & Approved:</strong> ₹{calculatedReward.toFixed(2)} was credited to{' '}
+                {workerFullName}'s rewards wallet using an active snapshot reward rule.
+              </span>
+            </div>
+          )}
+
+          {isRejected && (
+            <div className="p-3 bg-red-50 border border-red-200 text-red-800 text-xs rounded-xl space-y-1">
+              <div className="flex items-center space-x-2 font-bold">
+                <XCircle className="w-4 h-4 shrink-0 text-red-600" />
+                <span>Invoice Rejected</span>
+              </div>
+              <p className="text-xs pl-6">Reason: {rejectionReason || 'No reason provided.'}</p>
+            </div>
+          )}
+
           {/* User & Bill Overview Grid */}
           <div className="grid grid-cols-2 gap-4">
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
               <div className="text-xs text-slate-400 font-medium">Worker / Professional</div>
-              <div className="text-sm font-bold text-slate-900 mt-1">{bill.userFullName}</div>
-              <div className="text-xs text-slate-500">+91 {bill.userMobile}</div>
+              <div className="text-sm font-bold text-slate-900 mt-1">{workerFullName}</div>
+              {workerMobile && (
+                <div className="text-xs text-slate-500 font-mono">+91 {workerMobile}</div>
+              )}
               <div className="mt-2">
                 <span
                   className={`inline-block px-2.5 py-0.5 text-xs font-bold rounded-md ${
-                    isPlumber
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'bg-orange-100 text-orange-700'
+                    isPlumber ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
                   }`}
                 >
                   {isPlumber ? 'PLUMBER' : 'TILE INSTALLER'}
@@ -205,64 +301,79 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 ₹{grossAmount.toLocaleString('en-IN')}
               </div>
               <div className="text-xs text-slate-500 mt-0.5">
-                Invoice Date: {new Date(bill.invoiceDate).toLocaleDateString('en-IN')}
+                Invoice Date:{' '}
+                {bill.invoiceDate ? new Date(bill.invoiceDate).toLocaleDateString('en-IN') : '—'}
               </div>
               {submissionTimestamp && (
                 <div className="text-[11px] text-blue-600 font-medium mt-0.5">
                   Submitted: {new Date(submissionTimestamp).toLocaleString('en-IN')}
                 </div>
               )}
-              <div className="text-[11px] text-slate-400 mt-1">
-                Status: <span className="font-semibold text-slate-700">{bill.status}</span>
-              </div>
             </div>
           </div>
 
-          {/* Dynamic GST Audit Section (Admin Control) */}
+          {/* GST & Financial Verification Section */}
           <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200 space-y-4">
-            <div className="flex items-start justify-between">
-              <label htmlFor="gstIncludedCheckbox" className="flex items-start space-x-3 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  id="gstIncludedCheckbox"
-                  checked={gstIncluded}
-                  onChange={(e) => setGstIncluded(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                />
-                <div>
-                  <span className="text-xs font-bold text-slate-900 block">
-                    GST is included in this bill total — deduct GST before calculating the reward.
-                  </span>
-                  <span className="text-[11px] text-slate-500 block mt-0.5">
-                    Unchecked: GST deducted = ₹0, full valid bill amount eligible. Checked: embedded GST deducted via reverse GST formula.
-                  </span>
+            {isPending ? (
+              <>
+                <div className="flex items-start justify-between">
+                  <label
+                    htmlFor="gstIncludedCheckbox"
+                    className="flex items-start space-x-3 cursor-pointer select-none"
+                  >
+                    <input
+                      type="checkbox"
+                      id="gstIncludedCheckbox"
+                      checked={gstIncluded}
+                      onChange={(e) => setGstIncluded(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block">
+                        GST is included in this bill total — deduct GST before calculating reward.
+                      </span>
+                      <span className="text-[11px] text-slate-500 block mt-0.5">
+                        Unchecked: GST deducted = ₹0, full valid bill amount eligible. Checked: embedded
+                        GST deducted via reverse GST formula.
+                      </span>
+                    </div>
+                  </label>
                 </div>
-              </label>
-            </div>
 
-            {gstIncluded && (
-              <div className="pt-2 border-t border-slate-200">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Applicable GST Rule (Configured by Operations Administrator):
-                </label>
-                <select
-                  value={selectedGstRuleId}
-                  onChange={(e) => {
-                    const ruleId = e.target.value;
-                    setSelectedGstRuleId(ruleId);
-                    const found = gstRules.find((r) => r.id === ruleId);
-                    if (found) setSelectedGstRate(Number(found.ratePercentage));
-                  }}
-                  className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
-                >
-                  {gstRules.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.ratePercentage}% GST {r.description ? `(${r.description})` : ''}
-                    </option>
-                  ))}
-                </select>
-                <span className="text-[10px] text-slate-400 mt-1 block">
-                  Select the tax rule applicable to this invoice. Manual custom GST rate overrides are disabled to maintain accounting integrity.
+                {gstIncluded && (
+                  <div className="pt-2 border-t border-slate-200">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Applicable GST Rule (Configured by Operations Administrator):
+                    </label>
+                    <select
+                      value={selectedGstRuleId}
+                      onChange={(e) => {
+                        const ruleId = e.target.value;
+                        setSelectedGstRuleId(ruleId);
+                        const found = gstRules.find((r) => r.id === ruleId);
+                        if (found) setSelectedGstRate(Number(found.ratePercentage));
+                      }}
+                      className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                    >
+                      {gstRules.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.ratePercentage}% GST {r.description ? `(${r.description})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-[10px] text-slate-400 mt-1 block">
+                      Select the tax rule applicable to this invoice. Manual custom GST rate overrides
+                      are disabled to maintain accounting integrity.
+                    </span>
+                  </div>
+                )}
+              </>
+            ) : (
+              /* Read-only view for already resolved bills */
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                <span className="text-xs font-bold text-slate-700">Tax Auditing:</span>
+                <span className="text-xs font-bold text-slate-900">
+                  {bill.gstIncluded ? `GST Included (${bill.gstRate}%)` : 'GST Excluded (0%)'}
                 </span>
               </div>
             )}
@@ -272,15 +383,19 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
               <div>
                 <span className="text-[11px] text-slate-400 font-medium block">GST Component</span>
                 <span className="text-sm font-bold text-slate-800">
-                  {gstIncluded ? `₹${gstAmount.toFixed(2)}` : '₹0.00'}
+                  {(isPending ? gstIncluded : bill.gstIncluded)
+                    ? `₹${gstAmount.toFixed(2)}`
+                    : '₹0.00'}
                 </span>
-                {gstIncluded && (
-                  <span className="text-[10px] text-slate-400 block mt-0.5">({selectedGstRate}% inclusive)</span>
+                {(isPending ? gstIncluded : bill.gstIncluded) && (
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    ({isPending ? selectedGstRate : bill.gstRate}% inclusive)
+                  </span>
                 )}
               </div>
 
               <div>
-                <span className="text-[11px] text-slate-400 font-medium block">Eligible Amount</span>
+                <span className="text-[11px] text-slate-400 font-medium block">Eligible Base</span>
                 <span className="text-sm font-bold text-blue-700">
                   ₹{eligibleRewardAmount.toFixed(2)}
                 </span>
@@ -293,7 +408,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   ₹{calculatedReward.toFixed(2)}
                 </span>
                 <span className="text-[10px] text-emerald-700 font-medium block mt-0.5">
-                  Internal Rule: {rewardPercentage !== null ? `${rewardPercentage}%` : 'Unavailable'}
+                  {rewardPercentage !== null ? `@${rewardPercentage}%` : 'Rule unavailable'}
                   {ruleVersion !== null ? ` (v${ruleVersion})` : ''}
                 </span>
               </div>
@@ -316,6 +431,17 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 </span>
               </div>
               <div className="flex items-center space-x-2">
+                {isImage && targetUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setIsZoomed(!isZoomed)}
+                    className="text-xs text-slate-600 hover:text-slate-900 flex items-center space-x-1 font-semibold px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 transition"
+                    title={isZoomed ? 'Reset zoom' : 'Enlarge view'}
+                  >
+                    {isZoomed ? <ZoomOut className="w-3.5 h-3.5" /> : <ZoomIn className="w-3.5 h-3.5" />}
+                    <span>{isZoomed ? 'Reset' : 'Zoom'}</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleRefreshDocumentUrl}
@@ -372,11 +498,13 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   </button>
                 </div>
               ) : isImage ? (
-                <div className="w-full text-center">
+                <div className="w-full text-center overflow-auto max-h-[460px]">
                   <img
                     src={targetUrl}
                     alt={`Invoice #${bill.invoiceNumber}`}
-                    className="max-h-[380px] w-auto mx-auto rounded-lg object-contain shadow-sm border border-slate-200 bg-white"
+                    className={`mx-auto rounded-lg object-contain shadow-sm border border-slate-200 bg-white transition-all duration-200 ${
+                      isZoomed ? 'scale-150 my-12' : 'max-h-[380px] w-auto'
+                    }`}
                     onError={() => setDocError('Image failed to load. The signed URL may have expired.')}
                   />
                   <p className="text-[11px] text-slate-400 mt-2">
@@ -426,12 +554,12 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
           {rejectMode && (
             <div className="p-4 bg-red-50 border border-red-200 rounded-xl space-y-3">
               <label className="block text-xs font-bold text-red-900">
-                Mandatory Rejection Reason:
+                Mandatory Rejection Reason (visible to worker):
               </label>
               <textarea
                 value={rejectionReason}
                 onChange={(e) => setRejectionReason(e.target.value)}
-                placeholder="e.g. Invoice image is unreadable, or invoice amount does not match bill total..."
+                placeholder="e.g. Invoice image is blurry or truncated, amount does not match bill total, or invalid dealer stamp..."
                 rows={3}
                 className="w-full text-xs p-2.5 rounded-lg border border-red-300 focus:outline-none focus:ring-2 focus:ring-red-400 bg-white"
               />
@@ -456,30 +584,53 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
           )}
         </div>
 
-        {/* Action Buttons */}
-        {!rejectMode && bill.status !== 'APPROVED' && (
-          <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end space-x-3 bg-slate-50/50">
-            <button
-              onClick={() => setRejectMode(true)}
-              className="px-4 py-2 border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-xl transition flex items-center space-x-1.5"
-            >
-              <XCircle className="w-4 h-4" />
-              <span>Reject Bill</span>
-            </button>
-            <button
-              onClick={handleApprove}
-              disabled={isSubmitting || rulesUnavailable || rewardPercentage === null || (gstIncluded && !selectedGstRuleId)}
-              className={`px-5 py-2 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center space-x-1.5 ${
-                rulesUnavailable || rewardPercentage === null || (gstIncluded && !selectedGstRuleId)
-                  ? 'bg-slate-400 opacity-50 cursor-not-allowed shadow-none'
-                  : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
-              }`}
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>{isSubmitting ? 'Approving...' : `Approve & Credit ₹${calculatedReward.toFixed(2)}`}</span>
-            </button>
-          </div>
-        )}
+        {/* Footer Action Buttons */}
+        <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/50">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-bold rounded-xl transition"
+          >
+            Close
+          </button>
+
+          {!rejectMode && isPending && (
+            <div className="flex items-center space-x-3">
+              <button
+                type="button"
+                onClick={() => setRejectMode(true)}
+                className="px-4 py-2 border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-xl transition flex items-center space-x-1.5"
+              >
+                <XCircle className="w-4 h-4" />
+                <span>Reject Bill</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleApprove}
+                disabled={
+                  isSubmitting ||
+                  rulesUnavailable ||
+                  rewardPercentage === null ||
+                  (gstIncluded && !selectedGstRuleId)
+                }
+                className={`px-5 py-2 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center space-x-1.5 ${
+                  rulesUnavailable ||
+                  rewardPercentage === null ||
+                  (gstIncluded && !selectedGstRuleId)
+                    ? 'bg-slate-400 opacity-50 cursor-not-allowed shadow-none'
+                    : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
+                }`}
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>
+                  {isSubmitting
+                    ? 'Approving...'
+                    : `Approve & Credit ₹${calculatedReward.toFixed(2)}`}
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
