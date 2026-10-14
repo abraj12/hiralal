@@ -682,7 +682,7 @@ export default function AdminSettingsPage() {
                         type="number"
                         step="0.01"
                         min="0"
-                        max="50"
+                        max="100"
                         value={newGstRate}
                         onChange={(e) => setNewGstRate(e.target.value)}
                         placeholder="e.g. 18 or 12"

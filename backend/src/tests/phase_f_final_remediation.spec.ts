@@ -314,6 +314,40 @@ describe('Pre-Auth Nonce Endpoint — AUTH and REGISTRATION', () => {
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('INVALID_ACTION');
   });
+
+  test('POST /api/auth/integrity/pre-auth/nonce rejects deprecated legacy recovery and generic actions', async () => {
+    for (const action of ['FORGOT_PASSWORD', 'GENERAL']) {
+      const res = await request(app)
+        .post('/api/auth/integrity/pre-auth/nonce')
+        .send({ action, requestHash: validHash });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_ACTION');
+    }
+  });
+});
+
+// ==========================================
+// 4b. Browser CORS Header Contract
+// ==========================================
+describe('Browser CORS preflight header contract', () => {
+  test('OPTIONS preflight permits admin CSRF and password-recovery integrity salt headers', async () => {
+    const res = await request(app)
+      .options('/api/v1/auth/password-reset/request')
+      .set('Origin', 'https://hsspl.algions.in')
+      .set('Access-Control-Request-Method', 'POST')
+      .set(
+        'Access-Control-Request-Headers',
+        'Content-Type, X-CSRF-Token, x-integrity-request-salt, x-integrity-token, x-integrity-nonce'
+      );
+
+    expect(res.status).toBe(204);
+    const allowedHeaders = String(res.headers['access-control-allow-headers'] || '').toLowerCase();
+    expect(allowedHeaders).toContain('x-csrf-token');
+    expect(allowedHeaders).toContain('x-integrity-request-salt');
+    expect(allowedHeaders).toContain('x-integrity-token');
+    expect(allowedHeaders).toContain('x-integrity-nonce');
+  });
 });
 
 // ==========================================

@@ -747,18 +747,16 @@ router.post(
       const allowedPreAuthActions = [
         'AUTH',
         'REGISTRATION',
-        'FORGOT_PASSWORD',
         'FORGOT_PASSWORD_REQUEST',
         'FORGOT_PASSWORD_VERIFY',
         'FORGOT_PASSWORD_COMPLETE',
-        'GENERAL',
       ] as const;
 
       if (!action || !allowedPreAuthActions.includes(action)) {
         return res.status(400).json({
           success: false,
           code: 'INVALID_ACTION',
-          message: 'Pre-auth integrity action must be AUTH, REGISTRATION, FORGOT_PASSWORD, FORGOT_PASSWORD_REQUEST, FORGOT_PASSWORD_VERIFY, FORGOT_PASSWORD_COMPLETE, or GENERAL.',
+          message: 'Pre-auth integrity action must be AUTH, REGISTRATION, FORGOT_PASSWORD_REQUEST, FORGOT_PASSWORD_VERIFY, or FORGOT_PASSWORD_COMPLETE.',
         });
       }
 

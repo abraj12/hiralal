@@ -17,7 +17,7 @@ All financial values are denominated in Indian Rupees (₹) with 2-decimal paise
   ```json
   {
     "mobile": "9876543210",
-    "purpose": "REGISTRATION" // or "FORGOT_PASSWORD", "LOGIN"
+    "purpose": "REGISTRATION" // or "LOGIN"
   }
   ```
 - **Response (200)**:
@@ -28,6 +28,7 @@ All financial values are denominated in Indian Rupees (₹) with 2-decimal paise
   }
   ```
   *(Note: OTP codes are transmitted via MSG91 SMS and are strictly never returned in API responses).*
+  Generic OTP routes support only `REGISTRATION` and `LOGIN`. Password recovery is handled only through the dedicated `/auth/password-reset/*` endpoints.
 
 #### 1.2 User Registration
 - **Method**: `POST`
@@ -361,7 +362,7 @@ Requests 100% full available balance redemption. Has no minimum or maximum thres
 | :--- | :--- | :--- | :--- |
 | `/admin/bills` | `GET` | `BILL_ADMIN` | List and filter worker bills for verification |
 | `/admin/bills/:id/document-url` | `GET` | `BILL_ADMIN` | Generate 1800s temporary S3 signed URL for invoice inspection |
-| `/admin/bills/:id/review-config` | `GET` | `BILL_ADMIN` | Inspect applicable reward rule & GST rules for a bill's `invoiceDate` |
+| `/admin/bills/:id/review-config` | `GET` | `BILL_ADMIN` | Inspect applicable reward rule & GST rules for the bill's server-recorded submission timestamp |
 | `/admin/bills/:id/verify` | `POST` | `BILL_ADMIN` | Approve or reject bill with reverse-GST computation |
 | `/admin/settings/reward-rules` | `GET` | `OPERATIONS_ADMIN` | List all versioned reward rules across professions |
 | `/admin/settings/reward-rules` | `POST` | `OPERATIONS_ADMIN` | Deploy new versioned reward rule with effective date |
@@ -390,7 +391,7 @@ Requests 100% full available balance redemption. Has no minimum or maximum thres
   {
     "profession": "PLUMBER", // "PLUMBER" or "TILE_INSTALLER"
     "rewardPercentage": 0.50, // Finite number between 0.01% and 10.00%
-    "effectiveFrom": "2026-10-15" // Invoices on or after this date receive this rate
+    "effectiveFrom": "2026-10-15" // Bills submitted on or after this effective timestamp receive this rate
   }
   ```
 - **Response (201)**:
@@ -414,12 +415,14 @@ Requests 100% full available balance redemption. Has no minimum or maximum thres
 - **Method**: `GET`
 - **Path**: `/admin/bills/:id/review-config`
 - **Headers**: `Authorization: Bearer <BILL_ADMIN_TOKEN>`
+- **Timestamp policy**: The review-config and approval flows resolve reward and GST rules using the bill's server-recorded `createdAt` / `submissionTimestamp`, not `invoiceDate`, unless the product owner explicitly changes this policy.
 - **Response (200)**:
   ```json
   {
     "success": true,
     "billId": "bill-uuid",
     "invoiceDate": "2026-10-01T00:00:00.000Z",
+    "submissionTimestamp": "2026-10-14T09:30:00.000Z",
     "profession": "PLUMBER",
     "rewardRule": {
       "id": "rule-uuid",
