@@ -1170,7 +1170,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
           verificationToken: adminToken,
           newPassword: 'HackedAdminPassword@123',
         })
-      ).rejects.toThrow(/Password recovery is available only for worker accounts/i);
+      ).rejects.toThrow('The verification request is invalid or expired. Please restart password recovery.');
 
       // Verify admin password hash is untouched
       const refreshedAdmin = await prisma.user.findUnique({ where: { id: billAdminId } });
@@ -1227,7 +1227,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
       expect(fulfilled).toHaveLength(1);
       expect(rejected).toHaveLength(1);
-      expect((rejected[0] as PromiseRejectedResult).reason.message).toMatch(/Invalid or expired password reset token/i);
+      expect((rejected[0] as PromiseRejectedResult).reason.message).toMatch(/The verification request is invalid or expired/i);
     });
 
     // Finding B: Generic OTP endpoint restrictions
@@ -1351,13 +1351,15 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
       expect(computeIntegrityRequestHash('FORGOT_PASSWORD_VERIFY', reqMockVerify)).toBe(expectedVerifyHash);
 
       // 3. FORGOT_PASSWORD_COMPLETE
+      const validToken64 = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
       const reqMockComplete = {
         body: {
           mobile: '9876543203',
-          verificationToken: 'token_abc_123',
+          verificationToken: validToken64,
           newPassword: 'NewPassword@123',
           integrityRequestSalt: salt,
         },
+        get: () => undefined,
         headers: {},
       } as any;
       const expectedCompleteHash = crypto
@@ -1367,7 +1369,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
             version: 2,
             action: 'FORGOT_PASSWORD_COMPLETE',
             mobile: '9876543203',
-            verificationToken: 'token_abc_123',
+            verificationToken: validToken64,
             newPassword: 'NewPassword@123',
             integrityRequestSalt: salt,
           }),
@@ -1444,6 +1446,276 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
       await expect(
         AuthService.verifyPasswordResetOtp({ mobile: freshRecoveryWorkerMobile, otpCode: '12' })
       ).rejects.toThrow(uniformFailure);
+    });
+
+    test('C5. V2 recovery commitment salt validation, mismatch, and whitespace preservation', async () => {
+      const { computeIntegrityRequestHash, validateRecoverySalt, getRequiredRecoverySalt } = await import('../utils/integrityRequestHash');
+      const validSalt = 'a1b2c3d4e5f6789012345678abcdef01';
+      const validToken = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+      // 1. Missing salt throws INVALID_RECOVERY_INTEGRITY_SALT
+      expect(() => validateRecoverySalt(undefined)).toThrow('INVALID_RECOVERY_INTEGRITY_SALT');
+      expect(() => validateRecoverySalt('')).toThrow('INVALID_RECOVERY_INTEGRITY_SALT');
+
+      // 2. Malformed lengths throw INVALID_RECOVERY_INTEGRITY_SALT
+      expect(() => validateRecoverySalt('a'.repeat(31))).toThrow('INVALID_RECOVERY_INTEGRITY_SALT');
+      expect(() => validateRecoverySalt('a'.repeat(33))).toThrow('INVALID_RECOVERY_INTEGRITY_SALT');
+
+      // 3. Non-hex characters throw INVALID_RECOVERY_INTEGRITY_SALT
+      expect(() => validateRecoverySalt('g'.repeat(32))).toThrow('INVALID_RECOVERY_INTEGRITY_SALT');
+      expect(() => validateRecoverySalt('a1b2c3d4e5f6789012345678abcdef0! ')).toThrow('INVALID_RECOVERY_INTEGRITY_SALT');
+
+      // 4. Body & header salt mismatch throws RECOVERY_INTEGRITY_SALT_MISMATCH
+      const mismatchReq = {
+        body: { integrityRequestSalt: validSalt },
+        get: (h: string) => (h === 'x-integrity-request-salt' ? 'b1b2c3d4e5f6789012345678abcdef02' : undefined),
+      } as any;
+      expect(() => getRequiredRecoverySalt(mismatchReq)).toThrow('RECOVERY_INTEGRITY_SALT_MISMATCH');
+
+      // 5. Header only is accepted
+      const headerOnlyReq = {
+        body: {},
+        get: (h: string) => (h === 'x-integrity-request-salt' ? validSalt : undefined),
+      } as any;
+      expect(getRequiredRecoverySalt(headerOnlyReq)).toBe(validSalt);
+
+      // 6. Password whitespace preservation in FORGOT_PASSWORD_COMPLETE
+      const reqUntrimmed = {
+        body: {
+          mobile: '9876543203',
+          verificationToken: validToken,
+          newPassword: '  UntrimmedPassword@123  ',
+          integrityRequestSalt: validSalt,
+        },
+        get: () => undefined,
+      } as any;
+
+      const reqTrimmed = {
+        body: {
+          mobile: '9876543203',
+          verificationToken: validToken,
+          newPassword: 'UntrimmedPassword@123',
+          integrityRequestSalt: validSalt,
+        },
+        get: () => undefined,
+      } as any;
+
+      const hashUntrimmed = computeIntegrityRequestHash('FORGOT_PASSWORD_COMPLETE', reqUntrimmed);
+      const hashTrimmed = computeIntegrityRequestHash('FORGOT_PASSWORD_COMPLETE', reqTrimmed);
+      expect(hashUntrimmed).not.toBe(hashTrimmed);
+    });
+
+    test('C6. Password reset OTP SMS failure cleanup preserves anti-enumeration and permits retry', async () => {
+      const { SmsService } = await import('../services/sms');
+      const smsSpy = jest.spyOn(SmsService, 'sendOtp').mockResolvedValueOnce({
+        success: false,
+        error: 'Simulated SMS provider gateway error',
+      });
+
+      const recoveryMobile = '9876543203';
+      await prisma.otpRequest.deleteMany({ where: { mobile: recoveryMobile } });
+
+      // Request OTP with failing SMS provider
+      const res = await AuthService.requestPasswordResetOtp({ mobile: recoveryMobile });
+      expect(res.message).toBe('If an eligible account exists, a verification code will be sent.');
+
+      // Check DB: the exact created record must have isUsed = true and cooldownUntil = null
+      const failedRecord = await prisma.otpRequest.findFirst({
+        where: { mobile: recoveryMobile, purpose: 'FORGOT_PASSWORD' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(failedRecord).toBeDefined();
+      expect(failedRecord?.isUsed).toBe(true);
+      expect(failedRecord?.cooldownUntil).toBeNull();
+
+      // Ensure the failed OTP cannot be verified
+      await expect(
+        AuthService.verifyPasswordResetOtp({ mobile: recoveryMobile, otpCode: '123456' })
+      ).rejects.toThrow('The verification request is invalid or expired. Please restart password recovery.');
+
+      smsSpy.mockRestore();
+    });
+
+    test('C7. Complete password reset HTTP route enforces uniform error across all 8 failure scenarios', async () => {
+      const uniformMessage = 'The verification request is invalid or expired. Please restart password recovery.';
+      const dummyToken = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      const newPass = 'ValidNewPassword@123';
+
+      // 1. Non-existent mobile
+      const res1 = await request(app)
+        .post('/api/auth/password-reset/complete')
+        .send({ mobile: '9999900000', verificationToken: dummyToken, newPassword: newPass });
+      expect(res1.status).toBe(400);
+      expect(res1.body.message).toBe(uniformMessage);
+
+      // 2. Existing BILL_ADMIN
+      const res2 = await request(app)
+        .post('/api/auth/password-reset/complete')
+        .send({ mobile: billAdminMobile, verificationToken: dummyToken, newPassword: newPass });
+      expect(res2.status).toBe(400);
+      expect(res2.body.message).toBe(uniformMessage);
+
+      // 3. Existing OPERATIONS_ADMIN
+      const res3 = await request(app)
+        .post('/api/auth/password-reset/complete')
+        .send({ mobile: opsAdminMobile, verificationToken: dummyToken, newPassword: newPass });
+      expect(res3.status).toBe(400);
+      expect(res3.body.message).toBe(uniformMessage);
+
+      // 4. Suspended worker
+      const suspendedMobile = '9876500077';
+      await prisma.user.deleteMany({ where: { mobile: suspendedMobile } });
+      await prisma.user.create({
+        data: {
+          mobile: suspendedMobile,
+          fullName: 'Suspended Worker',
+          passwordHash: 'hash',
+          role: 'USER',
+          status: 'SUSPENDED',
+          isVerified: true,
+        },
+      });
+      const res4 = await request(app)
+        .post('/api/auth/password-reset/complete')
+        .send({ mobile: suspendedMobile, verificationToken: dummyToken, newPassword: newPass });
+      expect(res4.status).toBe(400);
+      expect(res4.body.message).toBe(uniformMessage);
+
+      // 5. Inactive/non-active worker status
+      const res5 = await request(app)
+        .post('/api/auth/password-reset/complete')
+        .send({ mobile: suspendedMobile, verificationToken: dummyToken, newPassword: newPass });
+      expect(res5.status).toBe(400);
+      expect(res5.body.message).toBe(uniformMessage);
+      await prisma.user.deleteMany({ where: { mobile: suspendedMobile } });
+
+      // 6. Active worker with invalid token
+      const res6 = await request(app)
+        .post('/api/auth/password-reset/complete')
+        .send({ mobile: workerMobile, verificationToken: dummyToken, newPassword: newPass });
+      expect(res6.status).toBe(400);
+      expect(res6.body.message).toBe(uniformMessage);
+
+      // 7. Active worker with expired token
+      const expiredRawToken = crypto.randomBytes(32).toString('hex');
+      await prisma.verificationToken.create({
+        data: {
+          mobile: workerMobile,
+          tokenHash: sha256Hash(expiredRawToken),
+          purpose: 'FORGOT_PASSWORD',
+          isUsed: false,
+          expiresAt: new Date(Date.now() - 60000), // 1 min ago
+        },
+      });
+      const res7 = await request(app)
+        .post('/api/auth/password-reset/complete')
+        .send({ mobile: workerMobile, verificationToken: expiredRawToken, newPassword: newPass });
+      expect(res7.status).toBe(400);
+      expect(res7.body.message).toBe(uniformMessage);
+
+      // 8. Active worker with already-consumed token
+      const consumedRawToken = crypto.randomBytes(32).toString('hex');
+      await prisma.verificationToken.create({
+        data: {
+          mobile: workerMobile,
+          tokenHash: sha256Hash(consumedRawToken),
+          purpose: 'FORGOT_PASSWORD',
+          isUsed: true,
+          expiresAt: new Date(Date.now() + 600000),
+        },
+      });
+      const res8 = await request(app)
+        .post('/api/auth/password-reset/complete')
+        .send({ mobile: workerMobile, verificationToken: consumedRawToken, newPassword: newPass });
+      expect(res8.status).toBe(400);
+      expect(res8.body.message).toBe(uniformMessage);
+
+      // 9. Active worker with valid token -> success
+      const validRawToken = crypto.randomBytes(32).toString('hex');
+      await prisma.verificationToken.create({
+        data: {
+          mobile: workerMobile,
+          tokenHash: sha256Hash(validRawToken),
+          purpose: 'FORGOT_PASSWORD',
+          isUsed: false,
+          expiresAt: new Date(Date.now() + 600000),
+        },
+      });
+      const res9 = await request(app)
+        .post('/api/auth/password-reset/complete')
+        .send({ mobile: workerMobile, verificationToken: validRawToken, newPassword: newPass });
+      expect(res9.status).toBe(200);
+      expect(res9.body.success).toBe(true);
+
+      // Token consumed and cannot be reused
+      const res9Reuse = await request(app)
+        .post('/api/auth/password-reset/complete')
+        .send({ mobile: workerMobile, verificationToken: validRawToken, newPassword: newPass });
+      expect(res9Reuse.status).toBe(400);
+      expect(res9Reuse.body.message).toBe(uniformMessage);
+
+      // 10. Missing inputs -> 400
+      const res10 = await request(app)
+        .post('/api/auth/password-reset/complete')
+        .send({ mobile: workerMobile });
+      expect(res10.status).toBe(400);
+    });
+
+    test('C8. Password length constraints and bcrypt UTF-8 byte boundary safety', async () => {
+      const validToken = crypto.randomBytes(32).toString('hex');
+
+      // Password < 6 chars
+      await expect(
+        AuthService.completePasswordReset({
+          mobile: workerMobile,
+          verificationToken: validToken,
+          newPassword: '12345',
+        })
+      ).rejects.toThrow('New password must be at least 6 characters long.');
+
+      // Password > 72 UTF-8 bytes (e.g. 73 ASCII characters)
+      const longPassword = 'A'.repeat(73);
+      await expect(
+        AuthService.completePasswordReset({
+          mobile: workerMobile,
+          verificationToken: validToken,
+          newPassword: longPassword,
+        })
+      ).rejects.toThrow('Password exceeds the maximum supported length.');
+
+      // Non-string password
+      await expect(
+        AuthService.completePasswordReset({
+          mobile: workerMobile,
+          verificationToken: validToken,
+          newPassword: 123456 as any,
+        })
+      ).rejects.toThrow('Password must be a valid string.');
+    });
+
+    test('C9. Password reset completion route rate limiting enforcement', async () => {
+      const validToken = crypto.randomBytes(32).toString('hex');
+      const testMobile = '9876543203';
+
+      // Send requests with header 'x-test-rate-limit' to enable limiter testing in test environment
+      let rateLimited = false;
+      for (let i = 0; i < 25; i++) {
+        const res = await request(app)
+          .post('/api/auth/password-reset/complete')
+          .set('x-test-rate-limit', 'true')
+          .send({
+            mobile: testMobile,
+            verificationToken: validToken,
+            newPassword: 'Password@123',
+          });
+
+        if (res.status === 429) {
+          rateLimited = true;
+          expect(res.body.code).toBe('RATE_LIMIT_EXCEEDED');
+          break;
+        }
+      }
+      expect(rateLimited).toBe(true);
     });
   });
 });

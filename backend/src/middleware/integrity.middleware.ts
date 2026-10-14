@@ -52,10 +52,11 @@ export function requireActionIntegrity(action: IntegrityAction) {
     try {
       requestHash = computeIntegrityRequestHash(action, req);
     } catch (err: any) {
+      console.warn(`[Integrity] Request hash computation failed for action ${action}:`, err?.message || err);
       res.status(403).json({
         success: false,
         code: 'INTEGRITY_FAILED',
-        message: `Failed to compute request payload hash: ${err.message}`,
+        message: 'Device integrity request validation failed.',
       });
       return;
     }
@@ -90,10 +91,11 @@ export function requireActionIntegrity(action: IntegrityAction) {
       (req as any).integrityVerdict = verdict;
       next();
     } catch (err: any) {
+      console.error(`[Integrity] Device integrity check error for action ${action}:`, err?.message || err);
       res.status(403).json({
         success: false,
         code: 'INTEGRITY_ERROR',
-        message: `Device integrity check error: ${err.message}`,
+        message: 'Device integrity check error.',
       });
     }
   };
@@ -140,10 +142,11 @@ export function requirePreAuthActionIntegrity(action: IntegrityAction) {
     try {
       requestHash = computeIntegrityRequestHash(action, req);
     } catch (err: any) {
+      console.warn(`[Integrity] Request hash computation failed for pre-auth action ${action}:`, err?.message || err);
       res.status(403).json({
         success: false,
         code: 'INTEGRITY_FAILED',
-        message: `Failed to compute request payload hash: ${err.message}`,
+        message: 'Device integrity request validation failed.',
       });
       return;
     }
@@ -175,10 +178,11 @@ export function requirePreAuthActionIntegrity(action: IntegrityAction) {
       (req as any).integrityVerdict = verdict;
       next();
     } catch (err: any) {
+      console.error(`[Integrity] Device integrity check error for pre-auth action ${action}:`, err?.message || err);
       res.status(403).json({
         success: false,
         code: 'INTEGRITY_ERROR',
-        message: `Device integrity check error: ${err.message}`,
+        message: 'Device integrity check error.',
       });
     }
   };

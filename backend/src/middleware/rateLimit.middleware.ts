@@ -216,6 +216,22 @@ export const passwordResetLimiter = createRateLimiter({
   message: 'Too many password reset requests. Please wait 15 minutes before trying again.',
 });
 
+export const passwordResetCompleteLimiter = createRateLimiter({
+  keyPrefix: 'auth:password_reset_complete:id',
+  limit: config.isProduction ? 5 : 20,
+  windowSeconds: 900, // 5 attempts per 15 minutes per mobile/identifier
+  getIdentifier: (req) => requestIdentifier(req),
+  message: 'Too many password reset completion attempts for this mobile. Please wait 15 minutes.',
+});
+
+export const passwordResetCompleteIpLimiter = createRateLimiter({
+  keyPrefix: 'auth:password_reset_complete:ip',
+  limit: config.isProduction ? 15 : 60,
+  windowSeconds: 900, // 15 attempts per 15 minutes per IP
+  getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
+  message: 'Too many password reset completion attempts from this network. Please wait 15 minutes.',
+});
+
 export const kycLimiter = createRateLimiter({
   keyPrefix: 'kyc:verify',
   limit: 5,

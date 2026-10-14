@@ -438,6 +438,57 @@ Worker password reset routes operate prior to establishing an authenticated sess
    - Added test suite 19 in `gst_zero_rate_consistency.spec.ts` covering `parseStrictGstRate` edge cases (negative zero neutralization, boundary rates 0 and 100, overflow rates, exponential notation, excess decimal scale).
    - Added test suite 20 verifying advisory-locked default rule concurrency and target existence validation atomicity.
 
+### 2.12 HIR-V4.4: Mandatory V2 Play Integrity Binding, Password-Recovery Privacy, Failed-SMS Cleanup, Completion Rate Limiting & Bcrypt UTF-8 Boundaries
+
+#### Problem Statement
+1. **Legacy V1 Play Integrity Fallback**: Backend integrity hash computation previously allowed a Version 1 fallback without `integrityRequestSalt`, allowing legacy or un-salted pre-auth tokens to bypass strict salt-bound attestation.
+2. **Password Whitespace Mismatch**: Mobile request commitment calculations previously trimmed `newPassword` before computing the payload hash, whereas backend bcrypt hashing did not trim `newPassword`, creating hash mismatches when users entered valid passwords containing leading or trailing whitespace.
+3. **Password-Recovery Privacy & Information Leakage**: Verification and completion endpoints returned disparate or leaking error messages on invalid tokens, suspended accounts, or non-worker roles. Furthermore, unhandled exceptions in integrity verification leaked internal parsing or crypto stack traces.
+4. **Failed-SMS Delivery Deadlock & Enumeration**: When the SMS gateway failed during password recovery OTP issuance, the newly created active OTP remained in the database with cooldown active, preventing subsequent retries while throwing unhandled gateway exceptions that leaked provider failures to public callers.
+5. **Brute-Force Recovery Completion Rate Limiting**: The `/password-reset/complete` endpoint lacked dedicated identifier and IP-level rate limiters, leaving token-guessing or password brute-forcing unthrottled beyond coarse global limiters.
+6. **Bcrypt 72-Byte Truncation Vulnerability**: Bcrypt algorithms truncate passwords longer than 72 bytes. Passwords longer than 72 UTF-8 bytes were passed to `bcrypt.hash()` without rejection, permitting silent truncation.
+7. **PostgreSQL Advisory Lock Void Deserialization**: Raw queries calling `SELECT pg_advisory_xact_lock(...)` could cause runtime deserialization warnings or type errors across certain Prisma client configurations expecting a scalar or row return.
+
+#### Implementation Details
+1. **Mandatory Version 2 Play Integrity Binding**:
+   - In `backend/src/utils/integrityRequestHash.ts`:
+     - Added `RECOVERY_SALT_PATTERN = /^[0-9a-f]{32}$/` and `validateRecoverySalt(value)` enforcing exactly 32 lowercase hexadecimal characters.
+     - Added `getRequiredRecoverySalt(req)` verifying salt presence in headers (`x-integrity-request-salt`) and request body (`integrityRequestSalt`), enforcing equality with `RECOVERY_INTEGRITY_SALT_MISMATCH`.
+     - Deprecated and removed legacy Version 1 fallback. Version 2 is mandatory for `FORGOT_PASSWORD_REQUEST`, `FORGOT_PASSWORD_VERIFY`, and `FORGOT_PASSWORD_COMPLETE`.
+     - Preserved exact `newPassword = String(rawPassword ?? '')` without trimming across mobile and backend canonical payload calculations.
+   - In `mobile/src/services/integrityRequestHash.ts`:
+     - Added `validateRecoverySalt(salt)` and updated `createPasswordResetCommitment` to strictly require valid 32-character hex salts and preserve raw `newPassword` whitespace.
+   - In `mobile/src/services/api.ts`:
+     - Made `attestation: PreAuthRecoveryAttestation` mandatory for `requestPasswordReset`, `verifyPasswordResetOtp`, and `completePasswordReset`.
+   - In `mobile/src/screens/LoginScreen.tsx`:
+     - Enforced mandatory device integrity attestation across `handleSendForgotOtp`, `handleVerifyForgotOtp`, and `handleCompleteForgot`. Redacted and sanitized all error logging to prevent credential or token exposure.
+2. **Password-Recovery Privacy & Uniform Failure Semantics**:
+   - In `backend/src/services/auth.service.ts`:
+     - Exported constant `PASSWORD_RESET_INVALID_MESSAGE = 'The verification request is invalid or expired. Please restart password recovery.'`.
+     - Enforced uniform generic response across `verifyPasswordResetOtp` and `completePasswordReset` whenever the user is missing, not a worker, inactive/suspended, or when the token is missing, expired, consumed, or mismatched.
+   - In `backend/src/routes/auth.routes.ts`:
+     - Sanitized route error handling for `/password-reset/complete` to return HTTP 400 with `PASSWORD_RESET_INVALID_MESSAGE` for invalid requests.
+   - In `backend/src/middleware/integrity.middleware.ts`:
+     - Sanitized pre-auth and action integrity failures to return `'Device integrity request validation failed.'` instead of leaking internal verification exception messages.
+3. **Failed-SMS Delivery Cleanup & Synthetic Anti-Enumeration**:
+   - In `backend/src/services/auth.service.ts`:
+     - Updated `requestPasswordResetOtp`: if the SMS provider returns failure or throws, the freshly created OTP record is marked used (`isUsed: true, cooldownUntil: null`) to prevent deadlocks, and the method returns the uniform synthetic response `{ success: true, message: 'If an eligible account exists, a verification code will be sent.' }` without throwing.
+     - Updated `requestAccountDeletionOtp`: if the SMS provider fails, the created OTP is marked used (`isUsed: true, cooldownUntil: null`) and throws a generic, non-leaking user-facing error.
+4. **Brute-Force Recovery Completion Rate Limiting**:
+   - In `backend/src/middleware/rateLimit.middleware.ts`:
+     - Added `passwordResetCompleteLimiter` (max 5 completion attempts per 15 minutes per mobile/identifier).
+     - Added `passwordResetCompleteIpLimiter` (max 15 completion attempts per 15 minutes per IP address).
+   - In `backend/src/routes/auth.routes.ts`:
+     - Attached `passwordResetCompleteIpLimiter` and `passwordResetCompleteLimiter` to `POST /password-reset/complete`.
+5. **Bcrypt 72-Byte Boundary Enforcement**:
+   - In `backend/src/services/auth.service.ts`:
+     - Validated `Buffer.byteLength(params.newPassword, 'utf8') <= 72`, throwing `'Password exceeds the maximum supported length.'` if violated.
+     - Enforced minimum 6 characters and non-empty string types.
+6. **Standardized PostgreSQL Advisory Lock Scalar Querying**:
+   - Standardized advisory lock acquisition across `auth.service.ts` and `gst.service.ts` via:
+     `SELECT 1::int AS lock_acquired FROM (SELECT pg_advisory_xact_lock(...)) AS lock_result`
+     ensuring scalar integer deserialization compatibility across Prisma client versions.
+
 ---
 
 ## 3. Production Gates & Repository Controls
@@ -447,8 +498,9 @@ All changes strictly conform to the repository safety policies:
 2. **Branch Isolation**: All commits and tests reside on `audit/deploy-workflow-investigation`.
 3. **Zero Production Mutation**: No live AWS deployment was triggered, no live database migrations were executed, and no Play Store release was published.
 4. **Zero Test Regressions**:
-   - **Backend**: 639 passed across 35 test suites (`npm test -- --runInBand`).
-   - **Deployment Health**: 61 passed across all suites (`python -m unittest scripts/test_verify_deployment_health.py`).
+   - **Backend**: 651 passed across 35 test suites (`npm test -- --runInBand`).
+   - **Deployment Health**: 61 passed across all suites (`python -m unittest scripts.test_verify_deployment_health`).
+   - **Migration Compatibility**: 6 passed (`python -m unittest scripts.test_migration_compatibility`).
    - **Next.js Security Floor**: 22 passed (`node scripts/test-next-security-floor.cjs`).
    - **Admin Portal**: 9 date-utility tests passed; production build clean (`next build`, 11/11 static pages generated).
    - **Mobile Workspace**: 24 plugin/config tests passed; TypeScript check clean (`npx tsc --noEmit`).
@@ -457,10 +509,12 @@ All changes strictly conform to the repository safety policies:
 
 ## 4. Conclusion & Release Readiness
 
-With the completion of HIR-V4-01 through HIR-V4-04, HIR-V4.1-01, HIR-V4.1-02, HIRALAL-GST-02, and V4.3 findings:
-- Mobile password recovery features full end-to-end Google Play Integrity device attestation bound to random per-request salts (`integrityRequestSalt`).
+With the completion of HIR-V4-01 through HIR-V4-04, HIR-V4.1-01, HIR-V4.1-02, HIRALAL-GST-02, V4.3, and V4.4 findings:
+- Mobile password recovery features mandatory Version 2 Google Play Integrity device attestation bound to random 32-character hexadecimal per-request salts (`integrityRequestSalt`) with exact whitespace preservation for passwords.
 - Generic OTP authentication paths strictly reject administrator, recovery, and deletion purposes (`Unsupported OTP purpose for this endpoint.`).
-- Password recovery is strictly scoped to worker (`USER`) accounts with full anti-enumeration protections and defense-in-depth credential mutation checks.
+- Password recovery is strictly scoped to worker (`USER`) accounts with full anti-enumeration protections, uniform failure messages (`PASSWORD_RESET_INVALID_MESSAGE`), and dedicated route-level rate limiting (`passwordResetCompleteLimiter` and `passwordResetCompleteIpLimiter`).
+- Failed SMS dispatches during recovery automatically clean up dangling OTP records (`isUsed: true, cooldownUntil: null`) while preserving synthetic anti-enumeration responses.
+- Bcrypt 72-byte UTF-8 boundaries are strictly enforced with defensive pre-hashing length checks.
 - OTP issuance across all endpoints is serialized via database-backed PostgreSQL transaction advisory locks `(7212027, hashtext(cleanMobile))`, preventing concurrent cooldown and rate-limit bypasses.
 - Recovery verification executes within a single atomic transaction under strict lock hierarchy (User `FOR UPDATE` -> OTP rows `FOR UPDATE` -> VerificationToken), returning uniform anti-enumeration messages on all failures.
 - Authentication lockouts are serialized and enforced under database row-locks against race conditions during both challenge issuance and OTP verification.
@@ -468,5 +522,6 @@ With the completion of HIR-V4-01 through HIR-V4-04, HIR-V4.1-01, HIR-V4.1-02, HI
 - Zero-rate GST invoices, strict rate validation, decimal-scale precision, negative-zero neutralization, and advisory-locked default rule atomicity are guaranteed.
 - Reverse GST calculations maintain mathematical and schema consistency across all endpoints.
 
-The codebase on branch `audit/deploy-workflow-investigation` is fully remediated, verified with 100% passing tests (639 backend, 61 deployment, 24 mobile, 22 security floor, 9 admin), and ready for independent code review and controlled release staging.
+The codebase on branch `audit/deploy-workflow-investigation` is fully remediated, verified with 100% passing tests (651 backend, 61 deployment, 6 migration, 24 mobile, 22 security floor, 9 admin), and ready for independent code review and controlled release staging.
+
 

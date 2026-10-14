@@ -204,6 +204,45 @@ export function buildCanonicalRegistrationPayload(input: {
   return normalizeRegistrationIntegrityPayload(input);
 }
 
+export const RECOVERY_SALT_PATTERN = /^[0-9a-f]{32}$/;
+
+/**
+ * Validates that a value is a valid 32-character lowercase hexadecimal recovery salt.
+ */
+export function validateRecoverySalt(value: unknown): string {
+  if (typeof value !== 'string' || !RECOVERY_SALT_PATTERN.test(value)) {
+    throw new Error('INVALID_RECOVERY_INTEGRITY_SALT');
+  }
+  return value;
+}
+
+/**
+ * Extracts and validates the required 32-character hexadecimal recovery salt from an Express Request.
+ * Enforces body and header equality when both are supplied; rejects missing, malformed, or conflicting salts.
+ */
+export function getRequiredRecoverySalt(req: Request): string {
+  const bodySalt: unknown = req.body?.integrityRequestSalt;
+  const headerSalt = typeof req.get === 'function'
+    ? req.get('x-integrity-request-salt')
+    : (req.headers ? (req.headers['x-integrity-request-salt'] as string) : undefined);
+
+  if (bodySalt !== undefined && typeof bodySalt !== 'string') {
+    throw new Error('INVALID_RECOVERY_INTEGRITY_SALT');
+  }
+
+  if (bodySalt !== undefined && headerSalt !== undefined && bodySalt !== headerSalt) {
+    throw new Error('RECOVERY_INTEGRITY_SALT_MISMATCH');
+  }
+
+  const salt = bodySalt !== undefined ? bodySalt : headerSalt;
+
+  if (typeof salt !== 'string' || !RECOVERY_SALT_PATTERN.test(salt)) {
+    throw new Error('INVALID_RECOVERY_INTEGRITY_SALT');
+  }
+
+  return salt;
+}
+
 /**
  * Computes canonical SHA-256 request hash from the actual received Express request.
  */
@@ -316,68 +355,85 @@ export function computeIntegrityRequestHash(
     }
 
     case 'FORGOT_PASSWORD': {
-      const payload = {
-        version: 1,
-        action: 'FORGOT_PASSWORD',
-        mobile: String(req.body?.mobile || '').trim(),
-      };
-      return computeSha256Json(payload);
+      throw new Error('Legacy FORGOT_PASSWORD action is deprecated. Use V2 recovery actions.');
     }
 
     case 'FORGOT_PASSWORD_REQUEST': {
-      const salt = String(req.body?.integrityRequestSalt || req.headers['x-integrity-request-salt'] || '').trim().toLowerCase();
-      const mobile = String(req.body?.mobile || '').replace(/\D/g, '').slice(-10);
-      if (salt) {
-        return computeSha256Json({
-          version: 2,
-          action: 'FORGOT_PASSWORD_REQUEST',
-          mobile,
-          integrityRequestSalt: salt,
-        });
+      const salt = getRequiredRecoverySalt(req);
+      const rawMobile = req.body?.mobile;
+      if (typeof rawMobile !== 'string' && typeof rawMobile !== 'number') {
+        throw new Error('INVALID_RECOVERY_MOBILE');
+      }
+      const mobile = String(rawMobile).replace(/\D/g, '').slice(-10);
+      if (!/^\d{10}$/.test(mobile)) {
+        throw new Error('INVALID_RECOVERY_MOBILE');
       }
       return computeSha256Json({
-        version: 1,
+        version: 2,
         action: 'FORGOT_PASSWORD_REQUEST',
-        mobile: String(req.body?.mobile || '').trim(),
+        mobile,
+        integrityRequestSalt: salt,
       });
     }
 
     case 'FORGOT_PASSWORD_VERIFY': {
-      const salt = String(req.body?.integrityRequestSalt || req.headers['x-integrity-request-salt'] || '').trim().toLowerCase();
-      const mobile = String(req.body?.mobile || '').replace(/\D/g, '').slice(-10);
-      if (salt) {
-        return computeSha256Json({
-          version: 2,
-          action: 'FORGOT_PASSWORD_VERIFY',
-          mobile,
-          otpCode: String(req.body?.otpCode || '').trim(),
-          integrityRequestSalt: salt,
-        });
+      const salt = getRequiredRecoverySalt(req);
+      const rawMobile = req.body?.mobile;
+      if (typeof rawMobile !== 'string' && typeof rawMobile !== 'number') {
+        throw new Error('INVALID_RECOVERY_MOBILE');
+      }
+      const mobile = String(rawMobile).replace(/\D/g, '').slice(-10);
+      if (!/^\d{10}$/.test(mobile)) {
+        throw new Error('INVALID_RECOVERY_MOBILE');
+      }
+      const rawOtp = req.body?.otpCode;
+      if (typeof rawOtp !== 'string' && typeof rawOtp !== 'number') {
+        throw new Error('INVALID_RECOVERY_OTP');
+      }
+      const otpCode = String(rawOtp).trim();
+      if (!/^\d{6}$/.test(otpCode)) {
+        throw new Error('INVALID_RECOVERY_OTP');
       }
       return computeSha256Json({
-        version: 1,
+        version: 2,
         action: 'FORGOT_PASSWORD_VERIFY',
-        mobile: String(req.body?.mobile || '').trim(),
+        mobile,
+        otpCode,
+        integrityRequestSalt: salt,
       });
     }
 
     case 'FORGOT_PASSWORD_COMPLETE': {
-      const salt = String(req.body?.integrityRequestSalt || req.headers['x-integrity-request-salt'] || '').trim().toLowerCase();
-      const mobile = String(req.body?.mobile || '').replace(/\D/g, '').slice(-10);
-      if (salt) {
-        return computeSha256Json({
-          version: 2,
-          action: 'FORGOT_PASSWORD_COMPLETE',
-          mobile,
-          verificationToken: String(req.body?.verificationToken || '').trim(),
-          newPassword: String(req.body?.newPassword || '').trim(),
-          integrityRequestSalt: salt,
-        });
+      const salt = getRequiredRecoverySalt(req);
+      const rawMobile = req.body?.mobile;
+      if (typeof rawMobile !== 'string' && typeof rawMobile !== 'number') {
+        throw new Error('INVALID_RECOVERY_MOBILE');
       }
+      const mobile = String(rawMobile).replace(/\D/g, '').slice(-10);
+      if (!/^\d{10}$/.test(mobile)) {
+        throw new Error('INVALID_RECOVERY_MOBILE');
+      }
+      const rawToken = req.body?.verificationToken;
+      if (typeof rawToken !== 'string') {
+        throw new Error('INVALID_RECOVERY_TOKEN');
+      }
+      const verificationToken = String(rawToken ?? '');
+      if (!/^[0-9a-f]{64}$/i.test(verificationToken.trim())) {
+        throw new Error('INVALID_RECOVERY_TOKEN');
+      }
+      const rawPassword = req.body?.newPassword;
+      if (typeof rawPassword !== 'string') {
+        throw new Error('INVALID_RECOVERY_PASSWORD');
+      }
+      // CRITICAL: Never trim or modify password for integrity hashing
+      const newPassword = String(rawPassword ?? '');
       return computeSha256Json({
-        version: 1,
+        version: 2,
         action: 'FORGOT_PASSWORD_COMPLETE',
-        mobile: String(req.body?.mobile || '').trim(),
+        mobile,
+        verificationToken,
+        newPassword,
+        integrityRequestSalt: salt,
       });
     }
 

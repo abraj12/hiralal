@@ -14,6 +14,7 @@ export interface PreAuthRecoveryAttestation {
 }
 
 import { validateProductionApiUrl } from './apiUrl';
+import { validateRecoverySalt } from './integrityRequestHash';
 export { validateProductionApiUrl };
 
 const getBaseUrl = () => {
@@ -677,17 +678,26 @@ export class MobileApiClient {
   }
 
   // Real Backend Password Reset Flow
-  static requestPasswordReset(mobile: string, attestation?: PreAuthRecoveryAttestation | RequiredActionAttestation) {
-    const extraHeaders: Record<string, string> = {};
-    const body: Record<string, any> = { mobile };
-    if (attestation && attestation.integrityToken?.trim()) {
-      extraHeaders['x-integrity-token'] = attestation.integrityToken.trim();
-      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce?.trim() || '';
-      if ('integrityRequestSalt' in attestation && attestation.integrityRequestSalt) {
-        extraHeaders['x-integrity-request-salt'] = attestation.integrityRequestSalt.trim();
-        body.integrityRequestSalt = attestation.integrityRequestSalt.trim();
-      }
+  static requestPasswordReset(mobile: string, attestation: PreAuthRecoveryAttestation) {
+    if (!attestation || typeof attestation !== 'object') {
+      throw new Error('PreAuthRecoveryAttestation is required for password recovery request.');
     }
+    const token = (attestation.integrityToken || '').trim();
+    const nonce = (attestation.integrityNonce || '').trim();
+    if (!token || !nonce) {
+      throw new Error('A valid PreAuthRecoveryAttestation with integrityToken and integrityNonce is required.');
+    }
+    const salt = validateRecoverySalt(attestation.integrityRequestSalt);
+
+    const extraHeaders: Record<string, string> = {
+      'x-integrity-token': token,
+      'x-integrity-nonce': nonce,
+      'x-integrity-request-salt': salt,
+    };
+    const body = {
+      mobile,
+      integrityRequestSalt: salt,
+    };
     return this.request('/auth/password-reset/request', {
       method: 'POST',
       headers: extraHeaders,
@@ -695,17 +705,27 @@ export class MobileApiClient {
     });
   }
 
-  static verifyPasswordResetOtp(mobile: string, otpCode: string, attestation?: PreAuthRecoveryAttestation | RequiredActionAttestation) {
-    const extraHeaders: Record<string, string> = {};
-    const body: Record<string, any> = { mobile, otpCode };
-    if (attestation && attestation.integrityToken?.trim()) {
-      extraHeaders['x-integrity-token'] = attestation.integrityToken.trim();
-      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce?.trim() || '';
-      if ('integrityRequestSalt' in attestation && attestation.integrityRequestSalt) {
-        extraHeaders['x-integrity-request-salt'] = attestation.integrityRequestSalt.trim();
-        body.integrityRequestSalt = attestation.integrityRequestSalt.trim();
-      }
+  static verifyPasswordResetOtp(mobile: string, otpCode: string, attestation: PreAuthRecoveryAttestation) {
+    if (!attestation || typeof attestation !== 'object') {
+      throw new Error('PreAuthRecoveryAttestation is required for password recovery verification.');
     }
+    const token = (attestation.integrityToken || '').trim();
+    const nonce = (attestation.integrityNonce || '').trim();
+    if (!token || !nonce) {
+      throw new Error('A valid PreAuthRecoveryAttestation with integrityToken and integrityNonce is required.');
+    }
+    const salt = validateRecoverySalt(attestation.integrityRequestSalt);
+
+    const extraHeaders: Record<string, string> = {
+      'x-integrity-token': token,
+      'x-integrity-nonce': nonce,
+      'x-integrity-request-salt': salt,
+    };
+    const body = {
+      mobile,
+      otpCode,
+      integrityRequestSalt: salt,
+    };
     return this.request('/auth/password-reset/verify', {
       method: 'POST',
       headers: extraHeaders,
@@ -719,18 +739,27 @@ export class MobileApiClient {
       verificationToken: string;
       newPassword: string;
     },
-    attestation?: PreAuthRecoveryAttestation | RequiredActionAttestation
+    attestation: PreAuthRecoveryAttestation
   ) {
-    const extraHeaders: Record<string, string> = {};
-    const body: Record<string, any> = { ...data };
-    if (attestation && attestation.integrityToken?.trim()) {
-      extraHeaders['x-integrity-token'] = attestation.integrityToken.trim();
-      extraHeaders['x-integrity-nonce'] = attestation.integrityNonce?.trim() || '';
-      if ('integrityRequestSalt' in attestation && attestation.integrityRequestSalt) {
-        extraHeaders['x-integrity-request-salt'] = attestation.integrityRequestSalt.trim();
-        body.integrityRequestSalt = attestation.integrityRequestSalt.trim();
-      }
+    if (!attestation || typeof attestation !== 'object') {
+      throw new Error('PreAuthRecoveryAttestation is required for password reset completion.');
     }
+    const token = (attestation.integrityToken || '').trim();
+    const nonce = (attestation.integrityNonce || '').trim();
+    if (!token || !nonce) {
+      throw new Error('A valid PreAuthRecoveryAttestation with integrityToken and integrityNonce is required.');
+    }
+    const salt = validateRecoverySalt(attestation.integrityRequestSalt);
+
+    const extraHeaders: Record<string, string> = {
+      'x-integrity-token': token,
+      'x-integrity-nonce': nonce,
+      'x-integrity-request-salt': salt,
+    };
+    const body = {
+      ...data,
+      integrityRequestSalt: salt,
+    };
     return this.request('/auth/password-reset/complete', {
       method: 'POST',
       headers: extraHeaders,

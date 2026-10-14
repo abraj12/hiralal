@@ -262,7 +262,7 @@ export class GstService {
     const executeInTx = async (db: any) => {
       if (isDefault) {
         // Serialize concurrent default-rule mutations using PostgreSQL advisory xact lock
-        await db.$executeRaw`SELECT pg_advisory_xact_lock(7212026, 1)`;
+        await db.$executeRaw`SELECT 1::int AS lock_acquired FROM (SELECT pg_advisory_xact_lock(7212026, 1)) AS lock_result`;
         // Clear existing default flags atomically
         await db.gstRule.updateMany({
           where: { isDefault: true },
@@ -334,7 +334,7 @@ export class GstService {
     const executeInTx = async (db: any) => {
       if (isDefault) {
         // Serialize concurrent default-rule mutations using PostgreSQL advisory xact lock
-        await db.$executeRaw`SELECT pg_advisory_xact_lock(7212026, 1)`;
+        await db.$executeRaw`SELECT 1::int AS lock_acquired FROM (SELECT pg_advisory_xact_lock(7212026, 1)) AS lock_result`;
       }
 
       // 1. Fetch and validate target existence inside transaction before any modifications

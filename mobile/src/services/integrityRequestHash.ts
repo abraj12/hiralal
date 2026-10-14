@@ -245,6 +245,18 @@ export async function generateSecureRequestSalt(): Promise<string> {
     .join('');
 }
 
+export const RECOVERY_SALT_PATTERN = /^[0-9a-f]{32}$/;
+
+/**
+ * Validates that a value is a valid 32-character lowercase hexadecimal recovery salt.
+ */
+export function validateRecoverySalt(value: unknown): string {
+  if (typeof value !== 'string' || !RECOVERY_SALT_PATTERN.test(value)) {
+    throw new Error('INVALID_RECOVERY_INTEGRITY_SALT');
+  }
+  return value;
+}
+
 export type PasswordRecoveryIntegrityAction =
   | 'FORGOT_PASSWORD_REQUEST'
   | 'FORGOT_PASSWORD_VERIFY'
@@ -263,11 +275,14 @@ export async function createPasswordResetCommitment(
     integrityRequestSalt: string;
   }
 ): Promise<string> {
-  const mobile = String(data.mobile || '').replace(/\D/g, '').slice(-10);
-  const salt = String(data.integrityRequestSalt || '').trim().toLowerCase();
-
-  if (!salt || salt.length < 16) {
-    throw new Error('A valid integrityRequestSalt (at least 16 hex characters) is required.');
+  const salt = validateRecoverySalt(data.integrityRequestSalt);
+  const rawMobile = data.mobile;
+  if (typeof rawMobile !== 'string' && typeof rawMobile !== 'number') {
+    throw new Error('INVALID_RECOVERY_MOBILE');
+  }
+  const mobile = String(rawMobile).replace(/\D/g, '').slice(-10);
+  if (!/^\d{10}$/.test(mobile)) {
+    throw new Error('INVALID_RECOVERY_MOBILE');
   }
 
   if (action === 'FORGOT_PASSWORD_REQUEST') {
@@ -281,7 +296,14 @@ export async function createPasswordResetCommitment(
   }
 
   if (action === 'FORGOT_PASSWORD_VERIFY') {
-    const otpCode = String(data.otpCode || '').trim();
+    const rawOtp = data.otpCode;
+    if (typeof rawOtp !== 'string' && typeof rawOtp !== 'number') {
+      throw new Error('INVALID_RECOVERY_OTP');
+    }
+    const otpCode = String(rawOtp).trim();
+    if (!/^\d{6}$/.test(otpCode)) {
+      throw new Error('INVALID_RECOVERY_OTP');
+    }
     const canonicalPayload = {
       version: 2 as const,
       action: 'FORGOT_PASSWORD_VERIFY' as const,
@@ -293,8 +315,21 @@ export async function createPasswordResetCommitment(
   }
 
   if (action === 'FORGOT_PASSWORD_COMPLETE') {
-    const verificationToken = String(data.verificationToken || '').trim();
-    const newPassword = String(data.newPassword || '').trim();
+    const rawToken = data.verificationToken;
+    if (typeof rawToken !== 'string') {
+      throw new Error('INVALID_RECOVERY_TOKEN');
+    }
+    const verificationToken = String(rawToken ?? '');
+    if (!/^[0-9a-f]{64}$/i.test(verificationToken.trim())) {
+      throw new Error('INVALID_RECOVERY_TOKEN');
+    }
+
+    const rawPassword = data.newPassword;
+    if (typeof rawPassword !== 'string') {
+      throw new Error('INVALID_RECOVERY_PASSWORD');
+    }
+    // CRITICAL: Never trim or modify password for integrity hashing
+    const newPassword = String(rawPassword ?? '');
     const canonicalPayload = {
       version: 2 as const,
       action: 'FORGOT_PASSWORD_COMPLETE' as const,
@@ -311,34 +346,19 @@ export async function createPasswordResetCommitment(
 
 /**
  * Computes canonical request hash for mobile password recovery actions.
- * Supports both Version 2 (with integrityRequestSalt) and Version 1 (legacy).
+ * Enforces Version 2 commitment bound to integrityRequestSalt (V1 deprecated).
  */
 export async function createPasswordResetRequestHash(
-  action: 'FORGOT_PASSWORD' | 'FORGOT_PASSWORD_REQUEST' | 'FORGOT_PASSWORD_VERIFY' | 'FORGOT_PASSWORD_COMPLETE',
+  action: PasswordRecoveryIntegrityAction,
   data: {
     mobile: string;
     otpCode?: string;
     verificationToken?: string;
     newPassword?: string;
-    integrityRequestSalt?: string;
+    integrityRequestSalt: string;
   }
 ): Promise<string> {
-  if (data.integrityRequestSalt && action !== 'FORGOT_PASSWORD') {
-    return createPasswordResetCommitment(action as PasswordRecoveryIntegrityAction, {
-      mobile: data.mobile,
-      otpCode: data.otpCode,
-      verificationToken: data.verificationToken,
-      newPassword: data.newPassword,
-      integrityRequestSalt: data.integrityRequestSalt,
-    });
-  }
-
-  const canonicalPayload = {
-    version: 1,
-    action,
-    mobile: String(data.mobile || '').trim(),
-  };
-  return sha256Json(canonicalPayload);
+  return createPasswordResetCommitment(action, data);
 }
 
 

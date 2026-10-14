@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { AuthService, normalizeStrictIndianMobile, requirePublicGenericOtpPurpose, requireGenericOtpPurpose } from '../services/auth.service';
+import { AuthService, normalizeStrictIndianMobile, requirePublicGenericOtpPurpose, requireGenericOtpPurpose, PASSWORD_RESET_INVALID_MESSAGE } from '../services/auth.service';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import {
   otpRequestLimiter,
@@ -12,6 +12,8 @@ import {
   loginLimiter,
   loginIpLimiter,
   passwordResetLimiter,
+  passwordResetCompleteLimiter,
+  passwordResetCompleteIpLimiter,
   adminLoginLimiter,
   adminAccountLoginLimiter,
   integrityNonceLimiter,
@@ -401,12 +403,18 @@ router.post(
 
 router.post(
   '/password-reset/complete',
+  passwordResetCompleteIpLimiter,
+  passwordResetCompleteLimiter,
   requirePreAuthActionIntegrity('FORGOT_PASSWORD_COMPLETE'),
   async (req: Request, res: Response) => {
     try {
       const { mobile, verificationToken, newPassword } = req.body;
       if (!mobile || !verificationToken || !newPassword) {
         return res.status(400).json({ success: false, message: 'Mobile, verification token, and new password are required.' });
+      }
+
+      if (typeof newPassword !== 'string') {
+        return res.status(400).json({ success: false, message: 'Password must be a valid string.' });
       }
 
       const ipAddress = req.ip || req.socket.remoteAddress;
@@ -422,7 +430,19 @@ router.post(
 
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(400).json({ success: false, message: err.message });
+      const isKnownFailure =
+        err.message === PASSWORD_RESET_INVALID_MESSAGE ||
+        err.message.includes('password') ||
+        err.message.includes('Password') ||
+        err.message.includes('invalid') ||
+        err.message.includes('expired');
+
+      if (isKnownFailure) {
+        return res.status(400).json({ success: false, message: err.message });
+      }
+
+      console.error('[AuthRoutes] Unexpected error in /password-reset/complete:', err);
+      return res.status(500).json({ success: false, message: 'An internal error occurred. Please try again later.' });
     }
   }
 );

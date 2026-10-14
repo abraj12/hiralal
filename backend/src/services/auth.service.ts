@@ -54,6 +54,9 @@ export const GENERIC_OTP_PURPOSES = PUBLIC_GENERIC_OTP_PURPOSES;
 export type GenericOtpPurpose = PublicGenericOtpPurpose;
 export const requireGenericOtpPurpose = requirePublicGenericOtpPurpose;
 
+export const PASSWORD_RESET_INVALID_MESSAGE =
+  'The verification request is invalid or expired. Please restart password recovery.';
+
 export class AuthService {
   /**
    * Checks whether an identifier matches any server-configured administrator prefix
@@ -761,7 +764,7 @@ export class AuthService {
 
     await prisma.$transaction(async (tx) => {
       // Advisory xact lock per mobile number: (7212027, hashtext(cleanMobile))
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(7212027, hashtext(${cleanMobile})::integer)`;
+      await tx.$executeRaw`SELECT 1::int AS lock_acquired FROM (SELECT pg_advisory_xact_lock(7212027, hashtext(${cleanMobile})::integer)) AS lock_result`;
 
       // 1. Business purpose validation
       if (validatedPurpose === 'REGISTRATION') {
@@ -835,6 +838,7 @@ export class AuthService {
    * non-existent users, non-USER accounts, inactive accounts, or cooldown/rate limits
    * receive the identical uniform message without OTP dispatch or database writes.
    * Serializes concurrent requests per mobile using PostgreSQL transaction advisory locks.
+   * On SMS delivery failure, safely cleans up the exact created OTP and clears cooldown.
    */
   static async requestPasswordResetOtp(params: {
     mobile: string;
@@ -860,7 +864,7 @@ export class AuthService {
 
     const txResult = await prisma.$transaction(async (tx) => {
       // Advisory xact lock per mobile number: (7212027, hashtext(cleanMobile))
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(7212027, hashtext(${cleanMobile})::integer)`;
+      await tx.$executeRaw`SELECT 1::int AS lock_acquired FROM (SELECT pg_advisory_xact_lock(7212027, hashtext(${cleanMobile})::integer)) AS lock_result`;
 
       // Check account existence and role
       const existingUser = await tx.user.findUnique({
@@ -900,7 +904,7 @@ export class AuthService {
       }
 
       // 3. Record OTP Request
-      await tx.otpRequest.create({
+      const createdRecord = await tx.otpRequest.create({
         data: {
           mobile: cleanMobile,
           otpHash,
@@ -910,7 +914,7 @@ export class AuthService {
         },
       });
 
-      return { shouldSendSms: true };
+      return { shouldSendSms: true, otpRequestId: createdRecord.id };
     });
 
     // 4. Secure SMS dispatch outside transaction
@@ -920,8 +924,26 @@ export class AuthService {
         otpCode,
       });
 
-      if (!smsResult.success && config.isProduction) {
-        throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
+      if (!smsResult.success) {
+        console.error('[AuthService] Password recovery SMS delivery failed:', smsResult.error || 'Gateway rejected dispatch');
+        if (txResult.otpRequestId) {
+          try {
+            await prisma.otpRequest.updateMany({
+              where: {
+                id: txResult.otpRequestId,
+                mobile: cleanMobile,
+                purpose: 'FORGOT_PASSWORD',
+                isUsed: false,
+              },
+              data: {
+                isUsed: true,
+                cooldownUntil: null,
+              },
+            });
+          } catch (cleanupErr) {
+            console.error('[AuthService] Failed to invalidate OTP after SMS failure:', cleanupErr);
+          }
+        }
       }
     }
 
@@ -949,9 +971,9 @@ export class AuthService {
     const otpCode = generateSecureOtp();
     const otpHash = hmacHashOtp(otpCode);
 
-    await prisma.$transaction(async (tx) => {
+    const txResult = await prisma.$transaction(async (tx) => {
       // Advisory xact lock per mobile number: (7212027, hashtext(cleanMobile))
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(7212027, hashtext(${cleanMobile})::integer)`;
+      await tx.$executeRaw`SELECT 1::int AS lock_acquired FROM (SELECT pg_advisory_xact_lock(7212027, hashtext(${cleanMobile})::integer)) AS lock_result`;
 
       // 1. Cooldown enforcement: prevent rapid resend within 60 seconds
       const activeCooldown = await tx.otpRequest.findFirst({
@@ -981,7 +1003,7 @@ export class AuthService {
       }
 
       // 3. Create OtpRequest record
-      await tx.otpRequest.create({
+      const createdRecord = await tx.otpRequest.create({
         data: {
           mobile: cleanMobile,
           otpHash,
@@ -990,6 +1012,8 @@ export class AuthService {
           cooldownUntil,
         },
       });
+
+      return { otpRequestId: createdRecord.id };
     });
 
     // 4. Secure SMS dispatch outside transaction
@@ -998,8 +1022,27 @@ export class AuthService {
       otpCode,
     });
 
-    if (!smsResult.success && config.isProduction) {
-      throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
+    if (!smsResult.success) {
+      console.error('[AuthService] Account deletion OTP SMS delivery failed:', smsResult.error || 'Gateway rejected dispatch');
+      if (txResult.otpRequestId) {
+        try {
+          await prisma.otpRequest.updateMany({
+            where: {
+              id: txResult.otpRequestId,
+              mobile: cleanMobile,
+              purpose: 'ACCOUNT_DELETION',
+              isUsed: false,
+            },
+            data: {
+              isUsed: true,
+              cooldownUntil: null,
+            },
+          });
+        } catch (cleanupErr) {
+          console.error('[AuthService] Failed to cleanup account deletion OTP after SMS failure:', cleanupErr);
+        }
+      }
+      throw new Error('Unable to send verification code at this time. Please try again later.');
     }
 
     return {
@@ -1196,7 +1239,7 @@ export class AuthService {
     mobile: string;
     otpCode: string;
   }) {
-    const genericFailure = 'The verification request is invalid or expired. Please restart password recovery.';
+    const genericFailure = PASSWORD_RESET_INVALID_MESSAGE;
     const cleanOtp = (params.otpCode || '').trim();
     if (!cleanOtp || cleanOtp.length !== 6) {
       throw new Error(genericFailure);
@@ -1784,10 +1827,25 @@ export class AuthService {
     userAgent?: string;
     ipAddress?: string;
   }) {
+    if (typeof params.mobile !== 'string' || !/^\d{10}$/.test(params.mobile.replace(/\D/g, '').slice(-10))) {
+      throw new Error(PASSWORD_RESET_INVALID_MESSAGE);
+    }
     const cleanMobile = params.mobile.replace(/\D/g, '').slice(-10);
 
-    if (!params.newPassword || params.newPassword.length < 6) {
+    if (typeof params.verificationToken !== 'string' || !/^[0-9a-f]{64}$/i.test(params.verificationToken.trim())) {
+      throw new Error(PASSWORD_RESET_INVALID_MESSAGE);
+    }
+
+    if (typeof params.newPassword !== 'string') {
+      throw new Error('Password must be a valid string.');
+    }
+
+    if (params.newPassword.length < 6) {
       throw new Error('New password must be at least 6 characters long.');
+    }
+
+    if (Buffer.byteLength(params.newPassword, 'utf8') > 72) {
+      throw new Error('Password exceeds the maximum supported length.');
     }
 
     const tokenHash = sha256Hash(params.verificationToken);
@@ -1808,16 +1866,16 @@ export class AuthService {
       `;
 
       if (!userRows || userRows.length !== 1) {
-        throw new Error('User not found.');
+        throw new Error(PASSWORD_RESET_INVALID_MESSAGE);
       }
 
       const user = userRows[0];
       if (user.role !== 'USER') {
-        throw new Error('Password recovery is available only for worker accounts.');
+        throw new Error(PASSWORD_RESET_INVALID_MESSAGE);
       }
 
       if (user.status !== 'ACTIVE') {
-        throw new Error('Account is inactive or suspended.');
+        throw new Error(PASSWORD_RESET_INVALID_MESSAGE);
       }
 
       // 2. Lock and verify verification token FOR UPDATE
@@ -1834,7 +1892,7 @@ export class AuthService {
       `;
 
       if (!targetRows || targetRows.length !== 1) {
-        throw new Error('Invalid or expired password reset token. Please verify OTP again.');
+        throw new Error(PASSWORD_RESET_INVALID_MESSAGE);
       }
 
       await tx.verificationToken.update({

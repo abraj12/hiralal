@@ -511,4 +511,144 @@ describe('Server-Side Play Integrity Action Enforcement & Bypass Prevention', ()
       expect(res.body.message).toContain('requestHash mismatch');
     });
   });
+
+  describe('Pre-Auth Play Integrity Enforcement on Worker Password Recovery Routes', () => {
+    const recoverySalt = 'c1c2c3c4d5d6d7d8e9e0e1e2f3f4f5f6';
+    const testWorkerMobile = '9888877771';
+
+    it('rejects /password-reset/request when integrity token is missing', async () => {
+      const res = await request(app)
+        .post('/api/auth/password-reset/request')
+        .send({ mobile: testWorkerMobile, integrityRequestSalt: recoverySalt });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('INTEGRITY_REQUIRED');
+    });
+
+    it('rejects /password-reset/request when integrity nonce is missing', async () => {
+      const res = await request(app)
+        .post('/api/auth/password-reset/request')
+        .set('x-integrity-token', 'valid_mock_token')
+        .send({ mobile: testWorkerMobile, integrityRequestSalt: recoverySalt });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('INTEGRITY_REQUIRED');
+    });
+
+    it('rejects /password-reset/request when integrityRequestSalt is missing or invalid', async () => {
+      const nonceObj = await PlayIntegrityService.generateNonce({
+        action: 'FORGOT_PASSWORD_REQUEST',
+        requestHash: 'a'.repeat(64),
+      });
+
+      const res = await request(app)
+        .post('/api/auth/password-reset/request')
+        .set('x-integrity-token', 'valid_mock_token')
+        .set('x-integrity-nonce', nonceObj.nonce)
+        .send({ mobile: testWorkerMobile });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('INTEGRITY_FAILED');
+      expect(res.body.message).toBe('Device integrity request validation failed.');
+    });
+
+    it('rejects /password-reset/request when body salt conflicts with header salt', async () => {
+      const nonceObj = await PlayIntegrityService.generateNonce({
+        action: 'FORGOT_PASSWORD_REQUEST',
+        requestHash: 'a'.repeat(64),
+      });
+
+      const res = await request(app)
+        .post('/api/auth/password-reset/request')
+        .set('x-integrity-token', 'valid_mock_token')
+        .set('x-integrity-nonce', nonceObj.nonce)
+        .set('x-integrity-request-salt', '00000000000000000000000000000000')
+        .send({ mobile: testWorkerMobile, integrityRequestSalt: recoverySalt });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('INTEGRITY_FAILED');
+    });
+
+    it('accepts valid pre-auth attestation and reaches business handler on /password-reset/request', async () => {
+      const canonicalPayload = {
+        version: 2,
+        action: 'FORGOT_PASSWORD_REQUEST',
+        mobile: testWorkerMobile,
+        integrityRequestSalt: recoverySalt,
+      };
+      const reqHash = computeSha256Json(canonicalPayload);
+
+      const nonceObj = await PlayIntegrityService.generateNonce({
+        action: 'FORGOT_PASSWORD_REQUEST',
+        requestHash: reqHash,
+      });
+
+      const res = await request(app)
+        .post('/api/auth/password-reset/request')
+        .set('x-integrity-token', 'valid_mock_token')
+        .set('x-integrity-nonce', nonceObj.nonce)
+        .set('x-integrity-request-salt', recoverySalt)
+        .send({ mobile: testWorkerMobile, integrityRequestSalt: recoverySalt });
+
+      // Verification passed through integrity middleware
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('rejects replayed nonce on /password-reset/request', async () => {
+      const canonicalPayload = {
+        version: 2,
+        action: 'FORGOT_PASSWORD_REQUEST',
+        mobile: testWorkerMobile,
+        integrityRequestSalt: recoverySalt,
+      };
+      const reqHash = computeSha256Json(canonicalPayload);
+
+      const nonceObj = await PlayIntegrityService.generateNonce({
+        action: 'FORGOT_PASSWORD_REQUEST',
+        requestHash: reqHash,
+      });
+
+      const firstRes = await request(app)
+        .post('/api/auth/password-reset/request')
+        .set('x-integrity-token', 'valid_mock_token')
+        .set('x-integrity-nonce', nonceObj.nonce)
+        .set('x-integrity-request-salt', recoverySalt)
+        .send({ mobile: testWorkerMobile, integrityRequestSalt: recoverySalt });
+
+      expect(firstRes.status).toBe(200);
+
+      // Replay attempt with same nonce
+      const secondRes = await request(app)
+        .post('/api/auth/password-reset/request')
+        .set('x-integrity-token', 'valid_mock_token')
+        .set('x-integrity-nonce', nonceObj.nonce)
+        .set('x-integrity-request-salt', recoverySalt)
+        .send({ mobile: testWorkerMobile, integrityRequestSalt: recoverySalt });
+
+      expect(secondRes.status).toBe(403);
+      expect(secondRes.body.code).toBe('INTEGRITY_FAILED');
+    });
+
+    it('strictly enforces integrity on /password-reset/verify and /password-reset/complete', async () => {
+      // 1. Verify missing token
+      const verifyRes = await request(app)
+        .post('/api/auth/password-reset/verify')
+        .send({ mobile: testWorkerMobile, otpCode: '123456', integrityRequestSalt: recoverySalt });
+      expect(verifyRes.status).toBe(403);
+      expect(verifyRes.body.code).toBe('INTEGRITY_REQUIRED');
+
+      // 2. Complete missing token
+      const completeRes = await request(app)
+        .post('/api/auth/password-reset/complete')
+        .send({
+          mobile: testWorkerMobile,
+          verificationToken: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          newPassword: 'ValidPassword@123',
+          integrityRequestSalt: recoverySalt,
+        });
+      expect(completeRes.status).toBe(403);
+      expect(completeRes.body.code).toBe('INTEGRITY_REQUIRED');
+    });
+  });
 });

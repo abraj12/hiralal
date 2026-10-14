@@ -277,23 +277,25 @@ export default function LoginScreen() {
     setForgotMsg(null);
 
     try {
-      let attestation: PreAuthRecoveryAttestation | undefined;
-      if (Platform.OS === 'android') {
-        try {
-          const salt = await generateSecureRequestSalt();
-          const requestHash = await createPasswordResetCommitment('FORGOT_PASSWORD_REQUEST', {
-            mobile: clean,
-            integrityRequestSalt: salt,
-          });
-          attestation = await MobileIntegrityService.performPreAuthActionAttestation(
-            'FORGOT_PASSWORD_REQUEST',
-            requestHash,
-            salt
-          );
-        } catch (integrityErr: any) {
-          console.error('[MOBILE-INTEGRITY] Pre-auth recovery request attestation failed:', integrityErr?.message);
-          throw new Error(`Device integrity attestation failed: ${integrityErr?.message || 'Unknown error'}`);
-        }
+      if (Platform.OS !== 'android') {
+        throw new Error('Password recovery is available only on genuine Android devices.');
+      }
+
+      let attestation: PreAuthRecoveryAttestation;
+      try {
+        const salt = await generateSecureRequestSalt();
+        const requestHash = await createPasswordResetCommitment('FORGOT_PASSWORD_REQUEST', {
+          mobile: clean,
+          integrityRequestSalt: salt,
+        });
+        attestation = await MobileIntegrityService.performPreAuthActionAttestation(
+          'FORGOT_PASSWORD_REQUEST',
+          requestHash,
+          salt
+        );
+      } catch (integrityErr: any) {
+        console.error('[MOBILE-INTEGRITY] Pre-auth recovery request attestation failed:', integrityErr?.message);
+        throw new Error(`Device integrity attestation failed: ${integrityErr?.message || 'Unknown error'}`);
       }
 
       const res = await MobileApiClient.requestPasswordReset(clean, attestation);
@@ -317,24 +319,26 @@ export default function LoginScreen() {
     setForgotMsg(null);
 
     try {
-      let attestation: PreAuthRecoveryAttestation | undefined;
-      if (Platform.OS === 'android') {
-        try {
-          const salt = await generateSecureRequestSalt();
-          const requestHash = await createPasswordResetCommitment('FORGOT_PASSWORD_VERIFY', {
-            mobile: clean,
-            otpCode: forgotOtp.trim(),
-            integrityRequestSalt: salt,
-          });
-          attestation = await MobileIntegrityService.performPreAuthActionAttestation(
-            'FORGOT_PASSWORD_VERIFY',
-            requestHash,
-            salt
-          );
-        } catch (integrityErr: any) {
-          console.error('[MOBILE-INTEGRITY] Pre-auth recovery verify attestation failed:', integrityErr?.message);
-          throw new Error(`Device integrity attestation failed: ${integrityErr?.message || 'Unknown error'}`);
-        }
+      if (Platform.OS !== 'android') {
+        throw new Error('Password recovery is available only on genuine Android devices.');
+      }
+
+      let attestation: PreAuthRecoveryAttestation;
+      try {
+        const salt = await generateSecureRequestSalt();
+        const requestHash = await createPasswordResetCommitment('FORGOT_PASSWORD_VERIFY', {
+          mobile: clean,
+          otpCode: forgotOtp.trim(),
+          integrityRequestSalt: salt,
+        });
+        attestation = await MobileIntegrityService.performPreAuthActionAttestation(
+          'FORGOT_PASSWORD_VERIFY',
+          requestHash,
+          salt
+        );
+      } catch (integrityErr: any) {
+        console.error('[MOBILE-INTEGRITY] Pre-auth recovery verify attestation failed:', integrityErr?.message);
+        throw new Error(`Device integrity attestation failed: ${integrityErr?.message || 'Unknown error'}`);
       }
 
       const res = await MobileApiClient.verifyPasswordResetOtp(clean, forgotOtp.trim(), attestation);
@@ -359,32 +363,37 @@ export default function LoginScreen() {
     setForgotMsg(null);
 
     try {
-      let attestation: PreAuthRecoveryAttestation | undefined;
-      if (Platform.OS === 'android') {
-        try {
-          const salt = await generateSecureRequestSalt();
-          const requestHash = await createPasswordResetCommitment('FORGOT_PASSWORD_COMPLETE', {
-            mobile: clean,
-            verificationToken: forgotToken,
-            newPassword,
-            integrityRequestSalt: salt,
-          });
-          attestation = await MobileIntegrityService.performPreAuthActionAttestation(
-            'FORGOT_PASSWORD_COMPLETE',
-            requestHash,
-            salt
-          );
-        } catch (integrityErr: any) {
-          console.error('[MOBILE-INTEGRITY] Pre-auth recovery complete attestation failed:', integrityErr?.message);
-          throw new Error(`Device integrity attestation failed: ${integrityErr?.message || 'Unknown error'}`);
-        }
+      if (Platform.OS !== 'android') {
+        throw new Error('Password recovery is available only on genuine Android devices.');
       }
 
-      const res = await MobileApiClient.completePasswordReset({
-        mobile: clean,
-        verificationToken: forgotToken,
-        newPassword,
-      }, attestation);
+      let attestation: PreAuthRecoveryAttestation;
+      try {
+        const salt = await generateSecureRequestSalt();
+        const requestHash = await createPasswordResetCommitment('FORGOT_PASSWORD_COMPLETE', {
+          mobile: clean,
+          verificationToken: forgotToken,
+          newPassword,
+          integrityRequestSalt: salt,
+        });
+        attestation = await MobileIntegrityService.performPreAuthActionAttestation(
+          'FORGOT_PASSWORD_COMPLETE',
+          requestHash,
+          salt
+        );
+      } catch (integrityErr: any) {
+        console.error('[MOBILE-INTEGRITY] Pre-auth recovery complete attestation failed:', integrityErr?.message);
+        throw new Error(`Device integrity attestation failed: ${integrityErr?.message || 'Unknown error'}`);
+      }
+
+      const res = await MobileApiClient.completePasswordReset(
+        {
+          mobile: clean,
+          verificationToken: forgotToken,
+          newPassword,
+        },
+        attestation
+      );
       setShowForgot(false);
       setInfoMsg(res.message || 'Password reset successfully. Please login.');
       setIdentifier(clean);
