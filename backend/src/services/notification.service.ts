@@ -167,9 +167,12 @@ export class NotificationService {
       throw new Error('A valid device token string (between 10 and 500 characters) is required.');
     }
 
-    const validPlatforms = ['ANDROID', 'IOS', 'WEB'];
-    const platform = (input.platform || 'ANDROID').toUpperCase();
-    const finalPlatform = validPlatforms.includes(platform) ? platform : 'ANDROID';
+    const validPlatforms = ['ANDROID', 'WEB'];
+    const platform = (input.platform || 'ANDROID').trim().toUpperCase();
+    if (!validPlatforms.includes(platform)) {
+      throw new Error('Invalid platform. Supported platforms are ANDROID and WEB.');
+    }
+    const finalPlatform = platform;
 
     // Limit active tokens per user (max 10 active devices) to prevent token table exhaustion
     const activeTokens = await prisma.pushDeviceToken.findMany({

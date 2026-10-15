@@ -265,7 +265,7 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
               <div className="text-3xl font-black text-slate-900">
-                ₹{Number(stats.rewardsThisMonth || 0).toLocaleString('en-IN')}
+                {Number(stats.rewardsThisMonth || 0).toLocaleString('en-IN')} Points
               </div>
               <div className="text-xs text-slate-400 mt-2 font-medium">
                 Direct cashback rewards
@@ -326,7 +326,7 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
               <div className="text-3xl font-black text-slate-900">
-                ₹{stats.rewardsThisMonth.toLocaleString('en-IN')}
+                {stats.rewardsThisMonth.toLocaleString('en-IN')} Points
               </div>
               <div className="text-xs text-slate-400 mt-2 font-medium">
                 Dynamic incentive rules applied
@@ -377,28 +377,28 @@ export default function AdminDashboardPage() {
               <div className="p-4 bg-slate-50 rounded-xl">
                 <span className="text-xs font-semibold text-slate-500 block mb-1">Available Wallet Liability</span>
                 <span className="text-xl font-black text-slate-900">
-                  ₹{Number(stats.availableWalletLiability || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(stats.availableWalletLiability || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                 </span>
                 <span className="text-[10px] text-slate-400 block mt-1">Payable on demand</span>
               </div>
               <div className="p-4 bg-amber-50 rounded-xl">
                 <span className="text-xs font-semibold text-amber-700 block mb-1">Reserved In-Flight</span>
                 <span className="text-xl font-black text-amber-900">
-                  ₹{Number(stats.reservedWalletLiability || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(stats.reservedWalletLiability || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                 </span>
                 <span className="text-[10px] text-amber-600 block mt-1">Pending payout approval</span>
               </div>
               <div className="p-4 bg-emerald-50 rounded-xl">
                 <span className="text-xs font-semibold text-emerald-700 block mb-1">Total Rewards Credited</span>
                 <span className="text-xl font-black text-emerald-900">
-                  ₹{Number(stats.totalRewardsCredited || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(stats.totalRewardsCredited || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                 </span>
                 <span className="text-[10px] text-emerald-600 block mt-1">All-time ledger credits</span>
               </div>
               <div className="p-4 bg-purple-50 rounded-xl">
                 <span className="text-xs font-semibold text-purple-700 block mb-1">Settled Disbursements</span>
                 <span className="text-xl font-black text-purple-900">
-                  ₹{Number(stats.totalRedeemed || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(stats.totalRedeemed || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                 </span>
                 <span className="text-[10px] text-purple-600 block mt-1">Disbursed via RazorpayX</span>
               </div>
@@ -408,7 +408,7 @@ export default function AdminDashboardPage() {
                 <div className="flex items-center space-x-2">
                   <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
                   <span className="font-semibold">
-                    Attention: {stats.failedPayouts} disbursement(s) totaling ₹{Number(stats.failedPayoutAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} require operational review.
+                    Attention: {stats.failedPayouts} disbursement(s) totaling {Number(stats.failedPayoutAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points require operational review.
                   </span>
                 </div>
                 <button
@@ -489,7 +489,7 @@ export default function AdminDashboardPage() {
                           ₹{Number(b.grossBillAmount || b.billAmount || 0).toLocaleString('en-IN')}
                         </td>
                         <td className="py-3.5 px-4 font-bold text-emerald-600">
-                          ₹{Number(b.calculatedReward || 0).toLocaleString('en-IN')}
+                          {Number(b.calculatedReward || 0).toLocaleString('en-IN')} Points
                         </td>
                         <td className="py-3.5 px-4">
                           <span
@@ -592,7 +592,7 @@ export default function AdminDashboardPage() {
                 <div className="p-3 bg-emerald-50 rounded-xl">
                   <span className="text-emerald-700 block font-semibold">Calculated Reward:</span>
                   <span className="font-black text-emerald-900 text-sm">
-                    ₹{Number(readOnlyBill.calculatedReward || 0).toLocaleString('en-IN')}
+                    {Number(readOnlyBill.calculatedReward || 0).toLocaleString('en-IN')} Points
                   </span>
                 </div>
               </div>

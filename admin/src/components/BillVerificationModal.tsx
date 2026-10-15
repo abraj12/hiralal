@@ -82,6 +82,30 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
     }
   };
 
+  // Auto-refresh signed document URL on mount to prevent expired presigned links
+  useEffect(() => {
+    let active = true;
+    if (bill?.id) {
+      setDocLoading(true);
+      setDocError(null);
+      AdminApiClient.getBillDocumentUrl(bill.id)
+        .then((res) => {
+          if (active && res && res.documentUrl) {
+            setDocUrl(res.documentUrl);
+          }
+        })
+        .catch((err) => {
+          console.warn('Auto-refresh document URL notice:', err?.message);
+        })
+        .finally(() => {
+          if (active) setDocLoading(false);
+        });
+    }
+    return () => {
+      active = false;
+    };
+  }, [bill?.id]);
+
   const targetUrl = docUrl || bill.fileUrl;
   const isPdf = Boolean(
     bill.fileName?.toLowerCase().endsWith('.pdf') ||
@@ -266,7 +290,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
             <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl flex items-center space-x-2">
               <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
               <span>
-                <strong>Verified & Approved:</strong> ₹{calculatedReward.toFixed(2)} was credited to{' '}
+                <strong>Verified & Approved:</strong> {calculatedReward.toFixed(2)} Points was credited to{' '}
                 {workerFullName}'s rewards wallet using an active snapshot reward rule.
               </span>
             </div>
@@ -410,9 +434,15 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
 
               <div>
                 <span className="text-[11px] text-slate-400 font-medium block">Calculated Reward</span>
-                <span className="text-sm font-extrabold text-emerald-600">
-                  ₹{calculatedReward.toFixed(2)}
-                </span>
+                {isPending && rewardPercentage === null && !rulesUnavailable ? (
+                  <span className="inline-flex items-center text-xs font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded animate-pulse mt-0.5">
+                    Calculating...
+                  </span>
+                ) : (
+                  <span className="text-sm font-extrabold text-emerald-600">
+                    {calculatedReward.toFixed(2)} Points
+                  </span>
+                )}
                 <span className="text-[10px] text-emerald-700 font-medium block mt-0.5">
                   {rewardPercentage !== null ? `@${rewardPercentage}%` : 'Rule unavailable'}
                   {ruleVersion !== null ? ` (v${ruleVersion})` : ''}
@@ -631,7 +661,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 <span>
                   {isSubmitting
                     ? 'Approving...'
-                    : `Approve & Credit ₹${calculatedReward.toFixed(2)}`}
+                    : `Approve & Credit ${calculatedReward.toFixed(2)} Points`}
                 </span>
               </button>
             </div>

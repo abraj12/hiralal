@@ -587,7 +587,7 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
                   <View style={styles.reviewCard}>
                     <View style={styles.reviewRow}>
                       <Text style={styles.reviewLabel}>Reward Amount</Text>
-                      <Text style={styles.reviewValueLarge}>₹{amountToRedeem.toLocaleString('en-IN')}</Text>
+                      <Text style={styles.reviewValueLarge}>{amountToRedeem.toLocaleString('en-IN')} Points</Text>
                     </View>
 
                     <View style={styles.divider} />
@@ -637,7 +637,7 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
                     {isSubmitting ? (
                       <ActivityIndicator color="#ffffff" />
                     ) : (
-                      <Text style={styles.primaryButtonText}>Confirm & Redeem ₹{amountToRedeem}</Text>
+                      <Text style={styles.primaryButtonText}>Confirm & Redeem {amountToRedeem} Points</Text>
                     )}
                   </TouchableOpacity>
                 </View>
@@ -657,7 +657,7 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
                       ? 'Transfer Completed Successfully!'
                       : 'Submitted! Awaiting Admin Approval'}
                   </Text>
-                  <Text style={styles.successAmount}>₹{amountToRedeem.toLocaleString('en-IN')}</Text>
+                  <Text style={styles.successAmount}>{amountToRedeem.toLocaleString('en-IN')} Points</Text>
                   <Text style={styles.successDesc}>
                     {payoutResult?.status === 'SUCCESS' || payoutResult?.status === 'PROCESSED'
                       ? `Your rewards payout has been successfully transferred to your verified payment account (${maskedPayment}).`

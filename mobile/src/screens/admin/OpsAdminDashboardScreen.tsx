@@ -117,7 +117,7 @@ export default function OpsAdminDashboardScreen({
             <Wallet size={16} color="#D97706" />
           </View>
           <Text style={[styles.statValue, { color: '#B45309' }]}>
-            ₹{Number(stats.availableWalletLiability ?? 0).toLocaleString('en-IN')}
+            {Number(stats.availableWalletLiability ?? 0).toLocaleString('en-IN')} Points
           </Text>
           <Text style={styles.statDesc}>Craftsman claimable points</Text>
         </View>
@@ -133,7 +133,7 @@ export default function OpsAdminDashboardScreen({
             <CreditCard size={16} color="#DC2626" />
           </View>
           <Text style={[styles.statValue, { color: '#B91C1C' }]}>
-            ₹{Number(stats.pendingPayoutAmount ?? 0).toLocaleString('en-IN')}
+            {Number(stats.pendingPayoutAmount ?? 0).toLocaleString('en-IN')} Points
           </Text>
           <Text style={styles.statDesc}>{stats.pendingPayouts ?? 0} batches awaiting release</Text>
         </TouchableOpacity>
@@ -145,7 +145,7 @@ export default function OpsAdminDashboardScreen({
             <CheckCircle2 size={16} color="#16A34A" />
           </View>
           <Text style={[styles.statValue, { color: '#15803D' }]}>
-            ₹{Number(stats.totalRedeemed ?? 0).toLocaleString('en-IN')}
+            {Number(stats.totalRedeemed ?? 0).toLocaleString('en-IN')} Points
           </Text>
           <Text style={styles.statDesc}>{stats.successfulPayouts ?? 0} successful settlements</Text>
         </View>
@@ -157,7 +157,7 @@ export default function OpsAdminDashboardScreen({
             <TrendingUp size={16} color="#2563EB" />
           </View>
           <Text style={[styles.statValue, { color: '#1D4ED8' }]}>
-            ₹{Number(stats.totalRewardsCredited ?? 0).toLocaleString('en-IN')}
+            {Number(stats.totalRewardsCredited ?? 0).toLocaleString('en-IN')} Points
           </Text>
           <Text style={styles.statDesc}>All-time incentive points</Text>
         </View>

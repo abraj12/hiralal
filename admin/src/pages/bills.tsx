@@ -377,7 +377,7 @@ export default function AdminBillsPage() {
                         {/* Calculated Reward */}
                         <td className="py-4 px-4 whitespace-nowrap">
                           <div className="font-black text-emerald-600 text-sm">
-                            ₹{rewardAmt.toLocaleString('en-IN')}
+                            {rewardAmt.toLocaleString('en-IN')} Points
                           </div>
                           {(b.rewardRateSnapshot || b.rewardPercentage) && (
                             <div className="text-[10px] text-emerald-700 font-semibold">

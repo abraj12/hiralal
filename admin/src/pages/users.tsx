@@ -291,7 +291,7 @@ export default function AdminUsersPage() {
                       </span>
                     </td>
                     <td className="py-4 px-4 font-black text-slate-900 text-sm">
-                      ₹{u.walletBalance.toLocaleString('en-IN')}
+                      {u.walletBalance.toLocaleString('en-IN')} Points
                     </td>
                     <td className="py-4 px-4 font-semibold text-slate-600">
                       {u.billsCount} invoices
@@ -529,7 +529,7 @@ export default function AdminUsersPage() {
                                 Available Balance
                               </span>
                               <span className="text-2xl font-black text-blue-950">
-                                ₹{Number(detailsData.wallet?.availableBalance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                {Number(detailsData.wallet?.availableBalance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })} Points
                               </span>
                               <span className="text-[10px] text-blue-600 block mt-1">Available for redemption</span>
                             </div>
@@ -538,7 +538,7 @@ export default function AdminUsersPage() {
                                 Reserved In-Flight
                               </span>
                               <span className="text-2xl font-black text-amber-950">
-                                ₹{Number(detailsData.wallet?.processingAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                {Number(detailsData.wallet?.processingAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })} Points
                               </span>
                               <span className="text-[10px] text-amber-600 block mt-1">Held during payout processing</span>
                             </div>
@@ -547,7 +547,7 @@ export default function AdminUsersPage() {
                                 Total Redeemed
                               </span>
                               <span className="text-2xl font-black text-emerald-950">
-                                ₹{Number(detailsData.wallet?.totalRedeemed || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                {Number(detailsData.wallet?.totalRedeemed || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })} Points
                               </span>
                               <span className="text-[10px] text-emerald-600 block mt-1">Lifetime disbursed rewards</span>
                             </div>
@@ -686,7 +686,7 @@ export default function AdminUsersPage() {
                                       ₹{Number(b.billAmount || 0).toLocaleString('en-IN')}
                                     </td>
                                     <td className="py-3 px-4 font-bold text-emerald-600">
-                                      ₹{Number(b.calculatedReward || 0).toLocaleString('en-IN')}
+                                      {Number(b.calculatedReward || 0).toLocaleString('en-IN')} Points
                                     </td>
                                     <td className="py-3 px-4">
                                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -748,7 +748,7 @@ export default function AdminUsersPage() {
                                   <tr key={p.id} className="hover:bg-slate-50/70">
                                     <td className="py-3 px-4 font-mono font-bold text-slate-900">{p.id}</td>
                                     <td className="py-3 px-4 font-bold text-slate-900">
-                                      ₹{Number(p.amount || 0).toLocaleString('en-IN')}
+                                      {Number(p.amount || 0).toLocaleString('en-IN')} Points
                                     </td>
                                     <td className="py-3 px-4 font-semibold text-slate-600">{p.paymentType}</td>
                                     <td className="py-3 px-4">
@@ -825,10 +825,10 @@ export default function AdminUsersPage() {
                                         ? 'text-emerald-600'
                                         : 'text-slate-900'
                                     }`}>
-                                      {l.type === 'REWARD_CREDIT' || l.type === 'REDEMPTION_REFUND' ? '+' : '-'}₹{Number(l.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                      {l.type === 'REWARD_CREDIT' || l.type === 'REDEMPTION_REFUND' ? '+' : '-'}{Number(l.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })} Points
                                     </td>
                                     <td className="py-3 px-4 font-bold text-slate-700">
-                                      ₹{Number(l.balanceAfter || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                      {Number(l.balanceAfter || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })} Points
                                     </td>
                                     <td className="py-3 px-4 text-slate-500 truncate max-w-xs">
                                       {l.description || '—'}

@@ -927,10 +927,9 @@ export default function AdminSettingsPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Minimum Redemption Threshold (₹)
+                    Minimum Redemption Threshold (Points)
                   </label>
                   <div className="relative">
-                    <span className="absolute left-3.5 top-2.5 text-xs font-bold text-slate-400">₹</span>
                     <input
                       type="number"
                       step="1"
@@ -938,7 +937,7 @@ export default function AdminSettingsPage() {
                       value={minimumRedemptionAmount}
                       onChange={(e) => setMinimumRedemptionAmount(e.target.value)}
                       placeholder="e.g. 500"
-                      className="w-full pl-8 pr-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800"
+                      className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800"
                       required
                     />
                   </div>
@@ -969,7 +968,7 @@ export default function AdminSettingsPage() {
                   100% Full-Balance Redemption Policy Enforced
                 </p>
                 <p className="text-[11px] text-amber-800 leading-relaxed">
-                  Mobile workers must accumulate at least ₹{minimumRedemptionAmount || '0'} to initiate redemption during an active window. When redeemed, their entire available balance is transferred in full — no partial amounts, no pool restrictions, and no ₹50,000 monthly rewards caps.
+                  Mobile workers must accumulate at least {minimumRedemptionAmount || '0'} Points to initiate redemption during an active window. When redeemed, their entire available balance is transferred in full — no partial amounts, and no pool restrictions.
                 </p>
               </div>
 

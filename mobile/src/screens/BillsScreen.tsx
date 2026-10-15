@@ -169,7 +169,7 @@ export default function BillsScreen() {
                       ]}
                     >
                       {isApproved
-                        ? `+₹${Number(b.calculatedReward || 0).toLocaleString('en-IN')}`
+                        ? `+${Number(b.calculatedReward || 0).toLocaleString('en-IN')} Points`
                         : isRejected
                         ? 'Rejected'
                         : 'Awaiting Review'}
@@ -228,7 +228,7 @@ export default function BillsScreen() {
                       ]}
                     >
                       {selectedBill.status === 'APPROVED'
-                        ? `+₹${Number(selectedBill.calculatedReward || 0).toLocaleString('en-IN')}`
+                        ? `+${Number(selectedBill.calculatedReward || 0).toLocaleString('en-IN')} Points`
                         : selectedBill.status === 'REJECTED'
                         ? 'Rejected'
                         : 'Pending Verification'}

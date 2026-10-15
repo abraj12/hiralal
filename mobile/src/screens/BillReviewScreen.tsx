@@ -107,7 +107,7 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
     setReviewBill(bill);
     setDocUrl(bill.fileUrl || null);
     setDocError(null);
-    setDocLoading(false);
+    setDocLoading(true);
     setReviewGstIncluded(false);
     setReviewGstOverrideReason('');
     setReviewConfig(null);
@@ -115,20 +115,32 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
     setReviewConfigLoading(true);
 
     try {
-      const res = await MobileApiClient.getAdminBillReviewConfig(bill.id);
-      setReviewConfig(res);
-      if (res && res.gstRules && res.gstRules.length > 0) {
-        const defaultRule = res.gstRules.find((r: GstRuleOption) => r.isDefault) || res.gstRules[0];
+      const [configRes, docRes] = await Promise.all([
+        MobileApiClient.getAdminBillReviewConfig(bill.id),
+        MobileApiClient.getAdminBillDocumentUrl(bill.id).catch((err: any) => {
+          console.warn('Document URL auto-fetch warning:', err?.message);
+          return null;
+        }),
+      ]);
+
+      setReviewConfig(configRes);
+      if (configRes && configRes.gstRules && configRes.gstRules.length > 0) {
+        const defaultRule = configRes.gstRules.find((r: GstRuleOption) => r.isDefault) || configRes.gstRules[0];
         setReviewGstRuleId(defaultRule.id);
         setReviewGstRate(Number(defaultRule.ratePercentage));
       } else {
         setReviewGstRuleId(undefined);
         setReviewGstRate(undefined);
       }
+
+      if (docRes && docRes.documentUrl) {
+        setDocUrl(docRes.documentUrl);
+      }
     } catch (err: any) {
       setReviewConfigError(err?.message || 'Failed to load bill review rules.');
     } finally {
       setReviewConfigLoading(false);
+      setDocLoading(false);
     }
   };
 
@@ -218,7 +230,10 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
 
     setActionLoading(rejectId);
     try {
-      await MobileApiClient.verifyAdminBill(rejectId, 'REJECT', rejectReason.trim());
+      await MobileApiClient.verifyAdminBill(rejectId, {
+        action: 'REJECT',
+        rejectionReason: rejectReason.trim(),
+      });
       setRejectId(null);
       setRejectReason('');
       await fetchBills();
@@ -267,7 +282,7 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={styles.detailLabel}>Bill Amount</Text>
             <Text style={styles.amountVal}>₹{Number(item.billAmount || 0).toLocaleString('en-IN')}</Text>
-            <Text style={styles.rewardVal}>Reward: ₹{Number(item.calculatedReward || 0).toLocaleString('en-IN')}</Text>
+            <Text style={styles.rewardVal}>Reward: {Number(item.calculatedReward || 0).toLocaleString('en-IN')} Points</Text>
           </View>
         </View>
 
@@ -614,7 +629,7 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
                       Estimated Reward ({rewardRate !== undefined ? `${rewardRate}%` : 'Unavailable'}):
                     </Text>
                     <Text style={[styles.breakdownRowValue, { color: '#059669', fontWeight: '800' }]}>
-                      ₹{calculatedReward.toFixed(2)}
+                      {calculatedReward.toFixed(2)} Points
                     </Text>
                   </View>
                 </View>

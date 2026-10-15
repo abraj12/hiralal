@@ -100,7 +100,7 @@ export default function HomeScreen() {
                   <View style={styles.billRight}>
                     <Text style={[styles.rewardAmount, { color: isApproved ? '#16A34A' : '#64748B' }]}>
                       {isApproved
-                        ? `+₹${Number(item.calculatedReward || 0).toLocaleString('en-IN')}`
+                        ? `+${Number(item.calculatedReward || 0).toLocaleString('en-IN')} Points`
                         : isRejected
                         ? 'Rejected'
                         : 'Under Review'}

@@ -412,25 +412,25 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
                 <View style={styles.ledgerBox}>
                   <Text style={styles.ledgerLabel}>Total Credited</Text>
                   <Text style={styles.ledgerValue}>
-                    ₹{Number(rewardsStats?.totalRewardsCredited ?? 0).toLocaleString('en-IN')}
+                    {Number(rewardsStats?.totalRewardsCredited ?? 0).toLocaleString('en-IN')} Points
                   </Text>
                 </View>
                 <View style={styles.ledgerBox}>
                   <Text style={styles.ledgerLabel}>Active Liability</Text>
                   <Text style={[styles.ledgerValue, { color: '#D97706' }]}>
-                    ₹{Number(rewardsStats?.availableWalletLiability ?? 0).toLocaleString('en-IN')}
+                    {Number(rewardsStats?.availableWalletLiability ?? 0).toLocaleString('en-IN')} Points
                   </Text>
                 </View>
                 <View style={styles.ledgerBox}>
                   <Text style={styles.ledgerLabel}>Settled Payouts</Text>
                   <Text style={[styles.ledgerValue, { color: '#16A34A' }]}>
-                    ₹{Number(rewardsStats?.totalRedeemed ?? 0).toLocaleString('en-IN')}
+                    {Number(rewardsStats?.totalRedeemed ?? 0).toLocaleString('en-IN')} Points
                   </Text>
                 </View>
                 <View style={styles.ledgerBox}>
                   <Text style={styles.ledgerLabel}>Pending Release</Text>
                   <Text style={[styles.ledgerValue, { color: '#DC2626' }]}>
-                    ₹{Number(rewardsStats?.pendingPayoutAmount ?? 0).toLocaleString('en-IN')}
+                    {Number(rewardsStats?.pendingPayoutAmount ?? 0).toLocaleString('en-IN')} Points
                   </Text>
                 </View>
               </View>
@@ -603,7 +603,7 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
                 </View>
 
                 <View style={styles.settingInputWrap}>
-                  <Text style={styles.inputLabel}>Minimum Claim Amount (₹) *</Text>
+                  <Text style={styles.inputLabel}>Minimum Claim Amount (Points) *</Text>
                   <TextInput
                     style={styles.textInput}
                     value={minRedemptionAmt}

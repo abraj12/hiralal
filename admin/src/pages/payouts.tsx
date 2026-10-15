@@ -210,7 +210,7 @@ export default function AdminPayoutsPage() {
                         </span>
                       </td>
                       <td className="py-4 px-4 font-black text-slate-900 text-sm">
-                        ₹{Number(p.amount || 0).toLocaleString('en-IN')}
+                        {Number(p.amount || 0).toLocaleString('en-IN')} Points
                       </td>
                       <td className="py-4 px-4">
                         <div className="font-semibold text-slate-800 flex items-center space-x-1.5">
@@ -300,7 +300,7 @@ export default function AdminPayoutsPage() {
                 <div className="p-3 bg-red-50 rounded-xl border border-red-200/80 text-xs text-red-800">
                   <p className="font-bold">Refund Notice:</p>
                   <p className="mt-0.5 text-[11px]">
-                    Rejecting this payout will automatically reverse the hold on the craftsman's wallet balance (₹{Number(rejectModalPayout.amount).toLocaleString('en-IN')}) and refund it immediately with an immutable ledger entry.
+                    Rejecting this payout will automatically reverse the hold on the craftsman's wallet balance ({Number(rejectModalPayout.amount).toLocaleString('en-IN')} Points) and refund it immediately with an immutable ledger entry.
                   </p>
                 </div>
 
@@ -314,7 +314,7 @@ export default function AdminPayoutsPage() {
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs space-y-1">
                   <div>Professional: <span className="font-bold text-slate-900">{rejectModalPayout.userName}</span></div>
                   <div>Account: <span className="font-mono text-slate-700">{rejectModalPayout.maskedAccount}</span></div>
-                  <div>Amount: <span className="font-bold text-slate-900">₹{Number(rejectModalPayout.amount).toLocaleString('en-IN')}</span></div>
+                  <div>Amount: <span className="font-bold text-slate-900">{Number(rejectModalPayout.amount).toLocaleString('en-IN')} Points</span></div>
                 </div>
 
                 <div>
@@ -379,7 +379,7 @@ export default function AdminPayoutsPage() {
                   <div>
                     <span className="text-slate-400 block font-semibold">Amount</span>
                     <span className="text-xl font-black text-slate-900">
-                      ₹{Number(inspectPayout.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      {Number(inspectPayout.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })} Points
                     </span>
                   </div>
                   <span className={`px-2.5 py-1 rounded-full font-bold text-[11px] ${

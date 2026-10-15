@@ -244,7 +244,7 @@ export default function OpsAdminUsersScreen() {
 
                   <View style={styles.userWalletCol}>
                     <Text style={styles.walletBalText}>
-                      Points: <Text style={{ fontWeight: '800', color: '#0F172A' }}>₹{Number(item.wallet?.availableBalance || 0).toLocaleString('en-IN')}</Text>
+                      Points: <Text style={{ fontWeight: '800', color: '#0F172A' }}>{Number(item.wallet?.availableBalance || 0).toLocaleString('en-IN')}</Text>
                     </Text>
                   </View>
                 </View>
@@ -279,13 +279,13 @@ export default function OpsAdminUsersScreen() {
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Available Cashback</Text>
                       <Text style={styles.detailValue}>
-                        ₹{Number(selectedUser?.wallet?.availableBalance || 0).toLocaleString('en-IN')}
+                        {Number(selectedUser?.wallet?.availableBalance || 0).toLocaleString('en-IN')} Points
                       </Text>
                     </View>
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Lifetime Rewards</Text>
                       <Text style={styles.detailValue}>
-                        ₹{Number(selectedUser?.wallet?.totalEarned || 0).toLocaleString('en-IN')}
+                        {Number(selectedUser?.wallet?.totalEarned || 0).toLocaleString('en-IN')} Points
                       </Text>
                     </View>
                     <View style={styles.detailRow}>

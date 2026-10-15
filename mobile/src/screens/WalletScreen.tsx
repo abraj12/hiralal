@@ -49,22 +49,22 @@ export default function WalletScreen() {
         {/* Main Balance Card */}
         <View style={styles.balanceCard}>
           <Text style={styles.balanceLabel}>Redeemable Balance</Text>
-          <Text style={styles.balanceValue}>₹{wallet.availableBalance.toLocaleString('en-IN')}</Text>
+          <Text style={styles.balanceValue}>{wallet.availableBalance.toLocaleString('en-IN')} Points</Text>
 
           <View style={styles.balanceSubRow}>
             <View style={styles.balanceSubItem}>
               <Text style={styles.subLabel}>Lifetime</Text>
-              <Text style={styles.subVal}>₹{(wallet.lifetimeCashback ?? (wallet.availableBalance + wallet.totalRedeemed + wallet.processingAmount)).toLocaleString('en-IN')}</Text>
+              <Text style={styles.subVal}>{(wallet.lifetimeCashback ?? (wallet.availableBalance + wallet.totalRedeemed + wallet.processingAmount)).toLocaleString('en-IN')} Points</Text>
             </View>
             <View style={styles.balanceDivider} />
             <View style={styles.balanceSubItem}>
               <Text style={styles.subLabel}>Redeemed</Text>
-              <Text style={styles.subVal}>₹{wallet.totalRedeemed.toLocaleString('en-IN')}</Text>
+              <Text style={styles.subVal}>{wallet.totalRedeemed.toLocaleString('en-IN')} Points</Text>
             </View>
             <View style={styles.balanceDivider} />
             <View style={styles.balanceSubItem}>
               <Text style={styles.subLabel}>Pending</Text>
-              <Text style={styles.subVal}>₹{wallet.processingAmount.toLocaleString('en-IN')}</Text>
+              <Text style={styles.subVal}>{wallet.processingAmount.toLocaleString('en-IN')} Points</Text>
             </View>
           </View>
 
@@ -111,8 +111,8 @@ export default function WalletScreen() {
           >
             <Text style={styles.redeemBtnText}>
               {canInitiateKyc
-                ? `Verify KYC & Redeem ₹${wallet.availableBalance.toLocaleString('en-IN')}`
-                : `Redeem Cashback ₹${wallet.availableBalance.toLocaleString('en-IN')}`}
+                ? `Verify KYC & Redeem ${wallet.availableBalance.toLocaleString('en-IN')} Points`
+                : `Redeem Cashback ${wallet.availableBalance.toLocaleString('en-IN')} Points`}
             </Text>
           </TouchableOpacity>
 
@@ -189,7 +189,7 @@ export default function WalletScreen() {
                           { color: isCredit ? '#16A34A' : '#0F172A' },
                         ]}
                       >
-                        {isCredit ? '+' : '-'}₹{Math.abs(Number(t.amount)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {isCredit ? '+' : '-'}{Math.abs(Number(t.amount)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                       </Text>
                       <Text style={styles.txDate}>
                         {new Date(t.createdAt).toLocaleDateString('en-IN', {
@@ -200,7 +200,7 @@ export default function WalletScreen() {
                       </Text>
                       {typeof t.balanceAfter === 'number' && (
                         <Text style={styles.txBalAfter}>
-                          Bal: ₹{Number(t.balanceAfter).toLocaleString('en-IN')}
+                          Bal: {Number(t.balanceAfter).toLocaleString('en-IN')} Points
                         </Text>
                       )}
                     </View>

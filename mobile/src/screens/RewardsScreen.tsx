@@ -77,7 +77,7 @@ export default function RewardsScreen() {
           <View style={styles.heroRow}>
             <View>
               <Text style={styles.heroSub}>{theme.myRewardsTitle}</Text>
-              <Text style={styles.heroValue}>₹{Number(totalRewards).toLocaleString('en-IN')}</Text>
+              <Text style={styles.heroValue}>{Number(totalRewards).toLocaleString('en-IN')} Points</Text>
             </View>
             <Image
               source={require('../../assets/rewards_illustration.png')}
@@ -90,11 +90,11 @@ export default function RewardsScreen() {
           <View style={styles.heroMetricsGrid}>
             <View style={styles.metricItem}>
               <Text style={styles.metricLabel}>Processing</Text>
-              <Text style={styles.metricVal}>₹{Number(processingAmount).toLocaleString('en-IN')}</Text>
+              <Text style={styles.metricVal}>{Number(processingAmount).toLocaleString('en-IN')} Points</Text>
             </View>
             <View style={styles.metricItem}>
               <Text style={styles.metricLabel}>Available</Text>
-              <Text style={styles.metricVal}>₹{Number(availableBalance).toLocaleString('en-IN')}</Text>
+              <Text style={styles.metricVal}>{Number(availableBalance).toLocaleString('en-IN')} Points</Text>
             </View>
             <View style={styles.metricItem}>
               <Text style={styles.metricLabel}>Approved Bills</Text>
@@ -153,7 +153,7 @@ export default function RewardsScreen() {
                         <Text style={styles.cardInvoice}>{item.invoiceNumber}</Text>
                       </View>
                       <Text style={styles.cardRewardGreen}>
-                        +₹{amount.toLocaleString('en-IN')}
+                        +{amount.toLocaleString('en-IN')} Points
                       </Text>
                     </View>
 
@@ -231,7 +231,7 @@ export default function RewardsScreen() {
                       </View>
                       <View style={{ alignItems: 'flex-end' }}>
                         <Text style={[styles.cardReward, { color: isCredit ? '#16A34A' : '#0F172A' }]}>
-                          {isCredit ? '+' : '-'}₹{Math.abs(Number(t.amount)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {isCredit ? '+' : '-'}{Math.abs(Number(t.amount)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                         </Text>
                         <Text style={styles.ledgerDate}>
                           {new Date(t.createdAt).toLocaleDateString('en-IN', {
@@ -246,7 +246,7 @@ export default function RewardsScreen() {
                     {typeof t.balanceAfter === 'number' && (
                       <View style={styles.cardFooterRow}>
                         <Text style={styles.balanceAfterText}>
-                          Balance After: ₹{Number(t.balanceAfter).toLocaleString('en-IN')}
+                          Balance After: {Number(t.balanceAfter).toLocaleString('en-IN')} Points
                         </Text>
                       </View>
                     )}

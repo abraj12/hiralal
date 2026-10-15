@@ -15,7 +15,7 @@ export default function StatusCards() {
         </View>
         <View style={styles.textColumn}>
           <Text style={styles.amountText}>
-            ₹{wallet.processingAmount.toLocaleString('en-IN')}
+            {wallet.processingAmount.toLocaleString('en-IN')} Points
           </Text>
           <Text style={styles.labelOrange}>Processing</Text>
         </View>
@@ -28,7 +28,7 @@ export default function StatusCards() {
         </View>
         <View style={styles.textColumn}>
           <Text style={styles.amountText}>
-            ₹{wallet.availableBalance.toLocaleString('en-IN')}
+            {wallet.availableBalance.toLocaleString('en-IN')} Points
           </Text>
           <Text style={styles.labelGreen}>Available</Text>
         </View>

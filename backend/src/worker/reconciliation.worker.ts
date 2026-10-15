@@ -39,6 +39,26 @@ export class ReconciliationWorker {
 
     for (const payout of stuckPayouts) {
       try {
+        // Atomic compare-and-swap lease claim to prevent concurrent worker instances
+        // from simultaneously querying the payment gateway for the same stuck payout
+        const claimTime = new Date();
+        const claimResult = await prisma.payout.updateMany({
+          where: {
+            id: payout.id,
+            status: payout.status,
+            updatedAt: payout.updatedAt,
+          },
+          data: {
+            lastReconciledAt: claimTime,
+            reconciliationAttempts: { increment: 1 },
+          },
+        });
+
+        if (claimResult.count === 0) {
+          // Another worker instance claimed or modified this payout concurrently
+          continue;
+        }
+
         let razorpayPayout: any = null;
 
         // 1. Fetch by razorpayPayoutId if known
@@ -102,38 +122,33 @@ export class ReconciliationWorker {
             console.log(`[RECONCILIATION] Payout ${payout.id} reversed as FAILED (${reason}) via gateway status.`);
           } else {
             // Still in 'queued' or 'processing'
-            await prisma.payout.update({
-              where: { id: payout.id },
-              data: {
-                razorpayPayoutId: payout.razorpayPayoutId || razorpayPayout.id,
-                lastReconciledAt: new Date(),
-                reconciliationAttempts: { increment: 1 },
-              },
-            });
+            if (!payout.razorpayPayoutId && razorpayPayout.id) {
+              await prisma.payout.update({
+                where: { id: payout.id },
+                data: {
+                  razorpayPayoutId: razorpayPayout.id,
+                },
+              });
+            }
           }
         } else {
           // Missing search result is NOT authoritative proof of gateway failure.
           // Keep funds safely reserved. Record reconciliation attempt and escalate to manual review after threshold.
-          const nextAttempts = (payout.reconciliationAttempts || 0) + 1;
+          const currentAttempts = (payout.reconciliationAttempts || 0) + 1;
           const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
-          const shouldEscalate = nextAttempts >= 5 || payout.createdAt <= twentyMinutesAgo;
+          const shouldEscalate = currentAttempts >= 5 || payout.createdAt <= twentyMinutesAgo;
 
-          await prisma.payout.update({
-            where: { id: payout.id },
-            data: {
-              reconciliationAttempts: nextAttempts,
-              lastReconciledAt: new Date(),
-              requiresManualReview: shouldEscalate,
-              manualReviewReason: shouldEscalate
-                ? `Lookup inconclusive after ${nextAttempts} attempts or 20-minute window; funds held reserved for operator audit.`
-                : null,
-            },
-          });
-
-          if (shouldEscalate) {
+          if (shouldEscalate && !payout.requiresManualReview) {
+            await prisma.payout.update({
+              where: { id: payout.id },
+              data: {
+                requiresManualReview: true,
+                manualReviewReason: `Lookup inconclusive after ${currentAttempts} attempts or 20-minute window; funds held reserved for operator audit.`,
+              },
+            });
             console.warn(`[RECONCILIATION] Payout ${payout.id} escalated to MANUAL REVIEW. Funds remain safely reserved.`);
           } else {
-            console.log(`[RECONCILIATION] Payout ${payout.id} lookup attempt ${nextAttempts} inconclusive. Retrying on next cycle.`);
+            console.log(`[RECONCILIATION] Payout ${payout.id} lookup attempt ${currentAttempts} inconclusive. Retrying on next cycle.`);
           }
         }
       } catch (err: any) {

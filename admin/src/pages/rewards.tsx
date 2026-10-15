@@ -125,7 +125,7 @@ export default function AdminRewardsPage() {
                   </div>
                 </div>
                 <div className="text-2xl font-black text-slate-900">
-                  ₹{Number(stats.availableWalletLiability || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(stats.availableWalletLiability || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1">Payable on demand to trade partners</p>
               </div>
@@ -140,7 +140,7 @@ export default function AdminRewardsPage() {
                   </div>
                 </div>
                 <div className="text-2xl font-black text-slate-900">
-                  ₹{Number(stats.rewardsThisMonth || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(stats.rewardsThisMonth || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1">Current monthly cycle credits</p>
               </div>
@@ -155,7 +155,7 @@ export default function AdminRewardsPage() {
                   </div>
                 </div>
                 <div className="text-2xl font-black text-slate-900">
-                  ₹{Number(stats.totalRewardsCredited || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(stats.totalRewardsCredited || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1">All-time ledger credits</p>
               </div>
@@ -170,7 +170,7 @@ export default function AdminRewardsPage() {
                   </div>
                 </div>
                 <div className="text-2xl font-black text-slate-900">
-                  ₹{Number(stats.totalRedeemed || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(stats.totalRedeemed || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1">{stats.successfulPayouts || 0} successful payouts</p>
               </div>
@@ -236,14 +236,14 @@ export default function AdminRewardsPage() {
                 <p className="text-xs text-slate-500 mb-4">Reward disbursements for pipes, fittings & sanitary invoices</p>
                 <div className="flex items-baseline space-x-2">
                   <span className="text-2xl font-black text-blue-600">
-                    ₹{programTotals.PLUMBER.totalAllocated.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {programTotals.PLUMBER.totalAllocated.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                   </span>
                   <span className="text-xs font-semibold text-slate-400">allocated this cycle</span>
                 </div>
                 <div className="mt-4 pt-4 border-t border-slate-100 text-xs text-slate-500 flex justify-between items-center">
                   <span>Average Reward / Bill</span>
                   <span className="font-bold text-slate-800">
-                    ₹{programTotals.PLUMBER.averageReward.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {programTotals.PLUMBER.averageReward.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                   </span>
                 </div>
                 <div className="mt-2 text-[11px] text-slate-400 flex justify-between items-center">
@@ -257,14 +257,14 @@ export default function AdminRewardsPage() {
                 <p className="text-xs text-slate-500 mb-4">Reward disbursements for ceramic, floor tiles & adhesives</p>
                 <div className="flex items-baseline space-x-2">
                   <span className="text-2xl font-black text-orange-600">
-                    ₹{programTotals.TILE_INSTALLER.totalAllocated.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {programTotals.TILE_INSTALLER.totalAllocated.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                   </span>
                   <span className="text-xs font-semibold text-slate-400">allocated this cycle</span>
                 </div>
                 <div className="mt-4 pt-4 border-t border-slate-100 text-xs text-slate-500 flex justify-between items-center">
                   <span>Average Reward / Bill</span>
                   <span className="font-bold text-slate-800">
-                    ₹{programTotals.TILE_INSTALLER.averageReward.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {programTotals.TILE_INSTALLER.averageReward.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Points
                   </span>
                 </div>
                 <div className="mt-2 text-[11px] text-slate-400 flex justify-between items-center">

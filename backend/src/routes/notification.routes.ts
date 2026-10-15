@@ -32,6 +32,9 @@ router.post('/welcome', authenticate, requireUser, welcomeRateLimiter, async (re
 
     const cleanInstallId = installationId.trim();
     const cleanPlatform = typeof platform === 'string' && platform.trim() ? platform.trim().toUpperCase() : 'ANDROID';
+    if (cleanPlatform !== 'ANDROID' && cleanPlatform !== 'WEB') {
+      return res.status(400).json({ success: false, message: 'Invalid platform. Supported platforms are ANDROID and WEB.' });
+    }
     const authUserId = req.user!.id;
 
     const title = 'Welcome to Hiralal and Sons!';
