@@ -30,7 +30,7 @@ export default function RewardCard({ onPress }: RewardCardProps) {
         <View style={styles.amountRow}>
           <View>
             <Text style={styles.amountText}>
-              {totalRewards.toLocaleString('en-IN')} Points
+              {Number(totalRewards || 0).toLocaleString('en-IN')} Points
             </Text>
             <Text style={styles.subtext}>Lifetime Earned Rewards</Text>
           </View>

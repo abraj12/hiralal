@@ -63,7 +63,7 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // 100% full balance redemption rule
-  const amountToRedeem = wallet.availableBalance;
+  const amountToRedeem = Number(wallet.availableBalance || 0);
 
   // On open, fetch real eligibility & existing KYC/Account status
   useEffect(() => {

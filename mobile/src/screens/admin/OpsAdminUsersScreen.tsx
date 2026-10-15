@@ -203,8 +203,8 @@ export default function OpsAdminUsersScreen() {
           }
           renderItem={({ item }) => {
             const isPlumber = item.profession === 'PLUMBER';
-            const kycVerified = (item.kycRecords || []).some((k: any) => k.panStatus === 'VERIFIED');
-            const hasBank = (item.paymentAccounts || []).some((p: any) => p.isVerified);
+            const kycVerified = item.panStatus === 'VERIFIED' || (item.kycRecords || []).some((k: any) => k.panStatus === 'VERIFIED');
+            const hasBank = item.paymentStatus === 'VERIFIED' || (item.paymentAccounts || []).some((p: any) => p.isVerified);
 
             return (
               <TouchableOpacity
@@ -249,7 +249,7 @@ export default function OpsAdminUsersScreen() {
 
                   <View style={styles.userWalletCol}>
                     <Text style={styles.walletBalText}>
-                      Points: <Text style={{ fontWeight: '800', color: '#0F172A' }}>{Number(item.wallet?.availableBalance || 0).toLocaleString('en-IN')}</Text>
+                      Points: <Text style={{ fontWeight: '800', color: '#0F172A' }}>{Number(item.walletBalance ?? item.wallet?.availableBalance ?? 0).toLocaleString('en-IN')}</Text>
                     </Text>
                   </View>
                 </View>
@@ -290,7 +290,7 @@ export default function OpsAdminUsersScreen() {
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Lifetime Rewards</Text>
                       <Text style={styles.detailValue}>
-                        {Number(selectedUser?.wallet?.totalEarned || 0).toLocaleString('en-IN')} Points
+                        {Number(selectedUser?.wallet?.lifetimeCashback ?? selectedUser?.wallet?.totalEarned ?? (Number(selectedUser?.wallet?.availableBalance || 0) + Number(selectedUser?.wallet?.totalRedeemed || 0) + Number(selectedUser?.wallet?.processingAmount || 0))).toLocaleString('en-IN')} Points
                       </Text>
                     </View>
                     <View style={styles.detailRow}>

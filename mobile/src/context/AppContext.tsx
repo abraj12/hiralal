@@ -169,11 +169,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const storedUser = await MobileApiClient.getStoredUser();
 
         if (token && storedUser && (storedUser.role === 'BILL_ADMIN' || storedUser.role === 'OPERATIONS_ADMIN')) {
-          if (mounted) {
-            setUser(storedUser);
-            setCurrentScreen('MAIN');
+          try {
+            // Validate admin session liveness against backend
+            await MobileApiClient.getAdminDashboard('ALL');
+            if (mounted) {
+              setUser(storedUser);
+              setCurrentScreen('MAIN');
+            }
+            return;
+          } catch (adminErr) {
+            console.warn('[AUTH] Stored admin session is invalid or expired:', adminErr);
+            await MobileApiClient.clearAllTokens();
+            if (mounted) {
+              setUser(null);
+              setCurrentScreen('WELCOME');
+            }
+            return;
           }
-          return;
         }
 
         if (token) {

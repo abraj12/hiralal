@@ -645,6 +645,17 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
                   <Text style={{ color: '#475569', fontWeight: '700' }}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: '#FEE2E2', borderWidth: 1, borderColor: '#FCA5A5' }]}
+                  onPress={() => {
+                    const idToReject = reviewBill.id;
+                    setReviewBill(null);
+                    setRejectId(idToReject);
+                  }}
+                  disabled={actionLoading === reviewBill.id}
+                >
+                  <Text style={{ color: '#DC2626', fontWeight: '700' }}>Reject Bill</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
                   style={[
                     styles.modalBtn,
                     {

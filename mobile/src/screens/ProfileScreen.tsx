@@ -186,23 +186,14 @@ export default function ProfileScreen() {
   const handlePasswordResetPrompt = () => {
     Alert.alert(
       'Change Security Password',
-      `Would you like to send a password reset verification code to registered mobile +91 ${user?.mobile}?`,
+      'To change your security password, please log out and use the "Forgot Password" verification flow on the login screen.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Send Code',
+          text: 'Log Out & Reset',
+          style: 'destructive',
           onPress: async () => {
-            try {
-              if (user?.mobile) {
-                await MobileApiClient.requestOtp(user.mobile, 'FORGOT_PASSWORD');
-                Alert.alert(
-                  'Code Dispatched',
-                  'A verification code has been dispatched to your mobile number. You can complete password reset using the Forgot Password option.'
-                );
-              }
-            } catch (e: any) {
-              Alert.alert('Error', e.message || 'Unable to dispatch reset code.');
-            }
+            await logout();
           },
         },
       ]

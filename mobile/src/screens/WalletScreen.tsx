@@ -49,22 +49,22 @@ export default function WalletScreen() {
         {/* Main Balance Card */}
         <View style={styles.balanceCard}>
           <Text style={styles.balanceLabel}>Redeemable Balance</Text>
-          <Text style={styles.balanceValue}>{wallet.availableBalance.toLocaleString('en-IN')} Points</Text>
+          <Text style={styles.balanceValue}>{Number(wallet.availableBalance || 0).toLocaleString('en-IN')} Points</Text>
 
           <View style={styles.balanceSubRow}>
             <View style={styles.balanceSubItem}>
               <Text style={styles.subLabel}>Lifetime</Text>
-              <Text style={styles.subVal}>{(wallet.lifetimeCashback ?? (wallet.availableBalance + wallet.totalRedeemed + wallet.processingAmount)).toLocaleString('en-IN')} Points</Text>
+              <Text style={styles.subVal}>{Number(wallet.lifetimeCashback ?? (Number(wallet.availableBalance || 0) + Number(wallet.totalRedeemed || 0) + Number(wallet.processingAmount || 0))).toLocaleString('en-IN')} Points</Text>
             </View>
             <View style={styles.balanceDivider} />
             <View style={styles.balanceSubItem}>
               <Text style={styles.subLabel}>Redeemed</Text>
-              <Text style={styles.subVal}>{wallet.totalRedeemed.toLocaleString('en-IN')} Points</Text>
+              <Text style={styles.subVal}>{Number(wallet.totalRedeemed || 0).toLocaleString('en-IN')} Points</Text>
             </View>
             <View style={styles.balanceDivider} />
             <View style={styles.balanceSubItem}>
               <Text style={styles.subLabel}>Pending</Text>
-              <Text style={styles.subVal}>{wallet.processingAmount.toLocaleString('en-IN')} Points</Text>
+              <Text style={styles.subVal}>{Number(wallet.processingAmount || 0).toLocaleString('en-IN')} Points</Text>
             </View>
           </View>
 
@@ -111,8 +111,8 @@ export default function WalletScreen() {
           >
             <Text style={styles.redeemBtnText}>
               {canInitiateKyc
-                ? `Verify KYC & Redeem ${wallet.availableBalance.toLocaleString('en-IN')} Points`
-                : `Redeem Cashback ${wallet.availableBalance.toLocaleString('en-IN')} Points`}
+                ? `Verify KYC & Redeem ${Number(wallet.availableBalance || 0).toLocaleString('en-IN')} Points`
+                : `Redeem Cashback ${Number(wallet.availableBalance || 0).toLocaleString('en-IN')} Points`}
             </Text>
           </TouchableOpacity>
 

@@ -148,7 +148,7 @@ export default function BillsScreen() {
                   <View>
                     <Text style={styles.billAmountLabel}>Bill Amount</Text>
                     <Text style={styles.billAmountValue}>
-                      ₹{b.billAmount.toLocaleString('en-IN')}
+                      ₹{Number(b.billAmount || 0).toLocaleString('en-IN')}
                     </Text>
                   </View>
 
@@ -210,7 +210,7 @@ export default function BillsScreen() {
                 <View style={styles.detailGrid}>
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Invoice Amount</Text>
-                    <Text style={styles.detailValue}>₹{selectedBill.billAmount.toLocaleString('en-IN')}</Text>
+                    <Text style={styles.detailValue}>₹{Number(selectedBill.billAmount || 0).toLocaleString('en-IN')}</Text>
                   </View>
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Reward Status</Text>
