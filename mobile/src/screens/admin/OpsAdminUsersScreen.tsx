@@ -107,8 +107,8 @@ export default function OpsAdminUsersScreen() {
       Alert.alert('Name Required', 'Please enter a valid full name.');
       return;
     }
-    if (!editReason.trim()) {
-      Alert.alert('Reason Required', 'An audit reason is required for legal name adjustments.');
+    if (!editReason.trim() || editReason.trim().length < 5) {
+      Alert.alert('Reason Required', 'A documented justification reason (at least 5 characters) is required for audit compliance.');
       return;
     }
 

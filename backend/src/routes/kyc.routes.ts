@@ -37,7 +37,7 @@ router.post('/pan/verify', authenticate, requireUser, kycLimiter, requireActionI
         panStatus: record.panStatus,
         maskedPan: record.maskedPan,
         panName: record.panName,
-        verifiedName: record.verifiedName,
+        verifiedName: record.verifiedName || record.panName,
         nameMatched: record.nameMatched,
         verifiedAt: record.verifiedAt,
       },

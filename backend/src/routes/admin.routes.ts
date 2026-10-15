@@ -41,8 +41,8 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
     const approvedBillsCount = await prisma.bill.count({ where: { ...billWhere, status: 'APPROVED' } });
     const rejectedBillsCount = await prisma.bill.count({ where: { ...billWhere, status: 'REJECTED' } });
 
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const { year: istYear, month: istMonth } = getIstYearAndMonth();
+    const startOfMonth = new Date(`${istYear}-${String(istMonth).padStart(2, '0')}-01T00:00:00+05:30`);
 
     const monthBills = await prisma.bill.findMany({
       where: {
@@ -101,7 +101,7 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
     const kycVerifiedCount = await prisma.user.count({
       where: {
         ...userWhere,
-        kycRecords: { some: { panStatus: 'VERIFIED' } },
+        kycRecords: { some: { panStatus: 'VERIFIED', nameMatched: true } },
       },
     });
 
@@ -146,8 +146,7 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
     });
     const totalRewardsCredited = Number(totalRewardsCreditedAgg._sum.amount || 0);
 
-    const { year: istYear, month: istMonth } = getIstYearAndMonth();
-    const istStartOfMonth = new Date(`${istYear}-${String(istMonth).padStart(2, '0')}-01T00:00:00+05:30`);
+    const istStartOfMonth = startOfMonth;
 
     const monthlyRewardCredits = await prisma.walletTransaction.findMany({
       where: {

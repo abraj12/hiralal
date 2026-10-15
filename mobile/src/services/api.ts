@@ -535,7 +535,7 @@ export class MobileApiClient {
 
   // Bills
   static getBills(status = 'ALL') {
-    return this.request(`/bills?status=${status}`);
+    return this.request(`/bills?status=${encodeURIComponent(status)}`);
   }
 
   static async uploadBill(
@@ -860,11 +860,11 @@ export class MobileApiClient {
   }
 
   static getAdminUserDetails(id: string) {
-    return this.request(`/admin/users/${id}`);
+    return this.request(`/admin/users/${encodeURIComponent(id)}`);
   }
 
   static updateAdminUserName(id: string, data: { fullName: string; reason: string; firstName?: string; middleName?: string; lastName?: string }) {
-    return this.request(`/admin/users/${id}/name`, {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/name`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -908,7 +908,7 @@ export class MobileApiClient {
         ? { action: actionOrOptions, rejectionReason: legacyRejectionReason }
         : actionOrOptions;
 
-    return this.request(`/admin/bills/${id}/verify`, {
+    return this.request(`/admin/bills/${encodeURIComponent(id)}/verify`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -920,7 +920,7 @@ export class MobileApiClient {
   }
 
   static handleAdminPayout(id: string, action: 'APPROVE' | 'REJECT', reason?: string) {
-    return this.request(`/admin/payouts/${id}/action`, {
+    return this.request(`/admin/payouts/${encodeURIComponent(id)}/action`, {
       method: 'POST',
       body: JSON.stringify({ action, reason }),
     });
@@ -979,14 +979,20 @@ export class MobileApiClient {
     targetAudience?: 'ALL' | 'PLUMBER' | 'TILE_INSTALLER';
     idempotencyKey?: string;
   }) {
+    const payload = {
+      ...data,
+      idempotencyKey:
+        data.idempotencyKey ||
+        `idem_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+    };
     return this.request('/admin/notifications/broadcast', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     });
   }
 
   static getAdminNotificationHistory(page = 1, limit = 20) {
-    return this.request(`/admin/notifications/history?page=${page}&limit=${limit}`);
+    return this.request(`/admin/notifications/history?page=${encodeURIComponent(page)}&limit=${encodeURIComponent(limit)}`);
   }
 
   // ==========================================
@@ -994,7 +1000,7 @@ export class MobileApiClient {
   // ==========================================
 
   static getNotifications(page = 1, limit = 20) {
-    return this.request(`/notifications?page=${page}&limit=${limit}`);
+    return this.request(`/notifications?page=${encodeURIComponent(page)}&limit=${encodeURIComponent(limit)}`);
   }
 
   static getUnreadNotificationCount() {
@@ -1002,7 +1008,7 @@ export class MobileApiClient {
   }
 
   static markNotificationRead(id: string) {
-    return this.request(`/notifications/${id}/read`, { method: 'PATCH' });
+    return this.request(`/notifications/${encodeURIComponent(id)}/read`, { method: 'PATCH' });
   }
 
   static markAllNotificationsRead() {

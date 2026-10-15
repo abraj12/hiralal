@@ -111,7 +111,7 @@ export class AdminApiClient {
 
   // Document URL Retrieval with Fresh Signed Access
   static getBillDocumentUrl(id: string) {
-    return this.request(`/admin/bills/${id}/document-url`);
+    return this.request(`/admin/bills/${encodeURIComponent(id)}/document-url`);
   }
 
   // Bill Review Configuration (Read-only, Bill Admin Authorized)
@@ -132,11 +132,11 @@ export class AdminApiClient {
   }
 
   static getUserDetails(id: string) {
-    return this.request(`/admin/users/${id}`);
+    return this.request(`/admin/users/${encodeURIComponent(id)}`);
   }
 
   static updateUserName(id: string, data: { fullName: string; reason: string; firstName?: string; middleName?: string; lastName?: string }) {
-    return this.request(`/admin/users/${id}/name`, {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/name`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -165,7 +165,7 @@ export class AdminApiClient {
       ? { action: actionOrOptions, rejectionReason: legacyRejectionReason }
       : actionOrOptions;
 
-    return this.request(`/admin/bills/${id}/verify`, {
+    return this.request(`/admin/bills/${encodeURIComponent(id)}/verify`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -182,7 +182,7 @@ export class AdminApiClient {
     action: 'APPROVE' | 'REJECT',
     reason?: string
   ) {
-    return this.request(`/admin/payouts/${id}/action`, {
+    return this.request(`/admin/payouts/${encodeURIComponent(id)}/action`, {
       method: 'POST',
       body: JSON.stringify({ action, reason }),
     });
@@ -285,14 +285,14 @@ export class AdminApiClient {
   }
 
   static sendDirectNotification(userId: string, data: { title: string; message: string }) {
-    return this.request(`/admin/notifications/users/${userId}`, {
+    return this.request(`/admin/notifications/users/${encodeURIComponent(userId)}`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   static getNotificationHistory(page = 1, limit = 20) {
-    return this.request(`/admin/notifications/history?page=${page}&limit=${limit}`);
+    return this.request(`/admin/notifications/history?page=${encodeURIComponent(page)}&limit=${encodeURIComponent(limit)}`);
   }
 
   // Admin Password-First OTP-Second Authentication Flow

@@ -28,6 +28,7 @@ import {
   FileText,
 } from 'lucide-react-native';
 import { MobileApiClient } from '../../services/api';
+import { parseIndiaIsoDateTime } from '../../utils/date-utils';
 
 type MoreSubTab = 'REWARDS' | 'BROADCAST' | 'AUDIT' | 'SETTINGS';
 
@@ -244,23 +245,32 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
           return;
         }
 
-        const startParsed = new Date(`${startDate.trim()}T${startTime.trim()}:00+05:30`);
-        const endParsed = new Date(`${endDate.trim()}T${endTime.trim()}:00+05:30`);
-
-        if (isNaN(startParsed.getTime()) || isNaN(endParsed.getTime())) {
-          Alert.alert('Invalid Date', 'Please enter dates in YYYY-MM-DD format and times in HH:MM format.');
+        let startParsed: string;
+        let endParsed: string;
+        try {
+          startParsed = parseIndiaIsoDateTime(startDate.trim(), startTime.trim());
+        } catch (err: any) {
+          Alert.alert('Invalid Start Date/Time', err?.message || 'Invalid start date or time format.');
           setSavingSettings(false);
           return;
         }
 
-        if (endParsed.getTime() <= startParsed.getTime()) {
+        try {
+          endParsed = parseIndiaIsoDateTime(endDate.trim(), endTime.trim());
+        } catch (err: any) {
+          Alert.alert('Invalid End Date/Time', err?.message || 'Invalid end date or time format.');
+          setSavingSettings(false);
+          return;
+        }
+
+        if (new Date(endParsed).getTime() <= new Date(startParsed).getTime()) {
           Alert.alert('Invalid Range', 'Closing date/time must be after opening date/time.');
           setSavingSettings(false);
           return;
         }
 
-        startAt = startParsed.toISOString();
-        endAt = endParsed.toISOString();
+        startAt = startParsed;
+        endAt = endParsed;
 
         if (!minRedemptionAmt.trim() || isNaN(Number(minRedemptionAmt)) || Number(minRedemptionAmt) <= 0) {
           Alert.alert('Threshold Required', 'Please enter a valid positive minimum redemption amount.');
@@ -269,12 +279,18 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
         }
       } else {
         if (startDate.trim() && startTime.trim()) {
-          const s = new Date(`${startDate.trim()}T${startTime.trim()}:00+05:30`);
-          if (!isNaN(s.getTime())) startAt = s.toISOString();
+          try {
+            startAt = parseIndiaIsoDateTime(startDate.trim(), startTime.trim());
+          } catch {
+            // Retain original or omit if invalid when disabled
+          }
         }
         if (endDate.trim() && endTime.trim()) {
-          const e = new Date(`${endDate.trim()}T${endTime.trim()}:00+05:30`);
-          if (!isNaN(e.getTime())) endAt = e.toISOString();
+          try {
+            endAt = parseIndiaIsoDateTime(endDate.trim(), endTime.trim());
+          } catch {
+            // Retain original or omit if invalid when disabled
+          }
         }
       }
 
