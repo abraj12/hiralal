@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { authenticate, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { NotificationService } from '../services/notification.service';
+import { pushTokenLimiter } from '../middleware/rateLimit.middleware';
 
 const router = Router();
 router.use(authenticate);
@@ -9,7 +10,7 @@ router.use(authenticate);
  * POST /api/push-token/register
  * Registers or reactivates a device push token for the authenticated user.
  */
-router.post('/register', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/register', pushTokenLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     const { token, platform } = req.body;

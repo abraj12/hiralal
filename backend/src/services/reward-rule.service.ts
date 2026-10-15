@@ -56,7 +56,7 @@ export class RewardRuleService {
   /**
    * Creates a new versioned reward rule for a profession atomically.
    * Append-only: historical rule rows are preserved completely immutable.
-   * Enforces business percentage limits (0.01% - 10.00%), strict date validation,
+   * Enforces business percentage limits (0.01% - 100.00%), strict date validation,
    * safe advisory lock concurrency serialization, and atomic audit logging.
    */
   static async createRule(

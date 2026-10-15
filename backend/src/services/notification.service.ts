@@ -163,13 +163,26 @@ export class NotificationService {
    */
   static async registerDeviceToken(userId: string, input: { token: string; platform?: string }) {
     const token = String(input.token || '').trim();
-    if (!token || token.length < 10) {
-      throw new Error('A valid device token string (at least 10 characters) is required.');
+    if (!token || token.length < 10 || token.length > 500) {
+      throw new Error('A valid device token string (between 10 and 500 characters) is required.');
     }
 
     const validPlatforms = ['ANDROID', 'IOS', 'WEB'];
     const platform = (input.platform || 'ANDROID').toUpperCase();
     const finalPlatform = validPlatforms.includes(platform) ? platform : 'ANDROID';
+
+    // Limit active tokens per user (max 10 active devices) to prevent token table exhaustion
+    const activeTokens = await prisma.pushDeviceToken.findMany({
+      where: { userId, isActive: true },
+      orderBy: { updatedAt: 'asc' },
+    });
+    if (activeTokens.length >= 10) {
+      const tokensToDeactivate = activeTokens.slice(0, activeTokens.length - 9);
+      await prisma.pushDeviceToken.updateMany({
+        where: { id: { in: tokensToDeactivate.map((t) => t.id) } },
+        data: { isActive: false },
+      });
+    }
 
     return await prisma.pushDeviceToken.upsert({
       where: { token },
@@ -216,11 +229,23 @@ export class NotificationService {
    * Audited, idempotent, and creates both in-app records and push dispatches.
    */
   static async broadcastToWorkers(adminId: string, input: BroadcastInput) {
-    if (!input.title || !input.title.trim()) {
+    const title = String(input.title || '').trim();
+    const message = String(input.message || '').trim();
+
+    if (!title) {
       throw new Error('Broadcast title is required.');
     }
-    if (!input.message || !input.message.trim()) {
+    if (title.length > 150) {
+      throw new Error('Broadcast title must not exceed 150 characters.');
+    }
+    if (!message) {
       throw new Error('Broadcast message is required.');
+    }
+    if (message.length > 1000) {
+      throw new Error('Broadcast message must not exceed 1000 characters.');
+    }
+    if (input.metadata && JSON.stringify(input.metadata).length > 4096) {
+      throw new Error('Broadcast metadata payload must not exceed 4KB.');
     }
 
     const audience = input.targetAudience || 'ALL';
@@ -262,8 +287,8 @@ export class NotificationService {
     const campaign = await prisma.$transaction(async (tx) => {
       const newCampaign = await tx.notificationCampaign.create({
         data: {
-          title: input.title.trim(),
-          message: input.message.trim(),
+          title,
+          message,
           targetAudience: audience,
           recipientCount,
           createdByAdminId: adminId,
@@ -273,19 +298,23 @@ export class NotificationService {
       });
 
       if (targetUsers.length > 0) {
-        await tx.notification.createMany({
-          data: targetUsers.map((u) => ({
-            userId: u.id,
-            title: input.title.trim(),
-            message: input.message.trim(),
-            type: 'ANNOUNCEMENT',
-            metadata: {
-              campaignId: newCampaign.id,
-              audience,
-              ...(input.metadata || {}),
-            },
-          })),
-        });
+        const BATCH_SIZE = 500;
+        for (let i = 0; i < targetUsers.length; i += BATCH_SIZE) {
+          const batch = targetUsers.slice(i, i + BATCH_SIZE);
+          await tx.notification.createMany({
+            data: batch.map((u) => ({
+              userId: u.id,
+              title,
+              message,
+              type: 'ANNOUNCEMENT',
+              metadata: {
+                campaignId: newCampaign.id,
+                audience,
+                ...(input.metadata || {}),
+              },
+            })),
+          });
+        }
       }
 
       await tx.auditLog.create({

@@ -9,6 +9,7 @@ export interface AppConfig {
   port: number;
   nodeEnv: string;
   isProduction: boolean;
+  isSensitiveEnv: boolean;
   databaseUrl: string;
   encryptionKey: string;
   fieldEncryptionKey: string;
@@ -90,6 +91,7 @@ export interface AppConfig {
 
 const nodeEnv = process.env.NODE_ENV || 'development';
 const isProduction = nodeEnv === 'production';
+const isSensitiveEnv = ['production', 'staging', 'uat'].includes(nodeEnv) || isProduction;
 const rawRole = (process.env.SERVICE_ROLE || 'api').toLowerCase();
 const ALLOWED_ROLES = ['api', 'worker', 'migration', 'cron'] as const;
 type ServiceRole = typeof ALLOWED_ROLES[number];
@@ -98,6 +100,24 @@ if (!ALLOWED_ROLES.includes(rawRole as any)) {
   throw new Error(`[FATAL] Invalid SERVICE_ROLE "${rawRole}". Allowed roles: ${ALLOWED_ROLES.join(', ')}`);
 }
 const serviceRole = rawRole as ServiceRole;
+
+/**
+ * Calculates Shannon entropy for a given string to measure information density and detect repetitive/trivial keys.
+ */
+export function calculateShannonEntropy(str: string): number {
+  if (!str) return 0;
+  const frequencies = new Map<string, number>();
+  for (const char of str) {
+    frequencies.set(char, (frequencies.get(char) || 0) + 1);
+  }
+  let entropy = 0;
+  const len = str.length;
+  for (const count of frequencies.values()) {
+    const p = count / len;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
 
 /**
  * Helper to identify unsafe example, placeholder, or low-entropy default values.
@@ -164,7 +184,21 @@ export function isUnsafeProductionValue(name: string, value: string | undefined)
   if (!value || !value.trim()) {
     return true;
   }
-  return isPlaceholderCredential(value);
+  if (isPlaceholderCredential(value)) {
+    return true;
+  }
+  const trimmed = value.trim();
+  // Check for repetitive/low-entropy keys on secret/key/password variables
+  const isKeyVar = /secret|key|password/i.test(name);
+  if (isKeyVar && trimmed.length >= 16) {
+    const uniqueChars = new Set(trimmed).size;
+    const entropy = calculateShannonEntropy(trimmed);
+    // Keys >= 16 chars should have at least 5 distinct characters and entropy >= 2.0
+    if (uniqueChars < 5 || entropy < 2.0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function validateProductionConfig(role: ServiceRole = serviceRole, env: Record<string, string | undefined> = process.env): void {
@@ -719,8 +753,8 @@ if (rawBillPrefix && rawOpsPrefix && rawBillPrefix === rawOpsPrefix) {
   throw new Error('[FATAL] BILL_ADMIN_PREFIX and OPERATIONS_ADMIN_PREFIX must not collide after normalization.');
 }
 
-// Production Fail-Fast Validation
-if (isProduction) {
+// Production & Sensitive Environment Fail-Fast Validation
+if (isSensitiveEnv) {
   validateProductionConfig(serviceRole, process.env);
 }
 
@@ -767,6 +801,7 @@ export const config: AppConfig = {
   port: parseInt(process.env.PORT || '5000', 10),
   nodeEnv,
   isProduction,
+  isSensitiveEnv,
   databaseUrl: process.env.DATABASE_URL || 'postgresql://postgres:1234@localhost:5432/hiralal_rewards?schema=public',
   encryptionKey: process.env.ENCRYPTION_KEY || 'hiralal_aes256_secret_key_32bytes_sample_dev_only!',
   fieldEncryptionKey: process.env.FIELD_ENCRYPTION_KEY || 'hiralal_field_aes256_32bytes_key_dev_only!',
@@ -808,7 +843,7 @@ export const config: AppConfig = {
     accountNumber: process.env.RAZORPAYX_ACCOUNT_NUMBER || '',
     webhookSecret:
       process.env.RAZORPAYX_WEBHOOK_SECRET ||
-      (nodeEnv === 'production' ? '' : 'webhook_secret_hiralal_rzpx_2026'),
+      (isSensitiveEnv ? '' : 'webhook_secret_hiralal_rzpx_2026'),
   },
 
   sms: {

@@ -125,3 +125,24 @@ python3 scripts/verify-deployment-health.py '{"status":"ok"}' '{"status":"ready"
   - `build_target`: `both`, `aab`, or `apk`.
 - **Signing Secrets**: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`.
 - **Output**: Verified signed `.aab` / `.apk`, `apksigner verify` signature summary, and `SHA256SUMS.txt`. Keystore material is securely erased after build.
+
+---
+
+### 8. Repository Security & GitHub Branch Protection Ruleset
+
+To protect production stability and ensure all financial and security controls remain uncompromised:
+
+1. **Target Branch**: Configure Branch Protection Ruleset on `main`.
+2. **Require Pull Request Reviews**:
+   - Minimum 1 approved review from senior repository maintainer.
+   - Dismiss stale approvals when new commits are pushed.
+   - Require review from Code Owners if applicable.
+3. **Require Status Checks to Pass Before Merging**:
+   - Require branches to be up to date before merging.
+   - Mandatory checks: `ci / test`, `ci / lint-and-typecheck`.
+4. **Prevent Direct Pushes & Force Pushes**:
+   - Block `git push --force` completely.
+   - Block branch deletion.
+5. **Linear Commit History**:
+   - Require linear history (Squash and merge or rebase).
+

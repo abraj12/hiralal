@@ -1,6 +1,8 @@
 import request from 'supertest';
+import jwt from 'jsonwebtoken';
 import { app } from '../server';
 import { prisma } from '../db';
+import { config } from '../config';
 import { AuthService } from '../services/auth.service';
 import { sha256Hash } from '../utils/crypto.utils';
 import { closeRedis, checkRedisConnection, isRedisReady, getRedisClient } from '../redis';
@@ -342,5 +344,33 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
     expect(refreshRes.status).toBe(401);
     expect(refreshRes.body.success).toBe(false);
   });
+
+  test('10. Sessionless JWTs are rejected with 401 when active session is present or in sensitive environments', async () => {
+    // 1. Log in to establish fresh active session
+    const loginRes = await request(app)
+      .post('/api/auth/login')
+      .send({ mobile: testMobile, password: 'NewSecretPassword@2026' });
+
+    expect(loginRes.status).toBe(200);
+    const { user } = loginRes.body;
+
+    // 2. Craft a token WITHOUT sessionId
+    const sessionlessToken = jwt.sign(
+      { userId: user.id, role: user.role, mobile: user.mobile },
+      config.jwt.accessSecret,
+      { expiresIn: '15m' }
+    );
+
+    // 3. Attempt authenticated request with sessionless token
+    const res = await request(app)
+      .get('/api/wallet')
+      .set('x-enforce-session', 'true')
+      .set('Authorization', `Bearer ${sessionlessToken}`);
+
+    // Must be rejected with 401
+    expect(res.status).toBe(401);
+    expect(res.body.success).toBe(false);
+  });
 });
+
 

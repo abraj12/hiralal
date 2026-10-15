@@ -23,7 +23,7 @@ describe('Concurrency & Financial Integrity Tests', () => {
     craftsmanUser = await prisma.user.create({
       data: {
         mobile: '9777777777',
-        fullName: 'Concurrency Test Craftsman',
+        fullName: 'Concurrency Craftsman',
         passwordHash: 'hash',
         profession: 'PLUMBER',
         role: 'USER',

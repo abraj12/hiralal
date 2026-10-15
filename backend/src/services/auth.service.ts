@@ -1331,9 +1331,7 @@ export class AuthService {
       throw new Error(nameValidation.error || 'Please enter a valid first name.');
     }
 
-    if (!params.password || params.password.length < 6) {
-      throw new Error('Password must be at least 6 characters long.');
-    }
+    AuthService.validatePassword(params.password, 'Password');
 
     if (!['PLUMBER', 'TILE_INSTALLER'].includes(params.profession)) {
       throw new Error('Profession must be either PLUMBER or TILE_INSTALLER.');
@@ -1849,17 +1847,7 @@ export class AuthService {
       throw new Error(PASSWORD_RESET_INVALID_MESSAGE);
     }
 
-    if (typeof params.newPassword !== 'string') {
-      throw new Error('Password must be a valid string.');
-    }
-
-    if (params.newPassword.length < 6) {
-      throw new Error('New password must be at least 6 characters long.');
-    }
-
-    if (Buffer.byteLength(params.newPassword, 'utf8') > 72) {
-      throw new Error('Password exceeds the maximum supported length.');
-    }
+    AuthService.validatePassword(params.newPassword, 'New password');
 
     const tokenHash = sha256Hash(params.verificationToken);
     const newHash = await bcrypt.hash(params.newPassword, 12);
@@ -2066,6 +2054,18 @@ export class AuthService {
       lastName: result.lastName,
       isNameLocked: result.isNameLocked,
     };
+  }
+
+  public static validatePassword(password: unknown, fieldName = 'Password'): void {
+    if (typeof password !== 'string') {
+      throw new Error('Password must be a valid string.');
+    }
+    if (password.length < 6) {
+      throw new Error(`${fieldName} must be at least 6 characters long.`);
+    }
+    if (Buffer.byteLength(password, 'utf8') > 72) {
+      throw new Error('Password exceeds the maximum supported length.');
+    }
   }
 
   private static generateAccessToken(userId: string, role: UserRole, mobile: string, sessionId?: string): string {

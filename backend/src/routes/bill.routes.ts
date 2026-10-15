@@ -7,7 +7,8 @@ import { StorageService } from '../services/storage.service';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { BillStatus } from '@prisma/client';
 import { parseIndiaBusinessDate } from '../utils/timezone.utils';
-import { requireActionIntegrity } from '../middleware/integrity.middleware';
+import { requireActionIntegrity, requirePreStreamIntegrityHeaders } from '../middleware/integrity.middleware';
+import { billUploadLimiter } from '../middleware/rateLimit.middleware';
 
 const router = Router();
 const upload = multer({
@@ -15,7 +16,6 @@ const upload = multer({
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB file limit
     files: 1, // Only 1 file per upload
-    fields: 10, // Max 10 text fields
     fieldNameSize: 100, // Max 100 characters for field names
     fieldSize: 64 * 1024, // 64KB per field
     parts: 15, // Max 15 parts total
@@ -25,7 +25,15 @@ const upload = multer({
 /**
  * Upload Bill Invoice
  */
-router.post('/', authenticate, requireUser, upload.single('invoiceFile'), requireActionIntegrity('BILL_UPLOAD'), async (req: AuthenticatedRequest, res: Response) => {
+router.post(
+  '/',
+  authenticate,
+  requireUser,
+  billUploadLimiter,
+  requirePreStreamIntegrityHeaders('BILL_UPLOAD'),
+  upload.single('invoiceFile'),
+  requireActionIntegrity('BILL_UPLOAD'),
+  async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const { invoiceNumber, invoiceDate, billAmount, remarks } = req.body;

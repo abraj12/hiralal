@@ -18,6 +18,8 @@ import {
   adminAccountLoginLimiter,
   integrityNonceLimiter,
   integrityVerifyLimiter,
+  registerIpLimiter,
+  adminPrefixesLimiter,
 } from '../middleware/rateLimit.middleware';
 import { prisma } from '../db';
 import { config } from '../config';
@@ -52,7 +54,7 @@ function setAdminCookie(res: Response, token?: string) {
 // 0. PUBLIC ADMIN PREFIXES DISCOVERY
 // ==========================================
 
-router.get('/admin-prefixes', (_req: Request, res: Response) => {
+router.get('/admin-prefixes', adminPrefixesLimiter, (_req: Request, res: Response) => {
   res.json({
     success: true,
     prefixes: {
@@ -105,7 +107,7 @@ router.post('/verify-otp', otpVerifyIpLimiter, otpVerifyLimiter, handleOtpVerify
 // 2. REGISTRATION (Consumes verificationToken)
 // ==========================================
 
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', registerIpLimiter, async (req: Request, res: Response) => {
   try {
     const { mobile, firstName, middleName, lastName, fullName, password, profession, verificationToken, otpCode } = req.body;
     if (!mobile || (!firstName && !fullName) || !password) {

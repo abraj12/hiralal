@@ -279,3 +279,36 @@ export const integrityVerifyLimiter = createRateLimiter({
   getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
   message: 'Too many integrity verification attempts. Please wait before retrying.',
 });
+
+export const billUploadLimiter = createRateLimiter({
+  keyPrefix: 'bill:upload',
+  limit: config.isProduction ? 10 : 30,
+  windowSeconds: 900, // 10 uploads per 15 minutes
+  getIdentifier: (req: any) => (req.user?.id ? `user:${req.user.id}` : `ip:${req.ip || 'unknown'}`),
+  message: 'Bill upload rate limit reached. Please wait 15 minutes before uploading more invoices.',
+});
+
+export const pushTokenLimiter = createRateLimiter({
+  keyPrefix: 'push:register',
+  limit: config.isProduction ? 10 : 60,
+  windowSeconds: 600, // 10 requests per 10 minutes
+  getIdentifier: (req: any) => (req.user?.id ? `user:${req.user.id}` : `ip:${req.ip || 'unknown'}`),
+  message: 'Push token registration rate limit reached. Please wait before retrying.',
+});
+
+export const registerIpLimiter = createRateLimiter({
+  keyPrefix: 'auth:register:ip',
+  limit: config.isProduction ? 5 : 30,
+  windowSeconds: 900, // 5 registrations per 15 minutes per IP
+  getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
+  message: 'Too many registration attempts from this network. Please wait 15 minutes before trying again.',
+});
+
+export const adminPrefixesLimiter = createRateLimiter({
+  keyPrefix: 'auth:admin_prefixes:ip',
+  limit: config.isProduction ? 60 : 300,
+  windowSeconds: 900, // 60 requests per 15 minutes
+  getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
+  message: 'Too many admin prefix discovery requests. Please wait before retrying.',
+});
+

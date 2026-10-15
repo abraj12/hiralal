@@ -392,6 +392,9 @@ describe('Part B & C — Pool-Free Reward Integrity, Volume Scaling, Self-Approv
       expect(areNamesMatching('Ramesh Kumar', 'RAMESH KUMAR')).toBe(true);
       expect(areNamesMatching('Kumar Ramesh', 'Ramesh Kumar')).toBe(true);
       expect(areNamesMatching('Shri Ramesh Kumar', 'Ramesh Kumar')).toBe(true);
+      expect(areNamesMatching('R K Sharma', 'Rajesh Kumar Sharma')).toBe(true);
+      expect(areNamesMatching('Rahul Singh', 'Rahul Kumar Singh')).toBe(false);
+      expect(areNamesMatching('Amit Kumar', 'Amit Kumar Verma')).toBe(false);
       expect(areNamesMatching('Ramesh Kumar', 'Vijay Mallya')).toBe(false);
     });
 

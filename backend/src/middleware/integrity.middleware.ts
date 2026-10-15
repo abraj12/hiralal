@@ -187,3 +187,28 @@ export function requirePreAuthActionIntegrity(action: IntegrityAction) {
     }
   };
 }
+
+/**
+ * Fast pre-stream middleware for multipart uploads.
+ * Verifies that the required integrity headers (x-integrity-token, x-integrity-nonce)
+ * are present on the request BEFORE multer streams and buffers the file payload into memory.
+ */
+export function requirePreStreamIntegrityHeaders(action: IntegrityAction) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const isEnforcing = PlayIntegrityService.isEnforcingActions();
+    if (isEnforcing) {
+      const integrityToken = (req.headers['x-integrity-token'] as string) || '';
+      const integrityNonce = (req.headers['x-integrity-nonce'] as string) || '';
+      if (!integrityToken || !integrityNonce) {
+        res.status(403).json({
+          success: false,
+          code: 'INTEGRITY_REQUIRED',
+          message: 'Device integrity attestation is required for file upload.',
+        });
+        return;
+      }
+    }
+    next();
+  };
+}
+

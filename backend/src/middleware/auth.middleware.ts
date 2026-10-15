@@ -181,14 +181,26 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       return;
     }
 
-    // Single active session validation
-    if (decoded.sessionId && (!user.activeSessionId || decoded.sessionId !== user.activeSessionId)) {
-      res.status(401).json({ success: false, message: 'Session expired or invalidated by a newer login or logout.' });
-      return;
-    }
+    // Enforce sessionId presence and single-active-session validation
+    const isSensitive = config.isSensitiveEnv || config.isProduction;
+    const isSessionIdRequired = isSensitive || req.headers['x-enforce-session'] === 'true';
 
-    // If token has a sessionId, verify that the session has not been explicitly revoked in AuthSession
-    if (decoded.sessionId) {
+    if (!decoded.sessionId) {
+      if (isSessionIdRequired) {
+        res.status(401).json({
+          success: false,
+          message: 'Invalid token payload. Session identifier is required.',
+        });
+        return;
+      }
+    } else {
+      // Single active session validation
+      if (!user.activeSessionId || decoded.sessionId !== user.activeSessionId) {
+        res.status(401).json({ success: false, message: 'Session expired or invalidated by a newer login or logout.' });
+        return;
+      }
+
+      // Verify that the session has not been explicitly revoked in AuthSession
       const session = await prisma.authSession.findFirst({
         where: {
           userId: user.id,

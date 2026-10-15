@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import {
   isUnsafeProductionValue,
+  calculateShannonEntropy,
   validateProductionConfig,
   validateProductionSignCare,
   validateProductionFcm,
@@ -14,11 +15,34 @@ const validTestRsaKey = crypto.generateKeyPairSync('rsa', {
 }).privateKey;
 
 describe('Phase 2 — Production Secrets Validation & Safety', () => {
+  describe('calculateShannonEntropy', () => {
+    it('calculates zero entropy for single-character repetitive strings', () => {
+      expect(calculateShannonEntropy('')).toBe(0);
+      expect(calculateShannonEntropy('aaaa')).toBe(0);
+      expect(calculateShannonEntropy('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBe(0);
+    });
+
+    it('calculates low entropy for alternating two-character strings', () => {
+      expect(calculateShannonEntropy('abababababababab')).toBe(1);
+    });
+
+    it('calculates high entropy for random hex keys', () => {
+      const hexKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      expect(calculateShannonEntropy(hexKey)).toBeGreaterThanOrEqual(4.0);
+    });
+  });
+
   describe('isUnsafeProductionValue', () => {
     it('rejects undefined, empty, or whitespace-only values', () => {
       expect(isUnsafeProductionValue('DATABASE_URL', undefined)).toBe(true);
       expect(isUnsafeProductionValue('DATABASE_URL', '')).toBe(true);
       expect(isUnsafeProductionValue('DATABASE_URL', '   ')).toBe(true);
+    });
+
+    it('rejects repetitive low-entropy secrets', () => {
+      expect(isUnsafeProductionValue('JWT_ACCESS_SECRET', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBe(true);
+      expect(isUnsafeProductionValue('ENCRYPTION_KEY', '1234123412341234')).toBe(true);
+      expect(isUnsafeProductionValue('REDIS_PASSWORD', 'bbbbbbbbbbbbbbbbbbbbbbbb')).toBe(true);
     });
 
     it('rejects known forbidden exact values', () => {

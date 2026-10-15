@@ -49,9 +49,20 @@ const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
     // Permit mobile apps, curl, server-to-server requests without Origin header
     if (!origin) return callback(null, true);
-    if (!config.isProduction) return callback(null, true);
+    if (config.nodeEnv === 'test') return callback(null, true);
     if (config.cors.allowedOrigins.includes(origin)) {
       return callback(null, true);
+    }
+    // In development or test, allow local loopback origins
+    if (!config.isProduction && !config.isSensitiveEnv) {
+      try {
+        const parsed = new URL(origin);
+        if (['localhost', '127.0.0.1', '0.0.0.0'].includes(parsed.hostname)) {
+          return callback(null, true);
+        }
+      } catch {
+        // Fall through to reject invalid origin
+      }
     }
     const corsErr: any = new Error(`Origin '${origin}' blocked by Hiralal CORS policy`);
     corsErr.status = 403;
@@ -81,7 +92,7 @@ app.use(cors(corsOptions));
 
 // JSON Body Parser with rawBody preservation for webhooks
 app.use(express.json({
-  limit: '15mb',
+  limit: '1mb',
   verify: (req: any, _res, buf) => {
     req.rawBody = buf;
   },

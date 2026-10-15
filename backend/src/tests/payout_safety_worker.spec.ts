@@ -32,7 +32,7 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
     user = await prisma.user.create({
       data: {
         mobile: '9666666666',
-        fullName: 'Disbursement Safety Craftsman',
+        fullName: 'Disbursement Craftsman',
         passwordHash: 'hash',
         profession: 'PLUMBER',
         role: 'USER',

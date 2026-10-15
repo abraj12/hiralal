@@ -189,19 +189,6 @@ export function compareNames(accountName: string, panVerifiedName: string): bool
     if (allTokensMatch) return true;
   }
 
-  // Shorter name tokens subset check (e.g., "Disbursement Craftsman" vs "Disbursement Safety Craftsman")
-  const [shorter, longer] = accountTokens.length < panTokens.length 
-    ? [accountTokens, panTokens] 
-    : [panTokens, accountTokens];
-
-  if (shorter.length >= 2) {
-    const longerSet = new Set(longer);
-    const allShorterInLonger = shorter.every(tok => longerSet.has(tok));
-    if (allShorterInLonger) {
-      return true;
-    }
-  }
-
   return false;
 }
 

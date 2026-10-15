@@ -21,12 +21,14 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
       return;
     }
 
-    if (config.isProduction && !config.razorpayx.webhookSecret) {
+    const isSensitive = config.isSensitiveEnv || config.isProduction;
+
+    if (isSensitive && !config.razorpayx.webhookSecret) {
       res.status(500).json({ error: 'Webhook secret not configured on server' });
       return;
     }
 
-    if (config.isProduction && !(req as any).rawBody) {
+    if (isSensitive && !(req as any).rawBody) {
       res.status(400).json({ error: 'Raw request body buffer missing for cryptographic verification' });
       return;
     }

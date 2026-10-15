@@ -65,16 +65,25 @@ describe('Phase 3 & Release-Blocker 1 & 2 — Backup Fail-Closed & Restore Finan
       expect(restoredSql).toContain('5420.50');
     });
 
-    it('verifies backward compatibility with legacy OpenSSL AES-256-CBC encrypted backups', async () => {
+    it('verifies legacy OpenSSL AES-256-CBC encrypted backups are rejected without flag and accepted with ALLOW_LEGACY_UNAUTHENTICATED_CBC_BACKUP=true', async () => {
       const testContent = 'Legacy SQL Dump content from earlier backup 2026';
       const legacyCompressed = zlib.gzipSync(Buffer.from(testContent, 'utf8'));
       const legacyEncrypted = encryptLegacyCbcBackup(legacyCompressed, PASSPHRASE);
 
       expect(legacyEncrypted.subarray(0, 8).equals(OPENSSL_MAGIC)).toBe(true);
 
+      // Default: Unauthenticated legacy CBC is rejected fail-closed
+      delete process.env.ALLOW_LEGACY_UNAUTHENTICATED_CBC_BACKUP;
+      expect(() => {
+        decryptBackup(legacyEncrypted, PASSPHRASE);
+      }).toThrow(/Unauthenticated legacy AES-CBC backup rejected/);
+
+      // Explicit flag enabled: Legacy CBC is permitted
+      process.env.ALLOW_LEGACY_UNAUTHENTICATED_CBC_BACKUP = 'true';
       const decrypted = decryptBackup(legacyEncrypted, PASSPHRASE);
       const decompressed = zlib.gunzipSync(decrypted).toString('utf8');
       expect(decompressed).toBe(testContent);
+      delete process.env.ALLOW_LEGACY_UNAUTHENTICATED_CBC_BACKUP;
     });
   });
 

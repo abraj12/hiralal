@@ -14,6 +14,9 @@ function encryptBackupGcm(dataBuffer, passphrase) {
   if (!passphrase || typeof passphrase !== 'string') {
     throw new Error('A secure passphrase is required for backup encryption.');
   }
+  if (passphrase.length < 16) {
+    throw new Error('Passphrase must be at least 16 characters long for backup encryption.');
+  }
 
   const salt = crypto.randomBytes(16);
   const iv = crypto.randomBytes(12);
@@ -47,6 +50,11 @@ function decryptBackup(encryptedBuffer, passphrase) {
 
   // 2. Check for Legacy OpenSSL AES-256-CBC with PBKDF2
   if (encryptedBuffer.length >= 16 && encryptedBuffer.subarray(0, 8).equals(OPENSSL_MAGIC)) {
+    if (process.env.ALLOW_LEGACY_UNAUTHENTICATED_CBC_BACKUP !== 'true') {
+      throw new Error(
+        'Unauthenticated legacy AES-CBC backup rejected. Legacy CBC mode lacks cryptographic authentication and is vulnerable to padding oracle attacks. Set ALLOW_LEGACY_UNAUTHENTICATED_CBC_BACKUP=true to decrypt legacy archives, or migrate to AES-256-GCM.'
+      );
+    }
     const salt = encryptedBuffer.subarray(8, 16);
     const ciphertext = encryptedBuffer.subarray(16);
 
@@ -79,8 +87,8 @@ if (require.main === module) {
     process.exit(1);
   }
 
-  if (!passphrase) {
-    console.error('[FATAL] BACKUP_ENCRYPTION_PASSPHRASE environment variable is missing.');
+  if (!passphrase || passphrase.length < 16) {
+    console.error('[FATAL] BACKUP_ENCRYPTION_PASSPHRASE must be at least 16 characters.');
     process.exit(1);
   }
 
