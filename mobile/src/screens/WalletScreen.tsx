@@ -198,7 +198,7 @@ export default function WalletScreen() {
                           year: 'numeric',
                         })}
                       </Text>
-                      {typeof t.balanceAfter === 'number' && (
+                      {t.balanceAfter != null && !isNaN(Number(t.balanceAfter)) && (
                         <Text style={styles.txBalAfter}>
                           Bal: {Number(t.balanceAfter).toLocaleString('en-IN')} Points
                         </Text>

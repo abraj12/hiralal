@@ -128,6 +128,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [bills, setBills] = useState<any[]>([]);
 
   const refreshData = async () => {
+    if (user && (user.role === 'BILL_ADMIN' || user.role === 'OPERATIONS_ADMIN')) {
+      return;
+    }
     try {
       const [walletRes, billsRes, profileRes, notifRes] = await Promise.all([
         MobileApiClient.getWallet().catch(() => null),

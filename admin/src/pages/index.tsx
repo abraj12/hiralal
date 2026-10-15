@@ -488,8 +488,16 @@ export default function AdminDashboardPage() {
                         <td className="py-3.5 px-4 font-bold text-slate-900">
                           ₹{Number(b.grossBillAmount || b.billAmount || 0).toLocaleString('en-IN')}
                         </td>
-                        <td className="py-3.5 px-4 font-bold text-emerald-600">
-                          {Number(b.calculatedReward || 0).toLocaleString('en-IN')} Points
+                        <td className="py-3.5 px-4">
+                          {b.status === 'APPROVED' ? (
+                            <span className="font-bold text-emerald-600">
+                              +{Number(b.calculatedReward || 0).toLocaleString('en-IN')} Points
+                            </span>
+                          ) : b.status === 'REJECTED' ? (
+                            <span className="text-slate-400 font-semibold text-xs">Rejected</span>
+                          ) : (
+                            <span className="text-amber-600 font-medium text-xs">Pending Review</span>
+                          )}
                         </td>
                         <td className="py-3.5 px-4">
                           <span
@@ -589,10 +597,32 @@ export default function AdminDashboardPage() {
                     ₹{Number(readOnlyBill.grossBillAmount || readOnlyBill.billAmount || 0).toLocaleString('en-IN')}
                   </span>
                 </div>
-                <div className="p-3 bg-emerald-50 rounded-xl">
-                  <span className="text-emerald-700 block font-semibold">Calculated Reward:</span>
-                  <span className="font-black text-emerald-900 text-sm">
-                    {Number(readOnlyBill.calculatedReward || 0).toLocaleString('en-IN')} Points
+                <div className={`p-3 rounded-xl ${
+                  readOnlyBill.status === 'APPROVED'
+                    ? 'bg-emerald-50'
+                    : readOnlyBill.status === 'REJECTED'
+                    ? 'bg-slate-50'
+                    : 'bg-amber-50'
+                }`}>
+                  <span className={`block font-semibold ${
+                    readOnlyBill.status === 'APPROVED'
+                      ? 'text-emerald-700'
+                      : readOnlyBill.status === 'REJECTED'
+                      ? 'text-slate-500'
+                      : 'text-amber-700'
+                  }`}>Reward Status:</span>
+                  <span className={`font-black text-sm ${
+                    readOnlyBill.status === 'APPROVED'
+                      ? 'text-emerald-900'
+                      : readOnlyBill.status === 'REJECTED'
+                      ? 'text-slate-600'
+                      : 'text-amber-800'
+                  }`}>
+                    {readOnlyBill.status === 'APPROVED'
+                      ? `+${Number(readOnlyBill.calculatedReward || 0).toLocaleString('en-IN')} Points`
+                      : readOnlyBill.status === 'REJECTED'
+                      ? 'Rejected'
+                      : 'Pending Review'}
                   </span>
                 </div>
               </div>

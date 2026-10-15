@@ -411,7 +411,7 @@ export class BillService {
           balanceAfter: newBalance,
           referenceType: 'BILL',
           referenceId: bill.id,
-          description: `Reward of ₹${finalReward.toFixed(2)} credited for approved invoice #${bill.invoiceNumber} (${profession})`,
+          description: `Reward of ${Number(finalReward).toLocaleString('en-IN')} Points credited for approved invoice #${bill.invoiceNumber} (${profession})`,
         },
       });
 
@@ -467,7 +467,7 @@ export class BillService {
         data: {
           userId: bill.userId,
           title: 'Bill Approved',
-          message: `Your bill (Invoice #${bill.invoiceNumber || bill.id.slice(0, 8)}) has been approved! ₹${finalReward.toFixed(2)} has been credited to your rewards wallet.`,
+          message: `Your bill (Invoice #${bill.invoiceNumber || bill.id.slice(0, 8)}) has been approved! ${Number(finalReward).toLocaleString('en-IN')} Points reward has been credited to your rewards wallet.`,
           type: 'BILL_APPROVED',
           metadata: {
             billId: bill.id,

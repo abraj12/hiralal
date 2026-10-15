@@ -377,7 +377,7 @@ export class PayoutService {
             balanceAfter: newAvailable,
             referenceType: 'PAYOUT',
             referenceId: newPayout.id,
-            description: `Payout debit of ₹${payoutAmount.toFixed(2)} reserved for ${verifiedAccount.maskedInfo}`,
+            description: `Payout debit of ${Number(payoutAmount).toLocaleString('en-IN')} Points reserved for ${verifiedAccount.maskedInfo}`,
           },
         });
 
@@ -386,7 +386,7 @@ export class PayoutService {
           data: {
             userId,
             title: 'Redemption Request Submitted',
-            message: `Your redemption request of ₹${payoutAmount.toFixed(2)} has been submitted and is pending admin approval.`,
+            message: `Your redemption request of ${Number(payoutAmount).toLocaleString('en-IN')} Points has been submitted and is pending admin approval.`,
             type: 'PAYOUT_PENDING',
           },
         });
@@ -503,7 +503,7 @@ export class PayoutService {
         data: {
           userId: payout.userId,
           title: 'Payout Approved',
-          message: `Your payout request of ₹${Number(payout.amount).toFixed(2)} has been approved and is being dispatched.`,
+          message: `Your payout request of ${Number(payout.amount).toLocaleString('en-IN')} Points has been approved and is being dispatched.`,
           type: 'PAYOUT_APPROVED',
         },
       });
@@ -631,7 +631,7 @@ export class PayoutService {
         data: {
           userId: payout.userId,
           title: 'Payout Request Rejected',
-          message: `Your payout request of ₹${payoutAmount.toFixed(2)} was rejected (${reason.trim()}). The funds have been refunded to your wallet.`,
+          message: `Your payout request of ${Number(payoutAmount).toLocaleString('en-IN')} Points was rejected (${reason.trim()}). The funds have been refunded to your wallet.`,
           type: 'PAYOUT_REJECTED',
         },
       });
@@ -730,7 +730,7 @@ export class PayoutService {
         data: {
           userId: payout.userId,
           title: 'Payout Failed & Refunded',
-          message: `Your payout request of ₹${payoutAmount.toFixed(2)} could not be processed (${reason}). The amount has been refunded back to your wallet.`,
+          message: `Your payout request of ${Number(payoutAmount).toLocaleString('en-IN')} Points could not be processed (${reason}). The amount has been refunded back to your wallet.`,
           type: 'PAYOUT_FAILED',
         },
       });
@@ -842,7 +842,7 @@ export class PayoutService {
         data: {
           userId: payout.userId,
           title: 'Payout Reversed & Credited',
-          message: `Your payout of ₹${payoutAmount.toFixed(2)} was reversed by the banking network (${reason}). The funds have been restored to your available wallet balance.`,
+          message: `Your payout of ${Number(payoutAmount).toLocaleString('en-IN')} Points was reversed by the banking network (${reason}). The funds have been restored to your available wallet balance.`,
           type: 'PAYOUT_FAILED',
         },
       });

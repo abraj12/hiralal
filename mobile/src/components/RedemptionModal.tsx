@@ -637,7 +637,7 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
                     {isSubmitting ? (
                       <ActivityIndicator color="#ffffff" />
                     ) : (
-                      <Text style={styles.primaryButtonText}>Confirm & Redeem {amountToRedeem} Points</Text>
+                      <Text style={styles.primaryButtonText}>Confirm & Redeem {Number(amountToRedeem || 0).toLocaleString('en-IN')} Points</Text>
                     )}
                   </TouchableOpacity>
                 </View>

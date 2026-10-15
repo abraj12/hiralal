@@ -243,7 +243,7 @@ export default function RewardsScreen() {
                       </View>
                     </View>
 
-                    {typeof t.balanceAfter === 'number' && (
+                    {t.balanceAfter != null && !isNaN(Number(t.balanceAfter)) && (
                       <View style={styles.cardFooterRow}>
                         <Text style={styles.balanceAfterText}>
                           Balance After: {Number(t.balanceAfter).toLocaleString('en-IN')} Points
