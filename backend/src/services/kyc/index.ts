@@ -178,6 +178,7 @@ export class KycService {
     const kyc = await prisma.$transaction(async (tx) => {
       const existingRecord = await tx.kycRecord.findFirst({
         where: { userId },
+        orderBy: { createdAt: 'desc' },
       });
 
       let updatedKyc;
@@ -252,6 +253,7 @@ export class KycService {
   static async getUserKycStatus(userId: string) {
     const kyc = await prisma.kycRecord.findFirst({
       where: { userId },
+      orderBy: { createdAt: 'desc' },
     });
 
     if (!kyc) {

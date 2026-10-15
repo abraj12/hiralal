@@ -161,7 +161,11 @@ export class BillService {
           // Mobile worker display: reward is available ONLY when approved
           calculatedReward: isApproved ? Number(b.calculatedReward) : null,
           rewardEarned: isApproved ? Number(b.calculatedReward) : null,
-          message: isApproved ? 'Approved' : 'Bill submitted. Awaiting verification.',
+          message: isApproved
+            ? 'Approved'
+            : b.status === 'REJECTED'
+            ? 'Rejected'
+            : 'Bill submitted. Awaiting verification.',
         };
       })
     );

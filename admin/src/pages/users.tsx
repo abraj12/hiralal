@@ -685,8 +685,16 @@ export default function AdminUsersPage() {
                                     <td className="py-3 px-4 font-bold text-slate-800">
                                       ₹{Number(b.billAmount || 0).toLocaleString('en-IN')}
                                     </td>
-                                    <td className="py-3 px-4 font-bold text-emerald-600">
-                                      {Number(b.calculatedReward || 0).toLocaleString('en-IN')} Points
+                                    <td className="py-3 px-4">
+                                      {b.status === 'APPROVED' ? (
+                                        <span className="font-bold text-emerald-600">
+                                          +{Number(b.calculatedReward || 0).toLocaleString('en-IN')} Points
+                                        </span>
+                                      ) : b.status === 'REJECTED' ? (
+                                        <span className="text-slate-400 font-semibold text-xs">Rejected</span>
+                                      ) : (
+                                        <span className="text-amber-600 font-medium text-xs">Pending Review</span>
+                                      )}
                                     </td>
                                     <td className="py-3 px-4">
                                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${

@@ -258,6 +258,8 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
 
   const renderBill = ({ item }: { item: any }) => {
     const isPending = item.status === 'PENDING' || item.status === 'UNDER_REVIEW';
+    const isApproved = item.status === 'APPROVED';
+    const isRejected = item.status === 'REJECTED';
 
     return (
       <View style={styles.card}>
@@ -282,7 +284,13 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={styles.detailLabel}>Bill Amount</Text>
             <Text style={styles.amountVal}>₹{Number(item.billAmount || 0).toLocaleString('en-IN')}</Text>
-            <Text style={styles.rewardVal}>Reward: {Number(item.calculatedReward || 0).toLocaleString('en-IN')} Points</Text>
+            <Text style={[styles.rewardVal, { color: isApproved ? '#059669' : isRejected ? '#DC2626' : '#D97706' }]}>
+              {isApproved
+                ? `Reward: +${Number(item.calculatedReward || 0).toLocaleString('en-IN')} Points`
+                : isRejected
+                ? 'Rejected'
+                : 'Pending Audit'}
+            </Text>
           </View>
         </View>
 

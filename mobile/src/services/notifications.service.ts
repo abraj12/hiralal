@@ -23,7 +23,7 @@ export interface PushPermissionStatus {
 
 export interface NativePushTokenResult {
   token: string | null;
-  platform: 'ANDROID' | 'IOS' | 'WEB';
+  platform: 'ANDROID' | 'WEB';
   permissionGranted: boolean;
   errorCode?: string;
 }
@@ -91,7 +91,7 @@ export class NotificationsService {
         return false;
       }
       const settings = await Notifications.getPermissionsAsync();
-      return Boolean(settings.granted || settings.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL);
+      return Boolean(settings.granted);
     } catch {
       return false;
     }
@@ -115,12 +115,12 @@ export class NotificationsService {
       }
 
       const existingSettings = await Notifications.getPermissionsAsync();
-      if (existingSettings.granted || existingSettings.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL) {
+      if (existingSettings.granted) {
         return { granted: true, status: 'granted' };
       }
 
       const requested = await Notifications.requestPermissionsAsync();
-      const granted = Boolean(requested.granted || requested.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL);
+      const granted = Boolean(requested.granted);
 
       return {
         granted,
@@ -137,7 +137,7 @@ export class NotificationsService {
    * NEVER fabricates fake/synthetic tokens. Returns explicit unavailable status on failure.
    */
   static async getNativePushToken(): Promise<NativePushTokenResult> {
-    const platform = Platform.OS === 'android' ? 'ANDROID' : Platform.OS === 'ios' ? 'IOS' : 'WEB';
+    const platform = Platform.OS === 'android' ? 'ANDROID' : 'WEB';
 
     // The backend notification service strictly utilizes Firebase Cloud Messaging (FCM HTTP v1).
     // Native FCM device tokens are acquired on Android. iOS APNs is not interchanged with FCM.

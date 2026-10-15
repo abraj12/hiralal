@@ -376,13 +376,21 @@ export default function AdminBillsPage() {
 
                         {/* Calculated Reward */}
                         <td className="py-4 px-4 whitespace-nowrap">
-                          <div className="font-black text-emerald-600 text-sm">
-                            {rewardAmt.toLocaleString('en-IN')} Points
-                          </div>
-                          {(b.rewardRateSnapshot || b.rewardPercentage) && (
-                            <div className="text-[10px] text-emerald-700 font-semibold">
-                              @{b.rewardRateSnapshot || b.rewardPercentage}% rule
-                            </div>
+                          {b.status === 'APPROVED' ? (
+                            <>
+                              <div className="font-black text-emerald-600 text-sm">
+                                +{rewardAmt.toLocaleString('en-IN')} Points
+                              </div>
+                              {(b.rewardRateSnapshot || b.rewardPercentage) && (
+                                <div className="text-[10px] text-emerald-700 font-semibold">
+                                  @{b.rewardRateSnapshot || b.rewardPercentage}% rule
+                                </div>
+                              )}
+                            </>
+                          ) : b.status === 'REJECTED' ? (
+                            <span className="text-slate-400 font-semibold text-xs">Rejected</span>
+                          ) : (
+                            <span className="text-amber-600 font-medium text-xs">Pending Review</span>
                           )}
                         </td>
 

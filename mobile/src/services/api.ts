@@ -846,7 +846,7 @@ export class MobileApiClient {
   }
 
   static getAdminBillDocumentUrl(id: string) {
-    return this.request(`/admin/bills/${id}/document-url`);
+    return this.request(`/admin/bills/${encodeURIComponent(id)}/document-url`);
   }
 
   static getAdminBillReviewConfig(id: string) {
