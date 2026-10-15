@@ -650,6 +650,11 @@ export default function AdminUsersPage() {
                                   {acc.bankName && <div className="text-slate-700 font-medium">{acc.bankName}</div>}
                                   {acc.ifscCode && <div className="text-slate-400 font-mono text-[11px]">IFSC: {acc.ifscCode}</div>}
                                   {acc.accountHolderName && <div className="text-slate-500 text-[11px]">Holder: {acc.accountHolderName}</div>}
+                                  {acc.providerRegisteredName && (
+                                    <div className="text-emerald-700 text-[11px] font-semibold">
+                                      Bank Confirmed: {acc.providerRegisteredName}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             ))}

@@ -239,7 +239,7 @@ export default function ProfileScreen() {
               if (hasKyc) {
                 Alert.alert(
                   'PAN Identity Verified',
-                  `PAN: ${eligibility.verifiedKyc.maskedPan}\nStatus: Verified\nVerified Name: ${eligibility.verifiedKyc.panName || user?.fullName}`
+                  `PAN: ${eligibility.verifiedKyc.maskedPan}\nStatus: Verified\nVerified Name: ${eligibility.verifiedKyc.verifiedName || eligibility.verifiedKyc.panName || user?.fullName}`
                 );
               } else {
                 Alert.alert(

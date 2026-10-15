@@ -244,6 +244,11 @@ router.get('/file', async (req: Request, res: Response) => {
     const provider = StorageService.getProvider();
     if (await provider.exists(key)) {
       const stream = await provider.getStream(key);
+      stream.on('error', () => {
+        if (!res.headersSent) {
+          res.status(500).json({ success: false, message: 'Failed to stream document file.' });
+        }
+      });
       return stream.pipe(res);
     }
 

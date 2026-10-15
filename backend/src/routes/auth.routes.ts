@@ -655,8 +655,8 @@ router.patch('/me', authenticate, requireUser, async (req: AuthenticatedRequest,
       where: { id: user.id },
       include: {
         wallet: true,
-        kycRecords: { where: { panStatus: 'VERIFIED' } },
-        paymentAccounts: { where: { isVerified: true, isDefault: true } },
+        kycRecords: { where: { panStatus: 'VERIFIED' }, orderBy: { createdAt: 'desc' } },
+        paymentAccounts: { where: { isVerified: true, isDefault: true }, orderBy: { createdAt: 'desc' } },
       },
     });
 

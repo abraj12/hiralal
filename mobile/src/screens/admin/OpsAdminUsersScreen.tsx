@@ -309,7 +309,7 @@ export default function OpsAdminUsersScreen() {
                         <View key={kyc.id} style={styles.kycRow}>
                           <View>
                             <Text style={styles.kycPanNumber}>{kyc.maskedPan || kyc.panNumber || 'PAN Record'}</Text>
-                            <Text style={styles.kycName}>{kyc.panName || kyc.panHolderName || selectedUser.fullName}</Text>
+                            <Text style={styles.kycName}>{kyc.verifiedName || kyc.panName || kyc.panHolderName || selectedUser.fullName}</Text>
                           </View>
                           <View style={[styles.statusChip, { backgroundColor: kyc.panStatus === 'VERIFIED' ? '#F0FDF4' : '#FEF3C7' }]}>
                             <Text style={[styles.statusChipText, { color: kyc.panStatus === 'VERIFIED' ? '#16A34A' : '#D97706' }]}>

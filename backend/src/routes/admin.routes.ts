@@ -350,6 +350,8 @@ router.get('/users/:id', requireOperationsAdmin, async (req: AuthenticatedReques
         id: p.id,
         accountType: p.accountType,
         accountHolderName: p.accountHolderName,
+        providerRegisteredName: p.providerRegisteredName,
+        providerNameVerified: p.providerNameVerified,
         maskedInfo: p.maskedInfo,
         ifscCode: p.ifscCode,
         bankName: p.bankName,
