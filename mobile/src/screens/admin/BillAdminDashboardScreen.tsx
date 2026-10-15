@@ -240,7 +240,7 @@ export default function BillAdminDashboardScreen({ onNavigateToBills }: BillAdmi
                       Amount: <Text style={{ fontWeight: '800' }}>₹{Number(bill.billAmount || 0).toLocaleString('en-IN')}</Text>
                     </Text>
                     <Text style={[styles.billRewardText, { color: isApproved ? '#16A34A' : '#64748B' }]}>
-                      {isApproved ? `+${Number(bill.rewardAmount || 0).toLocaleString('en-IN')} Points` : 'Pending audit'}
+                      {isApproved ? `+${Number(bill.calculatedReward ?? bill.rewardAmount ?? 0).toLocaleString('en-IN')} Points` : 'Pending audit'}
                     </Text>
                   </View>
                 </View>

@@ -131,4 +131,41 @@ describe('Phase 6 — PAN Data Migration & Blind Index Backfill', () => {
     // Clean up
     await prisma.kycRecord.delete({ where: { id: malformedKyc.id } });
   });
+
+  it('detects and isolates colliding legacy PAN even if existing record has non-VERIFIED status', async () => {
+    const rawPan = 'DEFGH5678J';
+    const blindIndex = generateBlindIndex(rawPan);
+
+    // Existing record in REJECTED state with blind index
+    const existing = await prisma.kycRecord.create({
+      data: {
+        userId: user1.id,
+        panBlindIndex: blindIndex,
+        panStatus: 'REJECTED',
+        panName: 'Existing Rejected',
+        maskedPan: 'DEFGH••••J',
+      },
+    });
+
+    // Incoming legacy unmigrated record with same PAN
+    const duplicate = await prisma.kycRecord.create({
+      data: {
+        userId: userDuplicate.id,
+        panNumber: rawPan,
+        panStatus: 'PENDING',
+        panName: 'Duplicate User',
+        maskedPan: 'DEFGH••••J',
+      },
+    });
+
+    const summary = await migrateLegacyPanRecords(prisma);
+    expect(summary.totalFound).toBe(1);
+    expect(summary.failed).toBe(1);
+    expect(summary.errors[0].reason).toContain('Duplicate PAN blind index detected');
+
+    // Clean up
+    await prisma.kycRecord.delete({ where: { id: duplicate.id } });
+    await prisma.kycRecord.delete({ where: { id: existing.id } });
+  });
 });
+

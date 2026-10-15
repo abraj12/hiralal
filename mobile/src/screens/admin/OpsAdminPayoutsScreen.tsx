@@ -122,7 +122,7 @@ export default function OpsAdminPayoutsScreen() {
             <Clock size={15} color="#D97706" />
           </View>
           <Text style={[styles.summaryValue, { color: '#B45309' }]}>
-            ₹{pendingTotal.toLocaleString('en-IN')}
+            {pendingTotal.toLocaleString('en-IN')} Points
           </Text>
           <Text style={styles.summaryDesc}>{pendingCount} craftsman requests</Text>
         </View>
@@ -205,10 +205,14 @@ export default function OpsAdminPayoutsScreen() {
               <View style={styles.payoutCard}>
                 <View style={styles.payoutTop}>
                   <View>
-                    <Text style={styles.craftsmanName}>{item.user?.fullName || 'Craftsman'}</Text>
+                    <Text style={styles.craftsmanName}>{item.user?.fullName || item.userName || 'Craftsman'}</Text>
                     <View style={styles.phoneRow}>
                       <Phone size={11} color="#64748B" />
-                      <Text style={styles.phoneText}>{item.user?.mobile} • {item.user?.profession}</Text>
+                      <Text style={styles.phoneText}>
+                        {(item.user?.mobile || item.userMobile || '')}
+                        {((item.user?.mobile || item.userMobile) && (item.user?.profession || item.profession)) ? ' • ' : ''}
+                        {(item.user?.profession || item.profession || '')}
+                      </Text>
                     </View>
                   </View>
 
@@ -224,16 +228,24 @@ export default function OpsAdminPayoutsScreen() {
                   <Building size={14} color="#475569" />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.accountTitle}>
-                      {item.accountType === 'UPI' ? 'UPI Disbursement' : 'Bank Account (IMPS)'}
+                      {(item.accountType || item.paymentType) === 'UPI' ? 'UPI Disbursement' : 'Bank Account (IMPS)'}
                     </Text>
                     <Text style={styles.accountDetail}>
-                      {item.accountNumber || item.upiId || 'Direct Bank Settlement'}
+                      {item.maskedAccount || item.accountNumber || item.upiId || 'Direct Bank Settlement'}
                     </Text>
                   </View>
                   <Text style={styles.payoutAmountText}>
-                    ₹{Number(item.amount || 0).toLocaleString('en-IN')}
+                    {Number(item.amount || 0).toLocaleString('en-IN')} Points
                   </Text>
                 </View>
+
+                {item.requiresManualReview && (
+                  <View style={{ backgroundColor: '#FEF2F2', padding: 8, borderRadius: 8, marginTop: 8, borderWidth: 1, borderColor: '#FECACA' }}>
+                    <Text style={{ fontSize: 11, color: '#B91C1C', fontWeight: '700' }}>
+                      Manual Review Required: {item.manualReviewReason || 'Inconclusive gateway reconciliation'}
+                    </Text>
+                  </View>
+                )}
 
                 {/* Actions Row */}
                 {isPending && (
@@ -268,6 +280,25 @@ export default function OpsAdminPayoutsScreen() {
                     </TouchableOpacity>
                   </View>
                 )}
+
+                {!isPending &&
+                  (item.status === 'APPROVED' ||
+                    (item.status === 'PROCESSING' && item.requiresManualReview && !item.razorpayPayoutId)) && (
+                    <View style={styles.actionsRow}>
+                      <TouchableOpacity
+                        style={[styles.rejectBtn, { flex: 1 }]}
+                        onPress={() => {
+                          setRejectId(item.id);
+                          setRejectReason('');
+                        }}
+                        disabled={actionLoading === item.id}
+                        activeOpacity={0.8}
+                      >
+                        <XCircle size={15} color="#DC2626" />
+                        <Text style={styles.rejectBtnText}>Reject & Refund</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
               </View>
             );
           }}

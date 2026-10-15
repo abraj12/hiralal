@@ -251,22 +251,24 @@ export default function AdminPayoutsPage() {
                           Inspect
                         </button>
                         {p.status === 'PENDING' && (
-                          <>
-                            <button
-                              onClick={() => handleAction(p.id, 'APPROVE')}
-                              disabled={actionLoading === p.id}
-                              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs shadow-sm transition disabled:opacity-50"
-                            >
-                              {actionLoading === p.id ? 'Approving...' : 'Approve'}
-                            </button>
-                            <button
-                              onClick={() => openRejectModal(p)}
-                              disabled={actionLoading === p.id}
-                              className="px-2.5 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-bold text-xs transition disabled:opacity-50"
-                            >
-                              Reject & Refund
-                            </button>
-                          </>
+                          <button
+                            onClick={() => handleAction(p.id, 'APPROVE')}
+                            disabled={actionLoading === p.id}
+                            className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs shadow-sm transition disabled:opacity-50"
+                          >
+                            {actionLoading === p.id ? 'Approving...' : 'Approve'}
+                          </button>
+                        )}
+                        {(p.status === 'PENDING' ||
+                          p.status === 'APPROVED' ||
+                          (p.status === 'PROCESSING' && p.requiresManualReview && !p.razorpayPayoutId)) && (
+                          <button
+                            onClick={() => openRejectModal(p)}
+                            disabled={actionLoading === p.id}
+                            className="px-2.5 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg font-bold text-xs transition disabled:opacity-50"
+                          >
+                            Reject & Refund
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -418,6 +420,13 @@ export default function AdminPayoutsPage() {
                   <div className="bg-indigo-50/70 border border-indigo-100 p-3 rounded-xl">
                     <span className="text-indigo-600 block font-semibold text-[10px] uppercase">RazorpayX Gateway ID</span>
                     <span className="font-mono font-bold text-indigo-950 text-xs">{inspectPayout.razorpayPayoutId}</span>
+                  </div>
+                )}
+
+                {inspectPayout.requiresManualReview && inspectPayout.manualReviewReason && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800">
+                    <span className="font-bold block mb-0.5">Manual Review Required:</span>
+                    <span>{inspectPayout.manualReviewReason}</span>
                   </div>
                 )}
 

@@ -87,12 +87,12 @@ All financial values are denominated in Indian Rupees (₹) with 2-decimal paise
   }
   ```
 
-#### 1.4 Admin Login (Password-First Two-Factor Challenge Flow)
-Admin authentication requires prefix-based identifiers (`BILL_ADMIN_PREFIX` or `OPERATIONS_ADMIN_PREFIX`) and a password-first verification challenge:
+#### 1.4 Admin Login (Two-Step Password & OTP Challenge Flow)
+Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN`) via prefix-based identifiers (`BILL_ADMIN_PREFIX` or `OPERATIONS_ADMIN_PREFIX`) and a mandatory two-step OTP challenge flow:
 
-**Step 1: Challenge Initiation**
+**Step 1: Admin OTP & Challenge Request**
 - **Method**: `POST`
-- **Path**: `/auth/login`
+- **Path**: `/auth/admin/otp/request`
 - **Body**:
   ```json
   {
@@ -103,6 +103,7 @@ Admin authentication requires prefix-based identifiers (`BILL_ADMIN_PREFIX` or `
 - **Response (200)**:
   ```json
   {
+    "success": true,
     "kind": "ADMIN_OTP_REQUIRED",
     "challengeToken": "<CHALLENGE_TOKEN_UUID>",
     "requiresOtp": true,
@@ -125,6 +126,7 @@ Admin authentication requires prefix-based identifiers (`BILL_ADMIN_PREFIX` or `
   ```
 - **Response Headers**:
   - `Set-Cookie: admin_access_token=<JWT>; HttpOnly; Secure; SameSite=Lax; Path=/`
+  - `Set-Cookie: csrf_token=<TOKEN>; Secure; SameSite=Lax; Path=/`
 - **Response (200)**:
   ```json
   {
@@ -137,6 +139,9 @@ Admin authentication requires prefix-based identifiers (`BILL_ADMIN_PREFIX` or `
     }
   }
   ```
+
+> [!NOTE]
+> Direct administrative password login via `POST /auth/admin/login` and `POST /auth/admin-login` has been permanently decommissioned. Calling either endpoint returns HTTP `410 Gone` with error code `LEGACY_ADMIN_LOGIN_DISABLED`. All administrators must authenticate through the two-step challenge flow.
 
 ---
 

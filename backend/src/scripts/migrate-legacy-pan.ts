@@ -62,7 +62,6 @@ export async function migrateLegacyPanRecords(prisma: PrismaClient): Promise<Pan
         where: {
           panBlindIndex: blindIndex,
           id: { not: record.id },
-          panStatus: 'VERIFIED',
         },
       });
 
@@ -70,7 +69,7 @@ export async function migrateLegacyPanRecords(prisma: PrismaClient): Promise<Pan
         summary.failed++;
         summary.errors.push({
           recordId: record.id,
-          reason: 'Duplicate verified PAN detected during backfill.',
+          reason: 'Duplicate PAN blind index detected during backfill.',
         });
         continue;
       }

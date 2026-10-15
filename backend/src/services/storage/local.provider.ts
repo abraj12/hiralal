@@ -9,7 +9,7 @@ export class LocalStorageProvider implements StorageProvider {
   private baseDir: string;
 
   constructor(baseDir?: string) {
-    this.baseDir = baseDir || path.join(__dirname, '../../../../uploads');
+    this.baseDir = baseDir || process.env.UPLOADS_DIR || path.resolve(process.cwd(), 'uploads');
     if (!fs.existsSync(this.baseDir)) {
       fs.mkdirSync(this.baseDir, { recursive: true });
     }

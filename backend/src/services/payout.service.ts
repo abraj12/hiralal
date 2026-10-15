@@ -551,12 +551,21 @@ export class PayoutService {
 
       if (!payout) throw new Error(`Payout ${payoutId} not found`);
 
-      if (payout.status !== 'PENDING') {
+      const isPending = payout.status === 'PENDING';
+      const isApproved = payout.status === 'APPROVED';
+      const isProcessingStuck =
+        payout.status === 'PROCESSING' &&
+        payout.requiresManualReview === true &&
+        !payout.razorpayPayoutId;
+
+      const isEligibleForManualRejection = isPending || isApproved || isProcessingStuck;
+
+      if (!isEligibleForManualRejection) {
         if (payout.status === 'SUCCESS') {
           throw new Error(`Cannot reject payout ${payoutId} because it has already successfully completed.`);
         }
         throw new Error(
-          `Cannot manually reject payout in ${payout.status} state. Manual rejection is permitted only before payout approval and dispatch.`
+          `Cannot manually reject payout in ${payout.status} state. Manual rejection is permitted only before payout dispatch or for pre-dispatch failures under manual review.`
         );
       }
 

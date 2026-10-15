@@ -117,12 +117,15 @@ export class KycService {
       where: {
         OR: [{ panBlindIndex }, { panNumber: cleanPan }],
         userId: { not: userId },
-        panStatus: 'VERIFIED',
       },
     });
 
     if (existingOther) {
-      throw new Error('This PAN number is already verified with another user account.');
+      throw new Error(
+        existingOther.panStatus === 'VERIFIED'
+          ? 'This PAN number is already verified with another user account.'
+          : 'This PAN number has already been registered with another user account.'
+      );
     }
 
     // 4. Dispatch to KYC Provider

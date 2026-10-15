@@ -72,14 +72,19 @@ export default function OpsAdminUsersScreen() {
     try {
       const res = await MobileApiClient.getAdminUserDetails(user.id);
       if (res && res.user) {
+        const kycList = res.kyc
+          ? Array.isArray(res.kyc)
+            ? res.kyc
+            : [res.kyc]
+          : [];
         setSelectedUser({
           ...res.user,
           wallet: res.wallet,
-          kycRecords: res.kyc,
-          paymentAccounts: res.paymentAccounts,
-          bills: res.bills,
-          payouts: res.payouts,
-          ledger: res.ledger,
+          kycRecords: kycList,
+          paymentAccounts: res.paymentAccounts || [],
+          bills: res.bills || [],
+          payouts: res.payouts || [],
+          ledger: res.ledger || [],
         });
       }
     } catch (e: any) {
@@ -301,8 +306,8 @@ export default function OpsAdminUsersScreen() {
                       selectedUser.kycRecords.map((kyc: any) => (
                         <View key={kyc.id} style={styles.kycRow}>
                           <View>
-                            <Text style={styles.kycPanNumber}>{kyc.panNumber || 'PAN Record'}</Text>
-                            <Text style={styles.kycName}>{kyc.panHolderName || selectedUser.fullName}</Text>
+                            <Text style={styles.kycPanNumber}>{kyc.maskedPan || kyc.panNumber || 'PAN Record'}</Text>
+                            <Text style={styles.kycName}>{kyc.panName || kyc.panHolderName || selectedUser.fullName}</Text>
                           </View>
                           <View style={[styles.statusChip, { backgroundColor: kyc.panStatus === 'VERIFIED' ? '#F0FDF4' : '#FEF3C7' }]}>
                             <Text style={[styles.statusChipText, { color: kyc.panStatus === 'VERIFIED' ? '#16A34A' : '#D97706' }]}>
@@ -323,7 +328,7 @@ export default function OpsAdminUsersScreen() {
                       selectedUser.paymentAccounts.map((acc: any) => (
                         <View key={acc.id} style={styles.bankRow}>
                           <View>
-                            <Text style={styles.bankAccountType}>{acc.accountType} • {acc.accountNumber || acc.upiId}</Text>
+                            <Text style={styles.bankAccountType}>{acc.accountType} • {acc.maskedInfo || acc.accountNumber || acc.upiId || 'Linked'}</Text>
                             <Text style={styles.bankName}>{acc.bankName || acc.accountHolderName}</Text>
                           </View>
                           <View style={[styles.statusChip, { backgroundColor: acc.isVerified ? '#F0FDF4' : '#FEF3C7' }]}>

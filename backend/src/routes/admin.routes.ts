@@ -98,6 +98,12 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
     const totalUsers = await prisma.user.count({ where: userWhere });
     const plumbersCount = await prisma.user.count({ where: { role: 'USER', profession: 'PLUMBER' } });
     const tilesCount = await prisma.user.count({ where: { role: 'USER', profession: 'TILE_INSTALLER' } });
+    const kycVerifiedCount = await prisma.user.count({
+      where: {
+        ...userWhere,
+        kycRecords: { some: { panStatus: 'VERIFIED' } },
+      },
+    });
 
     const payoutWhere: any = {};
     if (filterProfession) payoutWhere.user = { profession: filterProfession };
@@ -199,6 +205,7 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
         totalUsers,
         plumbersCount: filterProfession === 'TILE_INSTALLER' ? 0 : plumbersCount,
         tilesCount: filterProfession === 'PLUMBER' ? 0 : tilesCount,
+        kycVerifiedCount,
         pendingBills,
         approvedBillsCount,
         rejectedBillsCount,
@@ -652,15 +659,25 @@ router.get('/payouts', requireOperationsAdmin, async (req: AuthenticatedRequest,
       success: true,
       payouts: payouts.map((p) => ({
         id: p.id,
-        userName: p.user.fullName,
-        userMobile: p.user.mobile,
-        profession: p.user.profession,
+        userName: p.user?.fullName || 'Craftsman',
+        userMobile: p.user?.mobile || '',
+        profession: p.user?.profession || '',
+        user: {
+          fullName: p.user?.fullName || 'Craftsman',
+          mobile: p.user?.mobile || '',
+          profession: p.user?.profession || '',
+        },
         amount: Number(p.amount),
         status: p.status,
         paymentType: p.paymentType,
-        maskedAccount: p.paymentAccount.maskedInfo,
-        bankName: p.paymentAccount.bankName,
+        accountType: p.paymentAccount?.accountType || p.paymentType,
+        maskedAccount: p.paymentAccount?.maskedInfo || '',
+        accountNumber: p.paymentAccount?.maskedInfo || '',
+        upiId: p.paymentAccount?.maskedInfo || '',
+        bankName: p.paymentAccount?.bankName || null,
         razorpayPayoutId: p.razorpayPayoutId,
+        requiresManualReview: p.requiresManualReview,
+        manualReviewReason: p.manualReviewReason,
         failureReason: p.failureReason,
         adminRejectionReason: p.adminRejectionReason,
         approvedByAdminId: p.approvedByAdminId,

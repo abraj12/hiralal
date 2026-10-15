@@ -239,6 +239,7 @@ export class StorageService {
 
   static getLocalFilePath(fileKey: string): string {
     const sanitized = fileKey.replace(/\.\./g, '').replace(/[\/\\]/g, '_');
-    return path.join(__dirname, '../../../../uploads', sanitized);
+    const baseDir = process.env.UPLOADS_DIR || path.resolve(process.cwd(), 'uploads');
+    return path.join(baseDir, sanitized);
   }
 }

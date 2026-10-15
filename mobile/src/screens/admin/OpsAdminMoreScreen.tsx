@@ -31,6 +31,34 @@ import { MobileApiClient } from '../../services/api';
 
 type MoreSubTab = 'REWARDS' | 'BROADCAST' | 'AUDIT' | 'SETTINGS';
 
+function formatISTDateParts(isoString: string): { date: string; time: string } {
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return { date: '', time: '' };
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      hourCycle: 'h23',
+    });
+    const parts = formatter.formatToParts(d);
+    const p: Record<string, string> = {};
+    for (const part of parts) {
+      p[part.type] = part.value;
+    }
+    return {
+      date: `${p.year}-${p.month}-${p.day}`,
+      time: `${p.hour}:${p.minute}`,
+    };
+  } catch {
+    return { date: '', time: '' };
+  }
+}
+
 interface OpsAdminMoreScreenProps {
   initialSubTab?: MoreSubTab;
 }
@@ -119,17 +147,17 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
           );
           setRedemptionMsg(redempRes.settings.message || '');
           if (redempRes.settings.startAt) {
-            const d = new Date(redempRes.settings.startAt);
-            setStartDate(d.toISOString().slice(0, 10));
-            setStartTime(d.toISOString().slice(11, 16));
+            const { date, time } = formatISTDateParts(redempRes.settings.startAt);
+            setStartDate(date);
+            setStartTime(time);
           } else {
             setStartDate('');
             setStartTime('');
           }
           if (redempRes.settings.endAt) {
-            const d = new Date(redempRes.settings.endAt);
-            setEndDate(d.toISOString().slice(0, 10));
-            setEndTime(d.toISOString().slice(11, 16));
+            const { date, time } = formatISTDateParts(redempRes.settings.endAt);
+            setEndDate(date);
+            setEndTime(time);
           } else {
             setEndDate('');
             setEndTime('');
@@ -563,7 +591,7 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
                       </View>
 
                       <Text style={styles.auditActor}>
-                        Actor: <Text style={{ fontWeight: '700', color: '#0F172A' }}>{log.actor?.fullName || log.actorId || 'System'}</Text>
+                        Actor: <Text style={{ fontWeight: '700', color: '#0F172A' }}>{log.admin?.fullName || log.actor?.fullName || log.adminId || log.actorId || 'System'}</Text>
                       </Text>
 
                       <View style={styles.auditBottom}>
@@ -813,7 +841,9 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
             </View>
             <ScrollView style={{ padding: 16 }}>
               <Text style={styles.auditJsonTitle}>Action: {selectedAuditLog?.action}</Text>
-              <Text style={styles.auditJsonTitle}>Actor: {selectedAuditLog?.actor?.fullName} ({selectedAuditLog?.actorId})</Text>
+              <Text style={styles.auditJsonTitle}>
+                Actor: {selectedAuditLog?.admin?.fullName || selectedAuditLog?.actor?.fullName || selectedAuditLog?.admin?.mobile || 'System'} ({selectedAuditLog?.adminId || selectedAuditLog?.actorId || 'N/A'})
+              </Text>
               <Text style={styles.auditJsonTitle}>Time: {selectedAuditLog?.createdAt}</Text>
               <View style={styles.jsonBox}>
                 <Text style={styles.jsonText}>
