@@ -72,7 +72,15 @@ export default function OpsAdminUsersScreen() {
     try {
       const res = await MobileApiClient.getAdminUserDetails(user.id);
       if (res && res.user) {
-        setSelectedUser(res.user);
+        setSelectedUser({
+          ...res.user,
+          wallet: res.wallet,
+          kycRecords: res.kyc,
+          paymentAccounts: res.paymentAccounts,
+          bills: res.bills,
+          payouts: res.payouts,
+          ledger: res.ledger,
+        });
       }
     } catch (e: any) {
       console.warn('Failed to load user details:', e?.message);

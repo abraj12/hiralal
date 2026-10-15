@@ -54,14 +54,27 @@ export default function BillAdminDashboardScreen({ onNavigateToBills }: BillAdmi
     loadDashboard();
   };
 
-  const stats = data?.stats || {
-    pendingBills: 0,
-    approvedBills: 0,
-    rejectedBills: 0,
-    totalBills: 0,
-    verifiedToday: 0,
-    approvalRate: 0,
-  };
+  const stats = data?.stats
+    ? {
+        pendingBills: data.stats.pendingBills ?? 0,
+        approvedBills: data.stats.approvedBillsCount ?? data.stats.approvedBills ?? 0,
+        rejectedBills: data.stats.rejectedBillsCount ?? data.stats.rejectedBills ?? 0,
+        totalBills:
+          data.stats.totalBills ??
+          ((data.stats.approvedBillsCount ?? data.stats.approvedBills ?? 0) +
+            (data.stats.rejectedBillsCount ?? data.stats.rejectedBills ?? 0) +
+            (data.stats.pendingBills ?? 0)),
+        verifiedToday: data.stats.verifiedToday ?? 0,
+        approvalRate: data.stats.approvalRate ?? 0,
+      }
+    : {
+        pendingBills: 0,
+        approvedBills: 0,
+        rejectedBills: 0,
+        totalBills: 0,
+        verifiedToday: 0,
+        approvalRate: 0,
+      };
 
   const approvalRate = stats.totalBills > 0
     ? Math.round((stats.approvedBills / stats.totalBills) * 100)

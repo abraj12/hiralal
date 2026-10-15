@@ -24,8 +24,6 @@ import OpsAdminUsersScreen from './src/screens/admin/OpsAdminUsersScreen';
 import OpsAdminPayoutsScreen from './src/screens/admin/OpsAdminPayoutsScreen';
 import OpsAdminMoreScreen from './src/screens/admin/OpsAdminMoreScreen';
 
-const OperationsDashboardScreen = OpsAdminDashboardScreen;
-
 function MainAppNavigator() {
   const { currentScreen, activeTab, user } = useApp();
 
@@ -72,7 +70,7 @@ function MainAppNavigator() {
       switch (opsAdminTab) {
         case 'DASHBOARD':
           return (
-            <OperationsDashboardScreen
+            <OpsAdminDashboardScreen
               key={`ops-dash-${adminRefreshKey}`}
               onNavigateTab={tab => setOpsAdminTab(tab as any)}
               onNavigateMoreSubtab={st => {
@@ -93,7 +91,7 @@ function MainAppNavigator() {
             />
           );
         default:
-          return <OperationsDashboardScreen />;
+          return <OpsAdminDashboardScreen />;
       }
     }
 

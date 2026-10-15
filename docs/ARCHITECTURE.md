@@ -83,8 +83,8 @@ To maintain commercial-grade accounting integrity:
      `calculatedReward = roundMoney(eligibleAmount * rewardPercentage / 100)`
 4. **Pool-Free Model & Full-Balance Redemption**:
    - No monthly reward caps or global reward pools.
-   - No minimum or maximum redemption thresholds.
-   - Redemption requests reserve **100% of the user's available balance** when the redemption window is open.
+   - Configurable minimum redemption threshold (`minimumRedemptionAmount`) enforced dynamically per window by Operations Admin (no arbitrary hardcoded caps).
+   - Redemption requests reserve **100% of the user's available balance** when the redemption window is open (subject to minimum threshold).
 
 ---
 

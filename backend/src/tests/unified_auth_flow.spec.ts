@@ -520,9 +520,9 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
       expect(code).toContain("user?.role === 'BILL_ADMIN'");
       expect(code).toContain('<BillReviewScreen />');
 
-      // OPERATIONS_ADMIN routes to OperationsDashboardScreen
+      // OPERATIONS_ADMIN routes to OpsAdminDashboardScreen / OperationsDashboardScreen
       expect(code).toContain("user?.role === 'OPERATIONS_ADMIN'");
-      expect(code).toContain('<OperationsDashboardScreen />');
+      expect(code.includes('<OpsAdminDashboardScreen />') || code.includes('<OperationsDashboardScreen />')).toBe(true);
 
       // Ordinary Craftsman displays bottom tabs navigation
       expect(code).toContain('!isAdmin && <BottomNav />');

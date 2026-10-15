@@ -61,16 +61,16 @@ export default function OpsAdminDashboardScreen({
   };
 
   const stats = data?.stats || {
-    totalUsers: 124,
-    activePlumbers: 78,
-    activeTileInstallers: 46,
-    kycVerifiedCount: 92,
-    availableWalletLiability: 25810,
+    totalUsers: 0,
+    plumbersCount: 0,
+    tilesCount: 0,
+    kycVerifiedCount: 0,
+    availableWalletLiability: 0,
     pendingPayouts: 0,
     pendingPayoutAmount: 0,
-    successfulPayouts: 19,
-    totalRewardsCredited: 34500,
-    totalRedeemed: 8690,
+    successfulPayouts: 0,
+    totalRewardsCredited: 0,
+    totalRedeemed: 0,
   };
 
   return (
@@ -117,7 +117,7 @@ export default function OpsAdminDashboardScreen({
             <Wallet size={16} color="#D97706" />
           </View>
           <Text style={[styles.statValue, { color: '#B45309' }]}>
-            ₹{Number(stats.availableWalletLiability || 25810).toLocaleString('en-IN')}
+            ₹{Number(stats.availableWalletLiability ?? 0).toLocaleString('en-IN')}
           </Text>
           <Text style={styles.statDesc}>Craftsman claimable points</Text>
         </View>
@@ -133,9 +133,9 @@ export default function OpsAdminDashboardScreen({
             <CreditCard size={16} color="#DC2626" />
           </View>
           <Text style={[styles.statValue, { color: '#B91C1C' }]}>
-            ₹{Number(stats.pendingPayoutAmount || 0).toLocaleString('en-IN')}
+            ₹{Number(stats.pendingPayoutAmount ?? 0).toLocaleString('en-IN')}
           </Text>
-          <Text style={styles.statDesc}>{stats.pendingPayouts || 0} batches awaiting release</Text>
+          <Text style={styles.statDesc}>{stats.pendingPayouts ?? 0} batches awaiting release</Text>
         </TouchableOpacity>
 
         {/* Total Settled */}
@@ -145,9 +145,9 @@ export default function OpsAdminDashboardScreen({
             <CheckCircle2 size={16} color="#16A34A" />
           </View>
           <Text style={[styles.statValue, { color: '#15803D' }]}>
-            ₹{Number(stats.totalRedeemed || 8690).toLocaleString('en-IN')}
+            ₹{Number(stats.totalRedeemed ?? 0).toLocaleString('en-IN')}
           </Text>
-          <Text style={styles.statDesc}>{stats.successfulPayouts || 19} successful settlements</Text>
+          <Text style={styles.statDesc}>{stats.successfulPayouts ?? 0} successful settlements</Text>
         </View>
 
         {/* Total Allocated */}
@@ -157,7 +157,7 @@ export default function OpsAdminDashboardScreen({
             <TrendingUp size={16} color="#2563EB" />
           </View>
           <Text style={[styles.statValue, { color: '#1D4ED8' }]}>
-            ₹{Number(stats.totalRewardsCredited || 34500).toLocaleString('en-IN')}
+            ₹{Number(stats.totalRewardsCredited ?? 0).toLocaleString('en-IN')}
           </Text>
           <Text style={styles.statDesc}>All-time incentive points</Text>
         </View>
@@ -173,7 +173,7 @@ export default function OpsAdminDashboardScreen({
         <View style={styles.networkTop}>
           <View>
             <Text style={styles.networkTotalTitle}>
-              {stats.totalUsers || 124} Registered Professionals
+              {stats.totalUsers ?? 0} Registered Professionals
             </Text>
             <Text style={styles.networkTotalSub}>
               Active plumbing & tile laying partners in Gopalganj & Bihar
@@ -184,17 +184,17 @@ export default function OpsAdminDashboardScreen({
 
         <View style={styles.networkBadgesRow}>
           <View style={styles.tradeBadgeCol}>
-            <Text style={styles.tradeCount}>{stats.activePlumbers || 78}</Text>
-            <Text style={styles.tradeName}>Plumbers (0.55%)</Text>
+            <Text style={styles.tradeCount}>{stats.plumbersCount ?? 0}</Text>
+            <Text style={styles.tradeName}>Plumbers</Text>
           </View>
           <View style={styles.tradeDivider} />
           <View style={styles.tradeBadgeCol}>
-            <Text style={styles.tradeCount}>{stats.activeTileInstallers || 46}</Text>
-            <Text style={styles.tradeName}>Tile Artisans (0.50%)</Text>
+            <Text style={styles.tradeCount}>{stats.tilesCount ?? 0}</Text>
+            <Text style={styles.tradeName}>Tile Artisans</Text>
           </View>
           <View style={styles.tradeDivider} />
           <View style={styles.tradeBadgeCol}>
-            <Text style={styles.tradeCount}>{stats.kycVerifiedCount || 92}</Text>
+            <Text style={styles.tradeCount}>{stats.kycVerifiedCount ?? 0}</Text>
             <Text style={styles.tradeName}>KYC Verified</Text>
           </View>
         </View>

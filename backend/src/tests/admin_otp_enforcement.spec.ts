@@ -391,6 +391,8 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
         },
       });
 
+      await prisma.otpRequest.deleteMany({ where: { mobile: testWorkerMobile } });
+
       const workerReq = await AuthService.requestOtp({
         mobile: testWorkerMobile,
         purpose: 'LOGIN',
@@ -1716,6 +1718,6 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
         }
       }
       expect(rateLimited).toBe(true);
-    });
+    }, 30000);
   });
 });

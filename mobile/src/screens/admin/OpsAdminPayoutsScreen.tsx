@@ -32,7 +32,7 @@ export default function OpsAdminPayoutsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'REVERSED'>('ALL');
   const [professionFilter, setProfessionFilter] = useState<'ALL' | 'PLUMBER' | 'TILE_INSTALLER'>('ALL');
 
   // Reject Modal
@@ -140,7 +140,7 @@ export default function OpsAdminPayoutsScreen() {
       {/* 2. Filter Pills */}
       <View style={styles.filterPillsRow}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-          {(['ALL', 'PENDING', 'APPROVED', 'REJECTED'] as const).map(s => (
+          {(['ALL', 'PENDING', 'PROCESSING', 'SUCCESS', 'FAILED', 'REVERSED'] as const).map(s => (
             <TouchableOpacity
               key={s}
               style={[styles.filterPill, statusFilter === s && styles.filterPillActive]}

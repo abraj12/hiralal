@@ -62,8 +62,12 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
 
   // --- 4. Settings State ---
   const [redemptionSettings, setRedemptionSettings] = useState<any>(null);
-  const [isRedemptionOpen, setIsRedemptionOpen] = useState(true);
-  const [minRedemptionAmt, setMinRedemptionAmt] = useState('100');
+  const [isRedemptionOpen, setIsRedemptionOpen] = useState(false);
+  const [minRedemptionAmt, setMinRedemptionAmt] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [endTime, setEndTime] = useState('');
   const [redemptionMsg, setRedemptionMsg] = useState('');
   const [gstRules, setGstRules] = useState<any[]>([]);
   const [newGstRate, setNewGstRate] = useState('');
@@ -96,7 +100,7 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
         }
       } else if (tab === 'BROADCAST') {
         const res = await MobileApiClient.getAdminNotificationHistory(1, 20).catch(() => null);
-        if (res && res.history) setBroadcastHistory(res.history);
+        if (res && res.campaigns) setBroadcastHistory(res.campaigns);
       } else if (tab === 'AUDIT') {
         const res = await MobileApiClient.getAdminAuditLogs().catch(() => null);
         if (res && res.logs) setAuditLogs(res.logs);
@@ -108,8 +112,28 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
         if (redempRes && redempRes.settings) {
           setRedemptionSettings(redempRes.settings);
           setIsRedemptionOpen(!!redempRes.settings.isEnabled);
-          setMinRedemptionAmt(String(redempRes.settings.minimumRedemptionAmount || '100'));
+          setMinRedemptionAmt(
+            redempRes.settings.minimumRedemptionAmount !== null && redempRes.settings.minimumRedemptionAmount !== undefined
+              ? String(redempRes.settings.minimumRedemptionAmount)
+              : ''
+          );
           setRedemptionMsg(redempRes.settings.message || '');
+          if (redempRes.settings.startAt) {
+            const d = new Date(redempRes.settings.startAt);
+            setStartDate(d.toISOString().slice(0, 10));
+            setStartTime(d.toISOString().slice(11, 16));
+          } else {
+            setStartDate('');
+            setStartTime('');
+          }
+          if (redempRes.settings.endAt) {
+            const d = new Date(redempRes.settings.endAt);
+            setEndDate(d.toISOString().slice(0, 10));
+            setEndTime(d.toISOString().slice(11, 16));
+          } else {
+            setEndDate('');
+            setEndTime('');
+          }
         }
         if (gstRes && gstRes.rules) {
           setGstRules(gstRes.rules);
@@ -177,10 +201,63 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
   const handleSaveRedemption = async () => {
     setSavingSettings(true);
     try {
+      let startAt: string | null = null;
+      let endAt: string | null = null;
+
+      if (isRedemptionOpen) {
+        if (!startDate.trim() || !startTime.trim()) {
+          Alert.alert('Dates Required', 'Both start date (YYYY-MM-DD) and start time (HH:MM) are required to enable redemption.');
+          setSavingSettings(false);
+          return;
+        }
+        if (!endDate.trim() || !endTime.trim()) {
+          Alert.alert('Dates Required', 'Both end date (YYYY-MM-DD) and end time (HH:MM) are required to enable redemption.');
+          setSavingSettings(false);
+          return;
+        }
+
+        const startParsed = new Date(`${startDate.trim()}T${startTime.trim()}:00+05:30`);
+        const endParsed = new Date(`${endDate.trim()}T${endTime.trim()}:00+05:30`);
+
+        if (isNaN(startParsed.getTime()) || isNaN(endParsed.getTime())) {
+          Alert.alert('Invalid Date', 'Please enter dates in YYYY-MM-DD format and times in HH:MM format.');
+          setSavingSettings(false);
+          return;
+        }
+
+        if (endParsed.getTime() <= startParsed.getTime()) {
+          Alert.alert('Invalid Range', 'Closing date/time must be after opening date/time.');
+          setSavingSettings(false);
+          return;
+        }
+
+        startAt = startParsed.toISOString();
+        endAt = endParsed.toISOString();
+
+        if (!minRedemptionAmt.trim() || isNaN(Number(minRedemptionAmt)) || Number(minRedemptionAmt) <= 0) {
+          Alert.alert('Threshold Required', 'Please enter a valid positive minimum redemption amount.');
+          setSavingSettings(false);
+          return;
+        }
+      } else {
+        if (startDate.trim() && startTime.trim()) {
+          const s = new Date(`${startDate.trim()}T${startTime.trim()}:00+05:30`);
+          if (!isNaN(s.getTime())) startAt = s.toISOString();
+        }
+        if (endDate.trim() && endTime.trim()) {
+          const e = new Date(`${endDate.trim()}T${endTime.trim()}:00+05:30`);
+          if (!isNaN(e.getTime())) endAt = e.toISOString();
+        }
+      }
+
+      const minAmt = minRedemptionAmt.trim() ? Number(minRedemptionAmt) : null;
+
       await MobileApiClient.updateAdminRedemptionSettings({
         isEnabled: isRedemptionOpen,
-        minimumRedemptionAmount: Number(minRedemptionAmt) || 100,
-        message: redemptionMsg.trim() || (isRedemptionOpen ? 'Open' : 'Redemption window currently closed.'),
+        startAt,
+        endAt,
+        minimumRedemptionAmount: minAmt,
+        message: redemptionMsg.trim() || (isRedemptionOpen ? 'Open for verified craftsmen.' : 'Redemption window currently closed.'),
       });
       Alert.alert('Settings Saved', 'Cashback redemption window rules updated.');
     } catch (e: any) {
@@ -283,7 +360,7 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
                     <Text style={styles.ruleSub}>Pipes, Sanitaryware, CPVC Valves</Text>
                   </View>
                   <Text style={[styles.ruleRate, { color: '#1D4ED8' }]}>
-                    {plumberRule?.rewardPercentage || 0.55}%
+                    {plumberRule?.rewardPercentage !== undefined ? `${plumberRule.rewardPercentage}%` : 'Unconfigured'}
                   </Text>
                 </View>
                 <View style={styles.ruleCardBottom}>
@@ -294,7 +371,7 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
                     style={styles.ruleEditBtn}
                     onPress={() => {
                       setRateModalProfession('PLUMBER');
-                      setNewRatePercent(String(plumberRule?.rewardPercentage || 0.55));
+                      setNewRatePercent(plumberRule?.rewardPercentage !== undefined ? String(plumberRule.rewardPercentage) : '');
                     }}
                   >
                     <Text style={styles.ruleEditBtnText}>Adjust Rate</Text>
@@ -310,7 +387,7 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
                     <Text style={styles.ruleSub}>Ceramic, Porcelain, Adhesives</Text>
                   </View>
                   <Text style={[styles.ruleRate, { color: '#C2410C' }]}>
-                    {tileRule?.rewardPercentage || 0.50}%
+                    {tileRule?.rewardPercentage !== undefined ? `${tileRule.rewardPercentage}%` : 'Unconfigured'}
                   </Text>
                 </View>
                 <View style={styles.ruleCardBottom}>
@@ -321,7 +398,7 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
                     style={[styles.ruleEditBtn, { borderColor: '#FDBA74' }]}
                     onPress={() => {
                       setRateModalProfession('TILE_INSTALLER');
-                      setNewRatePercent(String(tileRule?.rewardPercentage || 0.50));
+                      setNewRatePercent(tileRule?.rewardPercentage !== undefined ? String(tileRule.rewardPercentage) : '');
                     }}
                   >
                     <Text style={[styles.ruleEditBtnText, { color: '#C2410C' }]}>Adjust Rate</Text>
@@ -335,25 +412,25 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
                 <View style={styles.ledgerBox}>
                   <Text style={styles.ledgerLabel}>Total Credited</Text>
                   <Text style={styles.ledgerValue}>
-                    ₹{Number(rewardsStats?.totalRewardsCredited || 34500).toLocaleString('en-IN')}
+                    ₹{Number(rewardsStats?.totalRewardsCredited ?? 0).toLocaleString('en-IN')}
                   </Text>
                 </View>
                 <View style={styles.ledgerBox}>
                   <Text style={styles.ledgerLabel}>Active Liability</Text>
                   <Text style={[styles.ledgerValue, { color: '#D97706' }]}>
-                    ₹{Number(rewardsStats?.availableWalletLiability || 25810).toLocaleString('en-IN')}
+                    ₹{Number(rewardsStats?.availableWalletLiability ?? 0).toLocaleString('en-IN')}
                   </Text>
                 </View>
                 <View style={styles.ledgerBox}>
                   <Text style={styles.ledgerLabel}>Settled Payouts</Text>
                   <Text style={[styles.ledgerValue, { color: '#16A34A' }]}>
-                    ₹{Number(rewardsStats?.totalRedeemed || 8690).toLocaleString('en-IN')}
+                    ₹{Number(rewardsStats?.totalRedeemed ?? 0).toLocaleString('en-IN')}
                   </Text>
                 </View>
                 <View style={styles.ledgerBox}>
                   <Text style={styles.ledgerLabel}>Pending Release</Text>
                   <Text style={[styles.ledgerValue, { color: '#DC2626' }]}>
-                    ₹{Number(rewardsStats?.pendingPayoutAmount || 0).toLocaleString('en-IN')}
+                    ₹{Number(rewardsStats?.pendingPayoutAmount ?? 0).toLocaleString('en-IN')}
                   </Text>
                 </View>
               </View>
@@ -531,8 +608,55 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
                     style={styles.textInput}
                     value={minRedemptionAmt}
                     onChangeText={setMinRedemptionAmt}
+                    placeholder="e.g. 500"
                     keyboardType="numeric"
                   />
+                </View>
+
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inputLabel}>Start Date (YYYY-MM-DD)</Text>
+                    <TextInput
+                      style={styles.textInput}
+                      value={startDate}
+                      onChangeText={setStartDate}
+                      placeholder="YYYY-MM-DD"
+                      autoCapitalize="none"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inputLabel}>Start Time (HH:MM)</Text>
+                    <TextInput
+                      style={styles.textInput}
+                      value={startTime}
+                      onChangeText={setStartTime}
+                      placeholder="09:00"
+                      autoCapitalize="none"
+                    />
+                  </View>
+                </View>
+
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inputLabel}>End Date (YYYY-MM-DD)</Text>
+                    <TextInput
+                      style={styles.textInput}
+                      value={endDate}
+                      onChangeText={setEndDate}
+                      placeholder="YYYY-MM-DD"
+                      autoCapitalize="none"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.inputLabel}>End Time (HH:MM)</Text>
+                    <TextInput
+                      style={styles.textInput}
+                      value={endTime}
+                      onChangeText={setEndTime}
+                      placeholder="18:00"
+                      autoCapitalize="none"
+                    />
+                  </View>
                 </View>
 
                 <View style={styles.settingInputWrap}>
