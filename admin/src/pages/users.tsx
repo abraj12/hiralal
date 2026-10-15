@@ -251,12 +251,12 @@ export default function AdminUsersPage() {
                     <td className="py-4 px-4">
                       <span
                         className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
-                          u.panStatus === 'VERIFIED'
+                          (u.isKycVerified ?? (u.panStatus === 'VERIFIED'))
                             ? 'bg-emerald-100 text-emerald-800'
                             : 'bg-slate-100 text-slate-600'
                         }`}
                       >
-                        {u.panStatus === 'VERIFIED' ? (
+                        {(u.isKycVerified ?? (u.panStatus === 'VERIFIED')) ? (
                           <>
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                             <span>Verified</span>
@@ -581,6 +581,12 @@ export default function AdminUsersPage() {
                                 <div>
                                   <span className="text-slate-400 block font-semibold">Masked PAN:</span>
                                   <span className="font-mono font-bold text-slate-800">{detailsData.kyc.maskedPan || '—'}</span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400 block font-semibold">Name Matched:</span>
+                                  <span className={`font-bold ${detailsData.kyc.nameMatched ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                    {detailsData.kyc.nameMatched ? 'Yes (Matched)' : 'No (Pending Review / Mismatch)'}
+                                  </span>
                                 </div>
                                 <div>
                                   <span className="text-slate-400 block font-semibold">Verification Provider:</span>

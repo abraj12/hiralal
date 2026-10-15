@@ -148,8 +148,8 @@ export class PayoutService {
       where: { id: userId },
       include: {
         wallet: true,
-        kycRecords: { where: { panStatus: 'VERIFIED' } },
-        paymentAccounts: { where: { isVerified: true, isDefault: true } },
+        kycRecords: { where: { panStatus: 'VERIFIED' }, orderBy: { createdAt: 'desc' } },
+        paymentAccounts: { where: { isVerified: true, isDefault: true }, orderBy: { createdAt: 'desc' } },
       },
     });
 
@@ -204,7 +204,7 @@ export class PayoutService {
     } else if (availableBalance <= 0) {
       reason = 'No balance available for redemption.';
     } else if (!isThresholdMet) {
-      reason = `Available balance (₹${availableBalance.toFixed(2)}) is below the minimum redemption threshold of ₹${minThreshold.toFixed(2)}.`;
+      reason = `Available balance (${Number(availableBalance).toLocaleString('en-IN')} Points) is below the minimum redemption threshold of ${Number(minThreshold).toLocaleString('en-IN')} Points.`;
     } else if (!beneficiaryCheck.isValid) {
       reason = beneficiaryCheck.reason || 'Please complete PAN and payment account verification to proceed.';
     }
@@ -290,8 +290,8 @@ export class PayoutService {
         const user = await tx.user.findUnique({
           where: { id: userId },
           include: {
-            kycRecords: { where: { panStatus: 'VERIFIED' } },
-            paymentAccounts: { where: { isVerified: true, isDefault: true } },
+            kycRecords: { where: { panStatus: 'VERIFIED' }, orderBy: { createdAt: 'desc' } },
+            paymentAccounts: { where: { isVerified: true, isDefault: true }, orderBy: { createdAt: 'desc' } },
           },
         });
 
@@ -330,7 +330,7 @@ export class PayoutService {
 
         if (currentAvailable < minThreshold) {
           throw new Error(
-            `Available balance (₹${currentAvailable.toFixed(2)}) is below the minimum redemption threshold of ₹${minThreshold.toFixed(2)}.`
+            `Available balance (${Number(currentAvailable).toLocaleString('en-IN')} Points) is below the minimum redemption threshold of ${Number(minThreshold).toLocaleString('en-IN')} Points.`
           );
         }
 
@@ -905,7 +905,7 @@ export class PayoutService {
         data: {
           userId: payout.userId,
           title: 'Reward Disbursement Successful!',
-          message: `₹${payoutAmount.toFixed(2)} has been credited to your verified payment account.`,
+          message: `${Number(payoutAmount).toLocaleString('en-IN')} Points has been credited to your verified payment account.`,
           type: 'PAYOUT_SUCCESS',
         },
       });

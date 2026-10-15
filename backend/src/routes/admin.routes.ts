@@ -64,17 +64,19 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
       },
     });
 
-    const mappedRecentBills = recentBills.map((b) => ({
-      ...b,
-      billAmount: Number(b.billAmount),
-      grossBillAmount: Number(b.grossBillAmount || b.billAmount),
-      gstAmount: b.gstAmount !== null ? Number(b.gstAmount) : 0,
-      gstRate: b.gstRate !== null ? Number(b.gstRate) : 0,
-      eligibleRewardAmount: b.eligibleRewardAmount !== null ? Number(b.eligibleRewardAmount) : Number(b.billAmount),
-      calculatedReward: Number(b.calculatedReward),
-      rewardPercentage: b.rewardPercentage !== null ? Number(b.rewardPercentage) : null,
-      fileUrl: StorageService.generateSignedUrl(b.fileKey, 30),
-    }));
+    const mappedRecentBills = await Promise.all(
+      recentBills.map(async (b) => ({
+        ...b,
+        billAmount: Number(b.billAmount),
+        grossBillAmount: Number(b.grossBillAmount || b.billAmount),
+        gstAmount: b.gstAmount !== null ? Number(b.gstAmount) : 0,
+        gstRate: b.gstRate !== null ? Number(b.gstRate) : 0,
+        eligibleRewardAmount: b.eligibleRewardAmount !== null ? Number(b.eligibleRewardAmount) : Number(b.billAmount),
+        calculatedReward: Number(b.calculatedReward),
+        rewardPercentage: b.rewardPercentage !== null ? Number(b.rewardPercentage) : null,
+        fileUrl: b.fileKey ? await StorageService.getSignedInvoiceUrl(b.fileKey, 1800) : '',
+      }))
+    );
 
     // Strict Role Separation: BILL_ADMIN sees only bill review stats and recent bills
     if (req.user?.role === 'BILL_ADMIN') {
@@ -255,7 +257,7 @@ router.get('/users', requireOperationsAdmin, async (req: AuthenticatedRequest, r
       include: {
         wallet: true,
         kycRecords: { orderBy: { createdAt: 'desc' }, take: 1 },
-        paymentAccounts: { where: { isDefault: true }, take: 1 },
+        paymentAccounts: { where: { isDefault: true }, orderBy: { createdAt: 'desc' }, take: 1 },
         _count: { select: { bills: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -274,6 +276,8 @@ router.get('/users', requireOperationsAdmin, async (req: AuthenticatedRequest, r
         createdAt: u.createdAt,
         walletBalance: u.wallet ? Number(u.wallet.availableBalance) : 0,
         panStatus: kyc ? kyc.panStatus : 'PENDING',
+        nameMatched: kyc ? Boolean(kyc.nameMatched) : false,
+        isKycVerified: Boolean(kyc && kyc.panStatus === 'VERIFIED' && kyc.nameMatched),
         paymentStatus: payment ? (payment.isVerified ? 'VERIFIED' : 'PENDING') : 'NOT_ADDED',
         billsCount: u._count.bills,
       };
@@ -332,6 +336,8 @@ router.get('/users/:id', requireOperationsAdmin, async (req: AuthenticatedReques
         ? {
             id: user.kycRecords[0].id,
             panName: user.kycRecords[0].panName,
+            verifiedName: user.kycRecords[0].verifiedName || user.kycRecords[0].panName,
+            nameMatched: user.kycRecords[0].nameMatched,
             panStatus: user.kycRecords[0].panStatus,
             maskedPan: user.kycRecords[0].maskedPan,
             provider: user.kycRecords[0].provider,
@@ -352,15 +358,17 @@ router.get('/users/:id', requireOperationsAdmin, async (req: AuthenticatedReques
         isDefault: p.isDefault,
         createdAt: p.createdAt,
       })),
-      bills: user.bills.map((b) => ({
-        ...b,
-        billAmount: Number(b.billAmount),
-        grossBillAmount: Number(b.grossBillAmount || b.billAmount),
-        gstAmount: b.gstAmount !== null ? Number(b.gstAmount) : 0,
-        eligibleRewardAmount: b.eligibleRewardAmount !== null ? Number(b.eligibleRewardAmount) : Number(b.billAmount),
-        calculatedReward: Number(b.calculatedReward),
-        fileUrl: StorageService.generateSignedUrl(b.fileKey, 30),
-      })),
+      bills: await Promise.all(
+        user.bills.map(async (b) => ({
+          ...b,
+          billAmount: Number(b.billAmount),
+          grossBillAmount: Number(b.grossBillAmount || b.billAmount),
+          gstAmount: b.gstAmount !== null ? Number(b.gstAmount) : 0,
+          eligibleRewardAmount: b.eligibleRewardAmount !== null ? Number(b.eligibleRewardAmount) : Number(b.billAmount),
+          calculatedReward: Number(b.calculatedReward),
+          fileUrl: b.fileKey ? await StorageService.getSignedInvoiceUrl(b.fileKey, 1800) : '',
+        }))
+      ),
       payouts: user.payouts.map((p) => ({
         id: p.id,
         amount: Number(p.amount),

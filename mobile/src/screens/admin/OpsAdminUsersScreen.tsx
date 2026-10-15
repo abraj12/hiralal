@@ -203,7 +203,9 @@ export default function OpsAdminUsersScreen() {
           }
           renderItem={({ item }) => {
             const isPlumber = item.profession === 'PLUMBER';
-            const kycVerified = item.panStatus === 'VERIFIED' || (item.kycRecords || []).some((k: any) => k.panStatus === 'VERIFIED');
+            const kycVerified = item.isKycVerified !== undefined
+              ? item.isKycVerified
+              : (item.panStatus === 'VERIFIED' || (item.kycRecords || []).some((k: any) => k.panStatus === 'VERIFIED'));
             const hasBank = item.paymentStatus === 'VERIFIED' || (item.paymentAccounts || []).some((p: any) => p.isVerified);
 
             return (

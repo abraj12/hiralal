@@ -395,7 +395,7 @@ describe('Account Deletion Lifecycle & Minimum Redemption Threshold Tests', () =
       expect(eligibility.canRedeem).toBe(false);
       expect(eligibility.isThresholdConfigured).toBe(true);
       expect(eligibility.isThresholdMet).toBe(false);
-      expect(eligibility.reason).toContain('below the minimum redemption threshold of ₹500.00');
+      expect(eligibility.reason).toContain('below the minimum redemption threshold of 500 Points');
     });
 
     test('requestRedemption fails closed when balance is below minimum threshold', async () => {
