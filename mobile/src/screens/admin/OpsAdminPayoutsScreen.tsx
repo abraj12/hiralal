@@ -260,7 +260,7 @@ export default function OpsAdminPayoutsScreen() {
                       activeOpacity={0.8}
                     >
                       <XCircle size={15} color="#DC2626" />
-                      <Text style={styles.rejectBtnText}>Reject</Text>
+                      <Text style={styles.rejectBtnText}>Reject & Refund</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity

@@ -111,6 +111,7 @@ export class PayoutWorker {
     // Strict Authoritative Beneficiary Verification Gate before dispatch
     const kycRecord = await prisma.kycRecord.findFirst({
       where: { userId: payout.userId, panStatus: 'VERIFIED' },
+      orderBy: { createdAt: 'desc' },
     });
 
     const beneficiaryCheck = PayoutService.validateBeneficiaryMatch(kycRecord, payout.paymentAccount);

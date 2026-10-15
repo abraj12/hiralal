@@ -52,6 +52,7 @@ export default function AdminDashboardPage() {
     totalUsers: 0,
     plumbersCount: 0,
     tilesCount: 0,
+    kycVerifiedCount: 0,
     pendingBills: 0,
     approvedBillsCount: 0,
     rejectedBillsCount: 0,
@@ -293,23 +294,23 @@ export default function AdminDashboardPage() {
               </div>
             </div>
 
-            {/* Card 2: Pending Bills */}
+            {/* Card 2: KYC Verified */}
             <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                  Pending Verification
+                  KYC Verified
                 </span>
-                <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
-                  <Clock className="w-4 h-4" />
+                <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
+                  <ShieldCheck className="w-4 h-4" />
                 </div>
               </div>
-              <div className="text-3xl font-black text-slate-900">{stats.pendingBills}</div>
+              <div className="text-3xl font-black text-slate-900">{stats.kycVerifiedCount ?? 0}</div>
               <div className="mt-2">
                 <button
-                  onClick={() => router.push('/payouts')}
-                  className="text-xs font-bold text-amber-600 hover:text-amber-700 flex items-center space-x-1"
+                  onClick={() => router.push('/users')}
+                  className="text-xs font-bold text-emerald-600 hover:text-emerald-700 flex items-center space-x-1"
                 >
-                  <span>Review payouts queue</span>
+                  <span>Inspect verified directory</span>
                   <ArrowUpRight className="w-3.5 h-3.5" />
                 </button>
               </div>

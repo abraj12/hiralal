@@ -90,6 +90,7 @@ router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res
         createdAt: p.createdAt,
         completedAt: p.completedAt,
         failureReason: p.failureReason,
+        adminRejectionReason: p.adminRejectionReason,
       })),
     });
   } catch (err: any) {
