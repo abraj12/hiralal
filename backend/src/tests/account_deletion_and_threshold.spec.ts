@@ -289,9 +289,33 @@ describe('Account Deletion Lifecycle & Minimum Redemption Threshold Tests', () =
         },
       });
 
+      // Seed a lingering verification token and OTP request for the mobile
+      await prisma.verificationToken.create({
+        data: {
+          mobile: testMobile,
+          tokenHash: 'sample-lingering-token-hash',
+          purpose: 'REGISTRATION',
+          expiresAt: new Date(Date.now() + 60000),
+        },
+      });
+      await prisma.otpRequest.create({
+        data: {
+          mobile: testMobile,
+          otpHash: testOtpHmac,
+          purpose: 'REGISTRATION',
+          expiresAt: new Date(Date.now() + 60000),
+        },
+      });
+
       // Run anonymization worker
       const workerResult = await AccountDeletionService.processScheduledDeletions(prisma);
       expect(workerResult.processedCount).toBeGreaterThanOrEqual(1);
+
+      // Verify VerificationToken and OtpRequest purged
+      const lingeringTokens = await prisma.verificationToken.findMany({ where: { mobile: testMobile } });
+      expect(lingeringTokens.length).toBe(0);
+      const lingeringOtps = await prisma.otpRequest.findMany({ where: { mobile: testMobile } });
+      expect(lingeringOtps.length).toBe(0);
 
       // Verify anonymized User state
       const anonymizedUser = await prisma.user.findUnique({ where: { id: userId } });

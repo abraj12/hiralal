@@ -338,6 +338,15 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     expect(res.body.message).toMatch(/custom reward overrides/i);
   });
 
+  test('GET /api/payouts returns mapped payouts with safe payment account details', async () => {
+    const res = await request(app)
+      .get('/api/payouts')
+      .set('Authorization', `Bearer ${userToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(Array.isArray(res.body.payouts)).toBe(true);
+  });
+
   test('Contract F: POST /api/auth/logout rejects missing token and accepts verified token', async () => {
     // Missing credentials
     const missingRes = await request(app)

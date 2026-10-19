@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import {
   isUnsafeProductionValue,
   calculateShannonEntropy,
@@ -633,6 +635,60 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       it('rejects invalid or empty certificate digests in production', () => {
         const env = { ...validBaseEnv, PLAY_INTEGRITY_ALLOWED_CERT_DIGESTS: 'short_invalid_digest' };
         expect(() => validateProductionPlayIntegrity(env)).toThrow(/A non-empty, valid SHA-256 certificate allowlist is required/);
+      });
+    });
+
+    describe('Test L — OTP Provider & Deployment Process Parity', () => {
+      it('validates production config with WhatsApp OTP provider when configured', () => {
+        const whatsappEnv: Record<string, string | undefined> = { ...validBaseEnv };
+        delete whatsappEnv.MSG91_AUTH_KEY;
+        delete whatsappEnv.MSG91_TEMPLATE_ID;
+        whatsappEnv.OTP_PROVIDER = 'WHATSAPP';
+        whatsappEnv.WHATSAPP_PHONE_NUMBER_ID = '100234567890123';
+        whatsappEnv.WHATSAPP_ACCESS_TOKEN = 'EAABwzL123456789abcdefghijklmnopqrstuvwxyz';
+        whatsappEnv.WHATSAPP_TEMPLATE_NAME = 'hiralal_auth_otp';
+
+        expect(() => validateProductionConfig('api', whatsappEnv)).not.toThrow();
+      });
+
+      it('rejects WhatsApp configuration when required variables are missing', () => {
+        const missingWhatsApp: Record<string, string | undefined> = { ...validBaseEnv };
+        delete missingWhatsApp.MSG91_AUTH_KEY;
+        delete missingWhatsApp.MSG91_TEMPLATE_ID;
+        missingWhatsApp.OTP_PROVIDER = 'WHATSAPP';
+        missingWhatsApp.WHATSAPP_PHONE_NUMBER_ID = '100234567890123';
+        missingWhatsApp.WHATSAPP_TEMPLATE_NAME = 'hiralal_auth_otp';
+        delete missingWhatsApp.WHATSAPP_ACCESS_TOKEN;
+
+        expect(() => validateProductionConfig('api', missingWhatsApp)).toThrow(
+          /Missing required environment variables: WHATSAPP_ACCESS_TOKEN/
+        );
+      });
+
+      it('rejects MSG91 configuration when MSG91 variables are missing', () => {
+        const msg91Env: Record<string, string | undefined> = { ...validBaseEnv, OTP_PROVIDER: 'MSG91' };
+        delete msg91Env.MSG91_AUTH_KEY;
+
+        expect(() => validateProductionConfig('api', msg91Env)).toThrow(
+          /Missing required environment variables: MSG91_AUTH_KEY/
+        );
+      });
+
+      it('verifies docker-compose.yml defines OTP_PROVIDER and WhatsApp environment variables', () => {
+        const composePath = path.resolve(__dirname, '../../../docker-compose.yml');
+        expect(fs.existsSync(composePath)).toBe(true);
+        const composeContent = fs.readFileSync(composePath, 'utf-8');
+        expect(composeContent).toContain('OTP_PROVIDER:');
+        expect(composeContent).toContain('WHATSAPP_PHONE_NUMBER_ID:');
+        expect(composeContent).toContain('WHATSAPP_ACCESS_TOKEN:');
+        expect(composeContent).toContain('WHATSAPP_TEMPLATE_NAME:');
+      });
+
+      it('verifies ecosystem.config.js directs hiralal-worker to dist/worker/index.js', () => {
+        const ecosystemPath = path.resolve(__dirname, '../../../ecosystem.config.js');
+        expect(fs.existsSync(ecosystemPath)).toBe(true);
+        const ecosystemContent = fs.readFileSync(ecosystemPath, 'utf-8');
+        expect(ecosystemContent).toMatch(/name:\s*'hiralal-worker'[\s\S]*?script:\s*'dist\/worker\/index\.js'/);
       });
     });
   });

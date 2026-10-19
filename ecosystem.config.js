@@ -37,7 +37,7 @@ module.exports = {
     {
       name: 'hiralal-worker',
       cwd: './backend',
-      script: 'dist/server.js',
+      script: 'dist/worker/index.js',
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,

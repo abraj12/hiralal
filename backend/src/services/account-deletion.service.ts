@@ -845,6 +845,7 @@ export class AccountDeletionService {
           });
           await tx.authSession.deleteMany({ where: { userId: u.id } });
           await tx.otpRequest.deleteMany({ where: { mobile: lockedUser.mobile } });
+          await tx.verificationToken.deleteMany({ where: { mobile: lockedUser.mobile } });
 
           // 4. Purge sensitive KYC records while retaining anonymous status
           await tx.kycRecord.updateMany({
