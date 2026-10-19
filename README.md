@@ -7,7 +7,7 @@
 [![Prisma](https://img.shields.io/badge/Prisma-6.4-teal.svg)](https://www.prisma.io/)
 [![Redis](https://img.shields.io/badge/Redis-7-red.svg)](https://redis.io/)
 [![CI](https://github.com/abraj12/hiralal/actions/workflows/ci.yml/badge.svg)](https://github.com/abraj12/hiralal/actions/workflows/ci.yml)
-[![Platform](https://img.shields.io/badge/Architecture-AWS%20Graviton2%20ARM64-orange.svg)]()
+[![Platform](https://img.shields.io/badge/Architecture-Hostinger%20KVM%202%20(Ubuntu%20x86__64)-blue.svg)]()
 
 Production rewards and loyalty management platform engineered specifically for **HIRALAL AND SONS SALES PVT. LTD.** (CIN: U51909BR2020PTC046116) by **ALGIONS AI LABS PRIVATE LIMITED** (CIN: U62011BR2026PTC088473).
 
@@ -27,9 +27,9 @@ Rewards are strictly **cash incentives** credited to user wallets upon verified 
 Internet
    ↓ HTTPS
 Cloudflare (Full Strict TLS + DDoS Protection + WAF)
-   ↓ HTTPS (Cloudflare Origin CA)
-AWS EC2 t4g.medium (ap-south-1 Mumbai, Graviton2 ARM64, 4 GiB RAM)
-   ↓ Port 443
+   ↓ HTTPS (Cloudflare Origin CA / TLS Termination)
+Hostinger KVM 2 VPS (Ubuntu 24.04/22.04 LTS x86_64, 2 vCPU, 8 GiB RAM, 100 GB NVMe)
+   ↓ Port 443 (UFW Firewall & Fail2ban Hardened)
 Nginx Reverse Proxy (Cloudflare Real-IP Restoration, HSTS, 15MB Upload Limit)
    ↓ Internal Bridge Network (hiralal_net)
 Node.js 22 Express API (Port 5000)
@@ -40,7 +40,7 @@ Node.js 22 Express API (Port 5000)
 External Enterprise Integrations:
    ├── Cloudflare R2: Private object storage for bills (HMAC signed URL access)
    ├── SignCare: PAN tax database validation (AES-256-GCM encrypted at rest)
-   ├── MSG91: SMS OTP transport (backend generates & verifies cryptographically)
+   ├── WhatsApp Business Platform: Cloud API OTP transport (cryptographic OTP + COPY_CODE button)
    └── RazorpayX: Bank / UPI fund account validation, payouts & webhook reconciliation
 ```
 
@@ -48,18 +48,19 @@ External Enterprise Integrations:
 
 ## 2. Service Dependencies & Hardware Profile
 
-- **Host Instance**: AWS EC2 `t4g.medium` (2 vCPU, 4 GiB RAM, ARM64 / Graviton2)
-- **EBS Storage**: 30 GB `gp3` (3000 IOPS, 125 MB/s baseline)
+- **Host Instance**: Hostinger KVM 2 VPS (2 vCPU, 8 GiB RAM, 100 GB NVMe, Ubuntu x86_64)
 - **Database**: PostgreSQL 16 (Alpine container, port 5432 bound strictly internal)
 - **In-Memory Cache**: Redis 7 (Alpine container, AOF persistence enabled, maxmemory 200MB)
 - **Application Runtime**: Node.js 22 LTS Alpine with `dumb-init` (PID 1 process manager)
 - **Reverse Proxy**: Nginx Alpine fronting Cloudflare with published IPv4/IPv6 CIDRs
+- **Process Management**: Systemd (`hiralal-stack.service`) or PM2 (`ecosystem.config.js`)
+- **Firewall**: UFW hardened (least privilege: ports 22, 80, 443 only; internal services blocked)
 
 ---
 
-## 3. Memory Budget (4 GiB EC2 Profile)
+## 3. Memory Budget (8 GiB Hostinger KVM 2 Profile)
 
-To guarantee stability on the 4 GiB instance and eliminate OOM crashes:
+With 8 GiB physical memory on Hostinger KVM 2 VPS, resource stability is maintained with generous headroom:
 
 | Service / Process | Allocation Limit | Reservation | Configuration Rationale |
 |:---|:---|:---|:---|
@@ -70,7 +71,8 @@ To guarantee stability on the 4 GiB instance and eliminate OOM crashes:
 | **Redis 7** | 256 MB | 64 MB | `--maxmemory 200mb`, `--maxmemory-policy noeviction` |
 | **Nginx** | 128 MB | 32 MB | Event-driven reverse proxy, SSL cache |
 | **Host OS & Kernel** | ~700 MB | - | Linux kernel, page cache, Docker daemon |
-| **Total Stack** | **~3.45 GB** | **~1.12 GB** | **Safely below 4,096 MB physical memory** |
+| **Available Headroom** | **~4.6 GB** | - | Buffer for spikes, builds, and automated backups |
+| **Total Stack Limit** | **~3.45 GB** | **~1.12 GB** | **Safely below 8,192 MB physical memory** |
 
 ---
 
@@ -112,11 +114,16 @@ RAZORPAYX_KEY_SECRET=rzp_live_secret
 RAZORPAYX_ACCOUNT_NUMBER=2323230041123456
 RAZORPAYX_WEBHOOK_SECRET=webhook_secret_rzpx
 
-# MSG91 SMS Transport
-SMS_PROVIDER=MSG91
-MSG91_AUTH_KEY=msg91_auth_key
-MSG91_TEMPLATE_ID=msg91_template_id
-MSG91_SENDER_ID=HIRLAL
+# WhatsApp Business Platform Cloud API (Phone Verification OTP)
+OTP_PROVIDER=WHATSAPP
+WHATSAPP_API_URL=https://graph.facebook.com
+WHATSAPP_API_VERSION=v21.0
+WHATSAPP_PHONE_NUMBER_ID=100012345678901
+WHATSAPP_ACCESS_TOKEN=EAAB...permanent_system_user_token
+WHATSAPP_BUSINESS_ACCOUNT_ID=200012345678901
+WHATSAPP_TEMPLATE_NAME=hiralal_auth_otp
+WHATSAPP_TEMPLATE_LANGUAGE=en_US
+WHATSAPP_AUTH_BUTTON_TYPE=COPY_CODE
 
 # Admin Bootstrapping (Separate credentials required; legacy ADMIN_INITIAL_PASSWORD rejected)
 BILL_ADMIN_MOBILE=REPLACE_WITH_PRODUCTION_BILL_ADMIN_10DIGIT_MOBILE

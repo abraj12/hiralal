@@ -1,11 +1,41 @@
-# Hiralal & Sons — Automated Database Backup Systemd Automation
+# Hiralal & Sons — Hostinger KVM 2 Production Systemd & Process Management
 
-This directory contains systemd unit files to automate daily offsite database backups on the production AWS EC2 instance (`t4g.medium` Graviton2 ARM64).
+This directory contains systemd unit definitions and configurations to ensure reliable process management and automated daily offsite database backups on the production **Hostinger KVM 2 VPS** (2 vCPU, 8 GB RAM, 100 GB NVMe, Ubuntu 24.04/22.04 LTS x86_64).
 
 ---
 
-## 1. Architecture Overview
+## 1. Process Management Architecture Overview
 
+### Option A: Docker Compose Stack Service (Recommended for Container Deployments)
+- **Unit**: `hiralal-stack.service`
+- **Function**: Automatically launches `docker compose up -d` on system boot after the Docker daemon is ready, and cleanly shuts down containers with `docker compose down --timeout 30` during server maintenance or shutdown.
+
+```bash
+# Install and enable stack service:
+sudo cp deploy/systemd/hiralal-stack.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable hiralal-stack.service
+sudo systemctl start hiralal-stack.service
+```
+
+### Option B: Standalone Node.js & Next.js Services
+For direct host execution without containers:
+- `hiralal-backend.service`: Express API (Port 5000, 1024 MB RAM limit, auto-restart on failure).
+- `hiralal-worker.service`: Payout & Outbox BullMQ worker (Port 5001, 768 MB RAM limit, auto-restart).
+- `hiralal-admin.service`: Next.js Admin Panel (Port 3000, 768 MB RAM limit, auto-restart).
+
+Alternatively, PM2 process management can be used via `ecosystem.config.js`:
+```bash
+pm2 start ecosystem.config.js --env production
+pm2 save
+pm2 startup
+```
+
+---
+
+## 2. Automated Offsite Database Backups
+
+### Service & Timer Units
 1. **Service Unit (`hiralal-backup.service`):**
    - Runs `/opt/hiralal/scripts/backup-db.sh` as a `Type=oneshot` task.
    - Dumps PostgreSQL database via `docker exec hiralal_postgres pg_dump`.
@@ -18,12 +48,9 @@ This directory contains systemd unit files to automate daily offsite database ba
 2. **Timer Unit (`hiralal-backup.timer`):**
    - Triggers daily at 02:30 AM IST (21:00 UTC).
    - Includes `RandomizedDelaySec=300` to prevent load spikes.
-   - Sets `Persistent=true` so missed backups (e.g. during maintenance or reboot) trigger immediately upon boot.
+   - Sets `Persistent=true` so missed backups trigger immediately upon boot.
 
----
-
-## 2. Configuration & Environment Variables
-
+### Configuration & Environment Variables
 Place production backup credentials in `/etc/hiralal/backup.env` (permissions `0600`):
 
 ```bash
@@ -46,11 +73,8 @@ EOF
 sudo chmod 600 /etc/hiralal/backup.env
 ```
 
----
-
-## 3. Installation & Activation
-
-Deploy the systemd units to `/etc/systemd/system/`:
+### Installation & Activation
+Deploy the backup systemd units to `/etc/systemd/system/`:
 
 ```bash
 # 1. Copy unit definitions
@@ -61,61 +85,13 @@ sudo cp deploy/systemd/hiralal-backup.timer /etc/systemd/system/
 sudo chmod 644 /etc/systemd/system/hiralal-backup.service
 sudo chmod 644 /etc/systemd/system/hiralal-backup.timer
 
-# 3. Reload systemd manager configuration
+# 3. Reload systemd daemon
 sudo systemctl daemon-reload
 
 # 4. Enable and start the timer
-sudo systemctl enable --now hiralal-backup.timer
-```
+sudo systemctl enable hiralal-backup.timer
+sudo systemctl start hiralal-backup.timer
 
----
-
-## 4. Verification & Operational Commands
-
-### Check Timer Status
-```bash
-sudo systemctl status hiralal-backup.timer
+# 5. Verify timer status
 sudo systemctl list-timers --all | grep hiralal
-```
-
-### Trigger Manual Backup Run
-```bash
-sudo systemctl start hiralal-backup.service
-```
-
-### Inspect Execution Status and Logs
-```bash
-# Check service exit status
-sudo systemctl status hiralal-backup.service
-
-# View latest 100 log lines
-sudo journalctl -u hiralal-backup.service -n 100 --no-pager
-
-# Follow live output during manual run
-sudo journalctl -u hiralal-backup.service -f
-```
-
----
-
-## 5. Disaster Recovery & Test Restore
-
-To verify backup restore integrity without touching production data, use `scripts/restore-db.sh` targeting a disposable container:
-
-```bash
-export BACKUP_ENCRYPTION_PASSPHRASE="<SECURE_CRYPTO_PASSPHRASE>"
-export DB_CONTAINER="hiralal_test_restore"
-export POSTGRES_USER="postgres"
-export POSTGRES_DB="hiralal_test"
-
-# 1. Spin up a temporary disposable PostgreSQL test container
-docker run -d --name hiralal_test_restore -e POSTGRES_PASSWORD=restoretest -e POSTGRES_DB=hiralal_test postgres:16-alpine
-
-# 2. Restore the latest backup into the disposable container
-./scripts/restore-db.sh /var/backups/hiralal/hiralal_backup_<TIMESTAMP>.sql.gz.enc hiralal_test
-
-# 3. Verify row counts and integrity
-docker exec -i hiralal_test_restore psql -U postgres -d hiralal_test -c "SELECT count(*) FROM \"User\";"
-
-# 4. Tear down the test container
-docker rm -f hiralal_test_restore
 ```

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Hiralal & Sons Sales Pvt. Ltd. — Nginx Cloudflare SSL Precheck Script
-# Platform: AWS EC2 t4g.medium (Graviton2 ARM64, ap-south-1)
+# Platform: Hostinger KVM 2 VPS (Ubuntu x86_64)
 # Verifies SSL certificates and configuration prior to Nginx startup
 # ==============================================================================
 

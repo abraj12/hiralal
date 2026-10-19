@@ -1,7 +1,7 @@
 # GitHub Environment Setup & Owner Protection Guide
 **Platform:** Hiralal & Sons Sales Pvt. Ltd. — Plumber & Tile Worker Rewards Platform  
-**Document Version:** 1.0 (Phase G.5 Closure)  
-**Security Scope:** Production AWS EC2 Deployment and Android Release Signing Protection  
+**Document Version:** 2.0 (Hostinger KVM 2 VPS & WhatsApp Platform)  
+**Security Scope:** Production Hostinger KVM 2 Deployment and Android Release Signing Protection  
 
 ---
 
@@ -9,12 +9,12 @@
 
 The Hiralal platform uses two isolated GitHub Environments in repository settings (`Settings -> Environments`) to enforce strict principle of least privilege, multi-party authorization, and secret isolation:
 
-1. **`production-ec2`**: Enforces deployment gates for the AWS EC2 production stack.
+1. **`production-kvm`**: Enforces deployment gates for the Hostinger KVM 2 VPS production stack.
 2. **`android-release-signing`**: Protects the release Android Keystore and production signing passwords.
 
 > [!IMPORTANT]
 > **Declaration vs. Configuration Warning:**
-> Declaring `environment: production-ec2` or `environment: android-release-signing` inside GitHub Actions workflow YAML files (`deploy-ec2.yml` and `android-release-candidate.yml`) binds the jobs to those environment names. However, **workflow YAML files cannot configure required reviewers, branch protection rules, or secret scoping on the GitHub repository settings page**.
+> Declaring `environment: production-kvm` or `environment: android-release-signing` inside GitHub Actions workflow YAML files (`deploy-kvm.yml` and `android-release-candidate.yml`) binds the jobs to those environment names. However, **workflow YAML files cannot configure required reviewers, branch protection rules, or secret scoping on the GitHub repository settings page**.
 > 
 > The repository owner/administrator **must explicitly execute the manual configuration steps below** in the GitHub Web UI to prevent unauthorized or single-contributor deployments and signing.
 
@@ -58,23 +58,23 @@ Navigate to **Settings -> Environments -> android-release-signing -> Deployment 
 
 ---
 
-## 3. Environment B: `production-ec2`
+## 3. Environment B: `production-kvm`
 
 ### Purpose
-Governs live deployment to AWS EC2 Graviton2 ARM64 instances, pre-migration database backup execution, migration runner invocation, deployment state recording, and stack startup.
+Governs live deployment to Hostinger KVM 2 VPS (Ubuntu x86_64), pre-migration database backup execution, migration runner invocation, deployment state recording, and stack startup.
 
 ### Required Environment Secrets
-Navigate to **Settings -> Environments -> production-ec2 -> Environment secrets**:
+Navigate to **Settings -> Environments -> production-kvm -> Environment secrets**:
 
 | Secret Name | Description | Example / Format |
 |---|---|---|
-| `EC2_HOST` | Production EC2 IPv4 address or hostname | `13.x.x.x` |
-| `EC2_USER` | Production SSH user | `ubuntu` |
-| `EC2_SSH_KEY` | Ed25519 or RSA deployment private key | OpenSSH private key PEM |
-| `EC2_SSH_KNOWN_HOSTS` | Pinned server host key fingerprint line | `13.x.x.x ssh-ed25519 AAAAC3...` |
+| `KVM_HOST` | Production Hostinger KVM 2 IPv4 address or hostname | `194.x.x.x` |
+| `KVM_USER` | Production SSH user | `ubuntu` |
+| `KVM_SSH_KEY` | Ed25519 or RSA deployment private key | OpenSSH private key PEM |
+| `KVM_SSH_KNOWN_HOSTS` | Pinned server host key fingerprint line | `194.x.x.x ssh-ed25519 AAAAC3...` |
 
 ### Required Environment Protection Rules
-Navigate to **Settings -> Environments -> production-ec2 -> Deployment protection rules**:
+Navigate to **Settings -> Environments -> production-kvm -> Deployment protection rules**:
 
 1. **Required reviewers**:
    - Check **Required reviewers**.

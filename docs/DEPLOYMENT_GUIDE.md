@@ -41,17 +41,28 @@
 
 ---
 
-### 3. Transactional SMS Gateway (MSG91 DLT Approved)
+### 3. WhatsApp Business Platform Cloud API (Phone Verification OTP)
 
-Configure MSG91 for transactional OTP transmission:
+Configure the official Meta WhatsApp Business Cloud API for phone-verification OTPs:
 ```env
-SMS_PROVIDER="MSG91"
-MSG91_AUTH_KEY="<your_msg91_auth_key>"
-MSG91_TEMPLATE_ID="<your_registered_dlt_template_id>"
-MSG91_SENDER_ID="HIRLAL"
+OTP_PROVIDER="WHATSAPP"
+WHATSAPP_API_URL="https://graph.facebook.com"
+WHATSAPP_API_VERSION="v21.0"
+WHATSAPP_PHONE_NUMBER_ID="<your_meta_phone_number_id>"
+WHATSAPP_ACCESS_TOKEN="<your_permanent_system_user_access_token>"
+WHATSAPP_BUSINESS_ACCOUNT_ID="<your_waba_account_id>"
+WHATSAPP_TEMPLATE_NAME="hiralal_auth_otp"
+WHATSAPP_TEMPLATE_LANGUAGE="en_US"
+WHATSAPP_AUTH_BUTTON_TYPE="COPY_CODE"
 ```
 
-*Note: OTP codes are generated and cryptographically verified exclusively server-side. OTPs are never returned to client responses in production.*
+#### Approved Authentication Template Details:
+- **Category:** `AUTHENTICATION`
+- **Template Name:** `hiralal_auth_otp`
+- **Languages:** `en_US`, `hi`
+- **Body:** `{{1}} is your verification code for Hiralal & Sons Rewards Platform. For security reasons, do not share this code with anyone. Valid for 5 minutes.`
+- **Buttons:** One-tap `COPY_CODE` button (`Copy Code`).
+- **Security Invariant:** OTP codes are generated via `crypto.randomInt()`, hashed with server HMAC-SHA256, single-use invalidated, rate-limited to 60-second cooldown, and access tokens are strictly redacted from logs.
 
 ---
 
@@ -85,7 +96,7 @@ FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY----
 
 ### 6. Production Docker Deployment & Health Validation
 
-Deploy the full stack:
+Deploy the full stack on Hostinger KVM 2 VPS (Ubuntu x86_64):
 ```bash
 docker compose up -d --build
 ```
@@ -106,7 +117,9 @@ python3 scripts/verify-deployment-health.py '{"status":"ok"}' '{"status":"ready"
 
 ### 7. GitHub Actions Production Deployment & Release Workflows
 
-#### Production EC2 Deployment (`.github/workflows/deploy-ec2.yml`)
+#### Production Hostinger KVM 2 Deployment (`.github/workflows/deploy-kvm.yml`)
+- **Target Server**: Hostinger KVM 2 VPS (2 vCPU, 8 GB RAM, Ubuntu x86_64).
+- **Environment**: Bound to canonical GitHub Environment `production-kvm`.
 - **Trigger**: Manual only (`workflow_dispatch`).
 - **Required Inputs**:
   - `confirm_deploy`: Must equal `DEPLOY` exactly.
@@ -114,8 +127,9 @@ python3 scripts/verify-deployment-health.py '{"status":"ok"}' '{"status":"ready"
 - **Pre-deployment Safety Gates**:
   - Target commit must be on `origin/main` without drift (`RELEASE_SHA == MAIN_HEAD`).
   - Target commit must have a completed, successful CI run (`ci.yml`).
-  - Mandatory secrets (`EC2_HOST`, `EC2_SSH_KEY`, `EC2_SSH_KNOWN_HOSTS`) fail closed before SSH.
+  - Mandatory secrets (`KVM_HOST`, `KVM_SSH_KEY`, `KVM_SSH_KNOWN_HOSTS`) fail closed before SSH.
   - Pre-migration database backup (`scripts/backup-db.sh`) is mandatory.
+  - Health check failure triggers automated forward-only container rollback (`rollback-release.sh`).
 
 #### Signed Android Release Candidate (`.github/workflows/android-release-candidate.yml`)
 - **Trigger**: Manual only (`workflow_dispatch`).

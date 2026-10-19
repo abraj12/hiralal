@@ -1,0 +1,30 @@
+[Unit]
+Description=Hiralal & Sons - Payouts & Outbox BullMQ Worker Daemon
+After=network.target postgresql.service redis-server.service hiralal-backend.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/hiralal/backend
+Environment=NODE_ENV=production
+Environment=PORT=5001
+Environment=SERVICE_ROLE=worker
+EnvironmentFile=/etc/hiralal/.env
+ExecStart=/usr/bin/node dist/server.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/hiralal/worker-out.log
+StandardError=append:/var/log/hiralal/worker-err.log
+
+# Resource Limits & Sandboxing (Hostinger KVM 2: 8GB RAM budget)
+MemoryMax=768M
+TasksMax=100
+LimitNOFILE=65536
+ProtectSystem=full
+ProtectHome=read-only
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

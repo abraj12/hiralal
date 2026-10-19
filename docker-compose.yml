@@ -2,7 +2,7 @@ version: '3.8'
 
 # ==============================================================================
 # Hiralal & Sons Sales Pvt. Ltd. - Production Multi-Container Compose
-# Platform: AWS EC2 t4g.medium (2 vCPU, 4 GiB RAM, ARM64 / Graviton2, ap-south-1)
+# Platform: Hostinger KVM 2 VPS (2 vCPU, 8 GiB RAM, 100 GB NVMe, Ubuntu x86_64)
 # Memory Budget:
 #   PostgreSQL 16:  1280 MB limit
 #   Redis 7:         256 MB limit
@@ -10,8 +10,8 @@ version: '3.8'
 #   Worker Daemon:   512 MB limit
 #   Admin Frontend:  512 MB limit
 #   Nginx Proxy:     128 MB limit
-#   OS / Kernel:    ~700 MB Headroom
-#   Total Stack:    < 4096 MB Physical RAM
+#   System / Kernel: ~4600 MB Headroom
+#   Total Stack:    < 8192 MB Physical RAM
 # ==============================================================================
 
 services:

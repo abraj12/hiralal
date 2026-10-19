@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Hiralal & Sons Rewards Platform — Automated Release Rollback Controller
-# Platform: AWS EC2 t4g.medium (linux/arm64, Graviton2, ap-south-1)
+# Platform: Hostinger KVM 2 VPS (linux/amd64, Ubuntu x86_64)
 # ==============================================================================
 # Invariant Guarantees:
 # 1. Forward-only database schema preservation: NEVER restore snapshots over live writes.

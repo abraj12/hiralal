@@ -1,0 +1,28 @@
+[Unit]
+Description=Hiralal & Sons - Next.js Admin Panel Frontend Service
+After=network.target hiralal-backend.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/hiralal/admin
+Environment=NODE_ENV=production
+Environment=PORT=3000
+EnvironmentFile=/etc/hiralal/.env
+ExecStart=/opt/hiralal/admin/node_modules/next/dist/bin/next start -p 3000
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/hiralal/admin-out.log
+StandardError=append:/var/log/hiralal/admin-err.log
+
+# Resource Limits & Sandboxing (Hostinger KVM 2: 8GB RAM budget)
+MemoryMax=768M
+TasksMax=100
+LimitNOFILE=65536
+ProtectSystem=full
+ProtectHome=read-only
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

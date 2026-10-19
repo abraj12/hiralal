@@ -1,0 +1,37 @@
+[Unit]
+Description=Hiralal & Sons Rewards Platform - Production Docker Compose Stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/hiralal
+User=root
+Group=docker
+
+# Read environment file if present
+EnvironmentFile=-/etc/hiralal/.env
+EnvironmentFile=-/opt/hiralal/.env
+
+# Pre-startup validation: compose configuration must be syntactically valid
+ExecStartPre=/usr/bin/docker compose config --quiet
+
+# Start application stack in detached mode
+ExecStart=/usr/bin/docker compose up -d
+
+# Gracefully stop application stack on system shutdown or service restart
+ExecStop=/usr/bin/docker compose down --timeout 30
+
+# Reload stack without full restart
+ExecReload=/usr/bin/docker compose up -d
+
+# Security and Sandbox Invariants
+TimeoutStartSec=300
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

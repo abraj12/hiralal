@@ -1,6 +1,6 @@
 /**
- * External Backup Upload & Verification Runner for Cloudflare R2 / AWS S3
- * Platform: AWS EC2 t4g.medium (Graviton2 ARM64)
+ * External Backup Upload & Verification Runner for Cloudflare R2 / S3-Compatible Storage
+ * Platform: Hostinger KVM 2 VPS (Ubuntu x86_64)
  * Client: HIRALAL AND SONS SALES PVT. LTD.
  */
 const fs = require('fs');

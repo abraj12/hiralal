@@ -248,8 +248,8 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
           fi
 
-  docker-arm64-check:
-    name: Docker ARM64 Build Verification (AWS Graviton2)
+  docker-kvm-build-check:
+    name: Production Docker Build Verification (Hostinger KVM 2 / linux/amd64)
     runs-on: ubuntu-latest
     needs: [backend-test, admin-date-tests]
 
@@ -257,40 +257,35 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up QEMU for ARM64 emulation
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/arm64
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Backend Docker Image for linux/arm64
+      - name: Build Backend Docker Image for linux/amd64
         uses: docker/build-push-action@v5
         with:
           context: ./backend
           file: ./backend/Dockerfile
-          platforms: linux/arm64
+          platforms: linux/amd64
           push: false
-          tags: hiralal-backend:ci-arm64-test
+          tags: hiralal-backend:ci-amd64-test
 
-      - name: Build Admin Panel Docker Image for linux/arm64
+      - name: Build Admin Panel Docker Image for linux/amd64
         uses: docker/build-push-action@v5
         with:
           context: ./admin
           file: ./admin/Dockerfile
-          platforms: linux/arm64
+          platforms: linux/amd64
           push: false
-          tags: hiralal-admin:ci-arm64-test
+          tags: hiralal-admin:ci-amd64-test
 
-      - name: Build Migration Runner Docker Image for linux/arm64
+      - name: Build Migration Runner Docker Image for linux/amd64
         uses: docker/build-push-action@v5
         with:
           context: ./backend
           file: ./backend/Dockerfile.migrate
-          platforms: linux/arm64
+          platforms: linux/amd64
           push: false
-          tags: hiralal-migrate:ci-arm64-test
+          tags: hiralal-migrate:ci-amd64-test
 
   full-stack-compose-smoke-test:
     name: Full 6-Container Docker Compose Stack Smoke Test
@@ -330,6 +325,10 @@ jobs:
           sed -i 's/REPLACE_WITH_RAZORPAYX_KEY_SECRET/rzp_secret_hiralal2026/g' .env
           sed -i 's/REPLACE_WITH_RAZORPAYX_ACCOUNT_NUMBER/2323230041123456/g' .env
           sed -i 's/REPLACE_WITH_RAZORPAYX_WEBHOOK_SECRET/ci_test_webhook_secret_rzpx_2026/g' .env
+          sed -i 's/REPLACE_WITH_WHATSAPP_PHONE_NUMBER_ID/100012345678901/g' .env
+          sed -i 's/REPLACE_WITH_WHATSAPP_PERMANENT_ACCESS_TOKEN/EAABci_test_token_valid_123456789/g' .env
+          sed -i 's/REPLACE_WITH_WHATSAPP_BUSINESS_ACCOUNT_ID/200012345678901/g' .env
+          sed -i 's/REPLACE_WITH_WHATSAPP_TEMPLATE_NAME/hiralal_auth_otp/g' .env
           sed -i 's/REPLACE_WITH_MSG91_AUTH_KEY/ci_test_msg91_auth_key_valid/g' .env
           sed -i 's/REPLACE_WITH_MSG91_TEMPLATE_ID/ci_test_msg91_template_valid/g' .env
           sed -i 's/REPLACE_WITH_PRODUCTION_BILL_ADMIN_10DIGIT_MOBILE/9876540001/g' .env

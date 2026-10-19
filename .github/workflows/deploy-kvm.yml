@@ -1,4 +1,4 @@
-name: Deploy to Production AWS EC2 (Graviton2 ARM64)
+name: Deploy to Production Hostinger KVM 2 (Ubuntu x86_64)
 
 on:
   workflow_dispatch:
@@ -21,9 +21,9 @@ permissions:
 
 jobs:
   deploy-production:
-    name: Production Deployment to AWS EC2
+    name: Production Deployment to Hostinger KVM 2 VPS
     runs-on: ubuntu-latest
-    environment: production-ec2
+    environment: production-kvm
     if: >-
       github.event_name == 'workflow_dispatch' &&
       (github.ref == 'refs/heads/main' || github.ref_name == 'main') &&
@@ -83,31 +83,31 @@ jobs:
 
       - name: Configure SSH Key and Verify Host Key
         env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+          KVM_HOST: ${{ secrets.KVM_HOST || secrets.EC2_HOST }}
+          KVM_SSH_KEY: ${{ secrets.KVM_SSH_KEY || secrets.EC2_SSH_KEY }}
+          KVM_SSH_KNOWN_HOSTS: ${{ secrets.KVM_SSH_KNOWN_HOSTS || secrets.EC2_SSH_KNOWN_HOSTS }}
         run: |
-          if [ -z "${EC2_HOST}" ] || [ -z "${EC2_SSH_KEY}" ] || [ -z "${EC2_SSH_KNOWN_HOSTS}" ]; then
-            echo "[FATAL ERROR] Mandatory EC2 deployment secrets (EC2_HOST, EC2_SSH_KEY, or EC2_SSH_KNOWN_HOSTS) are missing. Halting deployment." >&2
+          if [ -z "${KVM_HOST}" ] || [ -z "${KVM_SSH_KEY}" ] || [ -z "${KVM_SSH_KNOWN_HOSTS}" ]; then
+            echo "[FATAL ERROR] Mandatory KVM deployment secrets (KVM_HOST, KVM_SSH_KEY, or KVM_SSH_KNOWN_HOSTS) are missing. Halting deployment." >&2
             exit 1
           fi
           mkdir -p ~/.ssh
-          printf '%s\n' "${EC2_SSH_KEY}" > ~/.ssh/id_ed25519
+          printf '%s\n' "${KVM_SSH_KEY}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "${EC2_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          printf '%s\n' "${KVM_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: Execute Remote Deployment on EC2
+      - name: Execute Remote Deployment on Hostinger KVM 2 VPS
         env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER || 'ubuntu' }}
+          KVM_HOST: ${{ secrets.KVM_HOST || secrets.EC2_HOST }}
+          KVM_USER: ${{ secrets.KVM_USER || secrets.EC2_USER || 'ubuntu' }}
           TARGET_SHA: ${{ github.event.inputs.release_sha }}
         run: |
           echo "Target deployment commit: ${TARGET_SHA}"
 
-          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes "${EC2_USER}@${EC2_HOST}" TARGET_SHA="${TARGET_SHA}" 'bash -s' << 'EOF'
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes "${KVM_USER}@${KVM_HOST}" TARGET_SHA="${TARGET_SHA}" 'bash -s' << 'EOF'
             set -euo pipefail
-            echo "==> Deploying Hiralal & Sons Rewards Platform on AWS Graviton2..."
+            echo "==> Deploying Hiralal & Sons Rewards Platform on Hostinger KVM 2 VPS (Ubuntu x86_64)..."
             
             # Validate and normalize TARGET_SHA immediately before any path or command usage
             case "${TARGET_SHA:-}" in
@@ -319,7 +319,7 @@ jobs:
             CANDIDATE_HEALTHY=false
             if python3 scripts/verify-deployment-health.py "${HEALTH_JSON}" "${READY_JSON}"; then
               CANDIDATE_HEALTHY=true
-              echo "==> Deployment SUCCESS: Release ${DEPLOYED_SHA} healthy and verified!"
+              echo "==> Deployment SUCCESS: Release ${DEPLOYED_SHA} healthy and verified on Hostinger KVM 2!"
 
               # Record active release state metadata atomically using printf
               DEPLOYED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"

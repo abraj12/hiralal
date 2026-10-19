@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Hiralal & Sons Sales Pvt. Ltd. - Automated Database Restore Script
-# Platform: AWS EC2 t4g.medium (ARM64 / Graviton2)
+# Platform: Hostinger KVM 2 VPS (2 vCPU, 8 GB RAM, Ubuntu x86_64)
 # Client: HIRALAL AND SONS SALES PVT. LTD. (CIN: U51909BR2020PTC046116)
 # ==============================================================================
 #

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Authoritative JSON validation for application liveness and dependency readiness.
-Used during EC2 deployment gates to verify post-deployment service health.
+Used during deployment gates to verify post-deployment service health on Hostinger KVM 2 VPS.
 """
 import json
 import sys

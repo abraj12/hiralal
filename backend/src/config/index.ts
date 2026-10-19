@@ -51,6 +51,16 @@ export interface AppConfig {
     templateId: string;
     senderId: string;
   };
+  whatsapp: {
+    apiUrl: string;
+    apiVersion: string;
+    phoneNumberId: string;
+    accessToken: string;
+    businessAccountId: string;
+    templateName: string;
+    templateLanguage: string;
+    buttonType: string;
+  };
   cors: {
     allowedOrigins: string[];
   };
@@ -226,8 +236,11 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     'RAZORPAYX_KEY_SECRET',
     'RAZORPAYX_ACCOUNT_NUMBER',
     'RAZORPAYX_WEBHOOK_SECRET',
-    'MSG91_AUTH_KEY',
-    'MSG91_TEMPLATE_ID',
+    ...(
+      (env.OTP_PROVIDER || (env.WHATSAPP_ACCESS_TOKEN || env.WHATSAPP_PHONE_NUMBER_ID ? 'WHATSAPP' : (env.MSG91_AUTH_KEY ? 'MSG91' : 'WHATSAPP'))).toUpperCase() === 'MSG91'
+        ? ['MSG91_AUTH_KEY', 'MSG91_TEMPLATE_ID']
+        : ['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_TEMPLATE_NAME']
+    ),
     'CORS_ALLOWED_ORIGINS',
     'BILL_ADMIN_MOBILE',
     'OPERATIONS_ADMIN_MOBILE',
@@ -847,11 +860,22 @@ export const config: AppConfig = {
   },
 
   sms: {
-    provider: (process.env.SMS_PROVIDER || 'MSG91').toUpperCase(),
+    provider: (process.env.OTP_PROVIDER || process.env.SMS_PROVIDER || (isProduction ? 'WHATSAPP' : 'WHATSAPP')).toUpperCase(),
     apiKey: process.env.SMS_API_KEY || process.env.MSG91_AUTH_KEY || '',
     authKey: process.env.MSG91_AUTH_KEY || process.env.SMS_API_KEY || '',
     templateId: process.env.MSG91_TEMPLATE_ID || '',
     senderId: process.env.MSG91_SENDER_ID || process.env.SMS_SENDER_ID || 'HIRALAL',
+  },
+
+  whatsapp: {
+    apiUrl: process.env.WHATSAPP_API_URL || 'https://graph.facebook.com',
+    apiVersion: process.env.WHATSAPP_API_VERSION || 'v21.0',
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+    accessToken: process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_API_TOKEN || '',
+    businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '',
+    templateName: process.env.WHATSAPP_TEMPLATE_NAME || 'hiralal_auth_otp',
+    templateLanguage: process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US',
+    buttonType: (process.env.WHATSAPP_AUTH_BUTTON_TYPE || 'COPY_CODE').toUpperCase(),
   },
 
   cors: {

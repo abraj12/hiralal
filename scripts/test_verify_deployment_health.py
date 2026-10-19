@@ -148,7 +148,9 @@ class TestDeploymentWorkflowSafety(unittest.TestCase):
     """
     def setUp(self):
         self.repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.deploy_workflow_path = os.path.join(self.repo_root, ".github", "workflows", "deploy-ec2.yml")
+        self.deploy_workflow_path = os.path.join(self.repo_root, ".github", "workflows", "deploy-kvm.yml")
+        if not os.path.exists(self.deploy_workflow_path):
+            self.deploy_workflow_path = os.path.join(self.repo_root, ".github", "workflows", "deploy-ec2.yml")
         self.android_workflow_path = os.path.join(self.repo_root, ".github", "workflows", "android-release-candidate.yml")
 
         with open(self.deploy_workflow_path, "r", encoding="utf-8") as f:
@@ -186,8 +188,16 @@ class TestDeploymentWorkflowSafety(unittest.TestCase):
 
     def test_ec2_deployment_fails_closed_on_missing_secrets(self):
         """Production deployment halts before SSH connection if mandatory secrets are missing."""
-        self.assertIn('if [ -z "${EC2_HOST}" ] || [ -z "${EC2_SSH_KEY}" ] || [ -z "${EC2_SSH_KNOWN_HOSTS}" ]', self.deploy_content)
-        self.assertIn("Mandatory EC2 deployment secrets", self.deploy_content)
+        has_secret_check = (
+            'if [ -z "${KVM_HOST}" ] || [ -z "${KVM_SSH_KEY}" ] || [ -z "${KVM_SSH_KNOWN_HOSTS}" ]' in self.deploy_content
+            or 'if [ -z "${EC2_HOST}" ] || [ -z "${EC2_SSH_KEY}" ] || [ -z "${EC2_SSH_KNOWN_HOSTS}" ]' in self.deploy_content
+        )
+        self.assertTrue(has_secret_check)
+        has_msg = (
+            "Mandatory KVM deployment secrets" in self.deploy_content
+            or "Mandatory EC2 deployment secrets" in self.deploy_content
+        )
+        self.assertTrue(has_msg)
 
     def test_ec2_deployment_mandates_strict_host_key_checking(self):
         """SSH invocation must enforce StrictHostKeyChecking=yes with known_hosts."""
@@ -253,6 +263,7 @@ class TestDeploymentWorkflowSafety(unittest.TestCase):
     def test_no_secret_material_echoed_in_workflow_logs(self):
         """Neither release nor deployment workflow should echo private keys or passwords."""
         for content in [self.deploy_content, self.android_content]:
+            self.assertNotIn('echo "${KVM_SSH_KEY}"', content)
             self.assertNotIn('echo "${EC2_SSH_KEY}"', content)
             self.assertNotIn('echo "$KEYSTORE_PASS"', content)
             self.assertNotIn('echo "$KEY_PASS"', content)
@@ -275,7 +286,9 @@ class TestRollbackAndReleaseIntegrity(unittest.TestCase):
         self.admin_dockerfile = os.path.join(self.repo_root, "admin", "Dockerfile")
         self.migrate_dockerfile = os.path.join(self.repo_root, "backend", "Dockerfile.migrate")
         self.android_workflow = os.path.join(self.repo_root, ".github", "workflows", "android-release-candidate.yml")
-        self.deploy_workflow = os.path.join(self.repo_root, ".github", "workflows", "deploy-ec2.yml")
+        self.deploy_workflow = os.path.join(self.repo_root, ".github", "workflows", "deploy-kvm.yml")
+        if not os.path.exists(self.deploy_workflow):
+            self.deploy_workflow = os.path.join(self.repo_root, ".github", "workflows", "deploy-ec2.yml")
 
         with open(self.compose_path, "r", encoding="utf-8") as f:
             self.compose_content = f.read()

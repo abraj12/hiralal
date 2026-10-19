@@ -1,7 +1,7 @@
 /**
  * Cryptographic Backup Utility for Hiralal & Sons Platform
  * Authenticated Encryption (AES-256-GCM) with PBKDF2 & Legacy OpenSSL AES-256-CBC Fallback.
- * Platform: AWS EC2 t4g.medium (Graviton2 ARM64)
+ * Platform: Hostinger KVM 2 VPS (Ubuntu x86_64)
  */
 
 const fs = require('fs');
