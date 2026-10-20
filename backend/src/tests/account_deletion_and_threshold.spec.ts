@@ -4,13 +4,14 @@ import { AccountDeletionService } from '../services/account-deletion.service';
 import { AuthService } from '../services/auth.service';
 import { PayoutService } from '../services/payout.service';
 import { prisma } from '../db';
+import { hmacHashOtp } from '../utils/crypto.utils';
 
 describe('Account Deletion Lifecycle & Minimum Redemption Threshold Tests', () => {
   const testMobile = '9800000099';
   const testPassword = 'Password@123';
   const testOtp = '123456';
-  const testOtpHmac = crypto.createHmac('sha256', process.env.OTP_SECRET || 'dev-otp-secret-key-32-chars-minimum!').update(testOtp).digest('hex');
-  const testOtpSha = crypto.createHash('sha256').update(testOtp).digest('hex');
+  const testOtpHmac = hmacHashOtp(testOtp); // F-03: uses dedicated OTP_HMAC_SECRET via config
+  const testOtpSha = hmacHashOtp(testOtp); // F-03: was SHA-256, now HMAC (same as testOtpHmac)
 
   let userId: string;
   let walletId: string;

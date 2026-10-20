@@ -2,7 +2,7 @@ import request from 'supertest';
 import { app } from '../server';
 import { prisma } from '../db';
 import { AuthService } from '../services/auth.service';
-import { sha256Hash } from '../utils/crypto.utils';
+import { sha256Hash, hmacHashOtp } from '../utils/crypto.utils';
 import { closeRedis, checkRedisConnection } from '../redis';
 import bcrypt from 'bcryptjs';
 import fs from 'fs';
@@ -334,7 +334,7 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
       await prisma.otpRequest.create({
         data: {
           mobile: opsAdminMobile,
-          otpHash: sha256Hash(correctOtp),
+          otpHash: hmacHashOtp(correctOtp),
           purpose: 'ADMIN_LOGIN',
           expiresAt: new Date(Date.now() + 5 * 60 * 1000),
         },
@@ -369,7 +369,7 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
       await prisma.otpRequest.create({
         data: {
           mobile: billAdminMobile,
-          otpHash: sha256Hash(validOtp),
+          otpHash: hmacHashOtp(validOtp),
           purpose: 'ADMIN_LOGIN',
           expiresAt: new Date(Date.now() + 5 * 60 * 1000),
         },
@@ -434,7 +434,7 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
         data: { mobile: billAdminMobile, tokenHash: sha256Hash(c1), purpose: 'ADMIN_LOGIN', expiresAt: new Date(Date.now() + 600000) },
       });
       await prisma.otpRequest.create({
-        data: { mobile: billAdminMobile, otpHash: sha256Hash('112233'), purpose: 'ADMIN_LOGIN', expiresAt: new Date(Date.now() + 600000) },
+        data: { mobile: billAdminMobile, otpHash: hmacHashOtp('112233'), purpose: 'ADMIN_LOGIN', expiresAt: new Date(Date.now() + 600000) },
       });
       const billAuth = await AuthService.verifyAdminOtp({
         identifier: `XYZ${billAdminMobile}`,
@@ -449,7 +449,7 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
         data: { mobile: opsAdminMobile, tokenHash: sha256Hash(c2), purpose: 'ADMIN_LOGIN', expiresAt: new Date(Date.now() + 600000) },
       });
       await prisma.otpRequest.create({
-        data: { mobile: opsAdminMobile, otpHash: sha256Hash('223344'), purpose: 'ADMIN_LOGIN', expiresAt: new Date(Date.now() + 600000) },
+        data: { mobile: opsAdminMobile, otpHash: hmacHashOtp('223344'), purpose: 'ADMIN_LOGIN', expiresAt: new Date(Date.now() + 600000) },
       });
       const opsAuth = await AuthService.verifyAdminOtp({
         identifier: `ABC${opsAdminMobile}`,
@@ -554,7 +554,7 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
       const testOtp = '123456';
       await prisma.otpRequest.update({
         where: { id: otpRecord!.id },
-        data: { otpHash: sha256Hash(testOtp) },
+        data: { otpHash: hmacHashOtp(testOtp) },
       });
 
       // 2. Verify Registration OTP
@@ -598,7 +598,7 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
       const testOtp = '654321';
       await prisma.otpRequest.update({
         where: { id: otpRecord!.id },
-        data: { otpHash: sha256Hash(testOtp) },
+        data: { otpHash: hmacHashOtp(testOtp) },
       });
 
       // 2. Verify Password Reset OTP

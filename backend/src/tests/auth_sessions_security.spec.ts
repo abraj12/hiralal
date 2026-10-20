@@ -4,7 +4,7 @@ import { app } from '../server';
 import { prisma } from '../db';
 import { config } from '../config';
 import { AuthService } from '../services/auth.service';
-import { sha256Hash } from '../utils/crypto.utils';
+import { sha256Hash, hmacHashOtp } from '../utils/crypto.utils';
 import { closeRedis, checkRedisConnection, isRedisReady, getRedisClient } from '../redis';
 import { clearRateLimitCache } from '../middleware/rateLimit.middleware';
 
@@ -48,7 +48,7 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
     await prisma.otpRequest.create({
       data: {
         mobile: testMobile,
-        otpHash: sha256Hash(testOtpCode),
+        otpHash: hmacHashOtp(testOtpCode),
         purpose: 'REGISTRATION',
         expiresAt: new Date(Date.now() + 10 * 60 * 1000),
       },
@@ -172,7 +172,7 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
     await prisma.otpRequest.create({
       data: {
         mobile: testMobile,
-        otpHash: sha256Hash(resetOtp),
+        otpHash: hmacHashOtp(resetOtp),
         purpose: 'FORGOT_PASSWORD',
         expiresAt: new Date(Date.now() + 10 * 60 * 1000),
       },
@@ -217,7 +217,7 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
     await prisma.otpRequest.create({
       data: {
         mobile: concurrentMobile,
-        otpHash: sha256Hash(testOtp),
+        otpHash: hmacHashOtp(testOtp),
         purpose: 'REGISTRATION',
         expiresAt: new Date(Date.now() + 10 * 60 * 1000),
       },

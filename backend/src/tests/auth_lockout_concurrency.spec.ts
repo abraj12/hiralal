@@ -4,6 +4,7 @@ import { prisma } from '../db';
 import { config } from '../config';
 import { AuthService } from '../services/auth.service';
 import { resetAdmins } from './test_helpers';
+import { hmacHashOtp } from '../utils/crypto.utils';
 
 function sha256Hash(data: string): string {
   return crypto.createHash('sha256').update(data).digest('hex');
@@ -330,7 +331,7 @@ describe('HIR-V4-02 & HIR-V4.1-01: Concurrency-Safe Password Lockout & Verificat
     expect(latestOtp).not.toBeNull();
     await prisma.otpRequest.update({
       where: { id: latestOtp!.id },
-      data: { otpHash: sha256Hash(testOtp) },
+      data: { otpHash: hmacHashOtp(testOtp) },
     });
 
     // 4. Before OTP verification, execute 10 failed password attempts to cross lockout threshold
@@ -403,7 +404,7 @@ describe('HIR-V4-02 & HIR-V4.1-01: Concurrency-Safe Password Lockout & Verificat
     });
     await prisma.otpRequest.update({
       where: { id: latestOtp!.id },
-      data: { otpHash: sha256Hash(testOtp) },
+      data: { otpHash: hmacHashOtp(testOtp) },
     });
 
     // Legitimate verification executes and succeeds

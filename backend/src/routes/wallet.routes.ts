@@ -8,20 +8,17 @@ router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res
   try {
     const user = req.user!;
 
-    let wallet = await prisma.wallet.findUnique({
+    // F-18: Use upsert to eliminate TOCTOU race condition between findUnique + create
+    const wallet = await prisma.wallet.upsert({
       where: { userId: user.id },
+      update: {},
+      create: {
+        userId: user.id,
+        availableBalance: 0,
+        processingAmount: 0,
+        totalRedeemed: 0,
+      },
     });
-
-    if (!wallet) {
-      wallet = await prisma.wallet.create({
-        data: {
-          userId: user.id,
-          availableBalance: 0,
-          processingAmount: 0,
-          totalRedeemed: 0,
-        },
-      });
-    }
 
     const transactions = await prisma.walletTransaction.findMany({
       where: { userId: user.id },

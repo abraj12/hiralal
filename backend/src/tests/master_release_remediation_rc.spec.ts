@@ -10,6 +10,7 @@ import { AccountDeletionService } from '../services/account-deletion.service';
 import { AuthService } from '../services/auth.service';
 import { StorageService } from '../services/storage';
 import { PlayIntegrityService } from '../services/integrity/playIntegrity.service';
+import { hmacHashOtp } from '../utils/crypto.utils';
 import { getOrCreateBillAdmin, getOrCreateOpsAdmin } from './test_helpers';
 
 describe('Master Release-Blocker Remediation Final Corrective Verification (Workstreams A-E)', () => {
@@ -186,7 +187,7 @@ describe('Master Release-Blocker Remediation Final Corrective Verification (Work
 
       // Setup OTP code
       const otpCode = '654321';
-      const otpHash = crypto.createHash('sha256').update(otpCode).digest('hex');
+      const otpHash = hmacHashOtp(otpCode); // F-03: HMAC instead of SHA-256
       const latestOtp = await prisma.otpRequest.findFirst({
         where: { mobile: testUserMobile, purpose: 'ACCOUNT_DELETION', isUsed: false },
         orderBy: { createdAt: 'desc' },

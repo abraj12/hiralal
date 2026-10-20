@@ -5,12 +5,20 @@ const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
 const TAG_LENGTH = 16;
 
+// Domain-separation info strings for HKDF derivation (one per use-case)
+const HKDF_FIELD_ENC_INFO = Buffer.from('hiralal-field-encryption-v1');
+
 /**
- * Derives a consistent 32-byte key from the configured encryption secret.
+ * Derives a consistent 32-byte AES-256 key using HKDF-SHA256 with
+ * domain-separated info strings to prevent cross-purpose key reuse.
+ * HKDF replaces the previous raw SHA-256 approach (audit finding F-14).
  */
 function getDerivedKey(): Buffer {
   const keySource = config.fieldEncryptionKey || config.encryptionKey;
-  return crypto.createHash('sha256').update(keySource).digest();
+  const keyMaterial = Buffer.from(keySource, 'utf8');
+  // Empty salt is acceptable in HKDF when the key material already has high entropy
+  // Buffer.from() converts the ArrayBuffer returned by hkdfSync to a Node.js Buffer
+  return Buffer.from(crypto.hkdfSync('sha256', keyMaterial, Buffer.alloc(0), HKDF_FIELD_ENC_INFO, 32));
 }
 
 
@@ -88,9 +96,11 @@ export function generateBlindIndex(plaintext: string): string {
 /**
  * Computes server-secret-keyed HMAC-SHA256 for 6-digit OTPs
  * to prevent precomputation / rainbow table attacks on low-entropy numbers.
+ * Uses a dedicated OTP_HMAC_SECRET (audit finding F-05) — decoupled from
+ * the JWT signing key so rotating either does not affect the other.
  */
 export function hmacHashOtp(otpCode: string): string {
-  const secret = config.jwt.accessSecret || config.encryptionKey;
+  const secret = config.otpHmacSecret;
   return crypto.createHmac('sha256', secret).update(otpCode).digest('hex');
 }
 

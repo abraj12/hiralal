@@ -147,7 +147,9 @@ router.post(
         });
       }
       fileName = req.body.fileName || 'invoice.jpg';
-      mimeType = req.body.mimeType || 'image/jpeg';
+      // Do NOT trust the client-supplied mimeType; the server will derive it from magic bytes
+      // during StorageService.validateAndHashFile() inside BillService.submitBill() (F-10).
+      mimeType = req.body.mimeType || 'application/octet-stream';
     } else {
       return res.status(400).json({
         success: false,
@@ -200,16 +202,25 @@ router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res
 });
 
 /**
- * Secure signed URL document retrieval
+ * Secure signed URL document retrieval.
+ * Requires authentication and validates that the file key belongs to the requesting user (F-07).
  */
-router.get('/file', async (req: Request, res: Response) => {
+router.get('/file', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const user = req.user!;
     const key = req.query.key as string;
     const expires = parseInt(req.query.expires as string, 10);
     const sig = req.query.sig as string;
 
     if (!key || isNaN(expires) || !sig) {
       return res.status(400).json({ success: false, message: 'Invalid signed URL parameters.' });
+    }
+
+    // Authorization: verify the file key belongs to the authenticated user.
+    // Key format: bills/{userId}/{billId}/{filename}
+    const keyParts = key.split('/');
+    if (keyParts[0] !== 'bills' || keyParts[1] !== user.id) {
+      return res.status(403).json({ success: false, message: 'Access denied: document does not belong to your account.' });
     }
 
     const isValid = StorageService.verifySignedUrl(key, expires, sig);

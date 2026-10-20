@@ -16,12 +16,14 @@ export class ReconciliationWorker {
       config.razorpayx.accountNumber
     );
 
-    // Look for payouts stuck in non-terminal states older than 2 minutes
+    // Look for payouts stuck in non-terminal states older than 2 minutes.
+    // Exclude payouts already flagged for manual review -- operators handle those (F-13).
     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
     const stuckPayouts = await prisma.payout.findMany({
       where: {
         status: { in: ['PAYOUT_INITIATED', 'PROCESSING'] },
         updatedAt: { lte: twoMinutesAgo },
+        requiresManualReview: false,
       },
       include: { wallet: true },
       take: 50,

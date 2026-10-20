@@ -24,13 +24,34 @@ const router = Router();
 // Protect all admin endpoints with authentication
 router.use(authenticate);
 
+/** Valid profession values for enum-safe query filtering (F-17) */
+const VALID_PROFESSIONS: Profession[] = ['PLUMBER', 'TILE_INSTALLER'];
+
+/**
+ * Validates a profession query parameter and returns the typed enum value or undefined.
+ * Rejects unknown values to prevent Prisma runtime errors (F-17).
+ * Returns null when the value is invalid so callers can return a 400 response.
+ */
+function parseProfessionFilter(
+  professionQuery: string | undefined
+): { profession: Profession | undefined; invalid: boolean } {
+  if (!professionQuery || professionQuery === 'ALL') {
+    return { profession: undefined, invalid: false };
+  }
+  if (!VALID_PROFESSIONS.includes(professionQuery as Profession)) {
+    return { profession: undefined, invalid: true };
+  }
+  return { profession: professionQuery as Profession, invalid: false };
+}
+
 /**
  * 1. Dashboard Overview Stats with Strict Server-Side Profession Filtering
  */
 router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const professionQuery = req.query.profession as string;
-    const filterProfession = (professionQuery && professionQuery !== 'ALL') ? (professionQuery as Profession) : undefined;
+    // F-17: validate profession via shared helper to prevent enum injection
+    const { profession: filterProfession, invalid: professionInvalid } = parseProfessionFilter(req.query.profession as string);
+    if (professionInvalid) return res.status(400).json({ success: false, message: 'Invalid profession filter.' });
 
     const billWhere: any = {};
     if (filterProfession) billWhere.user = { profession: filterProfession };
@@ -234,13 +255,15 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
  */
 router.get('/users', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const profession = req.query.profession as string;
+    // F-17: validate profession via shared helper to prevent enum injection
+    const { profession: profFilter, invalid: profInvalid } = parseProfessionFilter(req.query.profession as string);
+    if (profInvalid) return res.status(400).json({ success: false, message: 'Invalid profession filter.' });
     const status = req.query.status as string;
     const search = req.query.search as string;
 
     const where: any = { role: 'USER' };
-    if (profession && profession !== 'ALL') {
-      where.profession = profession as Profession;
+    if (profFilter) {
+      where.profession = profFilter;
     }
     if (status && status !== 'ALL') {
       where.status = status as UserStatus;
@@ -428,11 +451,13 @@ router.put('/users/:id/name', requireOperationsAdmin, async (req: AuthenticatedR
 router.get('/bills', requireBillAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const status = req.query.status as string;
-    const profession = req.query.profession as string;
+    // F-17: validate profession via shared helper to prevent enum injection
+    const { profession: profFilter, invalid: profInvalid } = parseProfessionFilter(req.query.profession as string);
+    if (profInvalid) return res.status(400).json({ success: false, message: 'Invalid profession filter.' });
     const search = req.query.search as string;
 
     const bills = await BillService.getAdminBills({
-      profession: (profession && profession !== 'ALL') ? (profession as Profession) : 'ALL',
+      profession: profFilter ?? 'ALL',
       status: (status && status !== 'ALL') ? (status as BillStatus) : 'ALL',
       search,
     });
@@ -645,14 +670,16 @@ router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequ
 router.get('/payouts', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const status = req.query.status as string;
-    const profession = req.query.profession as string;
+    // F-17: validate profession via shared helper to prevent enum injection
+    const { profession: profFilter, invalid: profInvalid } = parseProfessionFilter(req.query.profession as string);
+    if (profInvalid) return res.status(400).json({ success: false, message: 'Invalid profession filter.' });
 
     const where: any = {};
     if (status && status !== 'ALL') {
       where.status = status;
     }
-    if (profession && profession !== 'ALL') {
-      where.user = { profession: profession as Profession };
+    if (profFilter) {
+      where.user = { profession: profFilter };
     }
 
     const payouts = await prisma.payout.findMany({

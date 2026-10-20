@@ -607,8 +607,7 @@ export class AuthService {
       }
 
       const inputHmac = hmacHashOtp(cleanOtp);
-      const inputSha = sha256Hash(cleanOtp);
-      if (inputHmac !== record.otpHash && inputSha !== record.otpHash) {
+      if (inputHmac !== record.otpHash) {
         const updated = await tx.otpRequest.update({
           where: { id: record.id },
           data: { attemptsCount: { increment: 1 } },
@@ -790,11 +789,12 @@ export class AuthService {
         throw new Error(`Please wait ${remainingSec} seconds before requesting a new verification code.`);
       }
 
-      // 3. Rate-limiting: max 5 requests per 10 minutes per mobile
+      // 3. Rate-limiting: max 5 requests per 10 minutes per mobile per purpose (F-12)
       const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
       const recentRequests = await tx.otpRequest.count({
         where: {
           mobile: cleanMobile,
+          purpose: validatedPurpose as OtpPurpose,
           createdAt: { gt: tenMinutesAgo },
         },
       });
@@ -890,11 +890,12 @@ export class AuthService {
         return { shouldSendSms: false };
       }
 
-      // 2. Rate-limiting: max 5 requests per 10 minutes per mobile
+      // 2. Rate-limiting: max 5 requests per 10 minutes per mobile per purpose (F-12)
       const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
       const recentRequests = await tx.otpRequest.count({
         where: {
           mobile: cleanMobile,
+          purpose: 'FORGOT_PASSWORD',
           createdAt: { gt: tenMinutesAgo },
         },
       });
@@ -989,11 +990,12 @@ export class AuthService {
         throw new Error(`Please wait ${remainingSec} seconds before requesting a new verification code.`);
       }
 
-      // 2. Rate-limiting: max 5 requests per 10 minutes per mobile
+      // 2. Rate-limiting: max 5 requests per 10 minutes per mobile per purpose (F-12)
       const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
       const recentRequests = await tx.otpRequest.count({
         where: {
           mobile: cleanMobile,
+          purpose: 'ACCOUNT_DELETION',
           createdAt: { gt: tenMinutesAgo },
         },
       });
@@ -1130,10 +1132,9 @@ export class AuthService {
       };
     }
 
-    // Verify cryptographic HMAC or SHA-256 hash (backward-compatible)
+    // Verify cryptographic HMAC hash (F-03: legacy SHA-256 backward-compat path removed)
     const inputHmac = hmacHashOtp(cleanOtp);
-    const inputSha = sha256Hash(cleanOtp);
-    if (inputHmac !== record.otpHash && inputSha !== record.otpHash) {
+    if (inputHmac !== record.otpHash) {
       const updated = await tx.otpRequest.update({
         where: { id: record.id },
         data: { attemptsCount: { increment: 1 } },
@@ -2060,8 +2061,8 @@ export class AuthService {
     if (typeof password !== 'string') {
       throw new Error('Password must be a valid string.');
     }
-    if (password.length < 6) {
-      throw new Error(`${fieldName} must be at least 6 characters long.`);
+    if (password.length < 8) {
+      throw new Error(`${fieldName} must be at least 8 characters long.`);
     }
     if (Buffer.byteLength(password, 'utf8') > 72) {
       throw new Error('Password exceeds the maximum supported length.');

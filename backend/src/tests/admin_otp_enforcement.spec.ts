@@ -268,7 +268,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
       expect(latestOtp).toBeDefined();
       await prisma.otpRequest.update({
         where: { id: latestOtp!.id },
-        data: { otpHash: sha256Hash(realOtp) },
+        data: { otpHash: hmacHashOtp(realOtp) },
       });
 
       // 2. OTP & Challenge verification
@@ -346,7 +346,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
       });
       await prisma.otpRequest.update({
         where: { id: latestOtp!.id },
-        data: { otpHash: sha256Hash(realOtp) },
+        data: { otpHash: hmacHashOtp(realOtp) },
       });
 
       // First verification succeeds
@@ -407,7 +407,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
       });
       await prisma.otpRequest.update({
         where: { id: wOtpRow!.id },
-        data: { otpHash: sha256Hash(workerOtp) },
+        data: { otpHash: hmacHashOtp(workerOtp) },
       });
 
       const workerVerify = await AuthService.verifyOtp({
@@ -457,7 +457,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
       });
       await prisma.otpRequest.update({
         where: { id: otpRow!.id },
-        data: { otpHash: sha256Hash(knownOtp) },
+        data: { otpHash: hmacHashOtp(knownOtp) },
       });
 
       // Verify REGISTRATION OTP
@@ -497,7 +497,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
       });
       await prisma.otpRequest.update({
         where: { id: billOtpRow!.id },
-        data: { otpHash: sha256Hash(billOtp) },
+        data: { otpHash: hmacHashOtp(billOtp) },
       });
 
       const billVerify = await request(app)
@@ -523,7 +523,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
       });
       await prisma.otpRequest.update({
         where: { id: opsOtpRow!.id },
-        data: { otpHash: sha256Hash(opsOtp) },
+        data: { otpHash: hmacHashOtp(opsOtp) },
       });
 
       const opsVerify = await request(app)
@@ -638,7 +638,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
     await prisma.otpRequest.create({
       data: {
         mobile: billAdminMobile,
-        otpHash: sha256Hash(testOtp),
+        otpHash: hmacHashOtp(testOtp),
         purpose: 'ADMIN_LOGIN',
         isUsed: false,
         expiresAt: new Date(Date.now() + 300000),
@@ -692,7 +692,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
     await prisma.otpRequest.create({
       data: {
         mobile: billAdminMobile,
-        otpHash: sha256Hash(realOtp),
+        otpHash: hmacHashOtp(realOtp),
         purpose: 'ADMIN_LOGIN',
         isUsed: false,
         expiresAt: new Date(Date.now() + 300000),
@@ -733,7 +733,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
     await prisma.otpRequest.create({
       data: {
         mobile: billAdminMobile,
-        otpHash: sha256Hash(realOtp),
+        otpHash: hmacHashOtp(realOtp),
         purpose: 'ADMIN_LOGIN',
         isUsed: false,
         expiresAt: new Date(Date.now() + 300000),
@@ -785,7 +785,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
     await prisma.otpRequest.create({
       data: {
         mobile: opsAdminMobile,
-        otpHash: sha256Hash(realOtp),
+        otpHash: hmacHashOtp(realOtp),
         purpose: 'ADMIN_LOGIN',
         isUsed: false,
         expiresAt: new Date(Date.now() + 300000),
@@ -840,7 +840,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
     await prisma.otpRequest.create({
       data: {
         mobile: billAdminMobile,
-        otpHash: sha256Hash(realOtp),
+        otpHash: hmacHashOtp(realOtp),
         purpose: 'ADMIN_LOGIN',
         isUsed: false,
         expiresAt: new Date(Date.now() + 300000),
@@ -940,7 +940,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
     await prisma.otpRequest.create({
       data: {
         mobile: billAdminMobile,
-        otpHash: sha256Hash(realOtp),
+        otpHash: hmacHashOtp(realOtp),
         purpose: 'ADMIN_LOGIN',
         isUsed: false,
         expiresAt: new Date(Date.now() + 300000),
@@ -1669,14 +1669,14 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
     test('C8. Password length constraints and bcrypt UTF-8 byte boundary safety', async () => {
       const validToken = crypto.randomBytes(32).toString('hex');
 
-      // Password < 6 chars
+      // Password < 8 chars (F-11: minimum raised from 6 to 8)
       await expect(
         AuthService.completePasswordReset({
           mobile: workerMobile,
           verificationToken: validToken,
-          newPassword: '12345',
+          newPassword: '1234567',
         })
-      ).rejects.toThrow('New password must be at least 6 characters long.');
+      ).rejects.toThrow('New password must be at least 8 characters long.');
 
       // Password > 72 UTF-8 bytes (e.g. 73 ASCII characters)
       const longPassword = 'A'.repeat(73);

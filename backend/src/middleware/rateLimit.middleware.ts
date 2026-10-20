@@ -77,11 +77,18 @@ export function createRateLimiter(options: {
     try {
       if (isRedisReady()) {
         const redis = getRedisClient();
-        const current = await redis.incr(key);
 
-        if (current === 1) {
-          await redis.expire(key, windowSeconds);
-        }
+        // Atomic INCR + conditional EXPIRE via Lua script (F-06: fixes non-atomic race condition).
+        // If the process crashes between INCR and EXPIRE, the key could persist forever.
+        // This Lua script executes both operations atomically in a single round-trip.
+        const luaScript = `
+          local current = redis.call('INCR', KEYS[1])
+          if current == 1 then
+            redis.call('EXPIRE', KEYS[1], ARGV[1])
+          end
+          return current
+        `;
+        const current = await (redis as any).eval(luaScript, 1, key, String(windowSeconds)) as number;
 
         const ttl = await redis.ttl(key);
         res.setHeader('X-RateLimit-Limit', limit);
@@ -306,8 +313,8 @@ export const registerIpLimiter = createRateLimiter({
 
 export const adminPrefixesLimiter = createRateLimiter({
   keyPrefix: 'auth:admin_prefixes:ip',
-  limit: config.isProduction ? 60 : 300,
-  windowSeconds: 900, // 60 requests per 15 minutes
+  limit: config.isProduction ? 10 : 60,
+  windowSeconds: 3600, // 10 requests per hour (tightened from 60/15min — F-04)
   getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
   message: 'Too many admin prefix discovery requests. Please wait before retrying.',
 });

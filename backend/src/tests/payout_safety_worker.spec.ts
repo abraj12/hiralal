@@ -282,26 +282,16 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
     expect(unmatchedRes.body.status).toBe('unmatched_held_for_retry');
   });
 
-  test('3b. Payouts Webhook Alias: POST /api/v1/payouts/webhook safely processes callbacks', async () => {
-    const aliasEventId = `evt_alias_${Date.now()}`;
+  test('3b. Webhook Alias Removed: POST /api/v1/payouts/webhook returns 404 (alias removed per F-02)', async () => {
+    // F-02 audit fix: The duplicate webhook alias at /api/v1/payouts/webhook was removed.
+    // Only /api/v1/webhook remains as the canonical endpoint.
+    // This test verifies the alias no longer exists to prevent double-processing.
     const aliasRes = await request(app)
       .post('/api/v1/payouts/webhook')
-      .set('x-razorpay-event-id', aliasEventId)
-      .send({
-        id: aliasEventId,
-        event: 'payout.processed',
-        payload: {
-          payout: {
-            entity: {
-              id: 'pout_alias_test',
-              reference_id: 'ref_dummy_alias',
-            },
-          },
-        },
-      });
+      .set('x-razorpay-event-id', `evt_alias_${Date.now()}`)
+      .send({ id: 'dummy', event: 'payout.processed' });
 
-    expect(aliasRes.status).toBe(200);
-    expect(aliasRes.body.status).toBe('unmatched_held_for_retry');
+    expect(aliasRes.status).toBe(404);
   });
 
   test('4. Reconciliation Worker: Gracefully handles offline or mock gateway sync', async () => {

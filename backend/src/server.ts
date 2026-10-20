@@ -103,13 +103,9 @@ const sharedAssetsPath = path.join(__dirname, '../../shared/assets');
 app.use('/assets', express.static(sharedAssetsPath));
 
 // Health Check Endpoints
+// F-22: Minimized response to avoid exposing service name and version strings
 const healthHandler = (_req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    service: 'Hiralal & Sons Rewards Management API',
-    version: '1.0.0',
-    timestamp: new Date().toISOString(),
-  });
+  res.json({ status: 'ok' });
 };
 
 const liveHandler = (_req: Request, res: Response) => {

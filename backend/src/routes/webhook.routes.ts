@@ -16,6 +16,14 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
   try {
     const signature = req.headers['x-razorpay-signature'] as string;
 
+    // Fail-closed: require webhook secret in all non-test environments (F-02).
+    // Without this, a missing RAZORPAYX_WEBHOOK_SECRET silently bypasses HMAC verification.
+    if (!config.razorpayx.webhookSecret && config.nodeEnv !== 'test') {
+      console.error('[WEBHOOK-SECURITY] RAZORPAYX_WEBHOOK_SECRET is not configured. Rejecting all webhook requests.');
+      res.status(403).json({ error: 'Webhook authentication not configured on server.' });
+      return;
+    }
+
     if (!signature && config.nodeEnv !== 'test') {
       res.status(400).json({ error: 'Missing x-razorpay-signature header' });
       return;
@@ -211,6 +219,6 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
 }
 
 router.post('/razorpayx', handleRazorpayXWebhook);
-router.post('/webhook', handleRazorpayXWebhook);
+// NOTE: The duplicate /webhook alias on payout.routes.ts has been removed (F-02).
 
 export default router;

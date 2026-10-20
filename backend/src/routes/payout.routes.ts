@@ -3,7 +3,6 @@ import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/a
 import { PayoutService } from '../services/payout.service';
 import { payoutRedeemLimiter } from '../middleware/rateLimit.middleware';
 import { requireActionIntegrity } from '../middleware/integrity.middleware';
-import { handleRazorpayXWebhook } from './webhook.routes';
 import { prisma } from '../db';
 
 const router = Router();
@@ -97,11 +96,5 @@ router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res
     res.status(500).json({ success: false, message: err.message });
   }
 });
-
-/**
- * RazorpayX Webhook Compatibility Alias
- * Dispatches directly to authoritative RazorpayX webhook handler
- */
-router.post('/webhook', handleRazorpayXWebhook);
 
 export default router;

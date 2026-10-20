@@ -7,6 +7,7 @@ import { config } from '../config';
 import { getIstYearAndMonth } from '../utils/timezone.utils';
 import { closeRedis } from '../redis';
 import { resetAdmins } from './test_helpers';
+import { hmacHashOtp } from '../utils/crypto.utils';
 
 describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
   let userToken: string;
@@ -62,7 +63,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     await prisma.otpRequest.create({
       data: {
         mobile: '9999999992',
-        otpHash: crypto.createHash('sha256').update('123456').digest('hex'),
+        otpHash: hmacHashOtp('123456'),
         purpose: 'ADMIN_LOGIN',
         isUsed: false,
         expiresAt: new Date(Date.now() + 15 * 60 * 1000),
@@ -106,7 +107,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     await prisma.otpRequest.create({
       data: {
         mobile: '9999999991',
-        otpHash: crypto.createHash('sha256').update('654321').digest('hex'),
+        otpHash: hmacHashOtp('654321'),
         purpose: 'ADMIN_LOGIN',
         isUsed: false,
         expiresAt: new Date(Date.now() + 15 * 60 * 1000),
@@ -167,12 +168,13 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     await closeRedis();
   });
 
-  test('GET /health, /api/health, /api/v1/health return 200 OK with service details', async () => {
+  test('GET /health, /api/health, /api/v1/health return 200 OK with status ok', async () => {
+    // F-22: health endpoint minimized — no service name or version exposed
     for (const path of ['/health', '/api/health', '/api/v1/health']) {
       const res = await request(app).get(path);
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('ok');
-      expect(res.body.service).toContain('Hiralal & Sons');
+      // service and version fields intentionally removed (F-22)
     }
   });
 
@@ -187,7 +189,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
 
     // Create a known OTP hash in test db for this registration
     const testOtpCode = '789123';
-    const otpHash = crypto.createHash('sha256').update(testOtpCode).digest('hex');
+    const otpHash = hmacHashOtp(testOtpCode); // F-03: HMAC instead of SHA-256
 
     await prisma.otpRequest.create({
       data: {

@@ -23,7 +23,7 @@ import { AccountDeletionService } from '../services/account-deletion.service';
 import { AuthService } from '../services/auth.service';
 import { StorageService } from '../services/storage';
 import { FcmProvider } from '../services/push/fcm.provider';
-import { sha256Hash } from '../utils/crypto.utils';
+import { sha256Hash, hmacHashOtp } from '../utils/crypto.utils';
 import {
   computeIntegrityRequestHash,
   normalizeRegistrationIntegrityPayload,
@@ -104,6 +104,8 @@ const validProductionEnv: Record<string, string> = {
   PLAY_INTEGRITY_ALLOW_MOCK: 'false',
   PLAY_INTEGRITY_REQUIRE_LICENSING: 'true',
   PLAY_INTEGRITY_ENFORCE_ACTIONS: 'true',
+  // F-05: Dedicated OTP HMAC secret required in production
+  OTP_HMAC_SECRET: 'prod_otp_hmac_secret_minimum_32_chars_2026!',
 };
 
 async function cleanTestData() {
@@ -1176,7 +1178,7 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
       await prisma.otpRequest.create({
         data: {
           mobile,
-          otpHash: sha256Hash(testOtpCode),
+          otpHash: hmacHashOtp(testOtpCode),
           purpose: 'ACCOUNT_DELETION',
           expiresAt: new Date(Date.now() + 10 * 60 * 1000),
         },
@@ -1235,7 +1237,7 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
       await prisma.otpRequest.create({
         data: {
           mobile,
-          otpHash: sha256Hash(testOtpCode),
+          otpHash: hmacHashOtp(testOtpCode),
           purpose: 'ACCOUNT_DELETION',
           expiresAt: new Date(Date.now() + 10 * 60 * 1000),
         },
@@ -1492,7 +1494,7 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
       await prisma.otpRequest.create({
         data: {
           mobile,
-          otpHash: sha256Hash(testOtpCode),
+          otpHash: hmacHashOtp(testOtpCode),
           purpose: 'ACCOUNT_DELETION',
           expiresAt: new Date(Date.now() + 10 * 60 * 1000),
         },
@@ -1566,7 +1568,7 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
       const otpRecord = await prisma.otpRequest.create({
         data: {
           mobile,
-          otpHash: sha256Hash(correctOtp),
+          otpHash: hmacHashOtp(correctOtp),
           purpose: 'ACCOUNT_DELETION',
           expiresAt: new Date(Date.now() + 10 * 60 * 1000),
           attemptsCount: 0,
@@ -1953,9 +1955,9 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
       });
       expect(otpRec).toBeDefined();
 
-      // Seed a known hash for '123456' using sha256Hash
+      // Seed a known hash for '123456' using hmacHashOtp (F-03: legacy sha256 removed)
       const testOtp = '123456';
-      const otpHash = sha256Hash(testOtp);
+      const otpHash = hmacHashOtp(testOtp);
       await prisma.otpRequest.update({
         where: { id: otpRec!.id },
         data: { otpHash, attemptsCount: 0 },
@@ -2078,9 +2080,9 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
       // 1. Request deletion to issue OTP
       await AccountDeletionService.requestDeletion(user.id, TEST_PASSWORD, '127.0.0.1');
 
-      // 2. Seed a known OTP with sha256Hash
+      // 2. Seed a known OTP with hmacHashOtp (F-03: legacy sha256 removed)
       const testOtp = '654321';
-      const otpHash = sha256Hash(testOtp);
+      const otpHash = hmacHashOtp(testOtp);
       const otpRec = await prisma.otpRequest.findFirst({
         where: { mobile, purpose: 'ACCOUNT_DELETION' },
         orderBy: { createdAt: 'desc' },

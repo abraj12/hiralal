@@ -378,7 +378,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       await prisma.otpRequest.create({
         data: {
           mobile: billAdminMobile,
-          otpHash: sha256Hash(testOtp),
+          otpHash: hmacHashOtp(testOtp),
           purpose: 'ADMIN_LOGIN',
           isUsed: false,
           expiresAt: new Date(Date.now() + 600000),
@@ -459,7 +459,7 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       await prisma.otpRequest.create({
         data: {
           mobile: billAdminMobile,
-          otpHash: sha256Hash(otp2),
+          otpHash: hmacHashOtp(otp2),
           purpose: 'ADMIN_LOGIN',
           isUsed: false,
           expiresAt: new Date(Date.now() + 600000),

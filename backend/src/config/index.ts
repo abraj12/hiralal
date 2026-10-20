@@ -14,6 +14,7 @@ export interface AppConfig {
   encryptionKey: string;
   fieldEncryptionKey: string;
   storageHmacSecret: string;
+  otpHmacSecret: string;
   jwt: {
     accessSecret: string;
     refreshSecret: string;
@@ -226,6 +227,7 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     'BILL_ADMIN_PREFIX',
     'OPERATIONS_ADMIN_PREFIX',
     'STORAGE_HMAC_SECRET',
+    'OTP_HMAC_SECRET',
     'R2_ACCESS_KEY_ID',
     'R2_SECRET_ACCESS_KEY',
     'R2_BUCKET_NAME',
@@ -819,6 +821,7 @@ export const config: AppConfig = {
   encryptionKey: process.env.ENCRYPTION_KEY || 'hiralal_aes256_secret_key_32bytes_sample_dev_only!',
   fieldEncryptionKey: process.env.FIELD_ENCRYPTION_KEY || 'hiralal_field_aes256_32bytes_key_dev_only!',
   storageHmacSecret: process.env.STORAGE_HMAC_SECRET || '',
+  otpHmacSecret: process.env.OTP_HMAC_SECRET || process.env.ENCRYPTION_KEY || 'hiralal_otp_hmac_secret_32bytes_dev!',
 
   jwt: {
     accessSecret: process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'dev_access_secret_key_hiralal_2026',
