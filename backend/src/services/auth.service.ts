@@ -754,7 +754,7 @@ export class AuthService {
     ipAddress?: string;
   }) {
     const validatedPurpose = requireGenericOtpPurpose(params.purpose);
-    const cleanMobile = (params.mobile || '').replace(/\D/g, '').slice(-10);
+    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
     if (cleanMobile.length !== 10) {
       throw new Error('Please enter a valid 10-digit Indian mobile number.');
     }
@@ -849,7 +849,7 @@ export class AuthService {
     mobile: string;
     ipAddress?: string;
   }) {
-    const cleanMobile = (params.mobile || '').replace(/\D/g, '').slice(-10);
+    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
     if (cleanMobile.length !== 10) {
       throw new Error('Please enter a valid 10-digit Indian mobile number.');
     }
@@ -965,7 +965,7 @@ export class AuthService {
     mobile: string;
     ipAddress?: string;
   }) {
-    const cleanMobile = (params.mobile || '').replace(/\D/g, '').slice(-10);
+    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
     if (cleanMobile.length !== 10) {
       throw new Error('Please enter a valid 10-digit Indian mobile number.');
     }
@@ -1081,7 +1081,7 @@ export class AuthService {
     verificationToken?: string;
     expiresAt?: string;
   }> {
-    const cleanMobile = params.mobile.replace(/\D/g, '').slice(-10);
+    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
     const cleanOtp = (params.otpCode || '').trim();
 
     if (!cleanOtp || cleanOtp.length !== 6) {
@@ -1254,7 +1254,7 @@ export class AuthService {
       throw new Error(genericFailure);
     }
 
-    const cleanMobile = (params.mobile || '').replace(/\D/g, '').slice(-10);
+    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
     if (cleanMobile.length !== 10) {
       throw new Error(genericFailure);
     }
@@ -1327,7 +1327,7 @@ export class AuthService {
     userAgent?: string;
     ipAddress?: string;
   }) {
-    const cleanMobile = params.mobile.replace(/\D/g, '').slice(-10);
+    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
 
     const nameValidation = validateStructuredName(
       params.firstName,
@@ -1853,7 +1853,7 @@ export class AuthService {
     if (typeof params.mobile !== 'string' || !/^\d{10}$/.test(params.mobile.replace(/\D/g, '').slice(-10))) {
       throw new Error(PASSWORD_RESET_INVALID_MESSAGE);
     }
-    const cleanMobile = params.mobile.replace(/\D/g, '').slice(-10);
+    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
 
     if (typeof params.verificationToken !== 'string' || !/^[0-9a-f]{64}$/i.test(params.verificationToken.trim())) {
       throw new Error(PASSWORD_RESET_INVALID_MESSAGE);

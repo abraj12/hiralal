@@ -821,7 +821,8 @@ export const config: AppConfig = {
   databaseUrl: process.env.DATABASE_URL || 'postgresql://postgres:1234@localhost:5432/hiralal_rewards?schema=public',
   encryptionKey: process.env.ENCRYPTION_KEY || 'hiralal_aes256_secret_key_32bytes_sample_dev_only!',
   fieldEncryptionKey: process.env.FIELD_ENCRYPTION_KEY || 'hiralal_field_aes256_32bytes_key_dev_only!',
-  blindIndexSecret: process.env.BLIND_INDEX_SECRET || process.env.FIELD_ENCRYPTION_KEY || 'hiralal_field_aes256_32bytes_key_dev_only!',
+  // SEC-HIGH-05: Dedicated blind index secret to prevent cryptographic key reuse across AES and HMAC primitives
+  blindIndexSecret: process.env.BLIND_INDEX_SECRET || (isProduction ? (() => { throw new Error('BLIND_INDEX_SECRET must be explicitly configured in production to prevent key reuse.'); })() : process.env.FIELD_ENCRYPTION_KEY || 'hiralal_field_aes256_32bytes_key_dev_only!'),
   storageHmacSecret: process.env.STORAGE_HMAC_SECRET || '',
   otpHmacSecret: process.env.OTP_HMAC_SECRET || process.env.ENCRYPTION_KEY || 'hiralal_otp_hmac_secret_32bytes_dev!',
 

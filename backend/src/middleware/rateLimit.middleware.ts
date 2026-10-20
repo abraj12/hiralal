@@ -17,10 +17,10 @@ export interface RateLimitOptions {
   message?: string;
 }
 
-export function normalizeIdentifier(val: string | undefined): string | null {
-  if (!val || typeof val !== 'string') return null;
-  const trimmed = val.trim();
-  if (!trimmed) return null;
+export function normalizeIdentifier(val: unknown): string | null {
+  if (val === undefined || val === null) return null;
+  const trimmed = String(val).trim();
+  if (!trimmed || trimmed === '[object Object]') return null;
   // Preserve uppercase alphanumeric prefix for admin identifiers so admins and craftsmen sharing phone numbers do not collide
   const adminMatch = trimmed.match(/^([A-Za-z]+)\s*([0-9]+)$/);
   if (adminMatch) {
@@ -331,5 +331,21 @@ export const adminPrefixesLimiter = createRateLimiter({
   windowSeconds: 3600, // 10 requests per hour (tightened from 60/15min — F-04)
   getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
   message: 'Too many admin prefix discovery requests. Please wait before retrying.',
+});
+
+export const authRefreshLimiter = createRateLimiter({
+  keyPrefix: 'auth:refresh',
+  limit: config.isProduction ? 30 : 120,
+  windowSeconds: 300, // 30 refresh requests per 5 minutes
+  getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
+  message: 'Too many token refresh requests. Please wait before retrying.',
+});
+
+export const webhookLimiter = createRateLimiter({
+  keyPrefix: 'webhook:razorpayx',
+  limit: 200,
+  windowSeconds: 60, // 200 webhook events per minute per IP
+  getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
+  message: 'Too many webhook events from this address.',
 });
 

@@ -329,6 +329,15 @@ export class BillService {
       if (bill.userId === adminId) {
         throw new Error('Administrators cannot approve bills submitted under their own account.');
       }
+      // SEC-HIGH-13: Trojan craftsman collusion guard - administrators cannot approve bills for accounts matching their phone
+      const adminUser = await tx.user.findUnique({ where: { id: adminId }, select: { mobile: true } });
+      if (adminUser && bill.user && bill.user.mobile) {
+        const adminClean = adminUser.mobile.replace(/\D/g, '').slice(-10);
+        const userClean = bill.user.mobile.replace(/\D/g, '').slice(-10);
+        if (adminClean === userClean) {
+          throw new Error('Administrators cannot approve bills submitted under accounts matching their registered mobile number.');
+        }
+      }
       if (bill.status === 'APPROVED') {
         throw new Error('This bill has already been approved.');
       }
@@ -346,7 +355,12 @@ export class BillService {
       }
 
       // Defense-in-depth: check if another bill with the same invoiceNumber was already approved
+      // SEC-HIGH-01: Acquire PostgreSQL advisory transaction lock keyed to normalized invoice number
+      // to strictly serialize cross-user approvals of identical invoice numbers and eliminate TOCTOU races.
       if (bill.invoiceNumber) {
+        const cleanInvoice = bill.invoiceNumber.trim().toUpperCase();
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:' + cleanInvoice}))`;
+
         const alreadyApproved = await tx.bill.findFirst({
           where: {
             id: { not: bill.id },
@@ -374,7 +388,18 @@ export class BillService {
       let gross = Number(bill.grossBillAmount || bill.billAmount);
       let grossWasCorrected = false;
       if (options?.correctedGrossAmount && Number(options.correctedGrossAmount) > 0) {
-        gross = Number(options.correctedGrossAmount);
+        const corrected = Number(options.correctedGrossAmount);
+        const original = Number(bill.grossBillAmount || bill.billAmount);
+        // SEC-CRIT-02: Hard ceiling ₹5,00,000 and max deviation cap to prevent arbitrary loyalty minting
+        const absoluteMaxCeiling = 500000;
+        const maxAllowedDeviation = original > 0 ? Math.max(original * 1.5, 25000) : 50000;
+        if (corrected > absoluteMaxCeiling) {
+          throw new Error(`Corrected gross amount ₹${corrected} exceeds the maximum allowable threshold of ₹${absoluteMaxCeiling}.`);
+        }
+        if (original > 0 && corrected > maxAllowedDeviation) {
+          throw new Error(`Corrected gross amount ₹${corrected} exceeds the maximum allowable deviation (submitted: ₹${original}).`);
+        }
+        gross = corrected;
         grossWasCorrected = true;
       }
       const isGstIncluded = options?.gstIncluded === true;

@@ -4,6 +4,7 @@ import { config } from '../config';
 import { prisma } from '../db';
 import { PayoutService } from '../services/payout.service';
 import { toPaise } from '../utils/money.utils';
+import { webhookLimiter } from '../middleware/rateLimit.middleware';
 
 const router = Router();
 
@@ -234,7 +235,7 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
   }
 }
 
-router.post('/razorpayx', handleRazorpayXWebhook);
+router.post('/razorpayx', webhookLimiter, handleRazorpayXWebhook);
 // NOTE: The duplicate /webhook alias on payout.routes.ts has been removed (F-02).
 
 export default router;

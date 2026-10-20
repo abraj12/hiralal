@@ -161,6 +161,7 @@ function encryptFileStream(inputFile, outputFile, passphrase) {
 
 function decryptFileStream(inputFile, outputFile, passphrase) {
   return new Promise((resolve, reject) => {
+    let tempOutputFile = null;
     try {
       const fd = fs.openSync(inputFile, 'r');
       const header = Buffer.alloc(51);
@@ -176,15 +177,30 @@ function decryptFileStream(inputFile, outputFile, passphrase) {
         const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
         decipher.setAuthTag(tag);
 
+        tempOutputFile = `${outputFile}.tmp_${Date.now()}_${Math.random().toString(36).substring(7)}`;
         const inStream = fs.createReadStream(inputFile, { start: 51 });
-        const outStream = fs.createWriteStream(outputFile);
+        const outStream = fs.createWriteStream(tempOutputFile);
+
+        const cleanupOnError = (err) => {
+          if (tempOutputFile && fs.existsSync(tempOutputFile)) {
+            try { fs.unlinkSync(tempOutputFile); } catch (_) {}
+          }
+          reject(err);
+        };
 
         inStream.pipe(decipher).pipe(outStream);
 
-        outStream.on('finish', resolve);
-        decipher.on('error', reject);
-        inStream.on('error', reject);
-        outStream.on('error', reject);
+        outStream.on('finish', () => {
+          try {
+            fs.renameSync(tempOutputFile, outputFile);
+            resolve();
+          } catch (renameErr) {
+            cleanupOnError(renameErr);
+          }
+        });
+        decipher.on('error', cleanupOnError);
+        inStream.on('error', cleanupOnError);
+        outStream.on('error', cleanupOnError);
       } else {
         const inputBuffer = fs.readFileSync(inputFile);
         const outputBuffer = decryptBackup(inputBuffer, passphrase);
@@ -192,6 +208,9 @@ function decryptFileStream(inputFile, outputFile, passphrase) {
         resolve();
       }
     } catch (e) {
+      if (tempOutputFile && fs.existsSync(tempOutputFile)) {
+        try { fs.unlinkSync(tempOutputFile); } catch (_) {}
+      }
       reject(e);
     }
   });

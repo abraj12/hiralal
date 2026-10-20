@@ -14,7 +14,7 @@ import {
   Info,
 } from 'lucide-react';
 import { AdminApiClient } from '../lib/api';
-import { calculateBillFinancials } from '../lib/financial-utils';
+import { calculateBillFinancials, safeDocumentUrl } from '../lib/financial-utils';
 
 interface BillVerificationModalProps {
   bill: any;
@@ -356,11 +356,12 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                     type="number"
                     step="0.01"
                     min="1"
+                    max="500000"
                     placeholder={grossAmount.toString()}
                     value={correctedAmount}
                     onChange={(e) => setCorrectedAmount(e.target.value)}
                     className="w-full text-base font-bold text-slate-900 bg-white border border-slate-200 rounded-lg px-2.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                    title="Correct invoice gross amount if entered incorrectly by worker"
+                    title="Correct invoice gross amount if entered incorrectly by worker (max ₹5,00,000)"
                   />
                 </div>
               ) : (
@@ -533,7 +534,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 </button>
                 {targetUrl && (
                   <a
-                    href={targetUrl}
+                    href={safeDocumentUrl(targetUrl)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs text-blue-600 hover:text-blue-800 flex items-center space-x-1 font-semibold px-2 py-1 rounded bg-blue-50 hover:bg-blue-100 transition"
@@ -618,7 +619,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   <p className="text-xs font-bold text-slate-800">{bill.invoiceNumber}</p>
                   <p className="text-[11px] text-slate-500 mt-1">{bill.fileName || 'Uploaded Invoice Document'}</p>
                   <a
-                    href={targetUrl}
+                    href={safeDocumentUrl(targetUrl)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="mt-3 inline-flex items-center space-x-1.5 px-3.5 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 shadow-sm transition"

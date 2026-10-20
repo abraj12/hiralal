@@ -53,7 +53,7 @@ router.get('/status', authenticate, requireUser, async (req: AuthenticatedReques
     const result = await KycService.getUserKyc(user.id);
     res.json({ success: true, ...result });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Failed to retrieve KYC status. Please retry.' });
   }
 });
 

@@ -2,7 +2,8 @@ import crypto from 'crypto';
 import { config } from '../config';
 
 const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 16;
+// SEC-MED-06: Standardize on 12-byte (96-bit) IV per NIST SP 800-38D recommendations
+const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 
 // Domain-separation info strings for HKDF derivation (one per use-case)

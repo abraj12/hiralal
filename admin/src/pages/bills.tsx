@@ -16,6 +16,7 @@ import {
 import Sidebar from '../components/Sidebar';
 import BillVerificationModal from '../components/BillVerificationModal';
 import { AdminApiClient } from '../lib/api';
+import { safeDocumentUrl } from '../lib/financial-utils';
 
 export default function AdminBillsPage() {
   const [bills, setBills] = useState<any[]>([]);
@@ -301,7 +302,7 @@ export default function AdminBillsPage() {
                             <span>{b.invoiceNumber}</span>
                             {b.fileUrl && (
                               <a
-                                href={b.fileUrl}
+                                href={safeDocumentUrl(b.fileUrl)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 title="Open original document in new tab"

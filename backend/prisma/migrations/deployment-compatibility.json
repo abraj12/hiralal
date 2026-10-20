@@ -179,6 +179,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Additive column beneficiaryBlindIndex and unique index on PaymentAccount to prevent cross-user account linking."
+    },
+    {
+      "id": "20261020120000_restrict_financial_entity_cascades",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Replaces ON DELETE CASCADE with ON DELETE RESTRICT on Wallet, WalletTransaction, Bill, and Payout to ensure double-entry accounting ledger permanence."
     }
   ]
 }

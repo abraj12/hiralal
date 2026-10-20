@@ -16,6 +16,7 @@ import {
 import Sidebar from '../components/Sidebar';
 import BillVerificationModal from '../components/BillVerificationModal';
 import { AdminApiClient } from '../lib/api';
+import { safeDocumentUrl } from '../lib/financial-utils';
 
 export default function AdminDashboardPage() {
   const router = useRouter();
@@ -658,7 +659,7 @@ export default function AdminDashboardPage() {
               {readOnlyBill.fileUrl && (
                 <div className="pt-2">
                   <a
-                    href={readOnlyBill.fileUrl}
+                    href={safeDocumentUrl(readOnlyBill.fileUrl)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center justify-center space-x-2 transition"

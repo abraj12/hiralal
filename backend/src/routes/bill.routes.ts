@@ -23,6 +23,14 @@ const upload = multer({
     fieldSize: 64 * 1024, // 64KB per field
     parts: 15, // Max 15 parts total
   },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid document type. Only JPEG, PNG, WEBP, and PDF documents are allowed.'));
+    }
+  },
 });
 
 /**
@@ -206,7 +214,7 @@ router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res
     const bills = await BillService.getUserBills(user.id, status);
     res.json({ success: true, bills });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Failed to retrieve bills. Please try again later.' });
   }
 });
 
@@ -277,7 +285,7 @@ router.get('/file', authenticate, async (req: AuthenticatedRequest, res: Respons
 
     res.status(404).json({ success: false, message: 'Document file not found in storage.' });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Failed to retrieve bills. Please try again later.' });
   }
 });
 

@@ -122,6 +122,7 @@ services:
       SIGNCARE_BASE_URL: ${SIGNCARE_BASE_URL:-https://api.signcare.in}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
       FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required}
+      BLIND_INDEX_SECRET: ${BLIND_INDEX_SECRET:?BLIND_INDEX_SECRET is required}
       # F-05: Dedicated OTP HMAC secret — must differ from JWT and encryption keys
       OTP_HMAC_SECRET: ${OTP_HMAC_SECRET:?OTP_HMAC_SECRET is required}
       STORAGE_HMAC_SECRET: ${STORAGE_HMAC_SECRET:?STORAGE_HMAC_SECRET is required}
@@ -235,6 +236,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
       FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required}
+      BLIND_INDEX_SECRET: ${BLIND_INDEX_SECRET:?BLIND_INDEX_SECRET is required}
       # F-05: Dedicated OTP HMAC secret — must differ from JWT and encryption keys
       OTP_HMAC_SECRET: ${OTP_HMAC_SECRET:?OTP_HMAC_SECRET is required}
       STORAGE_HMAC_SECRET: ${STORAGE_HMAC_SECRET:?STORAGE_HMAC_SECRET is required}

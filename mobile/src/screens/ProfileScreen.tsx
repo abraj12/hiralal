@@ -86,8 +86,9 @@ export default function ProfileScreen() {
       try {
         const requestHash = await createAccountDeletionRequestHash({ password: deletePassword });
         attestation = await MobileIntegrityService.performActionAttestation('ACCOUNT_DELETION_REQUEST', requestHash);
-      } catch (attErr) {
-        // Fallback for dev environments where Play Integrity is not configured
+      } catch (attErr: any) {
+        // Log attestation attempt result for dev/fallback tracking (SEC-MED-09)
+        console.warn('[PLAY-INTEGRITY] Account deletion attestation skipped or failed:', attErr?.message);
       }
       const res = await MobileApiClient.requestAccountDeletion(deletePassword, attestation);
       if (res.success) {

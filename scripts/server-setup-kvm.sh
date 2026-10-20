@@ -86,8 +86,17 @@ SSH_PORT="${SSH_PORT:-22}"
 ufw allow "${SSH_PORT}/tcp" comment "SSH Remote Administration"
 
 # Allow HTTP and HTTPS (Nginx Edge & ACME / Let's Encrypt / Cloudflare)
-ufw allow 80/tcp comment "Nginx HTTP / ACME Challenge"
-ufw allow 443/tcp comment "Nginx HTTPS Production TLS"
+# SEC-HIGH-03: Restrict ingress to Cloudflare edge CIDR blocks when RESTRICT_CLOUDFLARE_IPS=true
+if [ "${RESTRICT_CLOUDFLARE_IPS:-false}" = "true" ]; then
+  echo "==> Restricting HTTP/HTTPS ingress exclusively to Cloudflare edge CIDR blocks..."
+  CF_IPV4="173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22"
+  for cidr in ${CF_IPV4}; do
+    ufw allow proto tcp from "${cidr}" to any port 80,443 comment "Cloudflare Edge Ingress"
+  done
+else
+  ufw allow 80/tcp comment "Nginx HTTP / ACME Challenge"
+  ufw allow 443/tcp comment "Nginx HTTPS Production TLS"
+fi
 
 # Explicitly block external access to internal data and application ports
 # (PostgreSQL 5432, Redis 6379, Backend API 5000, Admin Panel 3000)

@@ -71,7 +71,7 @@ router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res
       })),
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Failed to retrieve reward history. Please retry.' });
   }
 });
 

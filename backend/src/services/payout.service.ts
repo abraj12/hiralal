@@ -458,6 +458,21 @@ export class PayoutService {
         throw new Error(`Cannot approve payout in ${payout.status} state. Only PENDING payouts can be approved.`);
       }
 
+      if (payout.userId === adminId) {
+        throw new Error('Administrators cannot approve payouts requested under their own account.');
+      }
+
+      // SEC-HIGH-06 & SEC-HIGH-13: Collusion guard: verify admin mobile != payout user mobile
+      const adminUser = await tx.user.findUnique({ where: { id: adminId }, select: { mobile: true } });
+      const payoutUser = await tx.user.findUnique({ where: { id: payout.userId }, select: { mobile: true } });
+      if (adminUser && payoutUser) {
+        const adminClean = adminUser.mobile.replace(/\D/g, '').slice(-10);
+        const userClean = payoutUser.mobile.replace(/\D/g, '').slice(-10);
+        if (adminClean === userClean) {
+          throw new Error('Administrators cannot approve payouts for accounts matching their registered mobile number.');
+        }
+      }
+
       const updated = await tx.payout.update({
         where: { id: payout.id },
         data: {

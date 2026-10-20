@@ -181,9 +181,10 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       return;
     }
 
-    // Enforce sessionId presence and single-active-session validation
-    const isSensitive = config.isSensitiveEnv || config.isProduction;
-    const isSessionIdRequired = isSensitive || req.headers['x-enforce-session'] === 'true';
+    // Enforce sessionId presence and single-active-session validation (SEC-MED-02)
+    // All operational environments (production, staging, dev) must require sessionId
+    const isTest = config.nodeEnv === 'test';
+    const isSessionIdRequired = !isTest || req.headers['x-enforce-session'] === 'true';
 
     if (!decoded.sessionId) {
       if (isSessionIdRequired) {

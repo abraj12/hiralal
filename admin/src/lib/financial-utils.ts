@@ -24,3 +24,16 @@ export function calculateBillFinancials(
     calculatedReward,
   };
 }
+
+/**
+ * Sanitizes external document preview URLs to strictly allow https: protocols.
+ * Prevents javascript: or dangerous protocol injection (SEC-HIGH-12).
+ */
+export function safeDocumentUrl(url: string | undefined | null): string {
+  if (!url) return '#';
+  const trimmed = url.trim();
+  if (trimmed.startsWith('https://') || trimmed.startsWith('http://localhost') || trimmed.startsWith('/')) {
+    return trimmed;
+  }
+  return '#';
+}

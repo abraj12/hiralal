@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import { AdminApiClient } from '../lib/api';
+import { safeDocumentUrl } from '../lib/financial-utils';
 
 export default function AdminUsersPage() {
   const router = useRouter();
@@ -721,7 +722,7 @@ export default function AdminUsersPage() {
                                     <td className="py-3 px-4 text-right">
                                       {b.fileUrl ? (
                                         <a
-                                          href={b.fileUrl}
+                                          href={safeDocumentUrl(b.fileUrl)}
                                           target="_blank"
                                           rel="noopener noreferrer"
                                           className="text-blue-600 hover:underline font-bold"

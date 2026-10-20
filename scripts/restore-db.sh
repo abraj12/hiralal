@@ -48,7 +48,30 @@ if [ -z "${BACKUP_ENCRYPTION_PASSPHRASE:-}" ]; then
 fi
 
 TEMP_DIR=$(mktemp -d /tmp/hiralal_restore_XXXXXX)
-trap 'rm -rf "${TEMP_DIR}"' EXIT
+# Emergency snapshot directory decoupled from temporary working directory
+# Guarantees that pre-restore safety snapshots are preserved across failure/cancellation (SEC-CRIT-03)
+SNAPSHOT_DIR="${EMERGENCY_SNAPSHOT_DIR:-/var/backups/hiralal/emergency_snapshots}"
+if ! mkdir -p "${SNAPSHOT_DIR}" 2>/dev/null; then
+  SNAPSHOT_DIR="/tmp/hiralal_emergency_snapshots"
+  mkdir -p "${SNAPSHOT_DIR}" 2>/dev/null || true
+fi
+SNAPSHOT_FILE="${SNAPSHOT_DIR}/pre_restore_snapshot_${TARGET_DB}_$(date +%s).sql.gz"
+
+cleanup() {
+  local exit_code=$?
+  rm -f "${DEC_FILE:-}" "${SQL_FILE:-}"
+  if [ -d "${TEMP_DIR:-}" ]; then
+    rm -rf "${TEMP_DIR}"
+  fi
+  if [ ${exit_code} -ne 0 ]; then
+    echo "[CRITICAL ALERT] Database restore failed with exit code ${exit_code}." >&2
+    if [ -f "${SNAPSHOT_FILE:-}" ]; then
+      echo "[ROLLBACK PRESERVED] Pre-restore emergency safety snapshot is PRESERVED at: ${SNAPSHOT_FILE}" >&2
+      echo "[ROLLBACK INSTRUCTION] To rollback manually: gunzip -c '${SNAPSHOT_FILE}' | docker exec -i '${DB_CONTAINER}' psql -U '${DB_USER}' -d '${TARGET_DB}'" >&2
+    fi
+  fi
+}
+trap cleanup EXIT
 
 DEC_FILE="${TEMP_DIR}/decrypted.sql.gz"
 SQL_FILE="${TEMP_DIR}/restore.sql"
@@ -65,7 +88,7 @@ echo "[$(date -u)] [2/4] Decompressing SQL dump..."
 gunzip -c "${DEC_FILE}" > "${SQL_FILE}"
 
 # Create emergency pre-restore snapshot of target database before applying dump
-SNAPSHOT_FILE="${TEMP_DIR}/pre_restore_snapshot_${TARGET_DB}_$(date +%s).sql.gz"
+# SNAPSHOT_FILE is already configured in durable SNAPSHOT_DIR (SEC-CRIT-03)
 echo "[$(date -u)] Creating pre-restore emergency snapshot of '${TARGET_DB}'..."
 if docker exec "${DB_CONTAINER}" pg_dump -U "${DB_USER}" -d "${TARGET_DB}" --clean --if-exists 2>/dev/null | gzip -9 > "${SNAPSHOT_FILE}" 2>/dev/null; then
   echo "[$(date -u)] Pre-restore safety snapshot created at ${SNAPSHOT_FILE}"

@@ -20,6 +20,7 @@ import {
   integrityVerifyLimiter,
   registerIpLimiter,
   adminPrefixesLimiter,
+  authRefreshLimiter,
 } from '../middleware/rateLimit.middleware';
 import { prisma } from '../db';
 import { config } from '../config';
@@ -226,11 +227,23 @@ router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Re
   } else if (isEnforcing) {
     // In enforcing mode, only browser sessions from configured Web Admin origins
     // are exempt from mobile device integrity attestation.
+    // SEC-HIGH-02: Use strict parsed URL origin equality to eliminate prefix/subdomain spoofing
     const origin = (req.headers.origin || req.headers.referer || '') as string;
-    const isAllowedWebAdminOrigin =
-      isAdminCandidate &&
-      origin &&
-      config.cors.allowedOrigins.some((allowed) => origin.startsWith(allowed));
+    let isAllowedWebAdminOrigin = false;
+    if (isAdminCandidate && origin) {
+      try {
+        const parsedOrigin = new URL(origin).origin;
+        isAllowedWebAdminOrigin = config.cors.allowedOrigins.some((allowed) => {
+          try {
+            return new URL(allowed).origin === parsedOrigin;
+          } catch {
+            return allowed === parsedOrigin;
+          }
+        });
+      } catch {
+        isAllowedWebAdminOrigin = false;
+      }
+    }
 
     if (!isAllowedWebAdminOrigin) {
       return res.status(403).json({
@@ -296,7 +309,7 @@ router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Re
   }
 });
 
-router.post('/refresh', async (req: Request, res: Response) => {
+router.post('/refresh', authRefreshLimiter, async (req: Request, res: Response) => {
   try {
     const { refreshToken } = req.body;
     if (!refreshToken) {

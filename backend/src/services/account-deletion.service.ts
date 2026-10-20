@@ -650,9 +650,15 @@ export class AccountDeletionService {
             attemptCount = claimed[0].attemptCount;
           }
 
-          // Fetch bills to delete
+          // SEC-HIGH-07 (CGST Act Section 36 statutory retention compliance):
+          // In production environments with audit retention enabled, approved tax invoices
+          // MUST be retained in storage for statutory 72 months to support GST tax audits.
+          const shouldRetainApproved = process.env.RETAIN_APPROVED_BILLS_FOR_AUDIT === 'true';
           const userBills = await tx.bill.findMany({
-            where: { userId: u.id },
+            where: {
+              userId: u.id,
+              ...(shouldRetainApproved ? { status: { not: 'APPROVED' } } : {}),
+            },
             select: { id: true, fileKey: true },
           });
 

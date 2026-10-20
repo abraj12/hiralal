@@ -246,7 +246,7 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
       recentBills: mappedRecentBills,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Administrative operation failed. Please retry.' });
   }
 });
 
@@ -308,7 +308,7 @@ router.get('/users', requireOperationsAdmin, async (req: AuthenticatedRequest, r
 
     res.json({ success: true, users: result });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Administrative operation failed. Please retry.' });
   }
 });
 
@@ -411,7 +411,7 @@ router.get('/users/:id', requireOperationsAdmin, async (req: AuthenticatedReques
       })),
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Administrative operation failed. Please retry.' });
   }
 });
 
@@ -467,7 +467,7 @@ router.get('/bills', requireBillAdmin, async (req: AuthenticatedRequest, res: Re
       bills,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Administrative operation failed. Please retry.' });
   }
 });
 
@@ -724,7 +724,7 @@ router.get('/payouts', requireOperationsAdmin, async (req: AuthenticatedRequest,
       })),
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Administrative operation failed. Please retry.' });
   }
 });
 
@@ -767,7 +767,7 @@ router.get('/settings/redemption', requireOperationsAdmin, async (req: Authentic
       isWindowOpen: result.isWindowOpen,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Administrative operation failed. Please retry.' });
   }
 });
 
@@ -931,7 +931,7 @@ router.get('/settings/reward-rules', requireOperationsAdmin, async (req: Authent
       })),
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Administrative operation failed. Please retry.' });
   }
 });
 
@@ -1021,7 +1021,7 @@ router.get('/settings/gst-rules', requireOperationsAdmin, async (_req: Authentic
       })),
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Administrative operation failed. Please retry.' });
   }
 });
 
@@ -1124,7 +1124,7 @@ router.get('/audit-logs', requireOperationsAdmin, async (_req: AuthenticatedRequ
 
     res.json({ success: true, logs });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Administrative operation failed. Please retry.' });
   }
 });
 
@@ -1208,7 +1208,7 @@ router.get('/notifications/history', requireOperationsAdmin, async (req: Authent
     const history = await NotificationService.getCampaignHistory({ page, limit });
     res.json({ success: true, ...history });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Administrative operation failed. Please retry.' });
   }
 });
 

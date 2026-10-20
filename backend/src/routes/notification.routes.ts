@@ -246,7 +246,7 @@ router.post('/welcome', authenticate, requireUser, welcomeRateLimiter, async (re
       });
     }
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Notification operation failed. Please retry.' });
   }
 });
 
@@ -269,7 +269,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
       ...result,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Notification operation failed. Please retry.' });
   }
 });
 
@@ -283,7 +283,7 @@ router.get('/unread-count', async (req: AuthenticatedRequest, res: Response) => 
     const count = await NotificationService.getUnreadCount(userId);
     res.json({ success: true, unreadCount: count });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Notification operation failed. Please retry.' });
   }
 });
 
@@ -297,7 +297,7 @@ router.patch('/read-all', async (req: AuthenticatedRequest, res: Response) => {
     const result = await NotificationService.markAllReadForUser(userId);
     res.json({ success: true, ...result });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Notification operation failed. Please retry.' });
   }
 });
 

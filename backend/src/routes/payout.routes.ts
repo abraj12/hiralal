@@ -16,7 +16,7 @@ router.get('/eligibility', authenticate, requireUser, async (req: AuthenticatedR
     const eligibility = await PayoutService.checkUserEligibility(user.id);
     res.json({ success: true, ...eligibility });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Payout service operation failed. Please retry.' });
   }
 });
 
@@ -93,7 +93,7 @@ router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res
       })),
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: 'Payout service operation failed. Please retry.' });
   }
 });
 
