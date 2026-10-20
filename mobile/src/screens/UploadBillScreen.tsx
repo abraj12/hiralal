@@ -25,6 +25,10 @@ interface SelectedFileInfo {
   file?: any;
 }
 
+const MAX_UPLOAD_MB = parseInt(process.env.EXPO_PUBLIC_BILL_MAX_UPLOAD_SIZE_MB || '10', 10) || 10;
+const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+const MAX_BILL_AMOUNT = parseFloat(process.env.EXPO_PUBLIC_BILL_MAX_AMOUNT || '50000000') || 50000000;
+
 function getIndiaCalendarToday(): string {
   try {
     return new Intl.DateTimeFormat('en-CA', {
@@ -63,8 +67,8 @@ export default function UploadBillScreen() {
       });
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        if (asset.fileSize && asset.fileSize > 10 * 1024 * 1024) {
-          setErrorMsg('Captured photo exceeds the 10MB maximum file size limit.');
+        if (asset.fileSize && asset.fileSize > MAX_UPLOAD_BYTES) {
+          setErrorMsg(`Captured photo exceeds the ${MAX_UPLOAD_MB}MB maximum file size limit.`);
           return;
         }
         setSelectedFile({
@@ -94,8 +98,8 @@ export default function UploadBillScreen() {
       });
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        if (asset.fileSize && asset.fileSize > 10 * 1024 * 1024) {
-          setErrorMsg('Selected image exceeds the 10MB maximum file size limit.');
+        if (asset.fileSize && asset.fileSize > MAX_UPLOAD_BYTES) {
+          setErrorMsg(`Selected image exceeds the ${MAX_UPLOAD_MB}MB maximum file size limit.`);
           return;
         }
         setSelectedFile({
@@ -120,8 +124,8 @@ export default function UploadBillScreen() {
       });
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        if (asset.size && asset.size > 10 * 1024 * 1024) {
-          setErrorMsg('Selected document exceeds the 10MB maximum file size limit.');
+        if (asset.size && asset.size > MAX_UPLOAD_BYTES) {
+          setErrorMsg(`Selected document exceeds the ${MAX_UPLOAD_MB}MB maximum file size limit.`);
           return;
         }
         setSelectedFile({
@@ -152,6 +156,11 @@ export default function UploadBillScreen() {
     const amount = parseFloat(billAmount);
     if (isNaN(amount) || amount <= 0) {
       setErrorMsg('Please enter a valid positive bill amount.');
+      return;
+    }
+
+    if (amount > MAX_BILL_AMOUNT) {
+      setErrorMsg(`Bill amount exceeds maximum permitted single invoice limit (₹${MAX_BILL_AMOUNT.toLocaleString('en-IN')}).`);
       return;
     }
 
@@ -293,7 +302,7 @@ export default function UploadBillScreen() {
             </View>
           ) : (
             <Text style={styles.noFileNotice}>
-              No document selected. Photo or PDF required (max 10MB).
+              No document selected. Photo or PDF required (max {MAX_UPLOAD_MB}MB).
             </Text>
           )}
         </View>

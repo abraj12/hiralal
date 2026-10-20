@@ -1492,6 +1492,7 @@ export class AuthService {
     }
 
     if (user.role !== 'USER') {
+      await bcrypt.compare(pass, DUMMY_HASH);
       throw new Error('Administrator accounts must authenticate using designated role prefix and two-factor authentication.');
     }
 

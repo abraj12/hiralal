@@ -11,10 +11,13 @@ import { requireActionIntegrity, requirePreStreamIntegrityHeaders } from '../mid
 import { billUploadLimiter } from '../middleware/rateLimit.middleware';
 
 const router = Router();
+const initialMaxUploadMb = parseInt(process.env.BILL_MAX_UPLOAD_SIZE_MB || '10', 10);
+const safeInitialMaxUploadMb = Number.isFinite(initialMaxUploadMb) && initialMaxUploadMb > 0 ? initialMaxUploadMb : 10;
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: parseInt(process.env.BILL_MAX_UPLOAD_SIZE_MB || '10', 10) * 1024 * 1024,
+    fileSize: safeInitialMaxUploadMb * 1024 * 1024,
     files: 1, // Only 1 file per upload
     fieldNameSize: 100, // Max 100 characters for field names
     fieldSize: 64 * 1024, // 64KB per field
@@ -109,7 +112,8 @@ router.post(
       });
     }
 
-    const maxBillAmount = parseFloat(process.env.BILL_MAX_AMOUNT || '50000000');
+    const rawMaxBillAmount = parseFloat(process.env.BILL_MAX_AMOUNT || '50000000');
+    const maxBillAmount = Number.isFinite(rawMaxBillAmount) && rawMaxBillAmount > 0 ? rawMaxBillAmount : 50000000;
     if (parsedAmount > maxBillAmount) {
       return res.status(400).json({
         success: false,
@@ -124,6 +128,10 @@ router.post(
       });
     }
 
+    const rawMaxUploadMb = parseInt(process.env.BILL_MAX_UPLOAD_SIZE_MB || '10', 10);
+    const maxUploadMb = Number.isFinite(rawMaxUploadMb) && rawMaxUploadMb > 0 ? rawMaxUploadMb : 10;
+    const maxUploadBytes = maxUploadMb * 1024 * 1024;
+
     let fileBuffer: Buffer;
     let fileName: string;
     let mimeType: string;
@@ -135,10 +143,10 @@ router.post(
     } else if (req.body.fileBase64 && typeof req.body.fileBase64 === 'string') {
       try {
         fileBuffer = Buffer.from(req.body.fileBase64, 'base64');
-        if (fileBuffer.length === 0 || fileBuffer.length > 10 * 1024 * 1024) {
+        if (fileBuffer.length === 0 || fileBuffer.length > maxUploadBytes) {
           return res.status(400).json({
             success: false,
-            message: 'Invoice file size must be between 1 byte and 10MB.',
+            message: `Invoice file size must be between 1 byte and ${maxUploadMb}MB.`,
           });
         }
       } catch (e) {

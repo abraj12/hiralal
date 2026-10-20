@@ -20,6 +20,9 @@ export default function AdminLoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
+  const billPrefix = process.env.NEXT_PUBLIC_BILL_ADMIN_PREFIX || 'BADM';
+  const opsPrefix = process.env.NEXT_PUBLIC_OPERATIONS_ADMIN_PREFIX || 'OADM';
+
   // Step 1: Password Login & OTP Dispatch
   const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,14 +145,14 @@ export default function AdminLoginPage() {
                   type="text"
                   value={identifier}
                   onChange={e => setIdentifier(e.target.value)}
-                  placeholder="e.g. BADM9876543210 or OADM9876543210"
+                  placeholder={`e.g. ${billPrefix}9876543210 or ${opsPrefix}9876543210`}
                   required
                   autoFocus
                   className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                 />
               </div>
               <p className="text-[11px] text-slate-400 mt-1.5">
-                Enter your designated role prefix (e.g. BADM for Bill Admin or OADM for Operations Admin) followed by your 10-digit mobile number.
+                Enter your designated role prefix (e.g. {billPrefix} for Bill Admin or {opsPrefix} for Operations Admin) followed by your 10-digit mobile number.
               </p>
             </div>
 

@@ -614,7 +614,7 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
                         <Text style={styles.auditEntity}>
                           Entity: {log.entityType} ({log.entityId ? log.entityId.substring(0, 8) : 'Global'})
                         </Text>
-                        <Text style={styles.auditIp}>{log.ipAddress || '127.0.0.1'}</Text>
+                        <Text style={styles.auditIp}>{log.ipAddress || 'Internal'}</Text>
                       </View>
                     </TouchableOpacity>
                   ))}

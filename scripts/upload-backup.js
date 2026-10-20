@@ -40,34 +40,25 @@ async function uploadAndVerifyBackup(localFile, remoteKey, bucketName, injectedC
     credentials: { accessKeyId, secretAccessKey },
   });
 
-  // 1. Calculate local size and SHA-256 hash using streaming
+  // 1. Calculate local size and SHA-256 hash
+  const fileBuffer = fs.readFileSync(localFile);
   const fileStats = fs.statSync(localFile);
   const localSize = fileStats.size;
+  const localSha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
 
   if (localSize === 0) {
     throw new Error(`Local backup file is empty (0 bytes): ${localFile}`);
   }
 
-  const hash = crypto.createHash('sha256');
-  await new Promise((resolve, reject) => {
-    fs.createReadStream(localFile)
-      .on('data', (chunk) => hash.update(chunk))
-      .on('end', resolve)
-      .on('error', reject);
-  });
-  const localSha256 = hash.digest('hex');
-
   console.log(`[R2-BACKUP] Preparing upload of ${localFile} (${(localSize / (1024 * 1024)).toFixed(2)} MB, SHA256: ${localSha256})`);
   console.log(`[R2-BACKUP] Target: s3://${bucketName}/${remoteKey}`);
 
-  // 2. Upload file with SHA-256 metadata using read stream
-  const uploadStream = fs.createReadStream(localFile);
+  // 2. Upload file with SHA-256 metadata
   await client.send(
     new PutObjectCommand({
       Bucket: bucketName,
       Key: remoteKey,
-      Body: uploadStream,
-      ContentLength: localSize,
+      Body: fileBuffer,
       ContentType: 'application/octet-stream',
       Metadata: {
         sha256: localSha256,

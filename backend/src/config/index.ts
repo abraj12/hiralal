@@ -897,10 +897,19 @@ export const config: AppConfig = {
   },
 
   auth: {
-    lockoutSeconds: parseInt(process.env.AUTH_LOCKOUT_SECONDS || '900', 10),
-    maxFailedAttempts: parseInt(process.env.AUTH_MAX_FAILED_ATTEMPTS || '10', 10),
+    lockoutSeconds: (() => {
+      const v = parseInt(process.env.AUTH_LOCKOUT_SECONDS || '900', 10);
+      return Number.isFinite(v) && v > 0 ? v : 900;
+    })(),
+    maxFailedAttempts: (() => {
+      const v = parseInt(process.env.AUTH_MAX_FAILED_ATTEMPTS || '10', 10);
+      return Number.isFinite(v) && v > 0 ? v : 10;
+    })(),
   },
-  authLockoutSeconds: parseInt(process.env.AUTH_LOCKOUT_SECONDS || '900', 10),
+  authLockoutSeconds: (() => {
+    const v = parseInt(process.env.AUTH_LOCKOUT_SECONDS || '900', 10);
+    return Number.isFinite(v) && v > 0 ? v : 900;
+  })(),
 
   otp: {
     ttlSeconds: (() => {

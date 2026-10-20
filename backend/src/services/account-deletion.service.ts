@@ -6,8 +6,14 @@ import { AuthService } from './auth.service';
 import { StorageService } from './storage';
 
 export class AccountDeletionService {
-  private static COOLDOWN_DAYS = parseInt(process.env.ACCOUNT_DELETION_COOLDOWN_DAYS || '30', 10);
-  private static GRACE_PERIOD_DAYS = parseInt(process.env.ACCOUNT_DELETION_GRACE_PERIOD_DAYS || '7', 10);
+  private static get COOLDOWN_DAYS(): number {
+    const v = parseInt(process.env.ACCOUNT_DELETION_COOLDOWN_DAYS || '30', 10);
+    return Number.isFinite(v) && v > 0 ? v : 30;
+  }
+  private static get GRACE_PERIOD_DAYS(): number {
+    const v = parseInt(process.env.ACCOUNT_DELETION_GRACE_PERIOD_DAYS || '7', 10);
+    return Number.isFinite(v) && v > 0 ? v : 7;
+  }
 
   /**
    * Step 1: User initiates account deletion while authenticated by providing their password.
