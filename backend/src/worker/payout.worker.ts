@@ -310,8 +310,20 @@ export class PayoutWorker {
           });
         }
       } else {
-        // HTTP 4xx Client Error: Definite rejection by Razorpay before processing
-        if (payoutRes.status >= 400 && payoutRes.status < 500) {
+        const isTransientClientError = [408, 409, 423, 429].includes(payoutRes.status);
+        if (isTransientClientError) {
+          // Transient 4xx Client Error: Rate limit (429), timeout (408), or conflict/in-flight (409)
+          // TIMEOUT/TRANSIENT SAFETY: DO NOT REVERSE WALLET! Move to PROCESSING for reconciliation.
+          console.warn(`[PAYOUT-WORKER] Gateway returned transient status ${payoutRes.status} for payout ${payout.id}. Moving to PROCESSING.`);
+          await prisma.payout.update({
+            where: { id: payout.id },
+            data: {
+              status: 'PROCESSING',
+              failureReason: `Gateway transient status ${payoutRes.status}: ${payoutData.error?.description || 'Transient client error'} (Pending reconciliation)`,
+            },
+          });
+        } else if (payoutRes.status >= 400 && payoutRes.status < 500) {
+          // Definitive Terminal Client Error: Bad request / invalid account / permanent rejection
           const reason = payoutData.error?.description || 'Disbursement rejected by payment gateway';
           console.warn(`[PAYOUT-WORKER] Payout ${payout.id} rejected by Razorpay: ${reason}`);
           await PayoutService.reversePayout(payout.id, reason);

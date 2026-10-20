@@ -86,13 +86,26 @@ SSH_PORT="${SSH_PORT:-22}"
 ufw allow "${SSH_PORT}/tcp" comment "SSH Remote Administration"
 
 # Allow HTTP and HTTPS (Nginx Edge & ACME / Let's Encrypt / Cloudflare)
-# SEC-HIGH-03: Restrict ingress to Cloudflare edge CIDR blocks when RESTRICT_CLOUDFLARE_IPS=true
+# SEC-HIGH-03 & Finding H-01: Restrict ingress to Cloudflare edge CIDR blocks in both UFW and Docker NAT chains
+CF_IPV4="173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22"
 if [ "${RESTRICT_CLOUDFLARE_IPS:-false}" = "true" ]; then
   echo "==> Restricting HTTP/HTTPS ingress exclusively to Cloudflare edge CIDR blocks..."
-  CF_IPV4="173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22"
   for cidr in ${CF_IPV4}; do
     ufw allow proto tcp from "${cidr}" to any port 80,443 comment "Cloudflare Edge Ingress"
   done
+
+  # Finding H-01: Docker NAT bypass defense via DOCKER-USER chain
+  # Docker NAT PREROUTING table bypasses UFW INPUT table. Restrict container ports 80/443 in DOCKER-USER chain.
+  if command -v iptables >/dev/null 2>&1; then
+    iptables -N DOCKER-USER 2>/dev/null || true
+    iptables -F DOCKER-USER 2>/dev/null || true
+    iptables -A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    for cidr in ${CF_IPV4}; do
+      iptables -A DOCKER-USER -p tcp -m multiport --dports 80,443 -s "${cidr}" -j ACCEPT
+    done
+    iptables -A DOCKER-USER -p tcp -m multiport --dports 80,443 -j DROP
+    iptables -A DOCKER-USER -j RETURN
+  fi
 else
   ufw allow 80/tcp comment "Nginx HTTP / ACME Challenge"
   ufw allow 443/tcp comment "Nginx HTTPS Production TLS"

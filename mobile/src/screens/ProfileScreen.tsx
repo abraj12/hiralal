@@ -82,14 +82,8 @@ export default function ProfileScreen() {
     setDeleteLoading(true);
     setDeleteError(null);
     try {
-      let attestation;
-      try {
-        const requestHash = await createAccountDeletionRequestHash({ password: deletePassword });
-        attestation = await MobileIntegrityService.performActionAttestation('ACCOUNT_DELETION_REQUEST', requestHash);
-      } catch (attErr: any) {
-        // Log attestation attempt result for dev/fallback tracking (SEC-MED-09)
-        console.warn('[PLAY-INTEGRITY] Account deletion attestation skipped or failed:', attErr?.message);
-      }
+      const requestHash = await createAccountDeletionRequestHash({ password: deletePassword });
+      const attestation = await MobileIntegrityService.performActionAttestation('ACCOUNT_DELETION_REQUEST', requestHash);
       const res = await MobileApiClient.requestAccountDeletion(deletePassword, attestation);
       if (res.success) {
         setDeleteStep('OTP');
@@ -111,13 +105,8 @@ export default function ProfileScreen() {
     setDeleteLoading(true);
     setDeleteError(null);
     try {
-      let attestation;
-      try {
-        const requestHash = await createAccountDeletionConfirmRequestHash({ otpCode: deleteOtp.trim() });
-        attestation = await MobileIntegrityService.performActionAttestation('ACCOUNT_DELETION_CONFIRM', requestHash);
-      } catch (attErr) {
-        // Fallback for dev environments
-      }
+      const requestHash = await createAccountDeletionConfirmRequestHash({ otpCode: deleteOtp.trim() });
+      const attestation = await MobileIntegrityService.performActionAttestation('ACCOUNT_DELETION_CONFIRM', requestHash);
       const res = await MobileApiClient.confirmAccountDeletion(deleteOtp.trim(), attestation);
       if (res.success) {
         setDeleteModalVisible(false);

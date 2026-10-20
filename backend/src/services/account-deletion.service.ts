@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db';
+import { config } from '../config';
 import { AuthService } from './auth.service';
 import { StorageService } from './storage';
 
@@ -651,9 +652,8 @@ export class AccountDeletionService {
           }
 
           // SEC-HIGH-07 (CGST Act Section 36 statutory retention compliance):
-          // In production environments with audit retention enabled, approved tax invoices
-          // MUST be retained in storage for statutory 72 months to support GST tax audits.
-          const shouldRetainApproved = process.env.RETAIN_APPROVED_BILLS_FOR_AUDIT === 'true';
+          // Approved tax invoices MUST be retained in storage for statutory 72 months to support GST tax audits.
+          const shouldRetainApproved = config.retainApprovedBillsForAudit;
           const userBills = await tx.bill.findMany({
             where: {
               userId: u.id,
@@ -909,36 +909,69 @@ export class AccountDeletionService {
           await tx.otpRequest.deleteMany({ where: { mobile: lockedUser.mobile } });
           await tx.verificationToken.deleteMany({ where: { mobile: lockedUser.mobile } });
 
-          // 4. Purge sensitive KYC records while retaining anonymous status
-          await tx.kycRecord.updateMany({
-            where: { userId: u.id },
-            data: {
-              panNumber: null,
-              panName: 'ANONYMIZED',
-              maskedPan: 'XXXXX0000X',
-              panNumberEncrypted: null,
-              panBlindIndex: null,
-              verifiedName: 'ANONYMIZED',
+          // 4. Statutory Financial Record Retention Check (Finding E-01: PMLA & Companies Act 8-year requirement)
+          const hasFinancialPayouts = await tx.payout.findFirst({
+            where: {
+              userId: u.id,
+              status: { in: ['SUCCESS', 'PROCESSING', 'PAYOUT_INITIATED', 'REVERSED'] },
             },
           });
-
-          // 5. Purge sensitive payout account details
-          await tx.paymentAccount.updateMany({
-            where: { userId: u.id },
-            data: {
-              upiId: null,
-              accountHolderName: 'ANONYMIZED',
-              providerRegisteredName: 'ANONYMIZED',
-              accountNumber: null,
-              accountNumberEncrypted: null,
-              beneficiaryBlindIndex: null,
-              ifscCode: null,
-              bankName: null,
-              maskedInfo: 'XXXX0000',
+          const hasApprovedInvoices = await tx.bill.findFirst({
+            where: {
+              userId: u.id,
+              status: 'APPROVED',
             },
           });
+          const requiresStatutoryRetention = Boolean(hasFinancialPayouts || hasApprovedInvoices);
 
-          // 6. Anonymize User record (retain ID for ledger foreign keys)
+          if (requiresStatutoryRetention) {
+            // Statutory retention: anonymize display names but retain encrypted PAN and blind index for regulatory audits
+            await tx.kycRecord.updateMany({
+              where: { userId: u.id },
+              data: {
+                panName: 'ANONYMIZED_STATUTORY_RETENTION',
+                verifiedName: 'ANONYMIZED_STATUTORY_RETENTION',
+              },
+            });
+            await tx.paymentAccount.updateMany({
+              where: { userId: u.id },
+              data: {
+                accountHolderName: 'ANONYMIZED_STATUTORY_RETENTION',
+                providerRegisteredName: 'ANONYMIZED_STATUTORY_RETENTION',
+                isDefault: false,
+              },
+            });
+          } else {
+            // Non-financial users: full cryptographic purge
+            await tx.kycRecord.updateMany({
+              where: { userId: u.id },
+              data: {
+                panNumber: null,
+                panName: 'ANONYMIZED',
+                maskedPan: 'XXXXX0000X',
+                panNumberEncrypted: null,
+                panBlindIndex: null,
+                verifiedName: 'ANONYMIZED',
+              },
+            });
+            await tx.paymentAccount.updateMany({
+              where: { userId: u.id },
+              data: {
+                upiId: null,
+                accountHolderName: 'ANONYMIZED',
+                providerRegisteredName: 'ANONYMIZED',
+                accountNumber: null,
+                accountNumberEncrypted: null,
+                beneficiaryBlindIndex: null,
+                ifscCode: null,
+                bankName: null,
+                maskedInfo: 'XXXX0000',
+                isDefault: false,
+              },
+            });
+          }
+
+          // 5. Anonymize User record (retain ID for ledger foreign keys)
           const anonymizedMobile = `DEL_${u.id.replace(/-/g, '').slice(0, 8)}_${crypto.randomBytes(4).toString('hex')}`;
           await tx.user.update({
             where: { id: u.id },

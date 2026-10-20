@@ -32,6 +32,10 @@ export function calculateBillFinancials(
 export function safeDocumentUrl(url: string | undefined | null): string {
   if (!url) return '#';
   const trimmed = url.trim();
+  // Reject protocol-relative URLs (e.g. //attacker.com) to prevent open redirects (Finding G-02)
+  if (trimmed.startsWith('//')) {
+    return '#';
+  }
   if (trimmed.startsWith('https://') || trimmed.startsWith('http://localhost') || trimmed.startsWith('/')) {
     return trimmed;
   }

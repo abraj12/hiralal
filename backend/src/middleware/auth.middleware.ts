@@ -144,12 +144,14 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
   }
   try {
     let decoded: any;
+    let verifiedWithAdminSecret = false;
     try {
       decoded = jwt.verify(token, config.jwt.accessSecret, { algorithms: ['HS256'] }) as any;
     } catch (primaryErr) {
       if (config.admin.accessSecret && config.admin.accessSecret !== config.jwt.accessSecret) {
         try {
           decoded = jwt.verify(token, config.admin.accessSecret, { algorithms: ['HS256'] }) as any;
+          verifiedWithAdminSecret = true;
         } catch {
           res.status(401).json({ success: false, message: 'Invalid or expired token.' });
           return;
@@ -174,6 +176,30 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     if (!user) {
       res.status(401).json({ success: false, message: 'User not found or session revoked.' });
       return;
+    }
+
+    // Cryptographic Key-to-Role Binding (Finding C-01)
+    const hasDistinctAdminKey = Boolean(
+      config.admin.accessSecret && config.admin.accessSecret !== config.jwt.accessSecret
+    );
+    const isAdminRole = user.role === 'BILL_ADMIN' || user.role === 'OPERATIONS_ADMIN';
+    if (hasDistinctAdminKey) {
+      if (isAdminRole && !verifiedWithAdminSecret) {
+        res.status(401).json({
+          success: false,
+          code: 'KEY_ROLE_MISMATCH',
+          message: 'Administrative access requires a token signed with the administrative key.',
+        });
+        return;
+      }
+      if (!isAdminRole && verifiedWithAdminSecret) {
+        res.status(401).json({
+          success: false,
+          code: 'KEY_ROLE_MISMATCH',
+          message: 'User access requires a token signed with the user key.',
+        });
+        return;
+      }
     }
 
     if (user.status !== 'ACTIVE') {

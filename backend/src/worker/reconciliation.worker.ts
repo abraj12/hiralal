@@ -163,6 +163,93 @@ export class ReconciliationWorker {
   }
 
   /**
+   * On-demand gateway reconciliation for a specific payout record (including those under manual review).
+   */
+  static async reconcileSinglePayout(payoutId: string): Promise<{ success: boolean; status: string; message: string }> {
+    const isRazorpayConfigured = Boolean(
+      config.razorpayx.keyId &&
+      config.razorpayx.keySecret &&
+      config.razorpayx.accountNumber
+    );
+    if (!isRazorpayConfigured) {
+      return { success: false, status: 'SKIPPED', message: 'RazorpayX gateway credentials are not configured on server.' };
+    }
+
+    const payout = await prisma.payout.findUnique({
+      where: { id: payoutId },
+      include: { wallet: true },
+    });
+    if (!payout) {
+      return { success: false, status: 'NOT_FOUND', message: 'Payout not found.' };
+    }
+
+    const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
+    let razorpayPayout: any = null;
+
+    if (payout.razorpayPayoutId) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      try {
+        const res = await fetch(`https://api.razorpay.com/v1/payouts/${payout.razorpayPayoutId}`, {
+          headers: { Authorization: auth },
+          signal: controller.signal,
+        });
+        if (res.ok) razorpayPayout = await res.json();
+      } catch (e) {
+        // Fallback
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    if (!razorpayPayout) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      try {
+        const res = await fetch(`https://api.razorpay.com/v1/payouts?reference_id=${payout.id}`, {
+          headers: { Authorization: auth },
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          const listData: any = await res.json();
+          if (listData.items && listData.items.length > 0) razorpayPayout = listData.items[0];
+        }
+      } catch (e) {
+        // Search failed
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    if (!razorpayPayout) {
+      return { success: false, status: payout.status, message: 'Gateway lookup inconclusive. No matching record returned by payment provider.' };
+    }
+
+    const gatewayStatus = razorpayPayout.status;
+    if (gatewayStatus === 'processed') {
+      await PayoutService.finalizeSuccess(payout.id, razorpayPayout.id);
+      return { success: true, status: 'SUCCESS', message: 'Payout finalized as SUCCESS via gateway status.' };
+    } else if (gatewayStatus === 'reversed') {
+      const reason = razorpayPayout.failure_reason || 'Disbursement reversed on banking network';
+      await PayoutService.handleReversedPayout(payout.id, reason);
+      return { success: true, status: 'REVERSED', message: `Payout marked as REVERSED (${reason}).` };
+    } else if (gatewayStatus === 'failed' || gatewayStatus === 'rejected') {
+      const reason = razorpayPayout.failure_reason || 'Disbursement rejected on banking network';
+      await PayoutService.reversePayout(payout.id, reason);
+      return { success: true, status: 'FAILED', message: `Payout reversed as FAILED (${reason}).` };
+    }
+
+    if (!payout.razorpayPayoutId && razorpayPayout.id) {
+      await prisma.payout.update({
+        where: { id: payout.id },
+        data: { razorpayPayoutId: razorpayPayout.id, lastReconciledAt: new Date() },
+      });
+    }
+
+    return { success: true, status: gatewayStatus, message: `Gateway status is "${gatewayStatus}". Funds remain in processing.` };
+  }
+
+  /**
    * Retries unprocessed or previously unmatched webhook events.
    */
   static async retryUnprocessedWebhooks(): Promise<number> {
@@ -209,7 +296,30 @@ export class ReconciliationWorker {
 
         const eventType = event.eventType;
         if (eventType === 'payout.processed') {
-          await PayoutService.finalizeSuccess(payoutRecord.id, razorpayPayoutId);
+          if (payoutRecord.status === 'FAILED' || payoutRecord.status === 'REVERSED') {
+            await prisma.payout.update({
+              where: { id: payoutRecord.id },
+              data: {
+                requiresManualReview: true,
+                manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway processed payout after local status was marked ${payoutRecord.status}.`,
+              },
+            });
+            await prisma.auditLog.create({
+              data: {
+                action: 'CRITICAL_FINANCIAL_DRIFT',
+                entityType: 'Payout',
+                entityId: payoutRecord.id,
+                newValue: JSON.stringify({
+                  payoutId: payoutRecord.id,
+                  eventId: event.eventId,
+                  razorpayPayoutId,
+                  localStatus: payoutRecord.status,
+                }),
+              },
+            });
+          } else {
+            await PayoutService.finalizeSuccess(payoutRecord.id, razorpayPayoutId);
+          }
         } else if (eventType === 'payout.reversed') {
           const reason = payoutEntity.failure_reason || 'Disbursement reversed by banking partner';
           await PayoutService.handleReversedPayout(payoutRecord.id, reason);

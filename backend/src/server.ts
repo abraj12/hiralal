@@ -90,14 +90,24 @@ const corsOptions: cors.CorsOptions = {
 };
 app.use(cors(corsOptions));
 
-// JSON Body Parser with rawBody preservation for webhooks
-// Supports base64 invoice submissions up to BILL_MAX_UPLOAD_SIZE_MB (default 10MB -> ~15MB base64)
-const jsonLimit = process.env.JSON_BODY_LIMIT || '15mb';
-app.use(express.json({
-  limit: jsonLimit,
+// Scoped JSON Body Parsers:
+// 1. Raw body buffer preservation for webhook signature verification (1MB limit)
+app.use(['/api/v1/webhooks', '/api/webhooks'], express.json({
+  limit: '1mb',
   verify: (req: any, _res, buf) => {
     req.rawBody = buf;
   },
+}));
+
+// 2. Bill upload routes supporting base64 invoice attachments up to BILL_MAX_UPLOAD_SIZE_MB
+const billJsonLimit = process.env.JSON_BODY_LIMIT || '15mb';
+app.use(['/api/v1/bills', '/api/bills'], express.json({
+  limit: billJsonLimit,
+}));
+
+// 3. Global strict 100kb body parser for standard REST API routes to prevent memory exhaustion DoS (Finding B-01)
+app.use(express.json({
+  limit: '100kb',
 }));
 
 // Static assets (logos, cards, banners for mobile and admin)

@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { AuthService, normalizeStrictIndianMobile, requirePublicGenericOtpPurpose, requireGenericOtpPurpose, PASSWORD_RESET_INVALID_MESSAGE } from '../services/auth.service';
-import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
+import { authenticate, requireUser, AuthenticatedRequest, csrfTokensMatch } from '../middleware/auth.middleware';
 import {
   otpRequestLimiter,
   otpRequestIpLimiter,
@@ -352,14 +352,29 @@ router.post('/logout', async (req: Request, res: Response) => {
 
     const cookies = (req as any).cookies || { admin_access_token: req.headers.cookie?.match(/admin_access_token=([^;]+)/)?.[1] };
     const cookieToken = cookies?.admin_access_token;
-    if (!userId && cookieToken) {
-      try {
-        const decodedAdmin = jwt.verify(cookieToken, config.admin.accessSecret, { algorithms: ['HS256'] }) as any;
-        if (decodedAdmin?.userId || decodedAdmin?.id) {
-          userId = decodedAdmin.userId || decodedAdmin.id;
+    if (cookieToken) {
+      // CSRF protection for cookie-based browser sessions (Finding C-02)
+      // Enforced strictly in production environments and whenever x-csrf-token header is supplied
+      const csrfCookie = (req as any).cookies?.csrf_token || req.headers.cookie?.match(/csrf_token=([^;]+)/)?.[1];
+      const csrfHeader = typeof req.headers['x-csrf-token'] === 'string' ? req.headers['x-csrf-token'] : '';
+      if (config.isProduction || csrfHeader) {
+        if (!csrfTokensMatch(csrfCookie, csrfHeader)) {
+          return res.status(403).json({
+            success: false,
+            code: 'CSRF_TOKEN_MISMATCH',
+            message: 'Anti-CSRF validation failed. Refresh the session and retry.',
+          });
         }
-      } catch {
-        // Token is invalid/unverified
+      }
+      if (!userId) {
+        try {
+          const decodedAdmin = jwt.verify(cookieToken, config.admin.accessSecret, { algorithms: ['HS256'] }) as any;
+          if (decodedAdmin?.userId || decodedAdmin?.id) {
+            userId = decodedAdmin.userId || decodedAdmin.id;
+          }
+        } catch {
+          // Token is invalid/unverified
+        }
       }
     }
 

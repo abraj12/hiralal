@@ -570,8 +570,7 @@ export class PayoutService {
       const isApproved = payout.status === 'APPROVED';
       const isStuckUnderReview =
         (payout.status === 'PROCESSING' || payout.status === 'PAYOUT_INITIATED') &&
-        payout.requiresManualReview === true &&
-        !payout.razorpayPayoutId;
+        payout.requiresManualReview === true;
 
       const isEligibleForManualRejection = isPending || isApproved || isStuckUnderReview;
 
@@ -580,7 +579,7 @@ export class PayoutService {
           throw new Error(`Cannot reject payout ${payoutId} because it has already successfully completed.`);
         }
         throw new Error(
-          `Cannot manually reject payout in ${payout.status} state. Manual rejection is permitted only before payout dispatch or for pre-dispatch failures under manual review.`
+          `Cannot manually reject payout in ${payout.status} state. Manual rejection is permitted only before payout dispatch or for stuck payouts under manual review.`
         );
       }
 
@@ -621,6 +620,7 @@ export class PayoutService {
           status: 'FAILED',
           adminRejectionReason: reason.trim(),
           failureReason: reason.trim(),
+          requiresManualReview: false,
         },
       });
 
@@ -737,6 +737,7 @@ export class PayoutService {
         data: {
           status: 'FAILED',
           failureReason: reason,
+          requiresManualReview: false,
         },
       });
 
@@ -834,6 +835,7 @@ export class PayoutService {
         data: {
           status: 'REVERSED',
           failureReason: reason,
+          requiresManualReview: false,
         },
       });
 
@@ -913,6 +915,7 @@ export class PayoutService {
           status: 'SUCCESS',
           razorpayPayoutId: razorpayPayoutId || payout.razorpayPayoutId,
           completedAt: new Date(),
+          requiresManualReview: false,
         },
       });
 

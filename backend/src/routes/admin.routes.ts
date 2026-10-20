@@ -14,6 +14,7 @@ import { GstService, parseStrictGstRate } from '../services/gst.service';
 import { BillService } from '../services/bill.service';
 import { StorageService } from '../services/storage.service';
 import { PayoutService } from '../services/payout.service';
+import { ReconciliationWorker } from '../worker/reconciliation.worker';
 import { AuthService } from '../services/auth.service';
 import { NotificationService } from '../services/notification.service';
 import { BillStatus, Profession, UserStatus } from '@prisma/client';
@@ -737,15 +738,46 @@ router.post('/payouts/:id/action', requireOperationsAdmin, async (req: Authentic
     if (action === 'APPROVE') {
       const payout = await PayoutService.approveRedemption(id, admin.id);
       return res.json({ success: true, message: 'Payout approved and queued for disbursement.', payout });
-    } else if (action === 'REJECT') {
+    } else if (action === 'REJECT' || action === 'FORCE_CANCEL') {
       if (!reason || !reason.trim()) {
         return res.status(400).json({ success: false, message: 'A rejection reason is required.' });
       }
       const payout = await PayoutService.rejectRedemption(id, admin.id, reason.trim());
       return res.json({ success: true, message: 'Payout rejected and refunded to user.', payout });
+    } else if (action === 'FINALIZE_SUCCESS') {
+      const existing = await prisma.payout.findUnique({ where: { id } });
+      if (!existing) {
+        return res.status(404).json({ success: false, message: 'Payout not found.' });
+      }
+      if (existing.status === 'SUCCESS') {
+        return res.json({ success: true, message: 'Payout is already completed.', payout: existing });
+      }
+      if (existing.status === 'FAILED' || existing.status === 'REVERSED') {
+        return res.status(400).json({ success: false, message: `Cannot finalize payout in ${existing.status} status.` });
+      }
+      const gatewayId = req.body.razorpayPayoutId || existing.razorpayPayoutId || 'MANUAL_ADMIN_SETTLEMENT';
+      const payout = await PayoutService.finalizeSuccess(id, gatewayId);
+      await prisma.auditLog.create({
+        data: {
+          adminId: admin.id,
+          action: 'PAYOUT_MANUALLY_FINALIZED',
+          entityType: 'Payout',
+          entityId: id,
+          newValue: JSON.stringify({
+            payoutId: id,
+            reason: reason?.trim() || 'Manual settlement confirmation by operations administrator',
+            adminId: admin.id,
+          }),
+        },
+      });
+      return res.json({ success: true, message: 'Payout manually finalized as SUCCESS.', payout });
+    } else if (action === 'SYNC_GATEWAY') {
+      const syncResult = await ReconciliationWorker.reconcileSinglePayout(id);
+      const updated = await prisma.payout.findUnique({ where: { id } });
+      return res.json({ success: syncResult.success, message: syncResult.message, payout: updated });
     }
 
-    return res.status(400).json({ success: false, message: 'Invalid action. Must be APPROVE or REJECT.' });
+    return res.status(400).json({ success: false, message: 'Invalid action. Must be APPROVE or REJECT (or FORCE_CANCEL, FINALIZE_SUCCESS, SYNC_GATEWAY).' });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }

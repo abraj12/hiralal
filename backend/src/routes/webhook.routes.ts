@@ -66,10 +66,10 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
     const eventType = event.event;
     const payoutEntity = event.payload?.payout?.entity;
     const eventId =
-      (req.headers['x-razorpay-event-id'] as string) ||
       event.id ||
       event.event_id ||
-      (payoutEntity ? `${eventType}_${payoutEntity.id}` : null);
+      (payoutEntity ? `${eventType}_${payoutEntity.id}` : null) ||
+      (req.headers['x-razorpay-event-id'] as string);
 
     console.log(`📥 [WEBHOOK] Received RazorpayX Event: ${eventType} (Event ID: ${eventId}, Payout ID: ${payoutEntity?.id})`);
 
@@ -179,8 +179,33 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
 
       try {
         if (eventType === 'payout.processed') {
-          await PayoutService.finalizeSuccess(payoutRecord.id, razorpayPayoutId);
-          console.log(`[WEBHOOK] Payout ${payoutRecord.id} successfully finalized via webhook.`);
+          if (payoutRecord.status === 'FAILED' || payoutRecord.status === 'REVERSED') {
+            console.error(`🚨 [WEBHOOK-CRITICAL] Financial drift detected! Payout ${payoutRecord.id} was ${payoutRecord.status} but gateway reported payout.processed!`);
+            await prisma.payout.update({
+              where: { id: payoutRecord.id },
+              data: {
+                requiresManualReview: true,
+                manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}. Immediate operator audit and balance clawback required.`,
+              },
+            });
+            await prisma.auditLog.create({
+              data: {
+                action: 'CRITICAL_FINANCIAL_DRIFT',
+                entityType: 'Payout',
+                entityId: payoutRecord.id,
+                newValue: JSON.stringify({
+                  payoutId: payoutRecord.id,
+                  eventId,
+                  razorpayPayoutId,
+                  localStatus: payoutRecord.status,
+                  warning: 'Wallet balance was refunded and gateway disbursed funds concurrently. Manual operator clawback required.',
+                }),
+              },
+            });
+          } else {
+            await PayoutService.finalizeSuccess(payoutRecord.id, razorpayPayoutId);
+            console.log(`[WEBHOOK] Payout ${payoutRecord.id} successfully finalized via webhook.`);
+          }
         } else if (eventType === 'payout.reversed') {
           const reason = payoutEntity.failure_reason || 'Disbursement reversed by banking partner';
           await PayoutService.handleReversedPayout(payoutRecord.id, reason);
@@ -201,6 +226,28 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
            transitionErr.message.includes('already failed'))
         ) {
           console.warn(`[WEBHOOK] Out-of-order delivery: event ${eventType} acknowledged for payout ${payoutRecord.id}: ${transitionErr.message}`);
+          if (eventType === 'payout.processed') {
+            await prisma.payout.update({
+              where: { id: payoutRecord.id },
+              data: {
+                requiresManualReview: true,
+                manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway processed webhook arrived for terminal payout (${transitionErr.message}). Operator audit required.`,
+              },
+            });
+            await prisma.auditLog.create({
+              data: {
+                action: 'CRITICAL_FINANCIAL_DRIFT',
+                entityType: 'Payout',
+                entityId: payoutRecord.id,
+                newValue: JSON.stringify({
+                  payoutId: payoutRecord.id,
+                  eventId,
+                  razorpayPayoutId,
+                  error: transitionErr.message,
+                }),
+              },
+            });
+          }
         } else {
           throw transitionErr;
         }

@@ -1,11 +1,13 @@
 import { prisma } from '../db';
 import { GstRule } from '@prisma/client';
+import { Decimal } from '@prisma/client/runtime/library';
 
-const roundMoney = (value: number): number => {
-  if (!Number.isFinite(value)) {
+const roundMoney = (value: number | Decimal): number => {
+  const dec = value instanceof Decimal ? value : new Decimal(value.toString());
+  if (!dec.isFinite()) {
     throw new Error('Money value must be finite.');
   }
-  return Math.round((value + Number.EPSILON) * 100) / 100;
+  return parseFloat(dec.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2));
 };
 
 const GST_RATE_STRING_PATTERN = /^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/;
@@ -103,7 +105,8 @@ export class GstService {
       throw new Error('[NO_APPLICABLE_GST_RULE]');
     }
 
-    const gross = roundMoney(grossBillAmount);
+    const grossDec = new Decimal(grossBillAmount.toString()).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const gross = parseFloat(grossDec.toFixed(2));
 
     if (configuredGstRate === 0) {
       return {
@@ -115,16 +118,22 @@ export class GstService {
       };
     }
 
-    const gstAmount = roundMoney(
-      (gross * configuredGstRate) / (100 + configuredGstRate)
-    );
+    const rateDec = new Decimal(configuredGstRate.toString());
+    const gstAmountDec = grossDec
+      .times(rateDec)
+      .dividedBy(new Decimal(100).plus(rateDec))
+      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const eligibleRewardDec = grossDec.minus(gstAmountDec).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+
+    const gstAmount = parseFloat(gstAmountDec.toFixed(2));
+    const eligibleRewardAmount = parseFloat(eligibleRewardDec.toFixed(2));
 
     return {
       grossBillAmount: gross,
       gstIncluded: true,
       gstRate: configuredGstRate,
       gstAmount,
-      eligibleRewardAmount: roundMoney(gross - gstAmount),
+      eligibleRewardAmount,
     };
   }
 
