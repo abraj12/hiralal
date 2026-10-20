@@ -14,6 +14,7 @@ describe('Audit Remediation & Security Defect Verification Suite', () => {
   const uniqueSuffix = Date.now().toString().slice(-6);
   const testMobileA = `9811${uniqueSuffix}`;
   const testMobileB = `9822${uniqueSuffix}`;
+  const testPassword = 'Password@123';
 
   let userAId: string;
   let userBId: string;
@@ -51,42 +52,47 @@ describe('Audit Remediation & Security Defect Verification Suite', () => {
     });
     userBId = userB.id;
 
-    const opsAdmin = await prisma.user.create({
-      data: {
-        mobile: `9999${uniqueSuffix}`,
-        fullName: 'Operations Administrator Lead',
-        role: 'OPERATIONS_ADMIN',
-        status: 'ACTIVE',
-        passwordHash: '$2a$10$abcdefghijklmnopqrstuvwxyz1234567890',
-      },
+    let opsAdmin = await prisma.user.findFirst({
+      where: { role: 'OPERATIONS_ADMIN' },
     });
+    if (!opsAdmin) {
+      opsAdmin = await prisma.user.create({
+        data: {
+          mobile: `9999${uniqueSuffix}`,
+          fullName: 'Operations Administrator Lead',
+          role: 'OPERATIONS_ADMIN',
+          status: 'ACTIVE',
+          passwordHash: '$2a$10$abcdefghijklmnopqrstuvwxyz1234567890',
+        },
+      });
+    }
     opsAdminId = opsAdmin.id;
   });
 
   afterAll(async () => {
     await prisma.walletTransaction.deleteMany({
-      where: { userId: { in: [userAId, userBId] } },
+      where: { userId: { in: [userAId, userBId].filter(Boolean) } },
     });
     await prisma.payout.deleteMany({
-      where: { userId: { in: [userAId, userBId] } },
+      where: { userId: { in: [userAId, userBId].filter(Boolean) } },
     });
     await prisma.bill.deleteMany({
-      where: { userId: { in: [userAId, userBId] } },
+      where: { userId: { in: [userAId, userBId].filter(Boolean) } },
     });
     await prisma.paymentAccount.deleteMany({
-      where: { userId: { in: [userAId, userBId] } },
+      where: { userId: { in: [userAId, userBId].filter(Boolean) } },
     });
     await prisma.kycRecord.deleteMany({
-      where: { userId: { in: [userAId, userBId] } },
+      where: { userId: { in: [userAId, userBId].filter(Boolean) } },
     });
     await prisma.authSession.deleteMany({
-      where: { userId: { in: [userAId, userBId] } },
+      where: { userId: { in: [userAId, userBId].filter(Boolean) } },
     });
     await prisma.wallet.deleteMany({
-      where: { userId: { in: [userAId, userBId] } },
+      where: { userId: { in: [userAId, userBId].filter(Boolean) } },
     });
     await prisma.user.deleteMany({
-      where: { id: { in: [userAId, userBId, opsAdminId] } },
+      where: { id: { in: [userAId, userBId].filter(Boolean) } },
     });
   });
 
@@ -182,8 +188,8 @@ describe('Audit Remediation & Security Defect Verification Suite', () => {
     });
   });
 
-  describe('3. [HIGH-03] Refresh Token Rotation 30-Second Grace Window', () => {
-    it('allows concurrent requests presenting the previous rotated token within 30 seconds without revoking active sessions', async () => {
+  describe('3. [HIGH-03] Refresh Token Strict Replay Attack Fencing', () => {
+    it('strictly revokes all active user sessions when an already-rotated refresh token is replayed', async () => {
       const initialRefreshToken = crypto.randomBytes(40).toString('hex');
       const tokenHash = crypto.createHash('sha256').update(initialRefreshToken).digest('hex');
       const sessionId = crypto.randomUUID();
@@ -207,24 +213,40 @@ describe('Audit Remediation & Security Defect Verification Suite', () => {
       expect(firstRotation.accessToken).toBeDefined();
       expect(firstRotation.refreshToken).toBeDefined();
 
-      // Request 2: Sibling concurrent request presents the old refresh token within 30s grace window
-      const secondRotation = await AuthService.refreshToken(initialRefreshToken);
-      expect(secondRotation.accessToken).toBeDefined();
-      expect(secondRotation.sessionId).toBe(sessionId);
+      // Request 2: Replay of already rotated token must immediately trigger replay attack fence
+      await expect(
+        AuthService.refreshToken(initialRefreshToken)
+      ).rejects.toThrow(/Compromised or reused refresh token/i);
 
-      // Verify user was NOT revoked/logged out
+      // Verify user sessions were revoked
       const userBAfter = await prisma.user.findUnique({ where: { id: userBId } });
-      expect(userBAfter!.activeSessionId).toBe(sessionId);
+      expect(userBAfter!.activeSessionId).toBeNull();
     });
   });
 
-  describe('4. [HIGH-07] Account Deletion Financial Fencing on Positive Balance', () => {
-    it('rejects account deletion request if user has an unredeemed positive wallet balance', async () => {
+  describe('4. [HIGH-07] Account Deletion Financial Fencing on In-Flight Obligations', () => {
+    it('rejects account deletion request if user has pending bills under review', async () => {
       const { AccountDeletionService } = await import('../services/account-deletion.service');
 
+      // Create a pending bill for userA
+      await prisma.bill.create({
+        data: {
+          userId: userAId,
+          invoiceNumber: `INV-FENCE-${uniqueSuffix}`,
+          billAmount: 100,
+          grossBillAmount: 100,
+          calculatedReward: 10,
+          status: 'PENDING',
+          fileUrl: 'https://test.storage.com/bill.jpg',
+          fileKey: 'bills/fence-test.jpg',
+          fileHash: `fence_hash_${uniqueSuffix}`,
+          invoiceDate: new Date(),
+        },
+      });
+
       await expect(
-        AccountDeletionService.requestDeletion(userAId, 'Password@123', '127.0.0.1')
-      ).rejects.toThrow(/unredeemed wallet balance/i);
+        AccountDeletionService.requestDeletion(userAId, testPassword, '127.0.0.1')
+      ).rejects.toThrow(/bills pending review/i);
     });
   });
 
