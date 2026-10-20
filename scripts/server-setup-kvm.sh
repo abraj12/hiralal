@@ -153,6 +153,13 @@ if ! command -v docker > /dev/null 2>&1; then
   systemctl start docker
 fi
 
+# Node.js LTS Runtime Installation (Required for host backup runners & AWS SDK S3 uploaders)
+echo "==> Installing Node.js LTS runtime on host for backup execution..."
+if ! command -v node > /dev/null 2>&1; then
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  apt-get install -y nodejs
+fi
+
 # 6. Process Management & Application Directory Layout
 echo "==> [6/7] Creating production directory hierarchy..."
 APP_DIR="/opt/hiralal"

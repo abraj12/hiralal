@@ -11,8 +11,8 @@ router.post('/pan/verify', authenticate, requireUser, kycLimiter, requireActionI
     const user = req.user!;
     const { panNumber, panName, consent, consentText } = req.body;
 
-    if (!panNumber || !panName) {
-      return res.status(400).json({ success: false, message: 'PAN number and full name on PAN card are required.' });
+    if (!panNumber || !panName || typeof panNumber !== 'string' || typeof panName !== 'string') {
+      return res.status(400).json({ success: false, message: 'PAN number and full name on PAN card must be valid text.' });
     }
 
     if (consent !== true) {

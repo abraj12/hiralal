@@ -755,8 +755,14 @@ router.post('/payouts/:id/action', requireOperationsAdmin, async (req: Authentic
       if (existing.status === 'FAILED' || existing.status === 'REVERSED') {
         return res.status(400).json({ success: false, message: `Cannot finalize payout in ${existing.status} status.` });
       }
+      if (existing.status === 'PENDING' || existing.status === 'APPROVED') {
+        return res.status(400).json({
+          success: false,
+          message: `Cannot manually finalize payout in ${existing.status} status. Payouts must be approved and dispatched before manual settlement.`,
+        });
+      }
       const gatewayId = req.body.razorpayPayoutId || existing.razorpayPayoutId || 'MANUAL_ADMIN_SETTLEMENT';
-      const payout = await PayoutService.finalizeSuccess(id, gatewayId);
+      const payout = await PayoutService.finalizeSuccess(id, gatewayId, admin.id);
       await prisma.auditLog.create({
         data: {
           adminId: admin.id,

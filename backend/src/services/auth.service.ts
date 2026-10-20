@@ -1724,8 +1724,21 @@ export class AuthService {
       throw new Error('Invalid refresh token.');
     }
 
-    // Replay attack detection: if token is already revoked, revoke all active sessions for the user!
+    const user = await prisma.user.findUnique({
+      where: { id: session.userId },
+    });
+
+    if (!user) {
+      throw new Error('User not found.');
+    }
+
+    // Replay attack detection vs displaced session differentiation (Finding C-01)
     if (session.revokedAt) {
+      // If this session is displaced by a newer login on another device, reject gracefully without terminating the active session
+      if (user.activeSessionId && session.sessionId && session.sessionId !== user.activeSessionId) {
+        throw new Error('Session has been invalidated by a newer login. Please log in again.');
+      }
+
       await prisma.authSession.updateMany({
         where: { userId: session.userId, revokedAt: null },
         data: { revokedAt: new Date() },
@@ -1740,10 +1753,6 @@ export class AuthService {
     if (session.expiresAt < new Date()) {
       throw new Error('Refresh token has expired. Please login again.');
     }
-
-    const user = await prisma.user.findUnique({
-      where: { id: session.userId },
-    });
 
     if (!user || user.status === 'SUSPENDED') {
       throw new Error('User account is invalid or suspended.');

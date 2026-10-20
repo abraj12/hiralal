@@ -51,6 +51,7 @@ services:
     image: redis:7-alpine
     container_name: hiralal_redis
     restart: unless-stopped
+    user: "999:999"
     command: >-
       sh -c 'printf "requirepass %s\n" "$$REDIS_PASSWORD" > /tmp/redis.conf && exec redis-server /tmp/redis.conf --appendonly yes --maxmemory 200mb --maxmemory-policy noeviction'
     deploy:

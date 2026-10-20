@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { AuthService, normalizeStrictIndianMobile, requirePublicGenericOtpPurpose, requireGenericOtpPurpose, PASSWORD_RESET_INVALID_MESSAGE } from '../services/auth.service';
-import { authenticate, requireUser, AuthenticatedRequest, csrfTokensMatch } from '../middleware/auth.middleware';
+import { authenticate, requireUser, AuthenticatedRequest, csrfTokensMatch, parseCookies } from '../middleware/auth.middleware';
 import {
   otpRequestLimiter,
   otpRequestIpLimiter,
@@ -350,12 +350,12 @@ router.post('/logout', async (req: Request, res: Response) => {
       }
     }
 
-    const cookies = (req as any).cookies || { admin_access_token: req.headers.cookie?.match(/admin_access_token=([^;]+)/)?.[1] };
-    const cookieToken = cookies?.admin_access_token;
+    const parsedCookies = parseCookies(req.headers.cookie);
+    const cookieToken = (req as any).cookies?.admin_access_token || parsedCookies['admin_access_token'];
     if (cookieToken) {
       // CSRF protection for cookie-based browser sessions (Finding C-02)
       // Enforced strictly in production environments and whenever x-csrf-token header is supplied
-      const csrfCookie = (req as any).cookies?.csrf_token || req.headers.cookie?.match(/csrf_token=([^;]+)/)?.[1];
+      const csrfCookie = (req as any).cookies?.csrf_token || parsedCookies['csrf_token'];
       const csrfHeader = typeof req.headers['x-csrf-token'] === 'string' ? req.headers['x-csrf-token'] : '';
       if (config.isProduction || csrfHeader) {
         if (!csrfTokensMatch(csrfCookie, csrfHeader)) {

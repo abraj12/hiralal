@@ -872,7 +872,7 @@ export class PayoutService {
    * Finalizes a successful payout: moves funds out of processingAmount, increments totalRedeemed,
    * updates payout status to SUCCESS, and notifies user.
    */
-  static async finalizeSuccess(payoutId: string, razorpayPayoutId?: string) {
+  static async finalizeSuccess(payoutId: string, razorpayPayoutId?: string, adminId?: string) {
     return await prisma.$transaction(async (tx) => {
       const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
@@ -896,6 +896,22 @@ export class PayoutService {
       // Forbidden transition: Cannot finalize a payout that was already FAILED or REVERSED
       if (payout.status === 'FAILED' || payout.status === 'REVERSED') {
         throw new Error(`Cannot finalize payout ${payoutId} because it is already in terminal state ${payout.status}`);
+      }
+
+      // SEC-HIGH-02: Enforce collusion and self-approval guards on manual administrator settlement (Finding B-03)
+      if (adminId) {
+        if (payout.userId === adminId) {
+          throw new Error('Administrators cannot manually settle payouts requested under their own account.');
+        }
+        const adminUser = await tx.user.findUnique({ where: { id: adminId }, select: { mobile: true } });
+        const payoutUser = await tx.user.findUnique({ where: { id: payout.userId }, select: { mobile: true } });
+        if (adminUser && payoutUser) {
+          const adminClean = adminUser.mobile.replace(/\D/g, '').slice(-10);
+          const userClean = payoutUser.mobile.replace(/\D/g, '').slice(-10);
+          if (adminClean === userClean) {
+            throw new Error('Administrators cannot manually settle payouts for accounts matching their registered mobile number.');
+          }
+        }
       }
 
       const payoutAmount = Number(payout.amount);

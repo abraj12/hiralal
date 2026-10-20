@@ -78,11 +78,21 @@ SQL_FILE="${TEMP_DIR}/restore.sql"
 
 echo "[$(date -u)] [1/4] Decrypting AES-256 backup: ${ENC_BACKUP}..."
 CRYPTO_SCRIPT="$(dirname "$0")/crypto-backup.js"
-if [ ! -f "${CRYPTO_SCRIPT}" ] || ! command -v node >/dev/null 2>&1; then
-  echo "[FATAL ERROR] Node.js or crypto-backup.js helper missing. Cannot safely decrypt backup." >&2
+if [ ! -f "${CRYPTO_SCRIPT}" ]; then
+  echo "[FATAL ERROR] crypto-backup.js helper missing. Cannot safely decrypt backup." >&2
   exit 1
 fi
-node "${CRYPTO_SCRIPT}" decrypt "${ENC_BACKUP}" "${DEC_FILE}"
+
+if command -v node >/dev/null 2>&1; then
+  node "${CRYPTO_SCRIPT}" decrypt "${ENC_BACKUP}" "${DEC_FILE}"
+else
+  # Container fallback if host Node.js is not installed
+  BACKEND_CONTAINER="${BACKEND_CONTAINER:-hiralal_backend}"
+  docker cp "${ENC_BACKUP}" "${BACKEND_CONTAINER}:/tmp/restore_enc.sql.gz.enc"
+  docker exec -e BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_KEY}" "${BACKEND_CONTAINER}" node /app/scripts/crypto-backup.js decrypt "/tmp/restore_enc.sql.gz.enc" "/tmp/restore_dec.sql.gz"
+  docker cp "${BACKEND_CONTAINER}:/tmp/restore_dec.sql.gz" "${DEC_FILE}"
+  docker exec "${BACKEND_CONTAINER}" rm -f /tmp/restore_enc.sql.gz.enc /tmp/restore_dec.sql.gz
+fi
 
 echo "[$(date -u)] [2/4] Decompressing SQL dump..."
 gunzip -c "${DEC_FILE}" > "${SQL_FILE}"
@@ -96,8 +106,22 @@ else
   echo "[INFO] Target database '${TARGET_DB}' may be empty or not yet created. Proceeding."
 fi
 
+# SEC-CRIT-04: Suspend live web & background worker traffic to eliminate connection pool deadlocks and data loss
+echo "[$(date -u)] Suspending application traffic during restoration..."
+docker compose stop backend worker 2>/dev/null || docker stop hiralal_backend hiralal_worker 2>/dev/null || true
+
+# Terminate active client connections on target database to permit single-transaction schema cleanup
+docker exec -i "${DB_CONTAINER}" psql -U "${DB_USER}" -d postgres -c "
+  SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+  WHERE datname = '${TARGET_DB}' AND pid <> pg_backend_pid();
+" >/dev/null 2>&1 || true
+
 echo "[$(date -u)] [3/4] Restoring SQL dump into database '${TARGET_DB}' in container '${DB_CONTAINER}' (atomic single-transaction)..."
 docker exec -i "${DB_CONTAINER}" psql -v ON_ERROR_STOP=1 --single-transaction -U "${DB_USER}" -d "${TARGET_DB}" < "${SQL_FILE}"
+
+# Restart suspended services after successful restoration
+echo "[$(date -u)] Resuming application traffic..."
+docker compose start backend worker 2>/dev/null || docker start hiralal_backend hiralal_worker 2>/dev/null || true
 
 echo "[$(date -u)] [4/4] Commencing deep financial integrity & ledger reconciliation verification..."
 

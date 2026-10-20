@@ -148,6 +148,7 @@ export class BillService {
         ...(status && { status }),
       },
       orderBy: { createdAt: 'desc' },
+      take: 100,
     });
 
     return await Promise.all(
@@ -222,6 +223,7 @@ export class BillService {
         gstRule: { select: { id: true, ratePercentage: true, description: true } },
       },
       orderBy: { createdAt: 'desc' },
+      take: 200,
     });
 
     return await Promise.all(
@@ -402,6 +404,7 @@ export class BillService {
         gross = corrected;
         grossWasCorrected = true;
       }
+
       const isGstIncluded = options?.gstIncluded === true;
       let effectiveGstRate = 0.0;
       let selectedGstRuleId: string | null = null;

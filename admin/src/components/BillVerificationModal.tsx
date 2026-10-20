@@ -597,7 +597,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                     src={`${targetUrl}#toolbar=0`}
                     className="w-full h-80 rounded-lg border border-slate-200 bg-white"
                     title={`Invoice PDF ${bill.invoiceNumber}`}
-                    sandbox="allow-scripts"
+                    sandbox="allow-same-origin"
                     referrerPolicy="no-referrer"
                   />
                   <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500 px-1">

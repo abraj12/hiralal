@@ -252,6 +252,10 @@ router.get('/file', authenticate, async (req: AuthenticatedRequest, res: Respons
     res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
+    // SEC-CRIT-01: Isolate previewed bill documents in restricted sandbox to prevent Stored XSS
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox; frame-ancestors 'self';");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
 
     // Extension inspection for safe content-type and inline disposition
     const ext = path.extname(key).toLowerCase();

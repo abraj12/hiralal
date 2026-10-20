@@ -19,7 +19,7 @@ TimeoutStartSec=1800
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/var/backups/hiralal /opt/hiralal
+ReadWritePaths=/var/backups/hiralal /opt/hiralal /run/docker.sock /var/run/docker.sock
 NoNewPrivileges=true
 
 [Install]

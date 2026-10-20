@@ -70,11 +70,21 @@ docker exec "${DB_CONTAINER}" pg_dump -U "${DB_USER}" -d "${DB_NAME}" --clean --
 
 # 3. Encrypt with Authenticated AES-256-GCM using PBKDF2 (fail closed)
 CRYPTO_SCRIPT="$(dirname "$0")/crypto-backup.js"
-if [ ! -f "${CRYPTO_SCRIPT}" ] || ! command -v node >/dev/null 2>&1; then
-  echo "[FATAL ERROR] Node.js or crypto-backup.js helper missing. Unauthenticated CBC fallback is prohibited." >&2
+if [ ! -f "${CRYPTO_SCRIPT}" ]; then
+  echo "[FATAL ERROR] crypto-backup.js helper missing. Unauthenticated CBC fallback is prohibited." >&2
   exit 1
 fi
-node "${CRYPTO_SCRIPT}" encrypt "${RAW_BACKUP}" "${ENC_BACKUP}"
+
+if command -v node >/dev/null 2>&1; then
+  node "${CRYPTO_SCRIPT}" encrypt "${RAW_BACKUP}" "${ENC_BACKUP}"
+else
+  # Container fallback if host Node.js is not installed
+  BACKEND_CONTAINER="${BACKEND_CONTAINER:-hiralal_backend}"
+  docker cp "${RAW_BACKUP}" "${BACKEND_CONTAINER}:/tmp/raw_backup.sql.gz"
+  docker exec -e BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_KEY}" "${BACKEND_CONTAINER}" node /app/scripts/crypto-backup.js encrypt "/tmp/raw_backup.sql.gz" "/tmp/enc_backup.sql.gz.enc"
+  docker cp "${BACKEND_CONTAINER}:/tmp/enc_backup.sql.gz.enc" "${ENC_BACKUP}"
+  docker exec "${BACKEND_CONTAINER}" rm -f /tmp/raw_backup.sql.gz /tmp/enc_backup.sql.gz.enc
+fi
 rm -f "${RAW_BACKUP}"
 
 BACKUP_SIZE=$(ls -lh "${ENC_BACKUP}" | awk '{print $5}')
@@ -102,11 +112,25 @@ if [ ! -f "${UPLOAD_SCRIPT}" ]; then
 fi
 
 # Run upload and verification runner
-if ! node "${UPLOAD_SCRIPT}" "${ENC_BACKUP}" "${REMOTE_PREFIX}" "${R2_BACKUP_BUCKET}"; then
-  echo "[FATAL ERROR] Offsite upload or remote verification FAILED." >&2
-  echo "[EMERGENCY RECOVERY] Encrypted local file retained at: ${ENC_BACKUP}" >&2
-  echo "Backup status: FAILED." >&2
-  exit 4
+if command -v node >/dev/null 2>&1; then
+  if ! node "${UPLOAD_SCRIPT}" "${ENC_BACKUP}" "${REMOTE_PREFIX}" "${R2_BACKUP_BUCKET}"; then
+    echo "[FATAL ERROR] Offsite upload or remote verification FAILED." >&2
+    echo "[EMERGENCY RECOVERY] Encrypted local file retained at: ${ENC_BACKUP}" >&2
+    echo "Backup status: FAILED." >&2
+    exit 4
+  fi
+else
+  # Container fallback if host Node.js is not installed
+  BACKEND_CONTAINER="${BACKEND_CONTAINER:-hiralal_backend}"
+  docker cp "${ENC_BACKUP}" "${BACKEND_CONTAINER}:/tmp/enc_backup.sql.gz.enc"
+  if ! docker exec -e R2_BACKUP_BUCKET="${R2_BACKUP_BUCKET}" -e R2_ENDPOINT="${R2_ENDPOINT}" -e R2_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}" -e R2_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}" "${BACKEND_CONTAINER}" node /app/scripts/upload-backup.js "/tmp/enc_backup.sql.gz.enc" "${REMOTE_PREFIX}" "${R2_BACKUP_BUCKET}"; then
+    docker exec "${BACKEND_CONTAINER}" rm -f /tmp/enc_backup.sql.gz.enc
+    echo "[FATAL ERROR] Offsite upload or remote verification FAILED." >&2
+    echo "[EMERGENCY RECOVERY] Encrypted local file retained at: ${ENC_BACKUP}" >&2
+    echo "Backup status: FAILED." >&2
+    exit 4
+  fi
+  docker exec "${BACKEND_CONTAINER}" rm -f /tmp/enc_backup.sql.gz.enc
 fi
 
 # 5. Clean up local backups older than RETENTION_DAYS (30 days) ONLY after remote verification succeeds

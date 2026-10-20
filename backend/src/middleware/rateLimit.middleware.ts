@@ -74,6 +74,7 @@ export function createRateLimiter(options: {
     const identifier = getIdentifier(req);
     const key = `ratelimit:${keyPrefix}:${identifier}`;
 
+    let passedRedis = false;
     try {
       if (isRedisReady()) {
         const redis = getRedisClient();
@@ -105,7 +106,7 @@ export function createRateLimiter(options: {
           return;
         }
 
-        return next();
+        passedRedis = true;
       } else if (config.isProduction) {
         // In production, security-sensitive auth routes fail closed if Redis is down
         res.status(503).json({
@@ -124,6 +125,10 @@ export function createRateLimiter(options: {
         });
         return;
       }
+    }
+
+    if (passedRedis) {
+      return next();
     }
 
     // In-memory fallback for non-production environments

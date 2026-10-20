@@ -32,7 +32,7 @@ export function csrfTokensMatch(
   return crypto.timingSafeEqual(cookieBuffer, headerBuffer);
 }
 
-function parseCookies(cookieHeader?: string): Record<string, string> {
+export function parseCookies(cookieHeader?: string): Record<string, string> {
   const list: Record<string, string> = {};
   if (!cookieHeader) return list;
   cookieHeader.split(';').forEach((cookie) => {
@@ -142,6 +142,7 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       return;
     }
   }
+  let authPassed = false;
   try {
     let decoded: any;
     let verifiedWithAdminSecret = false;
@@ -244,9 +245,14 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     }
 
     req.user = user;
-    next();
+    authPassed = true;
   } catch (error) {
     res.status(401).json({ success: false, message: 'Invalid or expired token.' });
+    return;
+  }
+
+  if (authPassed) {
+    next();
   }
 }
 
