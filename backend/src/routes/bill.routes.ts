@@ -225,13 +225,13 @@ router.get('/file', authenticate, async (req: AuthenticatedRequest, res: Respons
       return res.status(400).json({ success: false, message: 'Invalid signed URL parameters.' });
     }
 
-    // Authorization: verify the file key belongs to the authenticated user or requester is BILL_ADMIN.
+    // Authorization: verify the file key belongs to the authenticated user or requester is an administrator (BILL_ADMIN or OPERATIONS_ADMIN).
     // Key format: bills/{userId}/{billId}/{filename}
     const keyParts = key.split('/');
     const isOwner = keyParts[0] === 'bills' && keyParts[1] === user.id;
-    const isBillAdmin = user.role === 'BILL_ADMIN';
+    const isAdmin = user.role === 'BILL_ADMIN' || user.role === 'OPERATIONS_ADMIN';
 
-    if (keyParts[0] !== 'bills' || (!isOwner && !isBillAdmin)) {
+    if (keyParts[0] !== 'bills' || (!isOwner && !isAdmin)) {
       return res.status(403).json({ success: false, message: 'Access denied: document does not belong to your account.' });
     }
 

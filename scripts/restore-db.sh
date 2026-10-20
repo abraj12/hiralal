@@ -16,6 +16,7 @@
 # ==============================================================================
 
 set -euo pipefail
+umask 077
 
 ENC_BACKUP="${1:-}"
 TARGET_DB="${2:-${POSTGRES_DB:-hiralal_rewards}}"
@@ -64,7 +65,7 @@ echo "[$(date -u)] [2/4] Decompressing SQL dump..."
 gunzip -c "${DEC_FILE}" > "${SQL_FILE}"
 
 # Create emergency pre-restore snapshot of target database before applying dump
-SNAPSHOT_FILE="/tmp/pre_restore_snapshot_${TARGET_DB}_$(date +%s).sql.gz"
+SNAPSHOT_FILE="${TEMP_DIR}/pre_restore_snapshot_${TARGET_DB}_$(date +%s).sql.gz"
 echo "[$(date -u)] Creating pre-restore emergency snapshot of '${TARGET_DB}'..."
 if docker exec "${DB_CONTAINER}" pg_dump -U "${DB_USER}" -d "${TARGET_DB}" --clean --if-exists 2>/dev/null | gzip -9 > "${SNAPSHOT_FILE}" 2>/dev/null; then
   echo "[$(date -u)] Pre-restore safety snapshot created at ${SNAPSHOT_FILE}"

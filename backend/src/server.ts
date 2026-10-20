@@ -91,8 +91,10 @@ const corsOptions: cors.CorsOptions = {
 app.use(cors(corsOptions));
 
 // JSON Body Parser with rawBody preservation for webhooks
+// Supports base64 invoice submissions up to BILL_MAX_UPLOAD_SIZE_MB (default 10MB -> ~15MB base64)
+const jsonLimit = process.env.JSON_BODY_LIMIT || '15mb';
 app.use(express.json({
-  limit: '1mb',
+  limit: jsonLimit,
   verify: (req: any, _res, buf) => {
     req.rawBody = buf;
   },

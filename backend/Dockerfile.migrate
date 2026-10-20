@@ -36,5 +36,9 @@ COPY migration-runner/package.json \
 COPY --from=builder /app/node_modules ./node_modules
 COPY prisma ./prisma/
 
+RUN chown -R node:node /app
+
+USER node
+
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 CMD ["npx", "prisma", "migrate", "deploy"]

@@ -636,6 +636,7 @@ router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequ
         gstRate: gstIncluded ? (typeof gstRate === 'number' ? gstRate : undefined) : 0,
         gstRuleId: gstIncluded ? (typeof gstRuleId === 'string' && gstRuleId.trim() ? gstRuleId.trim() : undefined) : undefined,
         gstOverrideReason: gstIncluded && typeof gstOverrideReason === 'string' ? gstOverrideReason.trim() : undefined,
+        correctedGrossAmount: typeof req.body.correctedGrossAmount === 'number' && req.body.correctedGrossAmount > 0 ? req.body.correctedGrossAmount : undefined,
       });
 
       res.json({

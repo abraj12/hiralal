@@ -553,12 +553,12 @@ export class PayoutService {
 
       const isPending = payout.status === 'PENDING';
       const isApproved = payout.status === 'APPROVED';
-      const isProcessingStuck =
-        payout.status === 'PROCESSING' &&
+      const isStuckUnderReview =
+        (payout.status === 'PROCESSING' || payout.status === 'PAYOUT_INITIATED') &&
         payout.requiresManualReview === true &&
         !payout.razorpayPayoutId;
 
-      const isEligibleForManualRejection = isPending || isApproved || isProcessingStuck;
+      const isEligibleForManualRejection = isPending || isApproved || isStuckUnderReview;
 
       if (!isEligibleForManualRejection) {
         if (payout.status === 'SUCCESS') {

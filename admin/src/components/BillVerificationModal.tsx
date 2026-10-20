@@ -56,6 +56,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
     bill.createdAt || null
   );
   const [rulesUnavailable, setRulesUnavailable] = useState(false);
+  const [correctedAmount, setCorrectedAmount] = useState<string>('');
 
   // Image zoom control
   const [isZoomed, setIsZoomed] = useState(false);
@@ -109,7 +110,8 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   const sanitizeDocUrl = (url?: string | null): string | null => {
     if (!url) return null;
     const trimmed = url.trim();
-    if (/^(https?:\/\/|\/|blob:)/i.test(trimmed)) {
+    // Allow https://, http://, blob:, or absolute path / (rejecting protocol-relative //)
+    if (/^(https?:\/\/|blob:|\/(?!\/))/i.test(trimmed)) {
       return trimmed;
     }
     return null;
@@ -179,13 +181,16 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   }, [bill.id, isPending]);
 
   // Financial calculations
+  const parsedCorrected = parseFloat(correctedAmount);
+  const effectiveGross = !isNaN(parsedCorrected) && parsedCorrected > 0 ? parsedCorrected : grossAmount;
+
   let gstAmount = 0;
-  let eligibleRewardAmount = grossAmount;
+  let eligibleRewardAmount = effectiveGross;
   let calculatedReward = 0;
 
   if (isPending) {
     const liveFinancials = calculateBillFinancials(
-      grossAmount,
+      effectiveGross,
       gstIncluded,
       selectedGstRate,
       rewardPercentage
@@ -213,6 +218,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
         gstIncluded,
         gstRate: gstIncluded ? selectedGstRate : 0,
         gstRuleId: gstIncluded ? (selectedGstRuleId || undefined) : undefined,
+        correctedGrossAmount: !isNaN(parsedCorrected) && parsedCorrected > 0 ? parsedCorrected : undefined,
       });
       onVerified();
       onClose();
@@ -335,11 +341,39 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
             </div>
 
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-              <div className="text-xs text-slate-400 font-medium">Gross Invoice Amount</div>
-              <div className="text-xl font-black text-slate-900 mt-1">
-                ₹{grossAmount.toLocaleString('en-IN')}
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-slate-400 font-medium">Gross Invoice Amount</div>
+                {isPending && (
+                  <span className="text-[10px] text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded">
+                    Admin Editable
+                  </span>
+                )}
               </div>
-              <div className="text-xs text-slate-500 mt-0.5">
+              {isPending ? (
+                <div className="mt-1 flex items-center space-x-2">
+                  <span className="text-lg font-black text-slate-900">₹</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    placeholder={grossAmount.toString()}
+                    value={correctedAmount}
+                    onChange={(e) => setCorrectedAmount(e.target.value)}
+                    className="w-full text-base font-bold text-slate-900 bg-white border border-slate-200 rounded-lg px-2.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    title="Correct invoice gross amount if entered incorrectly by worker"
+                  />
+                </div>
+              ) : (
+                <div className="text-xl font-black text-slate-900 mt-1">
+                  ₹{grossAmount.toLocaleString('en-IN')}
+                </div>
+              )}
+              {isPending && correctedAmount && parseFloat(correctedAmount) !== grossAmount && !isNaN(parseFloat(correctedAmount)) && (
+                <div className="text-[11px] text-amber-600 font-medium mt-1">
+                  Worker submitted: ₹{grossAmount.toLocaleString('en-IN')}
+                </div>
+              )}
+              <div className="text-xs text-slate-500 mt-1">
                 Invoice Date:{' '}
                 {bill.invoiceDate ? new Date(bill.invoiceDate).toLocaleDateString('en-IN') : '—'}
               </div>

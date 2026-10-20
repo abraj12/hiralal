@@ -89,7 +89,7 @@ export function generateSecureOtp(): string {
 export function generateBlindIndex(plaintext: string): string {
   if (!plaintext) return '';
   const normalized = plaintext.trim().toUpperCase();
-  const hmacKey = config.fieldEncryptionKey || config.encryptionKey;
+  const hmacKey = config.blindIndexSecret || config.fieldEncryptionKey || config.encryptionKey;
   return crypto.createHmac('sha256', hmacKey).update(normalized).digest('hex');
 }
 

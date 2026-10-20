@@ -102,7 +102,12 @@ async function main() {
 
   try {
     // 1. Provision Bill Review Administrator (BILL_ADMIN)
-    if (process.env.NODE_ENV === 'production') {
+    const isSensitive =
+      process.env.NODE_ENV === 'production' ||
+      process.env.NODE_ENV === 'staging' ||
+      process.env.NODE_ENV === 'uat';
+
+    if (isSensitive) {
       if (!process.env.BILL_ADMIN_MOBILE) {
         throw new Error('BILL_ADMIN_MOBILE is required in production.');
       }
@@ -147,7 +152,7 @@ async function main() {
     const billAdminMobile = process.env.BILL_ADMIN_MOBILE || '9999999991';
     const billAdminPassword =
       process.env.BILL_ADMIN_INITIAL_PASSWORD ||
-      (process.env.NODE_ENV === 'production' ? '' : 'BillAdmin@123');
+      (isSensitive ? '' : 'BillAdmin@123');
 
     let billAdmin = existingBillAdmins[0] || null;
 
@@ -174,7 +179,7 @@ async function main() {
     }
 
     // 2. Provision Operations Administrator (OPERATIONS_ADMIN)
-    if (process.env.NODE_ENV === 'production') {
+    if (isSensitive) {
       if (!process.env.OPERATIONS_ADMIN_MOBILE) {
         throw new Error('OPERATIONS_ADMIN_MOBILE is required in production.');
       }
@@ -197,7 +202,7 @@ async function main() {
     const opsAdminMobile = process.env.OPERATIONS_ADMIN_MOBILE || '9999999992';
     const opsAdminPassword =
       process.env.OPERATIONS_ADMIN_INITIAL_PASSWORD ||
-      (process.env.NODE_ENV === 'production' ? '' : 'OpsAdmin@123');
+      (isSensitive ? '' : 'OpsAdmin@123');
 
     let opsAdmin = existingOpsAdmins[0] || null;
 

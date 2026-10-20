@@ -306,6 +306,16 @@ jobs:
               exit 1
             }
 
+            # Pre-flight migration backward-compatibility verification gate
+            chmod +x scripts/deploy/*.sh
+            if [ -n "${PREVIOUS_SHA}" ] && [ "${PREVIOUS_SHA}" != "NONE" ]; then
+              echo "Validating migration backward-compatibility against previous release ${PREVIOUS_SHA} before database migrations..."
+              ROLLBACK_DRY_RUN=true ./scripts/deploy/rollback-release.sh "${PREVIOUS_SHA}" "${TARGET_SHA}" || {
+                echo "[FATAL ERROR] Candidate release contains breaking migrations incompatible with safe rollback. Halting before database migration." >&2
+                exit 1
+              }
+            fi
+
             # Run database migrations using dedicated migration runner
             echo "Building and applying Prisma database migrations..."
             docker compose --profile tools build migrate

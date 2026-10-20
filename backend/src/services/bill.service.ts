@@ -59,6 +59,19 @@ export class BillService {
       throw new Error(`Invoice #${cleanInvoiceNumber} has already been submitted by your account.`);
     }
 
+    // 1b. Check cross-user duplicate invoice number across the platform
+    const existingGlobalBill = await prisma.bill.findFirst({
+      where: {
+        invoiceNumber: cleanInvoiceNumber,
+        status: { in: ['PENDING', 'UNDER_REVIEW', 'APPROVED'] },
+        userId: { not: data.userId },
+      },
+    });
+
+    if (existingGlobalBill) {
+      throw new Error(`Invoice #${cleanInvoiceNumber} has already been submitted to the platform.`);
+    }
+
     // 2. Validate file, magic-bytes, and calculate SHA-256 hash BEFORE storage write
     const { fileHash, normalizedMime } = StorageService.validateAndHashFile({
       buffer: data.fileBuffer,
@@ -263,6 +276,7 @@ export class BillService {
           gstRate?: number;
           gstRuleId?: string;
           gstOverrideReason?: string;
+          correctedGrossAmount?: number;
         },
     adminIdArg?: string,
     optionsArg?: {
@@ -270,6 +284,7 @@ export class BillService {
       gstRate?: number;
       gstRuleId?: string;
       gstOverrideReason?: string;
+      correctedGrossAmount?: number;
     }
   ) {
     let billId: string;
@@ -279,6 +294,7 @@ export class BillService {
       gstRate?: number;
       gstRuleId?: string;
       gstOverrideReason?: string;
+      correctedGrossAmount?: number;
     } | undefined;
 
     if (typeof billIdOrParams === 'object') {
@@ -329,6 +345,20 @@ export class BillService {
         throw new Error(`Bills with status ${bill.status} cannot be approved.`);
       }
 
+      // Defense-in-depth: check if another bill with the same invoiceNumber was already approved
+      if (bill.invoiceNumber) {
+        const alreadyApproved = await tx.bill.findFirst({
+          where: {
+            id: { not: bill.id },
+            invoiceNumber: bill.invoiceNumber,
+            status: 'APPROVED',
+          },
+        });
+        if (alreadyApproved) {
+          throw new Error(`Another bill with invoice #${bill.invoiceNumber} has already been approved.`);
+        }
+      }
+
       if (!bill.user.profession) {
         throw new Error('User has no registered profession. Cannot resolve reward rule.');
       }
@@ -341,7 +371,12 @@ export class BillService {
       const rulePercentage = Number(rule.rewardPercentage);
 
       // 3. Resolve GST calculation
-      const gross = Number(bill.grossBillAmount || bill.billAmount);
+      let gross = Number(bill.grossBillAmount || bill.billAmount);
+      let grossWasCorrected = false;
+      if (options?.correctedGrossAmount && Number(options.correctedGrossAmount) > 0) {
+        gross = Number(options.correctedGrossAmount);
+        grossWasCorrected = true;
+      }
       const isGstIncluded = options?.gstIncluded === true;
       let effectiveGstRate = 0.0;
       let selectedGstRuleId: string | null = null;
@@ -424,6 +459,7 @@ export class BillService {
         data: {
           status: 'APPROVED',
           grossBillAmount: gross,
+          billAmount: gross,
           gstIncluded: gstCalc.gstIncluded,
           gstRate: gstCalc.gstRate,
           gstAmount: gstCalc.gstAmount,
@@ -436,6 +472,9 @@ export class BillService {
           gstOverrideReason: options?.gstOverrideReason || null,
           verifiedByAdminId: adminId,
           rejectionReason: null,
+          remarks: grossWasCorrected
+            ? `${bill.remarks || ''} [Verified Gross corrected by admin from ₹${Number(bill.grossBillAmount || bill.billAmount)} to ₹${gross}]`.trim()
+            : bill.remarks,
         },
       });
 

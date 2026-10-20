@@ -113,6 +113,20 @@ export class KycService {
 
     // 3. Check cross-user uniqueness using keyed blind index
     const panBlindIndex = generateBlindIndex(cleanPan);
+
+    // Prevent overwriting existing verified PAN identity without administrative approval
+    const existingUserKyc = await prisma.kycRecord.findFirst({
+      where: { userId, panStatus: 'VERIFIED' },
+    });
+    if (existingUserKyc) {
+      if (existingUserKyc.panBlindIndex && existingUserKyc.panBlindIndex !== panBlindIndex) {
+        throw new Error(
+          'Your PAN identity is already verified. Changing a verified PAN requires administrative review and approval.'
+        );
+      }
+      return existingUserKyc;
+    }
+
     const existingOther = await prisma.kycRecord.findFirst({
       where: {
         OR: [{ panBlindIndex }, { panNumber: cleanPan }],

@@ -52,7 +52,7 @@ services:
     container_name: hiralal_redis
     restart: unless-stopped
     command: >-
-      sh -c 'redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"'
+      sh -c 'printf "requirepass %s\n" "$$REDIS_PASSWORD" > /tmp/redis.conf && exec redis-server /tmp/redis.conf --appendonly yes --maxmemory 200mb --maxmemory-policy noeviction'
     deploy:
       resources:
         limits:

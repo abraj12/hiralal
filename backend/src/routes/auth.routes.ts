@@ -118,19 +118,7 @@ router.post('/register', registerIpLimiter, async (req: Request, res: Response) 
       return res.status(400).json({ success: false, message: 'Profession must be either PLUMBER or TILE_INSTALLER.' });
     }
 
-    let tokenToConsume = verificationToken;
-
-    // Graceful adapter: if older client provided otpCode directly, verify OTP first to acquire token
-    if (!tokenToConsume && otpCode) {
-      const verifyRes = await AuthService.verifyOtp({ mobile, otpCode, purpose: 'REGISTRATION' });
-      tokenToConsume = verifyRes.verificationToken;
-    }
-
-    if (!tokenToConsume) {
-      return res.status(400).json({ success: false, message: 'Verification token is required. Please verify OTP first.' });
-    }
-
-    // Pre-auth integrity check for mobile registration
+    // Pre-auth integrity check for mobile registration must execute before any OTP or credential operations
     const isEnforcing = PlayIntegrityService.isEnforcingActions();
     const integrityToken = (req.headers['x-integrity-token'] as string) || (req.body?.integrityToken as string);
     const integrityNonce = (req.headers['x-integrity-nonce'] as string) || (req.body?.integrityNonce as string);
@@ -160,6 +148,18 @@ router.post('/register', registerIpLimiter, async (req: Request, res: Response) 
         code: 'INTEGRITY_REQUIRED',
         message: 'Device integrity attestation is required for mobile registration.',
       });
+    }
+
+    let tokenToConsume = verificationToken;
+
+    // Graceful adapter: if older client provided otpCode directly, verify OTP first to acquire token
+    if (!tokenToConsume && otpCode) {
+      const verifyRes = await AuthService.verifyOtp({ mobile, otpCode, purpose: 'REGISTRATION' });
+      tokenToConsume = verifyRes.verificationToken;
+    }
+
+    if (!tokenToConsume) {
+      return res.status(400).json({ success: false, message: 'Verification token is required. Please verify OTP first.' });
     }
 
     const ipAddress = req.ip || req.socket.remoteAddress;
@@ -196,34 +196,43 @@ router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Re
     return res.status(400).json({ success: false, message: 'Mobile number and password are required.' });
   }
 
-  // Pre-auth integrity check for craftsman mobile logins (non-admin candidates only)
+  // Pre-auth integrity check for mobile logins & web admin access
   const isEnforcing = PlayIntegrityService.isEnforcingActions();
   const isAdminCandidate = AuthService.isConfiguredAdminPrefix(rawIdentifier);
 
   const integrityToken = (req.headers['x-integrity-token'] as string) || (req.body?.integrityToken as string);
   const integrityNonce = (req.headers['x-integrity-nonce'] as string) || (req.body?.integrityNonce as string);
 
-  if (!isAdminCandidate) {
-    if (integrityToken && integrityNonce) {
-      const requestHash = computeIntegrityRequestHash('AUTH', req);
-      const verdict = await PlayIntegrityService.verifyActionToken({
-        nonce: integrityNonce,
-        integrityToken,
-        expectedContext: {
-          action: 'AUTH',
-          requestHash,
-        },
-      });
+  // If integrity headers are provided, verify them strictly
+  if (integrityToken && integrityNonce) {
+    const requestHash = computeIntegrityRequestHash('AUTH', req);
+    const verdict = await PlayIntegrityService.verifyActionToken({
+      nonce: integrityNonce,
+      integrityToken,
+      expectedContext: {
+        action: 'AUTH',
+        requestHash,
+      },
+    });
 
-      if (!verdict.success) {
-        return res.status(403).json({
-          success: false,
-          code: 'INTEGRITY_FAILED',
-          message: verdict.error || 'Device integrity verification failed.',
-          verdict,
-        });
-      }
-    } else if (isEnforcing) {
+    if (!verdict.success) {
+      return res.status(403).json({
+        success: false,
+        code: 'INTEGRITY_FAILED',
+        message: verdict.error || 'Device integrity verification failed.',
+        verdict,
+      });
+    }
+  } else if (isEnforcing) {
+    // In enforcing mode, only browser sessions from configured Web Admin origins
+    // are exempt from mobile device integrity attestation.
+    const origin = (req.headers.origin || req.headers.referer || '') as string;
+    const isAllowedWebAdminOrigin =
+      isAdminCandidate &&
+      origin &&
+      config.cors.allowedOrigins.some((allowed) => origin.startsWith(allowed));
+
+    if (!isAllowedWebAdminOrigin) {
       return res.status(403).json({
         success: false,
         code: 'INTEGRITY_REQUIRED',
@@ -278,7 +287,8 @@ router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Re
       err.message.includes('prefix') ||
       err.message.includes('format') ||
       err.message.includes('not found') ||
-      err.message.includes('suspended');
+      err.message.includes('suspended') ||
+      err.message.includes('locked');
     res.status(isCredentials ? 401 : 400).json({
       success: false,
       message: isCredentials ? 'Invalid login credentials. Please check your details and try again.' : err.message,

@@ -167,6 +167,9 @@ export class PaymentService {
     // Save or update account under concurrency-safe transaction
     try {
       return await prisma.$transaction(async (tx) => {
+        // Concurrency lock on user row to eliminate duplicate default account race conditions
+        await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+
         // Ensure only one default account
         await tx.paymentAccount.updateMany({
           where: { userId, isDefault: true },
@@ -390,6 +393,9 @@ export class PaymentService {
 
     try {
       return await prisma.$transaction(async (tx) => {
+        // Concurrency lock on user row to eliminate duplicate default account race conditions
+        await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${params.userId} FOR UPDATE`;
+
         await tx.paymentAccount.updateMany({
           where: { userId: params.userId, isDefault: true },
           data: { isDefault: false },

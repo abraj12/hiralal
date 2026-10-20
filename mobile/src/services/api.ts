@@ -245,6 +245,15 @@ export class MobileApiClient {
       }
     }
 
+    // If a token refresh is currently in progress, wait for it before dispatching new authenticated requests
+    if (this.refreshPromise && !endpoint.startsWith('/auth/')) {
+      try {
+        await this.refreshPromise;
+      } catch {
+        // If refresh fails, let request proceed to handle 401/error normally
+      }
+    }
+
     const currentToken = this.getToken();
     if (currentToken && !headers['Authorization']) {
       headers['Authorization'] = `Bearer ${currentToken}`;
@@ -441,30 +450,7 @@ export class MobileApiClient {
   static async login(identifier: string, password: string) {
     const extraHeaders: Record<string, string> = {};
 
-    // Admin candidates use prefixed identifiers — they authenticate via the web admin
-    // panel or admin OTP flow, not Android Play Integrity.
-    // Detect admin candidates dynamically using server-configured prefixes, so that
-    // changing server prefix configuration doesn't require a client update.
-    // The server is the authority for role classification.
-    let isAdminCandidate = false;
-    try {
-      const prefixRes = await this.getAdminPrefixes();
-      if (prefixRes?.success && prefixRes?.prefixes) {
-        const cleanId = identifier.trim().toUpperCase();
-        const billP = (prefixRes.prefixes.billAdmin || '').toUpperCase();
-        const opsP = (prefixRes.prefixes.operationsAdmin || '').toUpperCase();
-        isAdminCandidate =
-          (billP.length > 0 && cleanId.startsWith(billP)) ||
-          (opsP.length > 0 && cleanId.startsWith(opsP));
-      }
-    } catch {
-      // Prefix endpoint unavailable — conservatively treat as non-admin so that the
-      // user integrity path remains active. The server will reject admin-prefixed IDs
-      // through the standard user auth flow regardless.
-      isAdminCandidate = false;
-    }
-
-    if (Platform.OS === 'android' && !isAdminCandidate) {
+    if (Platform.OS === 'android') {
       try {
         const { createAuthRequestHash } = await import('./integrityRequestHash');
         const { MobileIntegrityService } = await import('./integrity.service');

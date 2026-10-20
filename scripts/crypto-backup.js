@@ -92,23 +92,107 @@ if (require.main === module) {
     process.exit(1);
   }
 
-  try {
-    const inputBuffer = fs.readFileSync(inputFile);
-    let outputBuffer;
-
-    if (mode === 'encrypt') {
-      outputBuffer = encryptBackupGcm(inputBuffer, passphrase);
-    } else if (mode === 'decrypt') {
-      outputBuffer = decryptBackup(inputBuffer, passphrase);
-    } else {
-      console.error(`Invalid mode: ${mode}. Must be 'encrypt' or 'decrypt'.`);
+  (async () => {
+    try {
+      if (mode === 'encrypt') {
+        await encryptFileStream(inputFile, outputFile, passphrase);
+      } else if (mode === 'decrypt') {
+        await decryptFileStream(inputFile, outputFile, passphrase);
+      } else {
+        console.error(`Invalid mode: ${mode}. Must be 'encrypt' or 'decrypt'.`);
+        process.exit(1);
+      }
+      process.exit(0);
+    } catch (err) {
+      console.error(`[CRYPTO-ERROR] ${err.message}`);
       process.exit(1);
     }
+  })();
+}
 
-    fs.writeFileSync(outputFile, outputBuffer);
-    process.exit(0);
-  } catch (err) {
-    console.error(`[CRYPTO-ERROR] ${err.message}`);
-    process.exit(1);
-  }
+function encryptFileStream(inputFile, outputFile, passphrase) {
+  return new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16);
+    const iv = crypto.randomBytes(12);
+    const key = crypto.pbkdf2Sync(passphrase, salt, 100000, 32, 'sha256');
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+
+    const tempCipherPath = `${outputFile}.tmp_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const inStream = fs.createReadStream(inputFile);
+    const outStream = fs.createWriteStream(tempCipherPath);
+
+    inStream.pipe(cipher).pipe(outStream);
+
+    outStream.on('finish', () => {
+      try {
+        const tag = cipher.getAuthTag();
+        const header = Buffer.concat([GCM_MAGIC, salt, iv, tag]);
+        const finalFd = fs.openSync(outputFile, 'w');
+        fs.writeSync(finalFd, header, 0, header.length, 0);
+
+        const cipherFd = fs.openSync(tempCipherPath, 'r');
+        const buf = Buffer.alloc(64 * 1024);
+        let bytesRead = 0;
+        let pos = header.length;
+        while ((bytesRead = fs.readSync(cipherFd, buf, 0, buf.length, null)) > 0) {
+          fs.writeSync(finalFd, buf, 0, bytesRead, pos);
+          pos += bytesRead;
+        }
+        fs.closeSync(cipherFd);
+        fs.closeSync(finalFd);
+        try { fs.unlinkSync(tempCipherPath); } catch (_) {}
+        resolve();
+      } catch (err) {
+        try { if (fs.existsSync(tempCipherPath)) fs.unlinkSync(tempCipherPath); } catch (_) {}
+        reject(err);
+      }
+    });
+
+    inStream.on('error', (err) => {
+      try { if (fs.existsSync(tempCipherPath)) fs.unlinkSync(tempCipherPath); } catch (_) {}
+      reject(err);
+    });
+    outStream.on('error', (err) => {
+      try { if (fs.existsSync(tempCipherPath)) fs.unlinkSync(tempCipherPath); } catch (_) {}
+      reject(err);
+    });
+  });
+}
+
+function decryptFileStream(inputFile, outputFile, passphrase) {
+  return new Promise((resolve, reject) => {
+    try {
+      const fd = fs.openSync(inputFile, 'r');
+      const header = Buffer.alloc(51);
+      const bytesRead = fs.readSync(fd, header, 0, 51, 0);
+      fs.closeSync(fd);
+
+      if (bytesRead >= 51 && header.subarray(0, 7).equals(GCM_MAGIC)) {
+        const salt = header.subarray(7, 23);
+        const iv = header.subarray(23, 35);
+        const tag = header.subarray(35, 51);
+
+        const key = crypto.pbkdf2Sync(passphrase, salt, 100000, 32, 'sha256');
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+        decipher.setAuthTag(tag);
+
+        const inStream = fs.createReadStream(inputFile, { start: 51 });
+        const outStream = fs.createWriteStream(outputFile);
+
+        inStream.pipe(decipher).pipe(outStream);
+
+        outStream.on('finish', resolve);
+        decipher.on('error', reject);
+        inStream.on('error', reject);
+        outStream.on('error', reject);
+      } else {
+        const inputBuffer = fs.readFileSync(inputFile);
+        const outputBuffer = decryptBackup(inputBuffer, passphrase);
+        fs.writeFileSync(outputFile, outputBuffer);
+        resolve();
+      }
+    } catch (e) {
+      reject(e);
+    }
+  });
 }

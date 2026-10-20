@@ -176,17 +176,33 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
         throw new Error(`[WEBHOOK] Amount mismatch in webhook payload: expected ${expectedPaise} paise, received ${payoutEntity.amount} paise`);
       }
 
-      if (eventType === 'payout.processed') {
-        await PayoutService.finalizeSuccess(payoutRecord.id, razorpayPayoutId);
-        console.log(`[WEBHOOK] Payout ${payoutRecord.id} successfully finalized via webhook.`);
-      } else if (eventType === 'payout.reversed') {
-        const reason = payoutEntity.failure_reason || 'Disbursement reversed by banking partner';
-        await PayoutService.handleReversedPayout(payoutRecord.id, reason);
-        console.log(`[WEBHOOK] Payout ${payoutRecord.id} handled post-success reversal via webhook: ${reason}`);
-      } else if (eventType === 'payout.failed' || eventType === 'payout.rejected') {
-        const reason = payoutEntity.failure_reason || 'Disbursement rejected by banking partner';
-        await PayoutService.reversePayout(payoutRecord.id, reason);
-        console.log(`[WEBHOOK] Payout ${payoutRecord.id} reversed via webhook: ${reason}`);
+      try {
+        if (eventType === 'payout.processed') {
+          await PayoutService.finalizeSuccess(payoutRecord.id, razorpayPayoutId);
+          console.log(`[WEBHOOK] Payout ${payoutRecord.id} successfully finalized via webhook.`);
+        } else if (eventType === 'payout.reversed') {
+          const reason = payoutEntity.failure_reason || 'Disbursement reversed by banking partner';
+          await PayoutService.handleReversedPayout(payoutRecord.id, reason);
+          console.log(`[WEBHOOK] Payout ${payoutRecord.id} handled post-success reversal via webhook: ${reason}`);
+        } else if (eventType === 'payout.failed' || eventType === 'payout.rejected') {
+          const reason = payoutEntity.failure_reason || 'Disbursement rejected by banking partner';
+          await PayoutService.reversePayout(payoutRecord.id, reason);
+          console.log(`[WEBHOOK] Payout ${payoutRecord.id} reversed via webhook: ${reason}`);
+        }
+      } catch (transitionErr: any) {
+        // Handle out-of-order webhook delivery: if payout has already reached terminal state,
+        // safely acknowledge to prevent infinite provider retry storms.
+        if (
+          transitionErr.message &&
+          (transitionErr.message.includes('already in terminal state') ||
+           transitionErr.message.includes('already successfully completed') ||
+           transitionErr.message.includes('already been reversed') ||
+           transitionErr.message.includes('already failed'))
+        ) {
+          console.warn(`[WEBHOOK] Out-of-order delivery: event ${eventType} acknowledged for payout ${payoutRecord.id}: ${transitionErr.message}`);
+        } else {
+          throw transitionErr;
+        }
       }
 
       // 4. Mark event as processed only after financial transition succeeds

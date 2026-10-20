@@ -1724,8 +1724,34 @@ export class AuthService {
       throw new Error('Invalid refresh token.');
     }
 
-    // Replay attack detection: if token is already revoked, revoke all user sessions!
+    // Replay attack detection: if token is already revoked, check grace window for concurrent requests
     if (session.revokedAt) {
+      const gracePeriodMs = 30 * 1000;
+      const timeSinceRevocation = Date.now() - session.revokedAt.getTime();
+
+      if (timeSinceRevocation <= gracePeriodMs) {
+        const user = await prisma.user.findUnique({
+          where: { id: session.userId },
+        });
+
+        if (user && user.status === 'ACTIVE' && user.role === 'USER') {
+          const successorSession = await prisma.authSession.findFirst({
+            where: { rotatedFrom: session.id, revokedAt: null },
+            orderBy: { createdAt: 'desc' },
+          });
+
+          if (successorSession && successorSession.sessionId && user.activeSessionId === successorSession.sessionId) {
+            const freshAccessToken = this.generateAccessToken(user.id, user.role, user.mobile, successorSession.sessionId);
+            return {
+              accessToken: freshAccessToken,
+              refreshToken: undefined,
+              token: freshAccessToken,
+              sessionId: successorSession.sessionId,
+            };
+          }
+        }
+      }
+
       await prisma.authSession.updateMany({
         where: { userId: session.userId, revokedAt: null },
         data: { revokedAt: new Date() },

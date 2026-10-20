@@ -69,13 +69,13 @@ if [ ! -f "${COMPATIBILITY_MANIFEST}" ]; then
 fi
 
 # Validate manifest JSON structure
-node -e "
-  const fs = require('fs');
-  const m = JSON.parse(fs.readFileSync('${COMPATIBILITY_MANIFEST}', 'utf8'));
+node -e '
+  const fs = require("fs");
+  const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   if (!Array.isArray(m.migrations) || m.migrations.length === 0) {
-    throw new Error('Manifest missing or empty migrations array');
+    throw new Error("Manifest missing or empty migrations array");
   }
-" 2>/dev/null || fail "Migration compatibility manifest at ${COMPATIBILITY_MANIFEST} is malformed or invalid JSON."
+' "${COMPATIBILITY_MANIFEST}" 2>/dev/null || fail "Migration compatibility manifest at ${COMPATIBILITY_MANIFEST} is malformed or invalid JSON."
 
 # Determine migrations introduced between PREVIOUS_SHA and TARGET_SHA
 # Git diff MUST succeed (never suppress error with || true)
@@ -91,17 +91,23 @@ BREAKING_MIGRATIONS=()
 if [ -n "${NEW_MIGRATION_DIRS}" ]; then
   echo "Inspecting migration deltas: ${NEW_MIGRATION_DIRS}"
   for mig in ${NEW_MIGRATION_DIRS}; do
-    IS_COMPAT=$(node -e "
-      const m = require('${COMPATIBILITY_MANIFEST}');
-      const entry = m.migrations.find(x => x.id === '${mig}');
+    if ! [[ "${mig}" =~ ^[0-9]{14}_[a-zA-Z0-9_]+$ ]]; then
+      BREAKING_FOUND=1
+      BREAKING_MIGRATIONS+=("${mig} (Malformed migration folder name rejected for safety)")
+      continue
+    fi
+
+    IS_COMPAT=$(node -e '
+      const m = require(process.argv[1]);
+      const entry = m.migrations.find(x => x.id === process.argv[2]);
       if (!entry) {
-        console.log('UNKNOWN');
+        console.log("UNKNOWN");
       } else if (entry.isBackwardCompatible === false || entry.allowsApplicationRollback === false || entry.destructive === true) {
-        console.log('BREAKING:' + (entry.breakingChanges ? entry.breakingChanges.join('; ') : 'incompatible'));
+        console.log("BREAKING:" + (entry.breakingChanges ? entry.breakingChanges.join("; ") : "incompatible"));
       } else {
-        console.log('COMPATIBLE');
+        console.log("COMPATIBLE");
       }
-    " 2>/dev/null || echo "UNKNOWN")
+    ' "${COMPATIBILITY_MANIFEST}" "${mig}" 2>/dev/null || echo "UNKNOWN")
 
     if [[ "${IS_COMPAT}" == BREAKING* ]]; then
       BREAKING_FOUND=1
@@ -121,19 +127,24 @@ if [ -n "${OVERRIDE_APPLIED_MIGRATIONS:-}" ]; then
   for app_mig in "${APPLIED_LIST[@]}"; do
     app_mig="$(echo "$app_mig" | tr -d ' ')"
     [ -z "$app_mig" ] && continue
+    if ! [[ "${app_mig}" =~ ^[0-9]{14}_[a-zA-Z0-9_]+$ ]]; then
+      BREAKING_FOUND=1
+      BREAKING_MIGRATIONS+=("${app_mig} (Malformed applied migration name rejected for safety)")
+      continue
+    fi
     # If applied migration was NOT in PREVIOUS_SHA, it must be evaluated
     if ! git cat-file -e "${PREVIOUS_SHA}:backend/prisma/migrations/${app_mig}/migration.sql" 2>/dev/null; then
-      IS_COMPAT=$(node -e "
-        const m = require('${COMPATIBILITY_MANIFEST}');
-        const entry = m.migrations.find(x => x.id === '${app_mig}');
+      IS_COMPAT=$(node -e '
+        const m = require(process.argv[1]);
+        const entry = m.migrations.find(x => x.id === process.argv[2]);
         if (!entry) {
-          console.log('UNKNOWN');
+          console.log("UNKNOWN");
         } else if (entry.isBackwardCompatible === false || entry.allowsApplicationRollback === false || entry.destructive === true) {
-          console.log('BREAKING:' + (entry.breakingChanges ? entry.breakingChanges.join('; ') : 'incompatible'));
+          console.log("BREAKING:" + (entry.breakingChanges ? entry.breakingChanges.join("; ") : "incompatible"));
         } else {
-          console.log('COMPATIBLE');
+          console.log("COMPATIBLE");
         }
-      " 2>/dev/null || echo "UNKNOWN")
+      ' "${COMPATIBILITY_MANIFEST}" "${app_mig}" 2>/dev/null || echo "UNKNOWN")
 
       if [[ "${IS_COMPAT}" == BREAKING* ]]; then
         BREAKING_FOUND=1

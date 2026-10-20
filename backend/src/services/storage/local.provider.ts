@@ -16,8 +16,14 @@ export class LocalStorageProvider implements StorageProvider {
   }
 
   private getFullPath(key: string): string {
-    const safeKey = key.replace(/\//g, '_');
-    return path.join(this.baseDir, safeKey);
+    // Sanitize both POSIX and Windows path separators and directory traversal sequences
+    const safeKey = key.replace(/[/\\]/g, '_').replace(/\.\./g, '_');
+    const resolvedPath = path.resolve(this.baseDir, safeKey);
+    const resolvedBase = path.resolve(this.baseDir);
+    if (resolvedPath !== resolvedBase && !resolvedPath.startsWith(resolvedBase + path.sep)) {
+      throw new Error('Path traversal detected in storage key.');
+    }
+    return resolvedPath;
   }
 
   async upload(params: { key: string; buffer: Buffer; mimeType: string }): Promise<UploadResult> {
