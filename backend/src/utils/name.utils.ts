@@ -151,7 +151,8 @@ export function normalizeName(name: string): string {
  * Compares an account name with a verified PAN holder name:
  * 1. Checks exact normalized string match.
  * 2. Checks token set equality (e.g. "RAJESH KUMAR SHARMA" matches "SHARMA RAJESH KUMAR").
- * 3. Handles initial expansion (e.g. "R K SHARMA" vs "RAJESH KUMAR SHARMA").
+ * 3. Handles initial expansion (e.g. "R K SHARMA" vs "RAJESH KUMAR SHARMA") requiring at least
+ *    one anchor token of length >= 2 to match exactly to prevent ambiguous single-letter false matches.
  */
 export function compareNames(accountName: string, panVerifiedName: string): boolean {
   const normAccount = normalizeName(accountName);
@@ -172,13 +173,20 @@ export function compareNames(accountName: string, panVerifiedName: string): bool
     if (sortedAccount === sortedPan) return true;
   }
 
-  // Token subset match for single initials (e.g., "R SHARMA" vs "RAJESH SHARMA")
-  if (accountTokens.length === panTokens.length) {
+  // Token subset match for single initials (e.g., "R K SHARMA" vs "RAJESH KUMAR SHARMA")
+  // Requires at least one anchor token (length >= 2) that is an exact identical match (e.g. surname)
+  if (accountTokens.length === panTokens.length && accountTokens.length >= 2) {
+    let hasExactAnchorToken = false;
     let allTokensMatch = true;
     for (let i = 0; i < accountTokens.length; i++) {
       const aTok = accountTokens[i];
       const pTok = panTokens[i];
-      if (aTok === pTok) continue;
+      if (aTok === pTok) {
+        if (aTok.length >= 2) {
+          hasExactAnchorToken = true;
+        }
+        continue;
+      }
       // Single character initial match
       if ((aTok.length === 1 && pTok.startsWith(aTok)) || (pTok.length === 1 && aTok.startsWith(pTok))) {
         continue;
@@ -186,7 +194,7 @@ export function compareNames(accountName: string, panVerifiedName: string): bool
       allTokensMatch = false;
       break;
     }
-    if (allTokensMatch) return true;
+    if (allTokensMatch && hasExactAnchorToken) return true;
   }
 
   return false;

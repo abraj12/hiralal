@@ -155,15 +155,17 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
         return;
       }
 
-      if (payoutEntity.currency && payoutEntity.currency !== 'INR') {
-        throw new Error(`[WEBHOOK] Invalid currency in webhook payload: expected INR, received ${payoutEntity.currency}`);
+      if (!payoutEntity.currency || typeof payoutEntity.currency !== 'string' || payoutEntity.currency !== 'INR') {
+        throw new Error(`[WEBHOOK] Invalid or missing currency in webhook payload: expected INR, received ${payoutEntity.currency}`);
       }
 
-      if (payoutEntity.amount !== undefined) {
-        const expectedPaise = Number(toPaise(payoutRecord.amount));
-        if (Number(payoutEntity.amount) !== expectedPaise) {
-          throw new Error(`[WEBHOOK] Amount mismatch in webhook payload: expected ${expectedPaise} paise, received ${payoutEntity.amount} paise`);
-        }
+      if (payoutEntity.amount === undefined || payoutEntity.amount === null || isNaN(Number(payoutEntity.amount))) {
+        throw new Error('[WEBHOOK] Missing or invalid amount in webhook payload');
+      }
+
+      const expectedPaise = Number(toPaise(payoutRecord.amount));
+      if (Number(payoutEntity.amount) !== expectedPaise) {
+        throw new Error(`[WEBHOOK] Amount mismatch in webhook payload: expected ${expectedPaise} paise, received ${payoutEntity.amount} paise`);
       }
 
       if (eventType === 'payout.processed') {

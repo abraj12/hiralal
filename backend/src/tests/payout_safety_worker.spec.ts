@@ -236,6 +236,8 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
           entity: {
             id: 'pout_webhook_dedup_test',
             reference_id: payout.id,
+            amount: 100000,
+            currency: 'INR',
           },
         },
       },

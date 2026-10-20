@@ -502,7 +502,9 @@ router.post('/admin/otp/verify', otpVerifyIpLimiter, otpVerifyLimiter, async (re
     if (result.accessToken || result.token) {
       setAdminCookie(res, result.accessToken || result.token);
     }
-    res.json(result);
+    // Strip token and accessToken from JSON body to enforce HttpOnly cookie-only transport
+    const { token, accessToken, ...sanitizedResult } = result as any;
+    res.json(sanitizedResult);
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }

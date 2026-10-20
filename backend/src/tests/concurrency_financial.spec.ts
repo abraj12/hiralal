@@ -289,4 +289,45 @@ describe('Concurrency & Financial Integrity Tests', () => {
     });
     expect(reversalTxs.length).toBe(1);
   });
+
+  test('7. Cross-User Beneficiary Collision Prevention: Concurrent registration of identical payment account across different users fails closed', async () => {
+    // Provision second user
+    const otherUser = await prisma.user.upsert({
+      where: { mobile: '9777777778' },
+      update: { status: 'ACTIVE' },
+      create: {
+        mobile: '9777777778',
+        fullName: 'Other Craftsman',
+        passwordHash: 'hash',
+        profession: 'PLUMBER',
+        role: 'USER',
+        status: 'ACTIVE',
+        isVerified: true,
+      },
+    });
+
+    const targetUpi = `shared_${Date.now()}@okaxis`;
+
+    // Attempt concurrent registration of identical UPI across craftsmanUser and otherUser
+    const [res1, res2] = await Promise.allSettled([
+      PaymentService.addUpiAccount(craftsmanUser.id, targetUpi),
+      PaymentService.addUpiAccount(otherUser.id, targetUpi),
+    ]);
+
+    const successes = [res1, res2].filter((r) => r.status === 'fulfilled');
+    const failures = [res1, res2].filter((r) => r.status === 'rejected');
+
+    // Exactly one user must succeed, the other must be rejected under database uniqueness
+    expect(successes.length).toBe(1);
+    expect(failures.length).toBe(1);
+
+    const accountsInDb = await prisma.paymentAccount.findMany({
+      where: { upiId: targetUpi },
+    });
+    expect(accountsInDb.length).toBe(1);
+
+    // Clean up second user
+    await prisma.paymentAccount.deleteMany({ where: { userId: otherUser.id } });
+    await prisma.user.delete({ where: { id: otherUser.id } });
+  });
 });

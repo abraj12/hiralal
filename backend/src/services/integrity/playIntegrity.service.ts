@@ -54,6 +54,34 @@ setInterval(() => {
   }
 }, 60000).unref();
 
+/**
+ * Normalizes an app certificate SHA-256 fingerprint into a lowercase 64-character hexadecimal string.
+ * Supports:
+ * - Google Play Integrity standard format: Base64-URL encoded SHA-256 digest (web-safe no-padding).
+ * - Standard Base64 encoded SHA-256 digest.
+ * - Colon/dash/space-separated hex format (e.g. keytool / Android Studio output).
+ * - Plain 64-character lowercase hex format.
+ */
+export function normalizeCertificateDigestToHex(raw: string): string | null {
+  if (!raw || typeof raw !== 'string') return null;
+  const cleaned = raw.trim();
+  const hexCandidate = cleaned.toLowerCase().replace(/[: -]/g, '');
+  if (/^[a-f0-9]{64}$/.test(hexCandidate)) {
+    return hexCandidate;
+  }
+  // Try decoding Base64 / Base64-URL (Google Play Integrity API documented format)
+  try {
+    const base64Standard = cleaned.replace(/-/g, '+').replace(/_/g, '/');
+    const buf = Buffer.from(base64Standard, 'base64');
+    if (buf.length === 32) {
+      return buf.toString('hex').toLowerCase();
+    }
+  } catch {
+    // ignore decoding errors
+  }
+  return null;
+}
+
 export interface PlayIntegrityVerdict {
   success: boolean;
   isRealDevice: boolean;
@@ -711,14 +739,18 @@ export class PlayIntegrityService {
       const rawPayloadDigests: string[] = Array.isArray(appIntegrity.certificateSha256Digest)
         ? appIntegrity.certificateSha256Digest
         : [];
-      const normalizedPayloadDigests = rawPayloadDigests.map((d: string) =>
-        d.trim().toLowerCase().replace(/[: -]/g, '')
-      );
-      const normalizedAllowed = effectiveConfig.allowedCertificateDigests.map((d) =>
-        d.trim().toLowerCase().replace(/[: -]/g, '')
-      );
+      const normalizedPayloadDigests = rawPayloadDigests
+        .map((d: string) => normalizeCertificateDigestToHex(d))
+        .filter((d): d is string => d !== null);
 
-      const hasMatchingCert = normalizedPayloadDigests.some((d: string) => normalizedAllowed.includes(d));
+      const normalizedAllowed = effectiveConfig.allowedCertificateDigests
+        .map((d: string) => normalizeCertificateDigestToHex(d))
+        .filter((d): d is string => d !== null);
+
+      const hasMatchingCert =
+        normalizedPayloadDigests.length > 0 &&
+        normalizedPayloadDigests.some((d: string) => normalizedAllowed.includes(d));
+
       if (!hasMatchingCert) {
         return {
           success: false,

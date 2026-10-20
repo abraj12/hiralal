@@ -282,7 +282,8 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
       expect(verifyRes.status).toBe(200);
       expect(verifyRes.body.success).toBe(true);
-      expect(verifyRes.body.accessToken).toBeDefined();
+      expect(verifyRes.body.accessToken).toBeUndefined();
+      expect(verifyRes.body.token).toBeUndefined();
       expect(verifyRes.body.user.role).toBe('BILL_ADMIN');
       expect(verifyRes.headers['set-cookie']).toBeDefined();
 
@@ -749,7 +750,9 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.accessToken).toBeDefined();
+    expect(res.body.accessToken).toBeUndefined();
+    expect(res.body.token).toBeUndefined();
+    expect(res.headers['set-cookie']).toBeDefined();
     expect(res.body.sessionId).toBeDefined();
     expect(res.body.user.role).toBe('BILL_ADMIN');
 

@@ -73,7 +73,11 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
       .post('/api/auth/admin/otp/verify')
       .send({ identifier: `${config.admin.operationsAdminPrefix}9999999992`, otpCode: '123456', challengeToken: opsChallengeToken });
     expect(opsAdminLoginRes.status).toBe(200);
-    adminToken = opsAdminLoginRes.body.token;
+    expect(opsAdminLoginRes.body.token).toBeUndefined();
+    expect(opsAdminLoginRes.body.accessToken).toBeUndefined();
+    const opsCookies = opsAdminLoginRes.headers['set-cookie'] || [];
+    const opsCookie = Array.isArray(opsCookies) ? opsCookies.find((c: string) => c.includes('admin_access_token=')) : opsCookies;
+    adminToken = opsCookie ? opsCookie.split('admin_access_token=')[1].split(';')[0] : '';
 
     // 1b. Provision Test Bill Admin in PostgreSQL
     await prisma.user.upsert({
@@ -113,7 +117,11 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
       .post('/api/auth/admin/otp/verify')
       .send({ identifier: `${config.admin.billAdminPrefix}9999999991`, otpCode: '654321', challengeToken: billChallengeToken });
     expect(billAdminLoginRes.status).toBe(200);
-    billAdminToken = billAdminLoginRes.body.token;
+    expect(billAdminLoginRes.body.token).toBeUndefined();
+    expect(billAdminLoginRes.body.accessToken).toBeUndefined();
+    const billCookies = billAdminLoginRes.headers['set-cookie'] || [];
+    const billCookie = Array.isArray(billCookies) ? billCookies.find((c: string) => c.includes('admin_access_token=')) : billCookies;
+    billAdminToken = billCookie ? billCookie.split('admin_access_token=')[1].split(';')[0] : '';
 
     // 2. Provision Test Plumber User
     const userPasswordHash = await bcrypt.hash('Password@123', 10);

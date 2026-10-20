@@ -564,7 +564,121 @@ describe('Hiralal Rewards Platform — Part 2 Master Remediation Suite', () => {
         .send(payloadObj);
 
       expect(res.status).toBe(500);
-      expect(res.body.error).toContain('Invalid currency');
+      expect(res.body.error).toContain('Invalid or missing currency');
+    });
+
+    it('rejects webhooks with missing currency (fail closed)', async () => {
+      const secret = config.razorpayx.webhookSecret || 'webhook_secret_hiralal_rzpx_2026';
+      config.razorpayx.webhookSecret = secret;
+
+      const paymentAccount = await prisma.paymentAccount.create({
+        data: {
+          userId: workerUser.id,
+          accountType: 'BANK_ACCOUNT',
+          accountHolderName: 'Master Test Worker',
+          accountNumber: '1234567890',
+          ifscCode: 'HDFC0001234',
+          maskedInfo: '••••••••7890',
+          isVerified: true,
+          isDefault: true,
+        },
+      });
+
+      const testPayout = await prisma.payout.create({
+        data: {
+          userId: workerUser.id,
+          walletId: workerUser.wallet.id,
+          paymentAccountId: paymentAccount.id,
+          idempotencyKey: `idemp_nocurr_${Date.now()}`,
+          amount: 500.0,
+          status: 'PROCESSING',
+          razorpayPayoutId: 'pout_nocurr_test_1',
+          paymentType: 'BANK_ACCOUNT',
+        },
+      });
+
+      const payloadObj = {
+        id: `evt_nocurr_${Date.now()}`,
+        event: 'payout.processed',
+        payload: {
+          payout: {
+            entity: {
+              id: testPayout.razorpayPayoutId,
+              amount: 50000,
+              // currency omitted
+            },
+          },
+        },
+      };
+
+      const rawBody = Buffer.from(JSON.stringify(payloadObj));
+      const sig = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+
+      const res = await request(app)
+        .post('/api/webhooks/razorpayx')
+        .set('Content-Type', 'application/json')
+        .set('x-razorpay-signature', sig)
+        .send(payloadObj);
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toContain('Invalid or missing currency');
+    });
+
+    it('rejects webhooks with missing amount (fail closed)', async () => {
+      const secret = config.razorpayx.webhookSecret || 'webhook_secret_hiralal_rzpx_2026';
+      config.razorpayx.webhookSecret = secret;
+
+      const paymentAccount = await prisma.paymentAccount.create({
+        data: {
+          userId: workerUser.id,
+          accountType: 'BANK_ACCOUNT',
+          accountHolderName: 'Master Test Worker',
+          accountNumber: '1234567890',
+          ifscCode: 'HDFC0001234',
+          maskedInfo: '••••••••7890',
+          isVerified: true,
+          isDefault: true,
+        },
+      });
+
+      const testPayout = await prisma.payout.create({
+        data: {
+          userId: workerUser.id,
+          walletId: workerUser.wallet.id,
+          paymentAccountId: paymentAccount.id,
+          idempotencyKey: `idemp_noamt_${Date.now()}`,
+          amount: 500.0,
+          status: 'PROCESSING',
+          razorpayPayoutId: 'pout_noamt_test_1',
+          paymentType: 'BANK_ACCOUNT',
+        },
+      });
+
+      const payloadObj = {
+        id: `evt_noamt_${Date.now()}`,
+        event: 'payout.processed',
+        payload: {
+          payout: {
+            entity: {
+              id: testPayout.razorpayPayoutId,
+              currency: 'INR',
+              // amount omitted
+            },
+          },
+        },
+      };
+
+      const rawBody = Buffer.from(JSON.stringify(payloadObj));
+      const sig = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+
+      const res = await request(app)
+        .post('/api/webhooks/razorpayx')
+        .set('Content-Type', 'application/json')
+        .set('x-razorpay-signature', sig)
+        .send(payloadObj);
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toContain('Missing or invalid amount');
     });
   });
 });

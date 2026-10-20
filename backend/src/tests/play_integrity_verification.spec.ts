@@ -969,7 +969,54 @@ describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', (
       expect(verdict.error).toContain('App certificate digest does not match');
     });
 
-    it('accepts certificate digest matching authorized fingerprint (case-insensitive & colon-insensitive)', async () => {
+    it('accepts certificate digest matching authorized fingerprint in Google Play Integrity Base64-URL format', async () => {
+      PlayIntegrityService.overrideConfig({
+        clientEmail: TEST_CLIENT_EMAIL,
+        privateKey: validRsaPrivateKey,
+        packageName: TEST_PACKAGE_NAME,
+        allowedCertificateDigests: [TEST_CERT_DIGEST],
+      });
+
+      // Google Play Integrity API returns Base64-URL encoded SHA-256 digest
+      const googleBase64UrlDigest = Buffer.from(TEST_CERT_DIGEST, 'hex').toString('base64url');
+
+      const nonceObj = await PlayIntegrityService.generateNonce();
+      const mockFetch = async (input: any) => {
+        const urlStr = String(input);
+        if (urlStr.includes('oauth2.googleapis.com')) {
+          return { ok: true, status: 200, json: async () => ({ access_token: 'tk', expires_in: 3600 }) } as any;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            tokenPayloadExternal: {
+              requestDetails: {
+                requestPackageName: TEST_PACKAGE_NAME,
+                nonce: nonceObj.nonce,
+                timestampMillis: String(Date.now()),
+              },
+              appIntegrity: {
+                appRecognitionVerdict: 'PLAY_RECOGNIZED',
+                certificateSha256Digest: [googleBase64UrlDigest],
+              },
+              deviceIntegrity: { deviceRecognitionVerdict: ['MEETS_DEVICE_INTEGRITY'] },
+            },
+          }),
+        } as any;
+      };
+      PlayIntegrityService.setFetchClient(mockFetch);
+
+      const verdict = await PlayIntegrityService.verifyToken({
+        nonce: nonceObj.nonce,
+        integrityToken: 'token',
+      });
+
+      expect(verdict.success).toBe(true);
+      expect(verdict.isRealDevice).toBe(true);
+    });
+
+    it('accepts certificate digest matching authorized fingerprint in colon-separated hex format', async () => {
       PlayIntegrityService.overrideConfig({
         clientEmail: TEST_CLIENT_EMAIL,
         privateKey: validRsaPrivateKey,
@@ -995,7 +1042,6 @@ describe('Play Integrity Comprehensive Verification & Anti-Tamper Test Suite', (
               },
               appIntegrity: {
                 appRecognitionVerdict: 'PLAY_RECOGNIZED',
-                // Google format often uppercase with colons
                 certificateSha256Digest: [
                   'A1:B2:C3:D4:E5:F6:A1:B2:C3:D4:E5:F6:A1:B2:C3:D4:E5:F6:A1:B2:C3:D4:E5:F6:A1:B2:C3:D4:E5:F6:A1:B2',
                 ],

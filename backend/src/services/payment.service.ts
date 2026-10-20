@@ -1,7 +1,7 @@
 import { prisma } from '../db';
 import { config } from '../config';
 import { PaymentType } from '@prisma/client';
-import { encryptSensitive, decryptSensitive } from '../utils/crypto.utils';
+import { encryptSensitive, decryptSensitive, generateBlindIndex } from '../utils/crypto.utils';
 
 export function readProviderRegisteredName(value: unknown): string | null {
   if (typeof value !== 'string') {
@@ -64,10 +64,15 @@ export class PaymentService {
       throw new Error('User account is suspended or inactive.');
     }
 
+    const beneficiaryBlindIndex = generateBlindIndex(`UPI:${cleanUpi}`);
+
     // Prevent cross-user account takeover: ensure UPI is not already verified to another user
     const existingOther = await prisma.paymentAccount.findFirst({
       where: {
-        upiId: cleanUpi,
+        OR: [
+          { upiId: cleanUpi },
+          { beneficiaryBlindIndex },
+        ],
         userId: { not: userId },
         isVerified: true,
       },
@@ -159,29 +164,61 @@ export class PaymentService {
 
     const maskedInfo = this.maskPaymentInfo('UPI', cleanUpi);
 
-    // Save or update account
-    return await prisma.$transaction(async (tx) => {
-      // Ensure only one default account
-      await tx.paymentAccount.updateMany({
-        where: { userId, isDefault: true },
-        data: { isDefault: false },
-      });
+    // Save or update account under concurrency-safe transaction
+    try {
+      return await prisma.$transaction(async (tx) => {
+        // Ensure only one default account
+        await tx.paymentAccount.updateMany({
+          where: { userId, isDefault: true },
+          data: { isDefault: false },
+        });
 
-      return await tx.paymentAccount.create({
-        data: {
-          userId,
-          accountType: 'UPI',
-          upiId: cleanUpi,
-          accountHolderName: providerRegisteredName || user.fullName,
-          providerRegisteredName,
-          providerNameVerified,
-          maskedInfo,
-          isVerified: isValid,
-          verifiedAt: isValid ? new Date() : null,
-          isDefault: true,
-        },
+        // If the same user already has this payment account, update it
+        const existingSelf = await tx.paymentAccount.findFirst({
+          where: {
+            userId,
+            beneficiaryBlindIndex,
+          },
+        });
+
+        if (existingSelf) {
+          return await tx.paymentAccount.update({
+            where: { id: existingSelf.id },
+            data: {
+              upiId: cleanUpi,
+              accountHolderName: providerRegisteredName || user.fullName,
+              providerRegisteredName,
+              providerNameVerified,
+              maskedInfo,
+              isVerified: isValid,
+              verifiedAt: isValid ? new Date() : null,
+              isDefault: true,
+            },
+          });
+        }
+
+        return await tx.paymentAccount.create({
+          data: {
+            userId,
+            accountType: 'UPI',
+            upiId: cleanUpi,
+            beneficiaryBlindIndex,
+            accountHolderName: providerRegisteredName || user.fullName,
+            providerRegisteredName,
+            providerNameVerified,
+            maskedInfo,
+            isVerified: isValid,
+            verifiedAt: isValid ? new Date() : null,
+            isDefault: true,
+          },
+        });
       });
-    });
+    } catch (err: any) {
+      if (err.code === 'P2002' || (err.message && err.message.includes('Unique constraint failed'))) {
+        throw new Error('This UPI ID is already registered and verified with another user account.');
+      }
+      throw err;
+    }
   }
 
   /**
@@ -217,13 +254,27 @@ export class PaymentService {
     }
 
     const maskedInfo = this.maskPaymentInfo('BANK_ACCOUNT', cleanAccount, params.bankName);
+    const beneficiaryBlindIndex = generateBlindIndex(`BANK:${cleanIfsc}:${cleanAccount}`);
 
-    // Prevent cross-user duplicate registration using exact normalized account number + IFSC
+    // Prevent cross-user duplicate registration using exact normalized account number + IFSC blind index
+    const existingOther = await prisma.paymentAccount.findFirst({
+      where: {
+        beneficiaryBlindIndex,
+        userId: { not: params.userId },
+        isVerified: true,
+      },
+    });
+    if (existingOther) {
+      throw new Error('This bank account is already registered and verified with another user account.');
+    }
+
+    // Fallback check for unindexed legacy rows
     const existingOthers = await prisma.paymentAccount.findMany({
       where: {
         ifscCode: cleanIfsc,
         userId: { not: params.userId },
         isVerified: true,
+        beneficiaryBlindIndex: null,
       },
       select: {
         id: true,
@@ -337,30 +388,65 @@ export class PaymentService {
 
     const encryptedAccount = encryptSensitive(cleanAccount);
 
-    return await prisma.$transaction(async (tx) => {
-      await tx.paymentAccount.updateMany({
-        where: { userId: params.userId, isDefault: true },
-        data: { isDefault: false },
-      });
+    try {
+      return await prisma.$transaction(async (tx) => {
+        await tx.paymentAccount.updateMany({
+          where: { userId: params.userId, isDefault: true },
+          data: { isDefault: false },
+        });
 
-      return await tx.paymentAccount.create({
-        data: {
-          userId: params.userId,
-          accountType: 'BANK_ACCOUNT',
-          accountHolderName: providerRegisteredName || cleanName,
-          providerRegisteredName,
-          providerNameVerified,
-          accountNumber: maskedInfo,
-          accountNumberEncrypted: encryptedAccount,
-          ifscCode: cleanIfsc,
-          bankName: params.bankName || 'Bank',
-          maskedInfo,
-          isVerified: isValid,
-          verifiedAt: isValid ? new Date() : null,
-          isDefault: true,
-        },
+        // If the same user already has this payment account, update it
+        const existingSelf = await tx.paymentAccount.findFirst({
+          where: {
+            userId: params.userId,
+            beneficiaryBlindIndex,
+          },
+        });
+
+        if (existingSelf) {
+          return await tx.paymentAccount.update({
+            where: { id: existingSelf.id },
+            data: {
+              accountHolderName: providerRegisteredName || cleanName,
+              providerRegisteredName,
+              providerNameVerified,
+              accountNumber: maskedInfo,
+              accountNumberEncrypted: encryptedAccount,
+              ifscCode: cleanIfsc,
+              bankName: params.bankName || 'Bank',
+              maskedInfo,
+              isVerified: isValid,
+              verifiedAt: isValid ? new Date() : null,
+              isDefault: true,
+            },
+          });
+        }
+
+        return await tx.paymentAccount.create({
+          data: {
+            userId: params.userId,
+            accountType: 'BANK_ACCOUNT',
+            beneficiaryBlindIndex,
+            accountHolderName: providerRegisteredName || cleanName,
+            providerRegisteredName,
+            providerNameVerified,
+            accountNumber: maskedInfo,
+            accountNumberEncrypted: encryptedAccount,
+            ifscCode: cleanIfsc,
+            bankName: params.bankName || 'Bank',
+            maskedInfo,
+            isVerified: isValid,
+            verifiedAt: isValid ? new Date() : null,
+            isDefault: true,
+          },
+        });
       });
-    });
+    } catch (err: any) {
+      if (err.code === 'P2002' || (err.message && err.message.includes('Unique constraint failed'))) {
+        throw new Error('This bank account is already registered and verified with another user account.');
+      }
+      throw err;
+    }
   }
 
   static async getUserPaymentAccounts(userId: string) {

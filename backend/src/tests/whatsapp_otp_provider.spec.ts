@@ -249,6 +249,29 @@ describe('WhatsApp Business Platform Cloud API OTP Provider Tests', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('WhatsApp Business credentials not configured');
     });
+
+    it('rejects successful HTTP 200 response when response is missing messages or message id', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          messaging_product: 'whatsapp',
+          contacts: [{ input: '919876543210', wa_id: '919876543210' }],
+          messages: [], // empty messages array
+        }),
+      } as any);
+
+      const provider = new WhatsAppOtpProvider();
+      const result = await provider.sendOtp({
+        mobile: '9876543210',
+        otpCode: '123456',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.provider).toBe('WHATSAPP');
+      expect(result.error).toContain('missing a valid message ID');
+      expect((result as any).messageId).toBeUndefined();
+    });
   });
 
   describe('3. SmsService / OtpService Dispatch & Mock Invariants', () => {

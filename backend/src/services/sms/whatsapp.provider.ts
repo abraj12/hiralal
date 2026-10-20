@@ -165,10 +165,20 @@ export class WhatsAppOtpProvider implements SmsProvider {
 
       const messageId = responseData.messages?.[0]?.id;
 
+      if (!messageId || typeof messageId !== 'string' || !messageId.trim()) {
+        const errorMsg = `WhatsApp Cloud API returned HTTP ${response.status} but response payload is missing a valid message ID.`;
+        console.error(`[WHATSAPP-ERROR] Delivery to ${maskedMobile} failed: ${errorMsg}`);
+        return {
+          success: false,
+          provider: this.name,
+          error: errorMsg,
+        };
+      }
+
       return {
         success: true,
         provider: this.name,
-        messageId: messageId || `wa_msg_${Date.now()}`,
+        messageId: messageId.trim(),
       };
     } catch (err: any) {
       if (err.name === 'AbortError') {

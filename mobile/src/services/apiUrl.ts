@@ -20,14 +20,20 @@ export function validateProductionApiUrl(
     throw new Error('The production API URL must use HTTPS.');
   }
 
+  const expectedHost = (
+    process.env.EXPO_PUBLIC_ALLOWED_API_HOST || 'hsspl.algions.in'
+  )
+    .toLowerCase()
+    .trim();
+
   if (
-    parsed.hostname.toLowerCase() !== 'hsspl.algions.in' ||
+    parsed.hostname.toLowerCase() !== expectedHost ||
     parsed.pathname.replace(/\/+$/, '') !== '/api/v1' ||
     parsed.search !== '' ||
     parsed.hash !== ''
   ) {
     throw new Error(
-      'The production mobile API URL must target https://hsspl.algions.in/api/v1.'
+      `The production mobile API URL must target https://${expectedHost}/api/v1.`
     );
   }
 

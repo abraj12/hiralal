@@ -21,6 +21,18 @@ set -euo pipefail
 
 umask 077
 
+# Auto-load production environment file if variables are not already exported in current shell
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+for candidate_env in "${SCRIPT_DIR}/../.env" "./.env" "${APP_DIR:-/opt/hiralal}/.env"; do
+  if [ -z "${BACKUP_ENCRYPTION_PASSPHRASE:-}" ] && [ -f "${candidate_env}" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "${candidate_env}"
+    set +a
+    break
+  fi
+done
+
 # 1. Mandatory Encryption Passphrase (Zero Fallback)
 if [ -z "${BACKUP_ENCRYPTION_PASSPHRASE:-}" ]; then
   echo "[FATAL ERROR] BACKUP_ENCRYPTION_PASSPHRASE environment variable is missing." >&2

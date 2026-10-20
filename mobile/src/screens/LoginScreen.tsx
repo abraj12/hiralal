@@ -147,8 +147,8 @@ export default function LoginScreen() {
     try {
       const res = await MobileApiClient.verifyAdminOtp(cleanAdminId, cleanOtp, challengeToken || undefined);
 
-      if (res.token && res.user) {
-        await loginAdminSession(res.user, res.token);
+      if (res.user) {
+        await loginAdminSession(res.user, res.token || '');
         setShowOtpModal(false);
         setLoginState('AUTHENTICATED');
       } else {

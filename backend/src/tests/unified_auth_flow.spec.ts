@@ -385,7 +385,9 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
 
       expect(verifyRes.status).toBe(200);
       expect(verifyRes.body.success).toBe(true);
-      expect(verifyRes.body.token).toBeDefined();
+      expect(verifyRes.body.token).toBeUndefined();
+      expect(verifyRes.body.accessToken).toBeUndefined();
+      expect(verifyRes.headers['set-cookie']).toBeDefined();
       expect(verifyRes.body.user.role).toBe('BILL_ADMIN');
       expect(verifyRes.body.user.mobile).toBe(billAdminMobile);
 

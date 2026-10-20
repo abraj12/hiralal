@@ -287,6 +287,20 @@ jobs:
               exit 1
             fi
             chmod +x scripts/*.sh
+
+            # Ensure production environment variables are exported for backup runner
+            if [ -f "${APP_DIR}/.env" ]; then
+              echo "Exporting environment variables from ${APP_DIR}/.env..."
+              set -a
+              . "${APP_DIR}/.env"
+              set +a
+            elif [ -f ./.env ]; then
+              echo "Exporting environment variables from ./.env..."
+              set -a
+              . ./.env
+              set +a
+            fi
+
             ./scripts/backup-db.sh || {
               echo "[FATAL ERROR] Pre-deployment database backup gate failed. Halting deployment before migrations." >&2
               exit 1

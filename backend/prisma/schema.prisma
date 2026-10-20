@@ -316,6 +316,7 @@ model PaymentAccount {
   user                   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   accountType            PaymentType
   upiId                  String?
+  beneficiaryBlindIndex  String?     @unique
   accountHolderName      String?
   providerRegisteredName String?
   providerNameVerified   Boolean     @default(false)
@@ -332,6 +333,7 @@ model PaymentAccount {
   payouts                Payout[]
 
   @@index([userId])
+  @@index([beneficiaryBlindIndex])
 }
 
 model Payout {
