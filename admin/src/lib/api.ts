@@ -159,6 +159,7 @@ export class AdminApiClient {
       gstRate?: number;
       gstRuleId?: string;
       gstOverrideReason?: string;
+      correctedGrossAmount?: number;
     },
     legacyRejectionReason?: string
   ) {

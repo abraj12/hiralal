@@ -120,16 +120,7 @@ export class AccountDeletionService {
         throw new Error('An account deletion is already scheduled or processing.');
       }
 
-      // Financial fencing: reject if positive wallet balance, pending bills, or in-flight payouts exist
-      const wallet = await tx.wallet.findUnique({
-        where: { userId },
-      });
-      if (wallet && Number(wallet.availableBalance) > 0) {
-        throw new Error(
-          `Account deletion cannot be requested while you have an unredeemed wallet balance of ₹${Number(wallet.availableBalance).toLocaleString('en-IN')}. Please redeem your available balance before deleting your account.`
-        );
-      }
-
+      // Financial fencing: reject if pending bills or in-flight payouts exist
       const pendingBillsCount = await tx.bill.count({
         where: {
           userId,
@@ -294,15 +285,6 @@ export class AccountDeletionService {
       }
 
       // Re-enforce financial fencing under row lock
-      const wallet = await tx.wallet.findUnique({
-        where: { userId: lockedUser.id },
-      });
-      if (wallet && Number(wallet.availableBalance) > 0) {
-        throw new Error(
-          `Account deletion cannot be confirmed while you have an unredeemed wallet balance of ₹${Number(wallet.availableBalance).toLocaleString('en-IN')}. Please redeem your available balance before deleting your account.`
-        );
-      }
-
       const pendingBillsCount = await tx.bill.count({
         where: {
           userId: lockedUser.id,
