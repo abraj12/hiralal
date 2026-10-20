@@ -34,7 +34,8 @@ export class R2StorageProvider implements StorageProvider {
       })
     );
 
-    const signedUrl = await this.getSignedUrl(params.key, 1800); // 30 min temporary access
+    const ttl = parseInt(process.env.R2_SIGNED_URL_TTL_SECONDS || '1800', 10);
+    const signedUrl = await this.getSignedUrl(params.key, ttl);
 
     return {
       fileKey: params.key,
@@ -71,7 +72,7 @@ export class R2StorageProvider implements StorageProvider {
     }
   }
 
-  async getSignedUrl(key: string, expiresInSeconds = 1800): Promise<string> {
+  async getSignedUrl(key: string, expiresInSeconds = parseInt(process.env.R2_SIGNED_URL_TTL_SECONDS || '1800', 10)): Promise<string> {
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: key,

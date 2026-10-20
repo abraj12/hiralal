@@ -12,7 +12,7 @@ Environment=NODE_ENV=production
 Environment=PORT=5001
 Environment=SERVICE_ROLE=worker
 EnvironmentFile=/etc/hiralal/.env
-ExecStart=/usr/bin/node dist/server.js
+ExecStart=/usr/bin/node dist/worker/index.js
 Restart=always
 RestartSec=5
 StandardOutput=append:/var/log/hiralal/worker-out.log

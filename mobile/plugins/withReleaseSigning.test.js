@@ -24,6 +24,33 @@ android {
   assert.ok(result.includes("signingConfigs.release : signingConfigs.debug"));
 });
 
+test('withReleaseSigning - correctly targets buildTypes.release and leaves buildTypes.debug untouched', () => {
+  const sampleGradle = `
+android {
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+        }
+    }
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+        release {
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+`;
+
+  const result = configureAppBuildGradle(sampleGradle);
+  assert.ok(result.includes(`        debug {
+            signingConfig signingConfigs.debug
+        }`));
+  assert.ok(result.includes(`        release {
+            signingConfig ((project.hasProperty('RELEASE_STORE_FILE') || System.getenv('ANDROID_KEYSTORE_PATH')) ? signingConfigs.release : signingConfigs.debug)`));
+});
+
 test('withReleaseSigning - idempotent on repeated executions', () => {
   const sampleGradle = `
 android {
@@ -33,6 +60,9 @@ android {
         }
     }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             signingConfig signingConfigs.debug
         }

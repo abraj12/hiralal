@@ -63,8 +63,17 @@ node "${CRYPTO_SCRIPT}" decrypt "${ENC_BACKUP}" "${DEC_FILE}"
 echo "[$(date -u)] [2/4] Decompressing SQL dump..."
 gunzip -c "${DEC_FILE}" > "${SQL_FILE}"
 
-echo "[$(date -u)] [3/4] Restoring SQL dump into database '${TARGET_DB}' in container '${DB_CONTAINER}'..."
-docker exec -i "${DB_CONTAINER}" psql -v ON_ERROR_STOP=1 -U "${DB_USER}" -d "${TARGET_DB}" < "${SQL_FILE}"
+# Create emergency pre-restore snapshot of target database before applying dump
+SNAPSHOT_FILE="/tmp/pre_restore_snapshot_${TARGET_DB}_$(date +%s).sql.gz"
+echo "[$(date -u)] Creating pre-restore emergency snapshot of '${TARGET_DB}'..."
+if docker exec "${DB_CONTAINER}" pg_dump -U "${DB_USER}" -d "${TARGET_DB}" --clean --if-exists 2>/dev/null | gzip -9 > "${SNAPSHOT_FILE}" 2>/dev/null; then
+  echo "[$(date -u)] Pre-restore safety snapshot created at ${SNAPSHOT_FILE}"
+else
+  echo "[INFO] Target database '${TARGET_DB}' may be empty or not yet created. Proceeding."
+fi
+
+echo "[$(date -u)] [3/4] Restoring SQL dump into database '${TARGET_DB}' in container '${DB_CONTAINER}' (atomic single-transaction)..."
+docker exec -i "${DB_CONTAINER}" psql -v ON_ERROR_STOP=1 --single-transaction -U "${DB_USER}" -d "${TARGET_DB}" < "${SQL_FILE}"
 
 echo "[$(date -u)] [4/4] Commencing deep financial integrity & ledger reconciliation verification..."
 

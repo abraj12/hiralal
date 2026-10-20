@@ -159,6 +159,10 @@ export class MobileApiClient {
     try {
       const val = user ? JSON.stringify(user) : null;
       if (Platform.OS === 'web') {
+        if (process.env.NODE_ENV === 'production') {
+          // On web in production, avoid persisting user PII into unencrypted localStorage
+          return;
+        }
         if (typeof window !== 'undefined' && window.localStorage) {
           if (val) window.localStorage.setItem('hiralal_user', val);
           else window.localStorage.removeItem('hiralal_user');

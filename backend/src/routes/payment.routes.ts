@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { requireActionIntegrity } from '../middleware/integrity.middleware';
+import { paymentVerifyLimiter } from '../middleware/rateLimit.middleware';
 import { PaymentService } from '../services/payment.service';
 
 const router = Router();
@@ -9,6 +10,7 @@ router.post(
   '/upi/verify',
   authenticate,
   requireUser,
+  paymentVerifyLimiter,
   requireActionIntegrity('BENEFICIARY_VERIFY'),
   async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -41,6 +43,7 @@ router.post(
   '/bank/verify',
   authenticate,
   requireUser,
+  paymentVerifyLimiter,
   requireActionIntegrity('BENEFICIARY_VERIFY'),
   async (req: AuthenticatedRequest, res: Response) => {
   try {

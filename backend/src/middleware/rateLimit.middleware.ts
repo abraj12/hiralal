@@ -241,18 +241,26 @@ export const passwordResetCompleteIpLimiter = createRateLimiter({
 
 export const kycLimiter = createRateLimiter({
   keyPrefix: 'kyc:verify',
-  limit: 5,
-  windowSeconds: 3600, // 5 attempts per hour
+  limit: parseInt(process.env.KYC_RATE_LIMIT || '5', 10),
+  windowSeconds: parseInt(process.env.KYC_RATE_WINDOW_SECONDS || '3600', 10),
   getIdentifier: (req: any) => (req.user?.id ? `user:${req.user.id}` : `ip:${req.ip || 'unknown'}`),
-  message: 'KYC PAN verification limit reached. Maximum 5 attempts per hour allowed.',
+  message: 'KYC PAN verification limit reached. Maximum attempts allowed per window.',
+});
+
+export const paymentVerifyLimiter = createRateLimiter({
+  keyPrefix: 'payment:verify',
+  limit: parseInt(process.env.PAYMENT_VERIFY_RATE_LIMIT || '5', 10),
+  windowSeconds: parseInt(process.env.PAYMENT_VERIFY_WINDOW_SECONDS || '3600', 10),
+  getIdentifier: (req: any) => (req.user?.id ? `user:${req.user.id}` : `ip:${req.ip || 'unknown'}`),
+  message: 'Payment account verification limit reached. Maximum attempts allowed per window.',
 });
 
 export const payoutRedeemLimiter = createRateLimiter({
   keyPrefix: 'payout:redeem',
-  limit: 3,
-  windowSeconds: 60, // 3 requests per minute
+  limit: parseInt(process.env.PAYOUT_REDEEM_RATE_LIMIT || '3', 10),
+  windowSeconds: parseInt(process.env.PAYOUT_REDEEM_WINDOW_SECONDS || '60', 10),
   getIdentifier: (req: any) => (req.user?.id ? `user:${req.user.id}` : `ip:${req.ip || 'unknown'}`),
-  message: 'Redemption request limit reached. Please wait a minute before requesting another payout.',
+  message: 'Redemption request limit reached. Please wait before requesting another payout.',
 });
 
 export const adminLoginLimiter = createRateLimiter({

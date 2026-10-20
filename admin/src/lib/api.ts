@@ -56,6 +56,7 @@ export class AdminApiClient {
     const isMutating = !['GET', 'HEAD', 'OPTIONS'].includes(method);
     const isAuthBootstrap = endpoint.includes('/auth/login') ||
       endpoint.includes('/auth/admin-login') ||
+      endpoint.includes('/auth/admin/otp') ||
       endpoint.includes('/auth/otp') ||
       endpoint.includes('/auth/send-otp') ||
       endpoint.includes('/auth/verify-otp') ||

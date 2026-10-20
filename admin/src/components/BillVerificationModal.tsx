@@ -106,7 +106,16 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
     };
   }, [bill?.id]);
 
-  const targetUrl = docUrl || bill.fileUrl;
+  const sanitizeDocUrl = (url?: string | null): string | null => {
+    if (!url) return null;
+    const trimmed = url.trim();
+    if (/^(https?:\/\/|\/|blob:)/i.test(trimmed)) {
+      return trimmed;
+    }
+    return null;
+  };
+
+  const targetUrl = sanitizeDocUrl(docUrl || bill.fileUrl);
   const isPdf = Boolean(
     bill.fileName?.toLowerCase().endsWith('.pdf') ||
     bill.mimeType === 'application/pdf' ||
@@ -553,6 +562,8 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                     src={`${targetUrl}#toolbar=0`}
                     className="w-full h-80 rounded-lg border border-slate-200 bg-white"
                     title={`Invoice PDF ${bill.invoiceNumber}`}
+                    sandbox="allow-scripts allow-same-origin"
+                    referrerPolicy="no-referrer"
                   />
                   <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500 px-1">
                     <span>{bill.fileName || 'Invoice Document (PDF)'}</span>

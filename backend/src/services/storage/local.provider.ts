@@ -47,7 +47,7 @@ export class LocalStorageProvider implements StorageProvider {
     return fs.existsSync(fullPath);
   }
 
-  async getSignedUrl(key: string, expiresInSeconds = 1800): Promise<string> {
+  async getSignedUrl(key: string, expiresInSeconds = parseInt(process.env.STORAGE_SIGNED_URL_TTL_SECONDS || '1800', 10)): Promise<string> {
     const { StorageService } = await import('./index');
     return StorageService.generateSignedUrl(key, Math.ceil(expiresInSeconds / 60));
   }

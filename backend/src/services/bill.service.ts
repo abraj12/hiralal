@@ -64,7 +64,7 @@ export class BillService {
       buffer: data.fileBuffer,
       originalFilename: data.fileName,
       mimeType: data.mimeType,
-      maxSizeInMb: 10,
+      maxSizeInMb: parseInt(process.env.BILL_MAX_UPLOAD_SIZE_MB || '10', 10),
     });
 
     // 3. Check duplicate document file hash across all users

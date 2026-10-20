@@ -263,11 +263,30 @@ export class GstService {
       if (isDefault) {
         // Serialize concurrent default-rule mutations using PostgreSQL advisory xact lock
         await db.$executeRaw`SELECT 1::int AS lock_acquired FROM (SELECT pg_advisory_xact_lock(7212026, 1)) AS lock_result`;
-        // Clear existing default flags atomically
-        await db.gstRule.updateMany({
-          where: { isDefault: true },
-          data: { isDefault: false },
-        });
+        
+        const effectiveFromDate = params.effectiveFrom || new Date();
+        const now = new Date();
+
+        if (effectiveFromDate > now) {
+          // Future default rule: Set existing active default rule's effectiveUntil to the future rule's effectiveFrom
+          // so there is no gap in default GST coverage
+          await db.gstRule.updateMany({
+            where: {
+              isDefault: true,
+              OR: [
+                { effectiveUntil: null },
+                { effectiveUntil: { gt: effectiveFromDate } },
+              ],
+            },
+            data: { effectiveUntil: effectiveFromDate },
+          });
+        } else {
+          // Immediately effective default rule: clear existing default flags atomically
+          await db.gstRule.updateMany({
+            where: { isDefault: true },
+            data: { isDefault: false },
+          });
+        }
       }
 
       const rule = await db.gstRule.create({

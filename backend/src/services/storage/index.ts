@@ -91,9 +91,10 @@ export class StorageService {
     mimeType: string;
     maxSizeInMb?: number;
   }): { fileHash: string; normalizedMime: string; extension: string } {
-    const maxSize = (params.maxSizeInMb || 10) * 1024 * 1024;
+    const maxMb = params.maxSizeInMb || parseInt(process.env.BILL_MAX_UPLOAD_SIZE_MB || '10', 10);
+    const maxSize = maxMb * 1024 * 1024;
     if (params.buffer.length > maxSize) {
-      throw new Error(`File size (${(params.buffer.length / (1024 * 1024)).toFixed(1)}MB) exceeds maximum limit of 10MB.`);
+      throw new Error(`File size (${(params.buffer.length / (1024 * 1024)).toFixed(1)}MB) exceeds maximum limit of ${maxMb}MB.`);
     }
 
     const ext = path.extname(params.originalFilename).toLowerCase();

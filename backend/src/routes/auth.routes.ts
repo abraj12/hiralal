@@ -311,13 +311,13 @@ router.post('/logout', async (req: Request, res: Response) => {
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
       try {
-        const decoded = jwt.verify(token, config.jwt.accessSecret) as any;
+        const decoded = jwt.verify(token, config.jwt.accessSecret, { algorithms: ['HS256'] }) as any;
         if (decoded?.userId || decoded?.id) {
           userId = decoded.userId || decoded.id;
         }
       } catch {
         try {
-          const decodedAdmin = jwt.verify(token, config.admin.accessSecret) as any;
+          const decodedAdmin = jwt.verify(token, config.admin.accessSecret, { algorithms: ['HS256'] }) as any;
           if (decodedAdmin?.userId || decodedAdmin?.id) {
             userId = decodedAdmin.userId || decodedAdmin.id;
           }
@@ -331,7 +331,7 @@ router.post('/logout', async (req: Request, res: Response) => {
     const cookieToken = cookies?.admin_access_token;
     if (!userId && cookieToken) {
       try {
-        const decodedAdmin = jwt.verify(cookieToken, config.admin.accessSecret) as any;
+        const decodedAdmin = jwt.verify(cookieToken, config.admin.accessSecret, { algorithms: ['HS256'] }) as any;
         if (decodedAdmin?.userId || decodedAdmin?.id) {
           userId = decodedAdmin.userId || decodedAdmin.id;
         }

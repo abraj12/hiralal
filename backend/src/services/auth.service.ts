@@ -261,7 +261,9 @@ export class AuthService {
       where: { mobile, role: role as UserRole },
     });
 
+    const DUMMY_HASH = '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
     if (!admin || admin.status !== 'ACTIVE') {
+      await bcrypt.compare(params.password, DUMMY_HASH);
       throw new Error('Invalid login credentials. Please check your details and try again.');
     }
 
@@ -607,7 +609,10 @@ export class AuthService {
       }
 
       const inputHmac = hmacHashOtp(cleanOtp);
-      if (inputHmac !== record.otpHash) {
+      const inputBuf = Buffer.from(inputHmac, 'hex');
+      const recordBuf = Buffer.from(record.otpHash, 'hex');
+      const isOtpMatch = inputBuf.length === recordBuf.length && crypto.timingSafeEqual(inputBuf, recordBuf);
+      if (!isOtpMatch) {
         const updated = await tx.otpRequest.update({
           where: { id: record.id },
           data: { attemptsCount: { increment: 1 } },
@@ -1134,7 +1139,10 @@ export class AuthService {
 
     // Verify cryptographic HMAC hash (F-03: legacy SHA-256 backward-compat path removed)
     const inputHmac = hmacHashOtp(cleanOtp);
-    if (inputHmac !== record.otpHash) {
+    const inputBuf = Buffer.from(inputHmac, 'hex');
+    const recordBuf = Buffer.from(record.otpHash, 'hex');
+    const isOtpMatch = inputBuf.length === recordBuf.length && crypto.timingSafeEqual(inputBuf, recordBuf);
+    if (!isOtpMatch) {
       const updated = await tx.otpRequest.update({
         where: { id: record.id },
         data: { attemptsCount: { increment: 1 } },
@@ -1477,7 +1485,9 @@ export class AuthService {
       include: { wallet: true },
     });
 
+    const DUMMY_HASH = '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
     if (!user) {
+      await bcrypt.compare(pass, DUMMY_HASH);
       throw new Error('Invalid mobile number or password.');
     }
 

@@ -6,8 +6,8 @@ import { AuthService } from './auth.service';
 import { StorageService } from './storage';
 
 export class AccountDeletionService {
-  private static COOLDOWN_DAYS = 30;
-  private static GRACE_PERIOD_DAYS = 7;
+  private static COOLDOWN_DAYS = parseInt(process.env.ACCOUNT_DELETION_COOLDOWN_DAYS || '30', 10);
+  private static GRACE_PERIOD_DAYS = parseInt(process.env.ACCOUNT_DELETION_GRACE_PERIOD_DAYS || '7', 10);
 
   /**
    * Step 1: User initiates account deletion while authenticated by providing their password.
@@ -112,6 +112,31 @@ export class AccountDeletionService {
 
       if (locked.hasActiveOp || locked.deletionScheduledAt) {
         throw new Error('An account deletion is already scheduled or processing.');
+      }
+
+      // Financial fencing: reject if pending bills or in-flight payouts exist
+      const pendingBillsCount = await tx.bill.count({
+        where: {
+          userId,
+          status: { in: ['PENDING', 'UNDER_REVIEW'] },
+        },
+      });
+      if (pendingBillsCount > 0) {
+        throw new Error(
+          'Account deletion cannot be requested while you have bills pending review. Please wait until bill verification is complete.'
+        );
+      }
+
+      const inFlightPayoutsCount = await tx.payout.count({
+        where: {
+          userId,
+          status: { in: ['PENDING', 'APPROVED', 'PAYOUT_INITIATED', 'PROCESSING'] },
+        },
+      });
+      if (inFlightPayoutsCount > 0) {
+        throw new Error(
+          'Account deletion cannot be requested while a payout is being processed. Please wait until payout processing is complete.'
+        );
       }
 
       return {
@@ -253,6 +278,31 @@ export class AccountDeletionService {
         );
       }
 
+      // Re-enforce financial fencing under row lock
+      const pendingBillsCount = await tx.bill.count({
+        where: {
+          userId: lockedUser.id,
+          status: { in: ['PENDING', 'UNDER_REVIEW'] },
+        },
+      });
+      if (pendingBillsCount > 0) {
+        throw new Error(
+          'Account deletion cannot be confirmed while you have bills pending review. Please wait until bill verification is complete.'
+        );
+      }
+
+      const inFlightPayoutsCount = await tx.payout.count({
+        where: {
+          userId: lockedUser.id,
+          status: { in: ['PENDING', 'APPROVED', 'PAYOUT_INITIATED', 'PROCESSING'] },
+        },
+      });
+      if (inFlightPayoutsCount > 0) {
+        throw new Error(
+          'Account deletion cannot be confirmed while a payout is being processed. Please wait until payout processing is complete.'
+        );
+      }
+
       // 3. Verify OTP in transaction (recording failed attempts if invalid)
       const otpResult = await AuthService.verifyOtpInTransaction(
         tx,
@@ -336,7 +386,7 @@ export class AccountDeletionService {
       success: true,
       deletionScheduledAt: txResult.scheduledAt!.toISOString(),
       gracePeriodDays: this.GRACE_PERIOD_DAYS,
-      message: `Your account deletion is scheduled for ${txResult.scheduledAt!.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}. Logging in during this 7-day grace period will automatically cancel the deletion.`,
+      message: `Your account deletion is scheduled for ${txResult.scheduledAt!.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}. Logging in during this ${this.GRACE_PERIOD_DAYS}-day grace period will automatically cancel the deletion.`,
     };
   }
 
@@ -869,6 +919,7 @@ export class AccountDeletionService {
               providerRegisteredName: 'ANONYMIZED',
               accountNumber: null,
               accountNumberEncrypted: null,
+              beneficiaryBlindIndex: null,
               ifscCode: null,
               bankName: null,
               maskedInfo: 'XXXX0000',

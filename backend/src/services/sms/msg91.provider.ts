@@ -39,19 +39,21 @@ export class MSG91SmsProvider implements SmsProvider {
         console.log(`[MSG91-DISPATCH] Dispatching OTP SMS to ${maskedMobile} (template: ${templateId})`);
       }
 
-      // MSG91 OTP Send API v5
+      // MSG91 OTP Send API v5 - Authenticate via HTTP header rather than query string to prevent log exposure
       const url = new URL('https://control.msg91.com/api/v5/otp');
       url.searchParams.set('template_id', templateId);
       url.searchParams.set('mobile', `91${cleanMobile}`);
-      url.searchParams.set('authkey', authKey);
-      url.searchParams.set('otp', params.otpCode);
       url.searchParams.set('otp_expiry', '10'); // 10 minutes
 
       const response = await fetch(url.toString(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          authkey: authKey,
         },
+        body: JSON.stringify({
+          otp: params.otpCode,
+        }),
         signal: controller.signal,
       });
 

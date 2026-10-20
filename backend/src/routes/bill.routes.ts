@@ -14,7 +14,7 @@ const router = Router();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB file limit
+    fileSize: parseInt(process.env.BILL_MAX_UPLOAD_SIZE_MB || '10', 10) * 1024 * 1024,
     files: 1, // Only 1 file per upload
     fieldNameSize: 100, // Max 100 characters for field names
     fieldSize: 64 * 1024, // 64KB per field
@@ -109,7 +109,8 @@ router.post(
       });
     }
 
-    if (parsedAmount > 50000000) { // ₹5,00,00,000 ceiling
+    const maxBillAmount = parseFloat(process.env.BILL_MAX_AMOUNT || '50000000');
+    if (parsedAmount > maxBillAmount) {
       return res.status(400).json({
         success: false,
         message: 'Bill amount exceeds maximum permitted single invoice limit.',
@@ -203,9 +204,9 @@ router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res
 
 /**
  * Secure signed URL document retrieval.
- * Requires authentication and validates that the file key belongs to the requesting user (F-07).
+ * Requires authentication and validates that the file key belongs to the requesting user or BILL_ADMIN.
  */
-router.get('/file', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/file', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     const key = req.query.key as string;
@@ -216,10 +217,13 @@ router.get('/file', authenticate, requireUser, async (req: AuthenticatedRequest,
       return res.status(400).json({ success: false, message: 'Invalid signed URL parameters.' });
     }
 
-    // Authorization: verify the file key belongs to the authenticated user.
+    // Authorization: verify the file key belongs to the authenticated user or requester is BILL_ADMIN.
     // Key format: bills/{userId}/{billId}/{filename}
     const keyParts = key.split('/');
-    if (keyParts[0] !== 'bills' || keyParts[1] !== user.id) {
+    const isOwner = keyParts[0] === 'bills' && keyParts[1] === user.id;
+    const isBillAdmin = user.role === 'BILL_ADMIN';
+
+    if (keyParts[0] !== 'bills' || (!isOwner && !isBillAdmin)) {
       return res.status(403).json({ success: false, message: 'Access denied: document does not belong to your account.' });
     }
 

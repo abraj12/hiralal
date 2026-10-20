@@ -171,6 +171,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Ensures any existing redemption settings without valid dates or threshold are safely disabled (fail-closed)."
+    },
+    {
+      "id": "20261020100000_payment_account_beneficiary_blind_index_unique",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive column beneficiaryBlindIndex and unique index on PaymentAccount to prevent cross-user account linking."
     }
   ]
 }

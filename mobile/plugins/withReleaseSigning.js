@@ -33,8 +33,9 @@ function configureAppBuildGradle(contents) {
   }
 
   // Update buildTypes release signingConfig to use release when available
-  if (contents.includes('buildTypes {') && contents.includes('release {')) {
-    const releaseIdx = contents.indexOf('release {');
+  const buildTypesIdx = contents.indexOf('buildTypes {');
+  if (buildTypesIdx !== -1) {
+    const releaseIdx = contents.indexOf('release {', buildTypesIdx);
     if (releaseIdx !== -1) {
       const targetStr = 'signingConfig signingConfigs.debug';
       const targetIdx = contents.indexOf(targetStr, releaseIdx);

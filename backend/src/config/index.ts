@@ -898,7 +898,7 @@ export const config: AppConfig = {
 
   auth: {
     lockoutSeconds: parseInt(process.env.AUTH_LOCKOUT_SECONDS || '900', 10),
-    maxFailedAttempts: 10,
+    maxFailedAttempts: parseInt(process.env.AUTH_MAX_FAILED_ATTEMPTS || '10', 10),
   },
   authLockoutSeconds: parseInt(process.env.AUTH_LOCKOUT_SECONDS || '900', 10),
 
@@ -927,5 +927,5 @@ export const config: AppConfig = {
     enforceActions: process.env.PLAY_INTEGRITY_ENFORCE_ACTIONS === 'true',
   },
 
-  timezone: 'Asia/Kolkata',
+  timezone: process.env.APP_TIMEZONE || process.env.TZ || 'Asia/Kolkata',
 };

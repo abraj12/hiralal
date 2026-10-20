@@ -145,11 +145,11 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
   try {
     let decoded: any;
     try {
-      decoded = jwt.verify(token, config.jwt.accessSecret) as any;
+      decoded = jwt.verify(token, config.jwt.accessSecret, { algorithms: ['HS256'] }) as any;
     } catch (primaryErr) {
       if (config.admin.accessSecret && config.admin.accessSecret !== config.jwt.accessSecret) {
         try {
-          decoded = jwt.verify(token, config.admin.accessSecret) as any;
+          decoded = jwt.verify(token, config.admin.accessSecret, { algorithms: ['HS256'] }) as any;
         } catch {
           res.status(401).json({ success: false, message: 'Invalid or expired token.' });
           return;
