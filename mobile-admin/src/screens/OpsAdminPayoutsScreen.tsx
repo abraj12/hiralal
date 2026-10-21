@@ -25,7 +25,7 @@ import {
   X,
   Wallet,
 } from 'lucide-react-native';
-import { MobileApiClient } from '../../services/api';
+import { MobileApiClient } from '../services/api';
 
 export default function OpsAdminPayoutsScreen() {
   const [payouts, setPayouts] = useState<any[]>([]);
@@ -183,7 +183,7 @@ export default function OpsAdminPayoutsScreen() {
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <Image
-                source={require('../../../assets/state_payouts_settled.png')}
+                source={require('../../assets/state_payouts_settled.png')}
                 style={styles.emptyImg}
                 resizeMode="contain"
               />

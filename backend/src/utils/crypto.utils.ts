@@ -24,8 +24,8 @@ function getDerivedKey(): Buffer {
 
 
 /**
- * Encrypts sensitive text using AES-256-GCM.
- * Output format: iv:tag:ciphertext (hex encoded)
+ * Encrypts sensitive text using AES-256-GCM with version-prefixed envelope formatting.
+ * Output format: v1:iv:tag:ciphertext (hex encoded)
  */
 export function encryptSensitive(plaintext: string): string {
   if (!plaintext) return '';
@@ -36,20 +36,26 @@ export function encryptSensitive(plaintext: string): string {
   encrypted += cipher.final('hex');
   const tag = cipher.getAuthTag();
 
-  return `${iv.toString('hex')}:${tag.toString('hex')}:${encrypted}`;
+  return `v1:${iv.toString('hex')}:${tag.toString('hex')}:${encrypted}`;
 }
 
 /**
- * Decrypts AES-256-GCM ciphertext.
+ * Decrypts AES-256-GCM ciphertext supporting both v1 versioned envelope and legacy unversioned formats.
  */
 export function decryptSensitive(cipherPackage: string): string {
   if (!cipherPackage) return '';
   const parts = cipherPackage.split(':');
-  if (parts.length !== 3) {
+  
+  let ivHex: string, tagHex: string, encryptedText: string;
+  if (parts.length === 4 && parts[0] === 'v1') {
+    [, ivHex, tagHex, encryptedText] = parts;
+  } else if (parts.length === 3) {
+    // Backwards compatibility with unversioned legacy records
+    [ivHex, tagHex, encryptedText] = parts;
+  } else {
     throw new Error('Invalid encrypted data format.');
   }
 
-  const [ivHex, tagHex, encryptedText] = parts;
   const iv = Buffer.from(ivHex, 'hex');
   const tag = Buffer.from(tagHex, 'hex');
 

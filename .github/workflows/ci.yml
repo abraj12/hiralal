@@ -518,10 +518,14 @@ jobs:
 
       - name: Mobile Supply Chain Security Audit
         working-directory: mobile
-        run: npm audit --omit=dev --audit-level=high || true
+        run: npm audit --omit=dev --audit-level=critical
 
       - name: Run Mobile Plugin Unit Tests
         working-directory: mobile
+        run: npm test
+
+      - name: Run Mobile Admin Unit Tests
+        working-directory: mobile-admin
         run: npm test
 
   mobile-android-build:

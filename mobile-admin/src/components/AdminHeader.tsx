@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image, Alert } from 'react-native';
 import { RefreshCw, LogOut, ShieldCheck, CheckCircle2 } from 'lucide-react-native';
-import { useApp } from '../context/AppContext';
+import { useAdminApp as useApp } from '../context/AdminAppContext';
 
 interface AdminHeaderProps {
   title?: string;

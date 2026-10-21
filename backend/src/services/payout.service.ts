@@ -585,8 +585,8 @@ export class PayoutService {
 
       const payoutAmount = Number(payout.amount);
 
-      // Atomically shift funds from processingAmount back to availableBalance
-      await tx.wallet.update({
+      // Atomically shift funds from processingAmount back to availableBalance (SEC-MED-07: atomic return without read skew)
+      const updatedWallet = await tx.wallet.update({
         where: { id: payout.walletId },
         data: {
           processingAmount: { decrement: payoutAmount },
@@ -595,10 +595,7 @@ export class PayoutService {
         },
       });
 
-      const updatedWallet = await tx.wallet.findUnique({
-        where: { id: payout.walletId },
-      });
-      const balanceAfter = Number(updatedWallet?.availableBalance || 0);
+      const balanceAfter = Number(updatedWallet.availableBalance);
 
       // Create immutable ledger reversal entry
       await tx.walletTransaction.create({

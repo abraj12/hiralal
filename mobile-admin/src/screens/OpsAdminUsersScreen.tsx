@@ -25,7 +25,7 @@ import {
   Phone,
   Calendar,
 } from 'lucide-react-native';
-import { MobileApiClient } from '../../services/api';
+import { MobileApiClient } from '../services/api';
 
 export default function OpsAdminUsersScreen() {
   const [users, setUsers] = useState<any[]>([]);

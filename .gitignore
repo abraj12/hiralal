@@ -12,11 +12,15 @@ admin/out/
 # Expo / React Native
 .expo/
 mobile/.expo/
+mobile-admin/.expo/
 .expo-shared/
 web-build/
 mobile/web-build/
+mobile-admin/web-build/
 mobile/android/
+mobile-admin/android/
 mobile/ios/
+mobile-admin/ios/
 
 # TypeScript / Compilations
 dist/

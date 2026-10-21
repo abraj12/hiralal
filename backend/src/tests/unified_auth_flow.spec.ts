@@ -514,20 +514,24 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
     });
 
     test('Mobile App.tsx navigates to correct role-specific dashboard based on user role', () => {
-      const appPath = path.resolve(__dirname, '../../../mobile/App.tsx');
-      expect(fs.existsSync(appPath)).toBe(true);
-      const code = fs.readFileSync(appPath, 'utf8');
+      // 1. Dedicated Admin Mobile App (com.admin.login) handles BILL_ADMIN and OPERATIONS_ADMIN
+      const adminAppPath = path.resolve(__dirname, '../../../mobile-admin/App.tsx');
+      expect(fs.existsSync(adminAppPath)).toBe(true);
+      const adminCode = fs.readFileSync(adminAppPath, 'utf8');
 
       // BILL_ADMIN routes to BillReviewScreen
-      expect(code).toContain("user?.role === 'BILL_ADMIN'");
-      expect(code).toContain('<BillReviewScreen />');
+      expect(adminCode).toContain("role === 'BILL_ADMIN'");
+      expect(adminCode).toContain('<BillReviewScreen');
 
-      // OPERATIONS_ADMIN routes to OpsAdminDashboardScreen / OperationsDashboardScreen
-      expect(code).toContain("user?.role === 'OPERATIONS_ADMIN'");
-      expect(code.includes('<OpsAdminDashboardScreen />') || code.includes('<OperationsDashboardScreen />')).toBe(true);
+      // OPERATIONS_ADMIN routes to OpsAdminDashboardScreen
+      expect(adminCode).toContain("role === 'OPERATIONS_ADMIN'");
+      expect(adminCode).toContain('<OpsAdminDashboardScreen');
 
-      // Ordinary Craftsman displays bottom tabs navigation
-      expect(code).toContain('!isAdmin && <BottomNav />');
+      // 2. Craftsman App (com.hiralal.rewards) displays craftsman bottom tabs navigation
+      const userAppPath = path.resolve(__dirname, '../../../mobile/App.tsx');
+      expect(fs.existsSync(userAppPath)).toBe(true);
+      const userCode = fs.readFileSync(userAppPath, 'utf8');
+      expect(userCode).toContain('<BottomNav />');
     });
   });
 

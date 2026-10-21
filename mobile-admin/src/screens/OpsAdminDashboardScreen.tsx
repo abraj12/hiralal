@@ -22,7 +22,7 @@ import {
   CheckCircle2,
   Award,
 } from 'lucide-react-native';
-import { MobileApiClient } from '../../services/api';
+import { MobileApiClient } from '../services/api';
 
 interface OpsAdminDashboardProps {
   onNavigateTab?: (tab: string) => void;
@@ -101,7 +101,7 @@ export default function OpsAdminDashboardScreen({
           </TouchableOpacity>
         </View>
         <Image
-          source={require('../../../assets/admin_operations_hero.png')}
+          source={require('../../assets/admin_operations_hero.png')}
           style={styles.heroImg}
           resizeMode="contain"
         />

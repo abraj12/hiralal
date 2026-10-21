@@ -43,14 +43,21 @@ export default function AdminUsersPage() {
   const [saving, setSaving] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchUsers = async () => {
     try {
       setLoading(true);
+      setError(null);
       const res = await AdminApiClient.getUsers(professionFilter, statusFilter, search);
       setUsers(res.users || []);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      if (err?.message?.includes('403') || err?.message?.includes('Forbidden') || err?.message?.includes('OPERATIONS_ADMIN')) {
+        setError('Access Denied: Only Operations Administrators are authorized to view and manage users.');
+      } else {
+        setError(err.message || 'Failed to load users.');
+      }
     } finally {
       setLoading(false);
     }
@@ -129,6 +136,12 @@ export default function AdminUsersPage() {
       <Sidebar />
 
       <main className="flex-1 w-full lg:ml-64 p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen">
+        {error && (
+          <div className="mb-6 p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 flex items-center gap-3 text-sm font-semibold">
+            <AlertCircle className="w-5 h-5 text-rose-600 flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">

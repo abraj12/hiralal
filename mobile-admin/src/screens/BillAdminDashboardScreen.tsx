@@ -20,7 +20,7 @@ import {
   Calendar,
   Layers,
 } from 'lucide-react-native';
-import { MobileApiClient } from '../../services/api';
+import { MobileApiClient } from '../services/api';
 
 interface BillAdminDashboardProps {
   onNavigateToBills: () => void;
@@ -110,7 +110,7 @@ export default function BillAdminDashboardScreen({ onNavigateToBills }: BillAdmi
           </TouchableOpacity>
         </View>
         <Image
-          source={require('../../../assets/admin_bill_review_hero.png')}
+          source={require('../../assets/admin_bill_review_hero.png')}
           style={styles.heroImg}
           resizeMode="contain"
         />

@@ -37,7 +37,7 @@ type LoginState =
   | 'ERROR';
 
 export default function LoginScreen() {
-  const { setCurrentScreen, login, loginAdminSession } = useApp();
+  const { setCurrentScreen, login } = useApp();
 
   // Unified Single Input Fields
   const [identifier, setIdentifier] = useState('');
@@ -49,13 +49,7 @@ export default function LoginScreen() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
-  // Administrator 2FA OTP Challenge State
-  const [showOtpModal, setShowOtpModal] = useState(false);
-  const [adminOtp, setAdminOtp] = useState('');
-  const [challengeToken, setChallengeToken] = useState<string | null>(null);
-  const [otpError, setOtpError] = useState<string | null>(null);
-  const [otpInfo, setOtpInfo] = useState<string | null>(null);
-  const [cooldownRemaining, setCooldownRemaining] = useState(0);
+
 
   // Forgot Password Modal State (3-Step Sequence)
   const [showForgot, setShowForgot] = useState(false);
@@ -81,8 +75,7 @@ export default function LoginScreen() {
 
   // ========================================================
   // UNIFIED LOGIN SUBMIT HANDLER
-  // Workers submit 10-digit mobile number + password.
-  // Admins submit prefix + 10-digit mobile number + password.
+  // Craftsmen submit 10-digit mobile number + password.
   // ========================================================
   const handleUnifiedLogin = async () => {
     if (loginState === 'VALIDATING' || loginState === 'SUBMITTING_CREDENTIALS') {
@@ -109,15 +102,8 @@ export default function LoginScreen() {
     try {
       const res = await login(trimmedId, password);
 
-      if (res?.requiresOtp) {
-        // Administrator candidate verified password. Issued 2FA OTP challenge.
-        setChallengeToken(res.challengeToken || null);
-        setAdminOtp('');
-        setOtpError(null);
-        setOtpInfo(res.message || 'Verification code dispatched to your registered mobile number.');
-        setCooldownRemaining(res.cooldownSeconds || 60);
-        setShowOtpModal(true);
-        setLoginState('WAITING_FOR_OTP');
+      if (res?.requiresOtp || res?.user?.role === 'BILL_ADMIN' || res?.user?.role === 'OPERATIONS_ADMIN') {
+        throw new Error('This mobile application is for craftsmen only. Please use the official Hiralal Admin application.');
       } else {
         setLoginState('AUTHENTICATED');
       }
@@ -125,68 +111,6 @@ export default function LoginScreen() {
       setErrorMsg(err.message || 'Invalid login credentials. Please check your details and try again.');
       setLoginState('ERROR');
     }
-  };
-
-  // ========================================================
-  // ADMIN 2FA OTP VERIFY HANDLER
-  // ========================================================
-  const handleVerifyAdminOtp = async () => {
-    if (loginState === 'VERIFYING_OTP') return;
-
-    const cleanOtp = adminOtp.trim();
-    if (!cleanOtp || cleanOtp.length !== 6) {
-      setOtpError('Please enter the 6-digit verification code.');
-      return;
-    }
-
-    const cleanAdminId = identifier.trim().toUpperCase();
-
-    setOtpError(null);
-    setLoginState('VERIFYING_OTP');
-
-    try {
-      const res = await MobileApiClient.verifyAdminOtp(cleanAdminId, cleanOtp, challengeToken || undefined);
-
-      if (res.user) {
-        await loginAdminSession(res.user, res.token || '');
-        setShowOtpModal(false);
-        setLoginState('AUTHENTICATED');
-      } else {
-        throw new Error('Failed to establish administrator session. Please retry.');
-      }
-    } catch (err: any) {
-      setOtpError(err.message || 'Invalid or expired verification code. Please check and retry.');
-      setLoginState('WAITING_FOR_OTP');
-    }
-  };
-
-  // Resend Admin OTP
-  const handleResendAdminOtp = async () => {
-    if (cooldownRemaining > 0) return;
-
-    const cleanAdminId = identifier.trim().toUpperCase();
-
-    try {
-      setOtpInfo('Requesting a new verification code...');
-      const res = await MobileApiClient.requestAdminOtp(cleanAdminId, password);
-      const token = res.challengeToken || res.verificationToken;
-      setChallengeToken(token);
-      setCooldownRemaining(res.cooldownSeconds || 60);
-      setOtpInfo(res.message || 'New verification code dispatched.');
-      setOtpError(null);
-    } catch (err: any) {
-      setOtpError(err.message || 'Failed to resend verification code.');
-    }
-  };
-
-  // Cancel / Reset from Admin OTP Challenge
-  const handleCancelAdminOtp = () => {
-    setShowOtpModal(false);
-    setChallengeToken(null);
-    setAdminOtp('');
-    setOtpError(null);
-    setOtpInfo(null);
-    setLoginState('IDLE');
   };
 
   // ========================================================
@@ -490,102 +414,6 @@ export default function LoginScreen() {
           </View>
         </View>
       </ScrollView>
-
-      {/* ======================================================== */}
-      {/* 2-FACTOR SECURITY VERIFICATION MODAL                      */}
-      {/* Sequence: Password verified -> OTP verification -> Session*/}
-      {/* ======================================================== */}
-      <Modal visible={showOtpModal} transparent={true} animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeaderRow}>
-              <View style={styles.shieldIconWrap}>
-                <Shield size={20} color="#1E60D5" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalTitle}>Security Verification</Text>
-                <Text style={styles.modalSubTitle}>Two-Factor Security Verification</Text>
-              </View>
-            </View>
-
-            <Text style={styles.modalDesc}>
-              A 6-digit security code was dispatched to the mobile number associated with your account.
-            </Text>
-
-            {otpError && (
-              <View style={[styles.errorBox, { marginBottom: 12 }]}>
-                <AlertCircle size={14} color="#DC2626" />
-                <Text style={styles.errorText}>{otpError}</Text>
-              </View>
-            )}
-
-            {otpInfo && !otpError && (
-              <View style={[styles.infoBox, { marginBottom: 12 }]}>
-                <CheckCircle2 size={14} color="#059669" />
-                <Text style={styles.infoText}>{otpInfo}</Text>
-              </View>
-            )}
-
-            {/* OTP Code Input */}
-            <View style={styles.otpInputWrap}>
-              <TextInput
-                style={styles.otpInput}
-                value={adminOtp}
-                onChangeText={(val) => {
-                  setAdminOtp(val.replace(/\D/g, ''));
-                  setOtpError(null);
-                }}
-                placeholder="------"
-                placeholderTextColor="#CBD5E1"
-                keyboardType="numeric"
-                maxLength={6}
-                autoFocus={true}
-              />
-            </View>
-
-            {/* Resend OTP Timer Action */}
-            <View style={styles.resendRow}>
-              {cooldownRemaining > 0 ? (
-                <Text style={styles.resendCooldownText}>
-                  Resend code in {cooldownRemaining}s
-                </Text>
-              ) : (
-                <TouchableOpacity onPress={handleResendAdminOtp}>
-                  <Text style={styles.resendActiveText}>
-                    Resend Security Code
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {/* Verify & Sign In Action */}
-            <TouchableOpacity
-              style={[
-                styles.modalBtn,
-                loginState === 'VERIFYING_OTP' && styles.loginBtnDisabled,
-              ]}
-              onPress={handleVerifyAdminOtp}
-              disabled={loginState === 'VERIFYING_OTP'}
-              activeOpacity={0.85}
-            >
-              {loginState === 'VERIFYING_OTP' ? (
-                <ActivityIndicator color="#ffffff" size="small" />
-              ) : (
-                <Text style={styles.modalBtnText}>Verify & Sign In</Text>
-              )}
-            </TouchableOpacity>
-
-            {/* Cancel & Return Safely to Login */}
-            <TouchableOpacity
-              style={styles.modalCancelBtn}
-              onPress={handleCancelAdminOtp}
-              disabled={loginState === 'VERIFYING_OTP'}
-            >
-              <Text style={styles.modalCancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
 
       {/* ======================================================== */}
       {/* FORGOT PASSWORD MODAL (3-Step Verification Sequence)     */}

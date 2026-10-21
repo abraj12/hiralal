@@ -177,7 +177,7 @@ model Wallet {
 model WalletTransaction {
   id            String          @id @default(uuid())
   walletId      String
-  wallet        Wallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  wallet        Wallet          @relation(fields: [walletId], references: [id], onDelete: Restrict)
   userId        String
   amount        Decimal         @db.Decimal(12, 2)
   type          TransactionType
@@ -196,7 +196,7 @@ model WalletTransaction {
 model Bill {
   id                   String      @id @default(uuid())
   userId               String
-  user                 User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                 User        @relation(fields: [userId], references: [id], onDelete: Restrict)
   invoiceNumber        String
   invoiceDate          DateTime
   billAmount           Decimal     @db.Decimal(12, 2)
@@ -339,12 +339,12 @@ model PaymentAccount {
 model Payout {
   id                    String         @id @default(uuid())
   userId                String
-  user                  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                  User           @relation(fields: [userId], references: [id], onDelete: Restrict)
   walletId              String
-  wallet                Wallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  wallet                Wallet         @relation(fields: [walletId], references: [id], onDelete: Restrict)
   amount                Decimal        @db.Decimal(12, 2)
   paymentAccountId      String
-  paymentAccount        PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Cascade)
+  paymentAccount        PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
   paymentType           PaymentType
   idempotencyKey        String
   status                PayoutStatus   @default(PENDING)
@@ -365,6 +365,8 @@ model Payout {
 
   @@unique([userId, idempotencyKey], name: "user_payout_idempotency_unique")
   @@index([userId])
+  @@index([walletId])
+  @@index([paymentAccountId])
   @@index([status])
   @@index([razorpayPayoutId])
   @@index([requiresManualReview])

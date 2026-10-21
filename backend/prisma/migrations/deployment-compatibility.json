@@ -179,6 +179,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Additive column beneficiaryBlindIndex and unique index on PaymentAccount to prevent cross-user account linking."
+    },
+    {
+      "id": "20261021100000_payout_indexes_and_statutory_retention_cascade_removal",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Indexes on Payout foreign keys, removes CASCADE on financial history in favor of RESTRICT, and adds non-negative balance CHECK constraints."
     }
   ]
 }

@@ -22,6 +22,7 @@ export default function AdminPayoutsPage() {
   const [professionFilter, setProfessionFilter] = useState('ALL');
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Rejection Modal State
   const [rejectModalPayout, setRejectModalPayout] = useState<any | null>(null);
@@ -99,6 +100,12 @@ export default function AdminPayoutsPage() {
       <Sidebar pendingPayoutsCount={pendingCount} />
 
       <main className="flex-1 w-full lg:ml-64 p-4 sm:p-6 lg:p-8 pt-20 lg:pt-8 min-h-screen">
+        {error && (
+          <div className="mb-6 p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 flex items-center gap-3 text-sm font-semibold">
+            <AlertCircle className="w-5 h-5 text-rose-600 flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">

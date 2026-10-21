@@ -78,6 +78,17 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
       return;
     }
 
+    // SEC-MED-02: Webhook replay tolerance check (reject stale payloads older than 5 minutes in non-test envs)
+    if (event.created_at && config.nodeEnv !== 'test') {
+      const eventTimeMs = typeof event.created_at === 'number' ? event.created_at * 1000 : new Date(event.created_at).getTime();
+      const toleranceMs = 5 * 60 * 1000;
+      if (Number.isFinite(eventTimeMs) && Math.abs(Date.now() - eventTimeMs) > toleranceMs) {
+        console.warn(`❌ [WEBHOOK] Stale webhook rejected: event age exceeds 5 minutes.`);
+        res.status(400).json({ error: 'Stale webhook timestamp exceeded tolerance window' });
+        return;
+      }
+    }
+
     // 1. Ensure event record exists in durable WebhookEvent ledger
     await prisma.webhookEvent.upsert({
       where: {

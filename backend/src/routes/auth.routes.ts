@@ -326,7 +326,8 @@ router.post('/refresh', authRefreshLimiter, async (req: Request, res: Response) 
   }
 });
 
-router.post('/logout', async (req: Request, res: Response) => {
+// SEC-LOW-02: Apply IP rate limiting to logout endpoint to prevent resource exhaustion
+router.post('/logout', loginIpLimiter, async (req: Request, res: Response) => {
   try {
     const { refreshToken } = req.body;
     let userId: string | undefined;

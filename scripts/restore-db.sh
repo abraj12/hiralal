@@ -42,6 +42,7 @@ if [ "${TARGET_DB}" = "hiralal_rewards" ] || [ "${TARGET_DB}" = "${POSTGRES_DB:-
   fi
 fi
 
+BACKUP_ENCRYPTION_PASSPHRASE="${BACKUP_ENCRYPTION_PASSPHRASE:-${BACKUP_ENCRYPTION_KEY:-}}"
 if [ -z "${BACKUP_ENCRYPTION_PASSPHRASE:-}" ]; then
   echo "[FATAL ERROR] BACKUP_ENCRYPTION_PASSPHRASE environment variable is required to decrypt backup." >&2
   exit 1
@@ -60,6 +61,9 @@ SNAPSHOT_FILE="${SNAPSHOT_DIR}/pre_restore_snapshot_${TARGET_DB}_$(date +%s).sql
 cleanup() {
   local exit_code=$?
   rm -f "${DEC_FILE:-}" "${SQL_FILE:-}"
+  if [ -n "${BACKEND_CONTAINER:-}" ] && command -v docker >/dev/null 2>&1; then
+    docker exec "${BACKEND_CONTAINER}" rm -f /tmp/restore_enc.sql.gz.enc /tmp/restore_dec.sql.gz 2>/dev/null || true
+  fi
   if [ -d "${TEMP_DIR:-}" ]; then
     rm -rf "${TEMP_DIR}"
   fi
@@ -89,7 +93,7 @@ else
   # Container fallback if host Node.js is not installed
   BACKEND_CONTAINER="${BACKEND_CONTAINER:-hiralal_backend}"
   docker cp "${ENC_BACKUP}" "${BACKEND_CONTAINER}:/tmp/restore_enc.sql.gz.enc"
-  docker exec -e BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_KEY}" "${BACKEND_CONTAINER}" node /app/scripts/crypto-backup.js decrypt "/tmp/restore_enc.sql.gz.enc" "/tmp/restore_dec.sql.gz"
+  docker exec -e BACKUP_ENCRYPTION_PASSPHRASE="${BACKUP_ENCRYPTION_PASSPHRASE}" -e BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_PASSPHRASE}" "${BACKEND_CONTAINER}" node /app/scripts/crypto-backup.js decrypt "/tmp/restore_enc.sql.gz.enc" "/tmp/restore_dec.sql.gz"
   docker cp "${BACKEND_CONTAINER}:/tmp/restore_dec.sql.gz" "${DEC_FILE}"
   docker exec "${BACKEND_CONTAINER}" rm -f /tmp/restore_enc.sql.gz.enc /tmp/restore_dec.sql.gz
 fi

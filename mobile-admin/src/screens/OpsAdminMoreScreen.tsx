@@ -27,8 +27,8 @@ import {
   X,
   FileText,
 } from 'lucide-react-native';
-import { MobileApiClient } from '../../services/api';
-import { parseIndiaIsoDateTime } from '../../utils/date-utils';
+import { MobileApiClient } from '../services/api';
+import { parseIndiaIsoDateTime } from '../utils/date-utils';
 
 type MoreSubTab = 'REWARDS' | 'BROADCAST' | 'AUDIT' | 'SETTINGS';
 
@@ -544,7 +544,7 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
               {broadcastHistory.length === 0 ? (
                 <View style={styles.emptyBroadcast}>
                   <Image
-                    source={require('../../../assets/state_no_notifications.png')}
+                    source={require('../../assets/state_no_notifications.png')}
                     style={styles.emptyBellImg}
                     resizeMode="contain"
                   />

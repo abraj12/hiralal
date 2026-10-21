@@ -8,7 +8,7 @@ import {
   Sliders,
   Award,
 } from 'lucide-react-native';
-import { useApp } from '../context/AppContext';
+import { useAdminApp as useApp } from '../context/AdminAppContext';
 
 export type BillAdminTab = 'DASHBOARD' | 'BILLS';
 export type OpsAdminTab = 'DASHBOARD' | 'USERS' | 'PAYOUTS' | 'MORE';

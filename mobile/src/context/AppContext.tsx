@@ -101,8 +101,6 @@ interface AppContextType {
   setCurrentScreen: (screen: 'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL' | 'NOTIFICATIONS') => void;
   setProfession: (profession: ProfessionType) => void;
   login: (mobile: string, pass: string) => Promise<any>;
-  loginAdmin: (identifier: string, pass: string, verificationToken: string) => Promise<void>;
-  loginAdminSession: (user: any, token: string) => Promise<void>;
   logout: () => void;
   refreshData: () => Promise<void>;
 }
@@ -194,6 +192,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (token) {
           const profileRes = await MobileApiClient.getProfile();
           if (profileRes && profileRes.user && mounted) {
+            if (profileRes.user.role === 'BILL_ADMIN' || profileRes.user.role === 'OPERATIONS_ADMIN') {
+              console.warn('[SECURITY] Administrator session rejected from Craftsmen mobile app.');
+              await MobileApiClient.clearAllTokens();
+              if (mounted) setCurrentScreen('WELCOME');
+              return;
+            }
             setUser(profileRes.user);
             await MobileApiClient.setStoredUser(profileRes.user);
             if (profileRes.user.profession && (profileRes.user.profession === 'PLUMBER' || profileRes.user.profession === 'TILE_INSTALLER')) {
@@ -244,8 +248,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const login = async (mobile: string, pass: string): Promise<any> => {
     // Authenticate with real server-side endpoint. NO mock/offline fallback.
     const res = await MobileApiClient.login(mobile, pass);
-    if (res?.requiresOtp) {
-      return res;
+    if (res?.requiresOtp || res?.user?.role === 'BILL_ADMIN' || res?.user?.role === 'OPERATIONS_ADMIN') {
+      await MobileApiClient.clearAllTokens();
+      throw new Error('This mobile application is for craftsmen only. Please use the official Hiralal Admin application.');
     }
     await MobileApiClient.setToken(res.token);
     if (res.refreshToken) {
@@ -266,19 +271,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     dispatchWelcomeNotificationOnce().catch(() => {});
     refreshData().catch(e => console.warn('Background sync failed:', e));
     return res;
-  };
-
-  /** @deprecated Legacy admin login is permanently disabled. Use loginAdminSession instead. */
-  const loginAdmin = async (_identifier: string, _pass: string, _verificationToken: string) => {
-    throw new Error('Legacy admin login is permanently disabled. Use loginAdminSession with verified OTP.');
-  };
-
-  const loginAdminSession = async (adminUser: any, token: string) => {
-    await MobileApiClient.setToken(token);
-    await MobileApiClient.setStoredUser(adminUser);
-    setUser(adminUser);
-    NotificationsService.registerDeviceToken().catch(() => {});
-    setCurrentScreen('MAIN');
   };
 
   const logout = async () => {
@@ -311,8 +303,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentScreen,
         setProfession: setProfessionState,
         login,
-        loginAdmin,
-        loginAdminSession,
         logout,
         refreshData,
       }}

@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "Hiralal Admin",
+    "slug": "hiralal-admin",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/brand_logo.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/brand_logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "android": {
+      "package": "com.admin.login",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/brand_logo.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "web": {
+      "favicon": "./assets/brand_logo.png"
+    },
+    "plugins": [
+      "expo-asset",
+      "./plugins/withPlayIntegrity",
+      "./plugins/withReleaseSigning",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/brand_logo.png",
+          "color": "#D32F2F"
+        }
+      ]
+    ]
+  }
+}

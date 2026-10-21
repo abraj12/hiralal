@@ -59,10 +59,10 @@ export class BillService {
       throw new Error(`Invoice #${cleanInvoiceNumber} has already been submitted by your account.`);
     }
 
-    // 1b. Check cross-user duplicate invoice number across the platform
+    // 1b. Check cross-user duplicate invoice number across the platform (SEC-MED-01 / SEC-LOW-01: case-insensitive)
     const existingGlobalBill = await prisma.bill.findFirst({
       where: {
-        invoiceNumber: cleanInvoiceNumber,
+        invoiceNumber: { equals: cleanInvoiceNumber, mode: 'insensitive' },
         status: { in: ['PENDING', 'UNDER_REVIEW', 'APPROVED'] },
         userId: { not: data.userId },
       },
@@ -366,7 +366,7 @@ export class BillService {
         const alreadyApproved = await tx.bill.findFirst({
           where: {
             id: { not: bill.id },
-            invoiceNumber: bill.invoiceNumber,
+            invoiceNumber: { equals: bill.invoiceNumber.trim(), mode: 'insensitive' },
             status: 'APPROVED',
           },
         });

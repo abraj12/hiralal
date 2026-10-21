@@ -21,6 +21,15 @@ set -euo pipefail
 
 umask 077
 
+# SEC-CRIT-01: Idempotent exit trap to ensure unencrypted raw dumps are never abandoned on disk
+cleanup_backup_artifacts() {
+  rm -f "${RAW_BACKUP:-}" 2>/dev/null || true
+  if [ -n "${BACKEND_CONTAINER:-}" ] && command -v docker >/dev/null 2>&1; then
+    docker exec "${BACKEND_CONTAINER}" rm -f /tmp/raw_backup.sql.gz /tmp/enc_backup.sql.gz.enc 2>/dev/null || true
+  fi
+}
+trap cleanup_backup_artifacts EXIT
+
 # Auto-load production environment file if variables are not already exported in current shell
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 for candidate_env in "${SCRIPT_DIR}/../.env" "./.env" "${APP_DIR:-/opt/hiralal}/.env"; do
@@ -32,6 +41,9 @@ for candidate_env in "${SCRIPT_DIR}/../.env" "./.env" "${APP_DIR:-/opt/hiralal}/
     break
   fi
 done
+
+# Harmonize passphrase across BACKUP_ENCRYPTION_PASSPHRASE and legacy BACKUP_ENCRYPTION_KEY
+BACKUP_ENCRYPTION_PASSPHRASE="${BACKUP_ENCRYPTION_PASSPHRASE:-${BACKUP_ENCRYPTION_KEY:-}}"
 
 # 1. Mandatory Encryption Passphrase (Zero Fallback)
 if [ -z "${BACKUP_ENCRYPTION_PASSPHRASE:-}" ]; then
@@ -81,7 +93,7 @@ else
   # Container fallback if host Node.js is not installed
   BACKEND_CONTAINER="${BACKEND_CONTAINER:-hiralal_backend}"
   docker cp "${RAW_BACKUP}" "${BACKEND_CONTAINER}:/tmp/raw_backup.sql.gz"
-  docker exec -e BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_KEY}" "${BACKEND_CONTAINER}" node /app/scripts/crypto-backup.js encrypt "/tmp/raw_backup.sql.gz" "/tmp/enc_backup.sql.gz.enc"
+  docker exec -e BACKUP_ENCRYPTION_PASSPHRASE="${BACKUP_ENCRYPTION_PASSPHRASE}" -e BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_PASSPHRASE}" "${BACKEND_CONTAINER}" node /app/scripts/crypto-backup.js encrypt "/tmp/raw_backup.sql.gz" "/tmp/enc_backup.sql.gz.enc"
   docker cp "${BACKEND_CONTAINER}:/tmp/enc_backup.sql.gz.enc" "${ENC_BACKUP}"
   docker exec "${BACKEND_CONTAINER}" rm -f /tmp/raw_backup.sql.gz /tmp/enc_backup.sql.gz.enc
 fi

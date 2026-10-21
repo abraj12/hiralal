@@ -80,7 +80,7 @@ if (require.main === module) {
   const mode = process.argv[2];
   const inputFile = process.argv[3];
   const outputFile = process.argv[4];
-  const passphrase = process.env.BACKUP_ENCRYPTION_PASSPHRASE;
+  const passphrase = process.env.BACKUP_ENCRYPTION_PASSPHRASE || process.env.BACKUP_ENCRYPTION_KEY;
 
   if (!mode || !inputFile || !outputFile) {
     console.error('Usage: node crypto-backup.js <encrypt|decrypt> <inputFile> <outputFile>');
@@ -88,7 +88,7 @@ if (require.main === module) {
   }
 
   if (!passphrase || passphrase.length < 16) {
-    console.error('[FATAL] BACKUP_ENCRYPTION_PASSPHRASE must be at least 16 characters.');
+    console.error('[FATAL] BACKUP_ENCRYPTION_PASSPHRASE (or BACKUP_ENCRYPTION_KEY) must be at least 16 characters.');
     process.exit(1);
   }
 

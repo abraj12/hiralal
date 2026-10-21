@@ -290,6 +290,13 @@ export class PaymentService {
       if (other.accountNumberEncrypted) {
         try {
           const decrypted = decryptSensitive(other.accountNumberEncrypted);
+          // SEC-MED-06: Opportunistically backfill blind index on legacy unindexed row
+          const backfilledIndex = generateBlindIndex(`${cleanIfsc}:${decrypted}`);
+          prisma.paymentAccount.update({
+            where: { id: other.id },
+            data: { beneficiaryBlindIndex: backfilledIndex },
+          }).catch(() => {});
+
           if (decrypted === cleanAccount) {
             throw new Error('This bank account is already registered and verified with another user account.');
           }
