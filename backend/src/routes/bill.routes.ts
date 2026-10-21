@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import express, { Router, Request, Response } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
@@ -41,6 +41,7 @@ router.post(
   authenticate,
   requireUser,
   billUploadLimiter,
+  express.json({ limit: process.env.JSON_BODY_LIMIT || '15mb' }),
   requirePreStreamIntegrityHeaders('BILL_UPLOAD'),
   upload.single('invoiceFile'),
   requireActionIntegrity('BILL_UPLOAD'),

@@ -23,7 +23,7 @@ import {
   authRefreshLimiter,
 } from '../middleware/rateLimit.middleware';
 import { prisma } from '../db';
-import { config } from '../config';
+import { config, normalizeAdminPrefix } from '../config';
 import { generateSecureToken, sha256Hash } from '../utils/crypto.utils';
 import { PlayIntegrityService } from '../services/integrity/playIntegrity.service';
 import { AccountDeletionService } from '../services/account-deletion.service';
@@ -52,8 +52,36 @@ function setAdminCookie(res: Response, token?: string) {
 }
 
 // ==========================================
-// 0. PUBLIC ADMIN PREFIXES DISCOVERY
+// 0. ADMIN PREFIXES VERIFICATION & DISCOVERY
 // ==========================================
+
+router.post(['/admin/verify-prefix', '/verify-admin-prefix'], adminPrefixesLimiter, (req: Request, res: Response) => {
+  const rawPrefix = String(req.body?.prefix || '').trim().toUpperCase();
+  if (!rawPrefix) {
+    return res.status(400).json({ success: false, verified: false, message: 'Administrator security prefix is required.' });
+  }
+
+  const billPrefix = normalizeAdminPrefix(config.admin.billAdminPrefix);
+  const opsPrefix = normalizeAdminPrefix(config.admin.operationsAdminPrefix);
+
+  const isBill = Boolean(billPrefix && rawPrefix === billPrefix);
+  const isOps = Boolean(opsPrefix && rawPrefix === opsPrefix);
+
+  if (isBill || isOps) {
+    return res.json({
+      success: true,
+      verified: true,
+      role: isBill ? 'BILL_ADMIN' : 'OPERATIONS_ADMIN',
+      message: 'Security prefix verified successfully.',
+    });
+  }
+
+  return res.status(401).json({
+    success: false,
+    verified: false,
+    message: 'Invalid administrator security prefix. Access denied.',
+  });
+});
 
 router.get('/admin-prefixes', adminPrefixesLimiter, (_req: Request, res: Response) => {
   res.json({
@@ -200,6 +228,19 @@ router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Re
   // Pre-auth integrity check for mobile logins & web admin access
   const isEnforcing = PlayIntegrityService.isEnforcingActions();
   const isAdminCandidate = AuthService.isConfiguredAdminPrefix(rawIdentifier);
+
+  if (isAdminCandidate) {
+    let allowed = false;
+    await new Promise<void>((resolve) => {
+      adminLoginLimiter(req, res, () => {
+        adminAccountLoginLimiter(req, res, () => {
+          allowed = true;
+          resolve();
+        });
+      });
+    });
+    if (!allowed || res.headersSent) return;
+  }
 
   const integrityToken = (req.headers['x-integrity-token'] as string) || (req.body?.integrityToken as string);
   const integrityNonce = (req.headers['x-integrity-nonce'] as string) || (req.body?.integrityNonce as string);
@@ -492,7 +533,7 @@ router.post(
 // 5. ADMIN AUTHENTICATION (OTP-First Flow)
 // ==========================================
 
-router.post('/admin/otp/request', otpRequestIpLimiter, otpRequestLimiter, async (req: Request, res: Response) => {
+router.post('/admin/otp/request', adminLoginLimiter, adminAccountLoginLimiter, otpRequestIpLimiter, otpRequestLimiter, async (req: Request, res: Response) => {
   try {
     const identifier = req.body.identifier || req.body.username;
     const { password } = req.body;
@@ -518,7 +559,7 @@ router.post('/admin/otp/request', otpRequestIpLimiter, otpRequestLimiter, async 
   }
 });
 
-router.post('/admin/otp/verify', otpVerifyIpLimiter, otpVerifyLimiter, async (req: Request, res: Response) => {
+router.post('/admin/otp/verify', adminLoginLimiter, adminAccountLoginLimiter, otpVerifyIpLimiter, otpVerifyLimiter, async (req: Request, res: Response) => {
   try {
     const identifier = req.body.identifier || req.body.username;
     const { otpCode, challengeToken, verificationToken } = req.body;
@@ -541,7 +582,17 @@ router.post('/admin/otp/verify', otpVerifyIpLimiter, otpVerifyLimiter, async (re
     if (result.accessToken || result.token) {
       setAdminCookie(res, result.accessToken || result.token);
     }
-    // Strip token and accessToken from JSON body to enforce HttpOnly cookie-only transport
+
+    // Return token in JSON body for native mobile admin clients (F-01 / Critical Fix)
+    const isMobileClient =
+      req.headers['x-client-type'] === 'mobile-admin' ||
+      req.body?.clientType === 'mobile-admin';
+
+    if (isMobileClient) {
+      return res.json(result);
+    }
+
+    // Strip token and accessToken from JSON body to enforce HttpOnly cookie-only transport for web browsers
     const { token, accessToken, ...sanitizedResult } = result as any;
     res.json(sanitizedResult);
   } catch (err: any) {

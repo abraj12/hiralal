@@ -99,13 +99,8 @@ app.use(['/api/v1/webhooks', '/api/webhooks'], express.json({
   },
 }));
 
-// 2. Bill upload routes supporting base64 invoice attachments up to BILL_MAX_UPLOAD_SIZE_MB
-const billJsonLimit = process.env.JSON_BODY_LIMIT || '15mb';
-app.use(['/api/v1/bills', '/api/bills'], express.json({
-  limit: billJsonLimit,
-}));
-
-// 3. Global strict 100kb body parser for standard REST API routes to prevent memory exhaustion DoS (Finding B-01)
+// 2. Global strict 100kb body parser for standard REST API routes to prevent memory exhaustion DoS (Finding B-01 / SEC-B01)
+// Large payload parsing for bill uploads is mounted exclusively on authenticated sub-routes.
 app.use(express.json({
   limit: '100kb',
 }));

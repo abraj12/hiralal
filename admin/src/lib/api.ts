@@ -297,6 +297,14 @@ export class AdminApiClient {
     return this.request(`/admin/notifications/history?page=${encodeURIComponent(page)}&limit=${encodeURIComponent(limit)}`);
   }
 
+  // Admin Prefix Verification (Step 1)
+  static verifyPrefix(prefix: string) {
+    return this.request('/auth/admin/verify-prefix', {
+      method: 'POST',
+      body: JSON.stringify({ prefix }),
+    });
+  }
+
   // Admin Password-First OTP-Second Authentication Flow
   static login(identifier: string, password: string) {
     return this.request('/auth/login', {

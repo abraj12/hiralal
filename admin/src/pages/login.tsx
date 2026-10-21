@@ -1,17 +1,40 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/router';
-import { Shield, Lock, AlertCircle, ArrowRight, CheckCircle2, ArrowLeft, KeyRound } from 'lucide-react';
+import {
+  Shield,
+  Lock,
+  AlertCircle,
+  ArrowRight,
+  CheckCircle2,
+  ArrowLeft,
+  KeyRound,
+  Eye,
+  EyeOff,
+  ShieldCheck,
+  Phone,
+} from 'lucide-react';
 import { AdminApiClient } from '../lib/api';
 
 export default function AdminLoginPage() {
   const router = useRouter();
 
-  // Password-First, OTP-Second Authentication Flow:
-  // Step 1: Enter Identifier & Password -> Validates credentials and dispatches OTP
-  // Step 2: Enter 6-digit OTP Challenge -> Validates OTP and establishes single active session
-  const [step, setStep] = useState<1 | 2>(1);
-  const [identifier, setIdentifier] = useState('');
+  // Multi-tier Administrative Authentication Flow:
+  // Step 1: Secret Admin Prefix Gate -> Prefix is entered masked (like password), verified against server
+  // Step 2: Mobile Number & Password -> Unlocked ONLY after correct prefix verification
+  // Step 3: 2FA OTP Challenge -> Validates 6-digit code and establishes single active session
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+
+  // Step 1: Prefix State
+  const [prefix, setPrefix] = useState('');
+  const [showPrefix, setShowPrefix] = useState(false);
+  const [verifiedPrefix, setVerifiedPrefix] = useState('');
+
+  // Step 2: Credentials State
+  const [mobile, setMobile] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Step 3: 2FA OTP State
   const [otpCode, setOtpCode] = useState('');
   const [challengeToken, setChallengeToken] = useState('');
   const [mobileMasked, setMobileMasked] = useState('');
@@ -20,15 +43,12 @@ export default function AdminLoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
-  // Step 1: Password Login & OTP Dispatch
-  const handlePasswordLogin = async (e: React.FormEvent) => {
+  // Step 1 Handler: Verify Prefix
+  const handleVerifyPrefix = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!identifier.trim()) {
-      setError('Please enter your admin identifier (Role Prefix + 10-digit Mobile).');
-      return;
-    }
-    if (!password) {
-      setError('Please enter your administrator password.');
+    const cleanPrefix = prefix.trim().toUpperCase();
+    if (!cleanPrefix) {
+      setError('Please enter your secret administrator role prefix.');
       return;
     }
 
@@ -37,12 +57,47 @@ export default function AdminLoginPage() {
     setInfoMessage(null);
 
     try {
-      const res = await AdminApiClient.login(identifier.trim(), password);
+      const res = await AdminApiClient.verifyPrefix(cleanPrefix);
+      if (res.verified || res.success) {
+        setVerifiedPrefix(cleanPrefix);
+        setInfoMessage('Security prefix verified. Please enter your administrator credentials.');
+        setStep(2);
+      } else {
+        setError('Invalid administrator security prefix. Access denied.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Invalid administrator security prefix. Access denied.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Step 2 Handler: Password Login & OTP Dispatch
+  const handlePasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanMobile = mobile.replace(/\D/g, '');
+    if (!cleanMobile || cleanMobile.length !== 10) {
+      setError('Please enter a valid 10-digit registered mobile number.');
+      return;
+    }
+    if (!password) {
+      setError('Please enter your administrator password.');
+      return;
+    }
+
+    const fullIdentifier = `${verifiedPrefix}${cleanMobile}`;
+
+    setIsLoading(true);
+    setError(null);
+    setInfoMessage(null);
+
+    try {
+      const res = await AdminApiClient.login(fullIdentifier, password);
       if (res.requiresOtp) {
         setChallengeToken(res.challengeToken);
         setMobileMasked(res.mobileMasked || '');
         setInfoMessage(res.message || `Verification code sent to your registered mobile (${res.mobileMasked || '***'}).`);
-        setStep(2);
+        setStep(3);
       } else if (res.token || res.accessToken) {
         AdminApiClient.setToken(res.token || res.accessToken);
         if (res.user) {
@@ -59,20 +114,23 @@ export default function AdminLoginPage() {
     }
   };
 
-  // Step 2: Verify OTP Challenge
+  // Step 3 Handler: Verify OTP Challenge
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!otpCode.trim() || otpCode.trim().length !== 6) {
+    const cleanOtp = otpCode.trim();
+    if (!cleanOtp || cleanOtp.length !== 6) {
       setError('Please enter a valid 6-digit verification code.');
       return;
     }
+
+    const fullIdentifier = `${verifiedPrefix}${mobile.replace(/\D/g, '')}`;
 
     setIsLoading(true);
     setError(null);
     setInfoMessage(null);
 
     try {
-      const res = await AdminApiClient.verifyOtp(identifier.trim(), otpCode.trim(), challengeToken);
+      const res = await AdminApiClient.verifyOtp(fullIdentifier, cleanOtp, challengeToken);
       AdminApiClient.setToken(res.token || res.accessToken);
       if (res.user) {
         AdminApiClient.setUser(res.user);
@@ -105,14 +163,15 @@ export default function AdminLoginPage() {
             Rewards Administration Portal
           </p>
           <p className="text-xs text-slate-500 mt-2">
-            Restricted access for authorized administrative personnel
+            Multi-tier security gate for authorized administrative personnel
           </p>
         </div>
 
         {/* Step indicator */}
         <div className="flex items-center justify-center space-x-2 mb-6">
-          <div className={`h-1.5 rounded-full transition-all ${step >= 1 ? 'w-12 bg-blue-600' : 'w-6 bg-slate-200'}`} />
-          <div className={`h-1.5 rounded-full transition-all ${step >= 2 ? 'w-12 bg-blue-600' : 'w-6 bg-slate-200'}`} />
+          <div className={`h-1.5 rounded-full transition-all ${step >= 1 ? 'w-8 bg-blue-600' : 'w-4 bg-slate-200'}`} />
+          <div className={`h-1.5 rounded-full transition-all ${step >= 2 ? 'w-8 bg-blue-600' : 'w-4 bg-slate-200'}`} />
+          <div className={`h-1.5 rounded-full transition-all ${step >= 3 ? 'w-8 bg-blue-600' : 'w-4 bg-slate-200'}`} />
         </div>
 
         {error && (
@@ -129,28 +188,85 @@ export default function AdminLoginPage() {
           </div>
         )}
 
-        {/* STEP 1: Admin Identifier & Password */}
+        {/* STEP 1: Secret Admin Prefix Gate */}
         {step === 1 && (
-          <form onSubmit={handlePasswordLogin} className="space-y-4">
+          <form onSubmit={handleVerifyPrefix} className="space-y-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                Admin Role Identifier
+                Administrator Security Prefix
               </label>
               <div className="relative">
                 <Shield className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
                 <input
-                  type="text"
-                  value={identifier}
-                  onChange={e => setIdentifier(e.target.value)}
-                  placeholder="Enter administrator identifier"
+                  type={showPrefix ? 'text' : 'password'}
+                  value={prefix}
+                  onChange={e => setPrefix(e.target.value.toUpperCase())}
+                  placeholder="Enter secret role prefix"
                   required
                   autoFocus
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                  autoComplete="off"
+                  className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium tracking-widest"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPrefix(!showPrefix)}
+                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-600"
+                  tabIndex={-1}
+                >
+                  {showPrefix ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
               <p className="text-[11px] text-slate-400 mt-1.5">
-                Enter your designated role prefix followed by your 10-digit mobile number.
+                Prefix input is masked for security. Click Verify to unlock credentials input.
               </p>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center space-x-2 transition duration-150 disabled:opacity-50"
+            >
+              <span>{isLoading ? 'Verifying Prefix...' : 'Verify Prefix & Continue'}</span>
+              <ShieldCheck className="w-4 h-4" />
+            </button>
+          </form>
+        )}
+
+        {/* STEP 2: Phone Number & Password (Unlocked after prefix is verified) */}
+        {step === 2 && (
+          <form onSubmit={handlePasswordLogin} className="space-y-4">
+            {/* Verified Prefix Status Chip */}
+            <div className="flex items-center justify-between p-2.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 font-medium">
+              <div className="flex items-center space-x-2">
+                <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>Security Prefix: <strong className="tracking-widest">••••</strong> (Verified)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setStep(1); setError(null); }}
+                className="text-blue-600 hover:underline font-bold text-[11px]"
+              >
+                Change
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                Registered Mobile Number
+              </label>
+              <div className="relative">
+                <Phone className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                <input
+                  type="tel"
+                  value={mobile}
+                  onChange={e => setMobile(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  placeholder="10-digit mobile number"
+                  maxLength={10}
+                  required
+                  autoFocus
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium tracking-wide"
+                />
+              </div>
             </div>
 
             <div>
@@ -160,13 +276,21 @@ export default function AdminLoginPage() {
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder="Enter secure password"
+                  placeholder="Enter administrator password"
                   required
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                  className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-600"
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
@@ -181,8 +305,8 @@ export default function AdminLoginPage() {
           </form>
         )}
 
-        {/* STEP 2: Verify OTP Challenge */}
-        {step === 2 && (
+        {/* STEP 3: Verify OTP Challenge */}
+        {step === 3 && (
           <form onSubmit={handleVerifyOtp} className="space-y-4">
             <div>
               <div className="flex items-center justify-between mb-1.5">
@@ -191,7 +315,7 @@ export default function AdminLoginPage() {
                 </label>
                 <button
                   type="button"
-                  onClick={() => { setStep(1); setError(null); }}
+                  onClick={() => { setStep(2); setError(null); }}
                   className="text-[11px] text-blue-600 hover:underline flex items-center space-x-1"
                 >
                   <ArrowLeft className="w-3 h-3" />
@@ -228,7 +352,7 @@ export default function AdminLoginPage() {
         )}
 
         <div className="mt-8 text-center text-[11px] text-slate-400">
-          Protected by Dual-Factor OTP & Single Active Session Policy
+          Protected by Prefix Gate, 2FA OTP & Single Active Session Policy
         </div>
       </div>
     </div>

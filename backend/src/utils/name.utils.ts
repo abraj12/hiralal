@@ -135,8 +135,8 @@ export function normalizeName(name: string): string {
   // Collapse multiple whitespaces
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
-  // Strip common prefixes
-  const prefixes = ['SHRI ', 'SMT ', 'MR ', 'MRS ', 'MS ', 'DR ', 'MD '];
+  // Strip common honorific prefixes (Note: 'MD' is NOT stripped as it represents Mohammad in Indian names)
+  const prefixes = ['SHRI ', 'SMT ', 'MR ', 'MRS ', 'MS ', 'DR '];
   for (const prefix of prefixes) {
     if (cleaned.startsWith(prefix)) {
       cleaned = cleaned.substring(prefix.length).trim();

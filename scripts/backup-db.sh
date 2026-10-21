@@ -28,7 +28,7 @@ cleanup_backup_artifacts() {
     docker exec "${BACKEND_CONTAINER}" rm -f /tmp/raw_backup.sql.gz /tmp/enc_backup.sql.gz.enc 2>/dev/null || true
   fi
 }
-trap cleanup_backup_artifacts EXIT
+trap cleanup_backup_artifacts EXIT INT TERM
 
 # Auto-load production environment file if variables are not already exported in current shell
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -73,7 +73,7 @@ cleanup() {
     rm -f "${RAW_BACKUP}"
   fi
 }
-trap cleanup EXIT INT TERM
+# Unified trap cleanup_backup_artifacts handles EXIT, INT, and TERM without clobbering container cleanup
 
 echo "[$(date -u)] [1/4] Starting database backup dump for '${DB_NAME}'..."
 

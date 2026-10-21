@@ -10,7 +10,8 @@ export default function App({ Component, pageProps }: AppProps) {
   const [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
-    const isLogin = router.pathname === '/login';
+    const pathname = router.pathname;
+    const isLogin = pathname === '/login';
     const user = AdminApiClient.getUser();
 
     if (!user && !isLogin) {
@@ -19,6 +20,21 @@ export default function App({ Component, pageProps }: AppProps) {
     } else if (user && isLogin) {
       setAuthorized(true);
       router.replace('/');
+    } else if (user) {
+      const role = user.role;
+      const billAdminAllowed = ['/', '/bills'];
+      const opsAdminAllowed = ['/', '/users', '/rewards', '/payouts', '/audit-logs', '/notifications', '/settings'];
+
+      const isAllowed =
+        (role === 'BILL_ADMIN' && billAdminAllowed.includes(pathname)) ||
+        (role === 'OPERATIONS_ADMIN' && opsAdminAllowed.includes(pathname));
+
+      if (!isAllowed && pathname !== '/') {
+        setAuthorized(false);
+        router.replace('/');
+      } else {
+        setAuthorized(true);
+      }
     } else {
       setAuthorized(true);
     }

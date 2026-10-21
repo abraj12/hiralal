@@ -32,12 +32,27 @@ export function calculateBillFinancials(
 export function safeDocumentUrl(url: string | undefined | null): string {
   if (!url) return '#';
   const trimmed = url.trim();
-  // Reject protocol-relative URLs (e.g. //attacker.com) to prevent open redirects (Finding G-02)
-  if (trimmed.startsWith('//')) {
+  // Reject backslashes completely to prevent browser protocol-relative normalization (e.g. /\attacker.com)
+  if (trimmed.includes('\\')) {
     return '#';
   }
-  if (trimmed.startsWith('https://') || trimmed.startsWith('http://localhost') || trimmed.startsWith('/')) {
+  // Reject protocol-relative URLs (e.g. //attacker.com)
+  if (/^[/\\]{2,}/.test(trimmed)) {
+    return '#';
+  }
+  // Strict relative path validation
+  if (/^\/(?!\/|\\)[\w\-.~%!$&'()*+,;=:@/]*$/.test(trimmed)) {
     return trimmed;
+  }
+  if (trimmed.startsWith('https://') || trimmed.startsWith('http://localhost') || trimmed.startsWith('http://127.0.0.1')) {
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'))) {
+        return trimmed;
+      }
+    } catch {
+      return '#';
+    }
   }
   return '#';
 }

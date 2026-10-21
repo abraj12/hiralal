@@ -78,7 +78,13 @@ console.log('📡 Mobile API configured at:', API_BASE);
 export function resolveDocumentUrl(url?: string | null): string | null {
   if (!url || typeof url !== 'string' || !url.trim()) return null;
   const clean = url.trim();
-  if (clean.startsWith('http://') || clean.startsWith('https://')) {
+  if (clean.startsWith('https://')) {
+    return clean;
+  }
+  if (clean.startsWith('http://')) {
+    if (process.env.NODE_ENV === 'production') {
+      return clean.replace(/^http:\/\//i, 'https://');
+    }
     return clean;
   }
   const baseOrigin = API_BASE.replace(/\/api(\/v1)?\/?$/, '');

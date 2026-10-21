@@ -267,7 +267,11 @@ router.get('/users', requireOperationsAdmin, async (req: AuthenticatedRequest, r
       where.profession = profFilter;
     }
     if (status && status !== 'ALL') {
-      where.status = status as UserStatus;
+      const cleanStatus = status.trim().toUpperCase();
+      if (cleanStatus !== 'ACTIVE' && cleanStatus !== 'SUSPENDED') {
+        return res.status(400).json({ success: false, message: 'Invalid user status filter. Permitted values: ACTIVE, SUSPENDED, ALL.' });
+      }
+      where.status = cleanStatus as UserStatus;
     }
     if (search) {
       where.OR = [

@@ -169,24 +169,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const token = await MobileApiClient.initToken();
         const storedUser = await MobileApiClient.getStoredUser();
 
-        if (token && storedUser && (storedUser.role === 'BILL_ADMIN' || storedUser.role === 'OPERATIONS_ADMIN')) {
-          try {
-            // Validate admin session liveness against backend
-            await MobileApiClient.getAdminDashboard('ALL');
-            if (mounted) {
-              setUser(storedUser);
-              setCurrentScreen('MAIN');
-            }
-            return;
-          } catch (adminErr) {
-            console.warn('[AUTH] Stored admin session is invalid or expired:', adminErr);
-            await MobileApiClient.clearAllTokens();
-            if (mounted) {
-              setUser(null);
-              setCurrentScreen('WELCOME');
-            }
-            return;
+        if (storedUser && (storedUser.role === 'BILL_ADMIN' || storedUser.role === 'OPERATIONS_ADMIN')) {
+          console.warn('[SECURITY] Stored administrator session rejected from Craftsman mobile app.');
+          await MobileApiClient.clearAllTokens();
+          if (mounted) {
+            setUser(null);
+            setCurrentScreen('WELCOME');
           }
+          return;
         }
 
         if (token) {

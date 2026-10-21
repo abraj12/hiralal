@@ -9,7 +9,7 @@ import {
   generateSecureToken,
   hmacHashOtp,
 } from '../utils/crypto.utils';
-import { validateStructuredName } from '../utils/name.utils';
+import { validateStructuredName, compareNames } from '../utils/name.utils';
 import { UserRole, Profession, OtpPurpose, Prisma } from '@prisma/client';
 import { SmsService } from './sms';
 
@@ -721,7 +721,10 @@ export class AuthService {
         sessionId: txResult.sessionId,
       },
       config.admin.accessSecret || config.jwt.accessSecret,
-      { expiresIn: (config.admin.accessTokenExpiresIn || '1d') as any }
+      {
+        algorithm: 'HS256',
+        expiresIn: (config.admin.accessTokenExpiresIn || '1d') as any,
+      }
     );
 
     return {
@@ -2036,11 +2039,23 @@ export class AuthService {
         },
       });
 
-      // 2. Reset KYC nameMatched flag to enforce re-match policy before next payout
-      await tx.kycRecord.updateMany({
+      // 2. Re-evaluate or reset KYC nameMatched flag and prevent KYC re-verification deadlock (SEC-C-03)
+      const userKycRecords = await tx.kycRecord.findMany({
         where: { userId: user.id },
-        data: { nameMatched: false },
       });
+      for (const kyc of userKycRecords) {
+        let isMatched = false;
+        if (kyc.panName) {
+          isMatched = compareNames(val.fullName, kyc.panName);
+        }
+        await tx.kycRecord.update({
+          where: { id: kyc.id },
+          data: {
+            nameMatched: isMatched,
+            panStatus: isMatched ? kyc.panStatus : 'PENDING',
+          },
+        });
+      }
 
       // 3. Create comprehensive immutable Audit Log
       await tx.auditLog.create({
@@ -2097,7 +2112,10 @@ export class AuthService {
     return jwt.sign(
       payload,
       config.jwt.accessSecret,
-      { expiresIn: config.jwt.accessExpiresIn as any }
+      {
+        algorithm: 'HS256',
+        expiresIn: config.jwt.accessExpiresIn as any,
+      }
     );
   }
 }

@@ -603,7 +603,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500 px-1">
                     <span>{bill.fileName || 'Invoice Document (PDF)'}</span>
                     <a
-                      href={targetUrl}
+                      href={safeDocumentUrl(targetUrl)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-blue-600 font-bold hover:underline flex items-center space-x-1"

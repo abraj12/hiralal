@@ -78,7 +78,13 @@ console.log('📡 Mobile API configured at:', API_BASE);
 export function resolveDocumentUrl(url?: string | null): string | null {
   if (!url || typeof url !== 'string' || !url.trim()) return null;
   const clean = url.trim();
-  if (clean.startsWith('http://') || clean.startsWith('https://')) {
+  if (clean.startsWith('https://')) {
+    return clean;
+  }
+  if (clean.startsWith('http://')) {
+    if (process.env.NODE_ENV === 'production') {
+      return clean.replace(/^http:\/\//i, 'https://');
+    }
     return clean;
   }
   const baseOrigin = API_BASE.replace(/\/api(\/v1)?\/?$/, '');
@@ -235,6 +241,7 @@ export class MobileApiClient {
 
   static async request<T = any>(endpoint: string, options: RequestInit = {}, isRetry = false): Promise<T> {
     const headers: Record<string, string> = {
+      'X-Client-Type': 'mobile-admin',
       ...(options.headers as Record<string, string>),
     };
 
@@ -803,7 +810,14 @@ export class MobileApiClient {
     });
   }
 
-  // Admin Authentication Sequence (Password-First, OTP-Challenge Flow)
+  // Admin Authentication Sequence (Prefix-Verification, Password-First, OTP-Challenge Flow)
+  static verifyPrefix(prefix: string) {
+    return this.request('/auth/admin/verify-prefix', {
+      method: 'POST',
+      body: JSON.stringify({ prefix }),
+    });
+  }
+
   static requestAdminOtp(identifier: string, password?: string) {
     return this.request('/auth/admin/otp/request', {
       method: 'POST',

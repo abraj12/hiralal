@@ -179,6 +179,10 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
 
   const handleOpenExternal = async (url: string) => {
     try {
+      if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url.trim())) {
+        Alert.alert('Security Alert', 'Untrusted or invalid document URL protocol.');
+        return;
+      }
       const supported = await Linking.canOpenURL(url);
       if (supported) {
         await Linking.openURL(url);

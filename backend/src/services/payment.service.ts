@@ -291,7 +291,7 @@ export class PaymentService {
         try {
           const decrypted = decryptSensitive(other.accountNumberEncrypted);
           // SEC-MED-06: Opportunistically backfill blind index on legacy unindexed row
-          const backfilledIndex = generateBlindIndex(`${cleanIfsc}:${decrypted}`);
+          const backfilledIndex = generateBlindIndex(`BANK:${cleanIfsc}:${decrypted}`);
           prisma.paymentAccount.update({
             where: { id: other.id },
             data: { beneficiaryBlindIndex: backfilledIndex },

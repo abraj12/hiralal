@@ -33,6 +33,10 @@ export function calculateRewardAmount(
   const billDec = new Decimal(billAmount.toString());
   const rateDec = new Decimal(ratePercentage.toString());
 
+  if (!billDec.isFinite() || billDec.isNegative()) {
+    throw new Error('Bill amount must be a finite non-negative number.');
+  }
+
   if (!rateDec.isFinite() || rateDec.isNegative() || rateDec.isZero()) {
     throw new Error('Reward rate percentage must be a finite positive number.');
   }

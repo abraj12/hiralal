@@ -6,7 +6,6 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
-  Image,
   ActivityIndicator,
   Modal,
 } from 'react-native';
@@ -18,35 +17,46 @@ import {
   EyeOff,
   KeyRound,
   ShieldCheck,
+  Phone,
+  CheckCircle2,
+  ArrowRight,
 } from 'lucide-react-native';
 import { useAdminApp } from '../context/AdminAppContext';
 import { MobileApiClient } from '../services/api';
 
-type LoginState =
-  | 'IDLE'
-  | 'SUBMITTING_CREDENTIALS'
-  | 'WAITING_FOR_OTP'
-  | 'VERIFYING_OTP'
-  | 'AUTHENTICATED'
-  | 'ERROR';
-
 export default function AdminLoginScreen() {
   const { loginAdmin, verifyAdminOtp } = useAdminApp();
 
-  const [identifier, setIdentifier] = useState('');
+  // Multi-tier Administrative Authentication Flow:
+  // Step 1: Administrator Security Prefix Gate (masked with * like password)
+  // Step 2: Registered Mobile Number & Password (unlocked ONLY after prefix verification)
+  // Step 3: Two-Factor Authentication (OTP Challenge)
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+
+  // Step 1: Prefix State
+  const [prefix, setPrefix] = useState('');
+  const [showPrefix, setShowPrefix] = useState(false);
+  const [verifiedPrefix, setVerifiedPrefix] = useState('');
+  const [isVerifyingPrefix, setIsVerifyingPrefix] = useState(false);
+
+  // Step 2: Credentials State
+  const [mobile, setMobile] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isSubmittingCredentials, setIsSubmittingCredentials] = useState(false);
 
-  const [loginState, setLoginState] = useState<LoginState>('IDLE');
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  // 2FA OTP Challenge Modal State
+  // Step 3: 2FA OTP State
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [adminOtp, setAdminOtp] = useState('');
   const [challengeToken, setChallengeToken] = useState<string | null>(null);
   const [otpError, setOtpError] = useState<string | null>(null);
   const [otpInfo, setOtpInfo] = useState<string | null>(null);
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+
+  // General Feedback State
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
   useEffect(() => {
     let timer: any;
@@ -58,50 +68,78 @@ export default function AdminLoginScreen() {
     return () => clearInterval(timer);
   }, [cooldownRemaining]);
 
-  const handleSubmitCredentials = async () => {
-    if (loginState === 'SUBMITTING_CREDENTIALS') return;
+  // Step 1: Verify Prefix
+  const handleVerifyPrefix = async () => {
+    const cleanPrefix = prefix.trim().toUpperCase();
+    if (!cleanPrefix) {
+      setErrorMsg('Please enter your administrator security prefix.');
+      return;
+    }
 
-    const trimmedId = identifier.trim().toUpperCase();
-    if (!trimmedId) {
-      setErrorMsg('Please enter your Administrator ID or registered mobile.');
-      setLoginState('ERROR');
+    setIsVerifyingPrefix(true);
+    setErrorMsg(null);
+    setInfoMsg(null);
+
+    try {
+      const res = await MobileApiClient.verifyPrefix(cleanPrefix);
+      if (res?.verified || res?.success) {
+        setVerifiedPrefix(cleanPrefix);
+        setInfoMsg('Security prefix verified. Please enter your administrator credentials.');
+        setStep(2);
+      } else {
+        setErrorMsg('Invalid administrator security prefix. Access denied.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Invalid administrator security prefix. Access denied.');
+    } finally {
+      setIsVerifyingPrefix(false);
+    }
+  };
+
+  // Step 2: Verify Credentials & Request 2FA OTP
+  const handleSubmitCredentials = async () => {
+    const cleanMobile = mobile.replace(/\D/g, '');
+    if (!cleanMobile || cleanMobile.length !== 10) {
+      setErrorMsg('Please enter a valid 10-digit registered mobile number.');
       return;
     }
 
     if (!password) {
       setErrorMsg('Please enter your administrator password.');
-      setLoginState('ERROR');
       return;
     }
 
+    const fullIdentifier = `${verifiedPrefix}${cleanMobile}`;
     setErrorMsg(null);
-    setLoginState('SUBMITTING_CREDENTIALS');
+    setInfoMsg(null);
+    setIsSubmittingCredentials(true);
 
     try {
-      const res = await loginAdmin(trimmedId, password);
+      const res = await loginAdmin(fullIdentifier, password);
 
       if (res?.requiresOtp) {
         setChallengeToken(res.challengeToken || null);
         setAdminOtp('');
         setOtpError(null);
-        setOtpInfo(res.message || 'Verification code dispatched to your registered device.');
+        setOtpInfo(res.message || `Verification code sent to registered mobile (${res.mobileMasked || '***'}).`);
         setCooldownRemaining(res.cooldownSeconds || 60);
         setShowOtpModal(true);
-        setLoginState('WAITING_FOR_OTP');
+        setStep(3);
       } else if (res?.user) {
-        // Direct session returned
-        setLoginState('AUTHENTICATED');
+        // Direct session established
       } else {
         throw new Error('Authentication challenge required.');
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Invalid administrator credentials. Access denied.');
-      setLoginState('ERROR');
+    } finally {
+      setIsSubmittingCredentials(false);
     }
   };
 
+  // Step 3: Verify 2FA OTP
   const handleVerifyOtp = async () => {
-    if (loginState === 'VERIFYING_OTP') return;
+    if (isVerifyingOtp) return;
 
     const cleanOtp = adminOtp.trim();
     if (!cleanOtp || cleanOtp.length !== 6) {
@@ -109,27 +147,28 @@ export default function AdminLoginScreen() {
       return;
     }
 
-    const cleanAdminId = identifier.trim().toUpperCase();
+    const fullIdentifier = `${verifiedPrefix}${mobile.replace(/\D/g, '')}`;
     setOtpError(null);
-    setLoginState('VERIFYING_OTP');
+    setIsVerifyingOtp(true);
 
     try {
-      await verifyAdminOtp(cleanAdminId, cleanOtp, challengeToken || undefined);
+      await verifyAdminOtp(fullIdentifier, cleanOtp, challengeToken || undefined);
       setShowOtpModal(false);
-      setLoginState('AUTHENTICATED');
     } catch (err: any) {
       setOtpError(err.message || 'Invalid or expired verification code.');
-      setLoginState('WAITING_FOR_OTP');
+    } finally {
+      setIsVerifyingOtp(false);
     }
   };
 
+  // Step 3: Resend OTP
   const handleResendOtp = async () => {
     if (cooldownRemaining > 0) return;
-    const cleanAdminId = identifier.trim().toUpperCase();
+    const fullIdentifier = `${verifiedPrefix}${mobile.replace(/\D/g, '')}`;
 
     try {
       setOtpInfo('Requesting new verification code...');
-      const res = await MobileApiClient.requestAdminOtp(cleanAdminId, password);
+      const res = await MobileApiClient.requestAdminOtp(fullIdentifier, password);
       setChallengeToken(res.challengeToken || res.verificationToken);
       setCooldownRemaining(res.cooldownSeconds || 60);
       setOtpInfo(res.message || 'New verification code dispatched.');
@@ -152,6 +191,13 @@ export default function AdminLoginScreen() {
         </View>
       </View>
 
+      {/* Step Indicators */}
+      <View style={styles.stepIndicatorRow}>
+        <View style={[styles.stepDot, step >= 1 && styles.stepDotActive]} />
+        <View style={[styles.stepDot, step >= 2 && styles.stepDotActive]} />
+        <View style={[styles.stepDot, step >= 3 && styles.stepDotActive]} />
+      </View>
+
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Administrator Sign In</Text>
         <Text style={styles.cardSub}>
@@ -166,68 +212,152 @@ export default function AdminLoginScreen() {
           </View>
         )}
 
-        {/* Admin ID / Mobile Input */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>ADMINISTRATOR IDENTIFIER</Text>
-          <View style={styles.inputWrapper}>
-            <Shield size={20} color="#64748B" style={styles.inputIcon} />
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. BA9876543210 or OP9876543210"
-              placeholderTextColor="#94A3B8"
-              value={identifier}
-              onChangeText={setIdentifier}
-              autoCapitalize="characters"
-              autoCorrect={false}
-              editable={loginState !== 'SUBMITTING_CREDENTIALS'}
-            />
+        {infoMsg && (
+          <View style={styles.infoBox}>
+            <CheckCircle2 size={18} color="#10B981" style={{ marginRight: 8 }} />
+            <Text style={styles.infoText}>{infoMsg}</Text>
           </View>
-        </View>
+        )}
 
-        {/* Password Input */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>PASSWORD</Text>
-          <View style={styles.inputWrapper}>
-            <Lock size={20} color="#64748B" style={styles.inputIcon} />
-            <TextInput
-              style={styles.input}
-              placeholder="Enter administrator password"
-              placeholderTextColor="#94A3B8"
-              secureTextEntry={!showPassword}
-              value={password}
-              onChangeText={setPassword}
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={loginState !== 'SUBMITTING_CREDENTIALS'}
-            />
+        {/* STEP 1: Secret Admin Prefix Gate */}
+        {step === 1 && (
+          <View>
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>ADMINISTRATOR SECURITY PREFIX</Text>
+              <View style={styles.inputWrapper}>
+                <Shield size={20} color="#64748B" style={styles.inputIcon} />
+                <TextInput
+                  style={[styles.input, { letterSpacing: 4 }]}
+                  placeholder="Enter secret role prefix"
+                  placeholderTextColor="#94A3B8"
+                  secureTextEntry={!showPrefix}
+                  value={prefix}
+                  onChangeText={setPrefix}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  editable={!isVerifyingPrefix}
+                  autoFocus
+                />
+                <TouchableOpacity
+                  onPress={() => setShowPrefix(!showPrefix)}
+                  style={styles.eyeBtn}
+                >
+                  {showPrefix ? <EyeOff size={18} color="#64748B" /> : <Eye size={18} color="#64748B" />}
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.helperText}>
+                Prefix input is masked for security. Click Verify to unlock credentials input.
+              </Text>
+            </View>
+
             <TouchableOpacity
-              onPress={() => setShowPassword(!showPassword)}
-              style={styles.eyeBtn}
+              style={[styles.submitButton, isVerifyingPrefix && styles.buttonDisabled]}
+              onPress={handleVerifyPrefix}
+              disabled={isVerifyingPrefix}
             >
-              {showPassword ? <EyeOff size={18} color="#64748B" /> : <Eye size={18} color="#64748B" />}
+              {isVerifyingPrefix ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <View style={styles.buttonInner}>
+                  <Text style={styles.submitButtonText}>Verify Prefix & Continue</Text>
+                  <ShieldCheck size={18} color="#ffffff" style={{ marginLeft: 8 }} />
+                </View>
+              )}
             </TouchableOpacity>
           </View>
-        </View>
+        )}
 
-        {/* Submit Button */}
-        <TouchableOpacity
-          style={[styles.submitButton, loginState === 'SUBMITTING_CREDENTIALS' && styles.buttonDisabled]}
-          onPress={handleSubmitCredentials}
-          disabled={loginState === 'SUBMITTING_CREDENTIALS'}
-        >
-          {loginState === 'SUBMITTING_CREDENTIALS' ? (
-            <ActivityIndicator color="#ffffff" />
-          ) : (
-            <Text style={styles.submitButtonText}>Verify & Proceed to 2FA</Text>
-          )}
-        </TouchableOpacity>
+        {/* STEP 2: Phone Number & Password (Unlocked ONLY after Prefix is verified) */}
+        {step >= 2 && (
+          <View>
+            {/* Verified Prefix Chip */}
+            <View style={styles.prefixVerifiedChip}>
+              <View style={styles.prefixVerifiedLeft}>
+                <ShieldCheck size={16} color="#38BDF8" style={{ marginRight: 6 }} />
+                <Text style={styles.prefixVerifiedText}>
+                  Security Prefix: <Text style={{ letterSpacing: 2, fontWeight: '800' }}>••••</Text> (Verified)
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  setStep(1);
+                  setErrorMsg(null);
+                  setInfoMsg(null);
+                }}
+              >
+                <Text style={styles.changePrefixBtnText}>Change</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Registered Mobile Number */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>REGISTERED MOBILE NUMBER</Text>
+              <View style={styles.inputWrapper}>
+                <Phone size={20} color="#64748B" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="10-digit mobile number"
+                  placeholderTextColor="#94A3B8"
+                  value={mobile}
+                  onChangeText={(val) => setMobile(val.replace(/\D/g, '').slice(0, 10))}
+                  keyboardType="phone-pad"
+                  maxLength={10}
+                  autoCorrect={false}
+                  editable={!isSubmittingCredentials}
+                  autoFocus
+                />
+              </View>
+            </View>
+
+            {/* Administrator Password */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>ADMINISTRATOR PASSWORD</Text>
+              <View style={styles.inputWrapper}>
+                <Lock size={20} color="#64748B" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter administrator password"
+                  placeholderTextColor="#94A3B8"
+                  secureTextEntry={!showPassword}
+                  value={password}
+                  onChangeText={setPassword}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!isSubmittingCredentials}
+                />
+                <TouchableOpacity
+                  onPress={() => setShowPassword(!showPassword)}
+                  style={styles.eyeBtn}
+                >
+                  {showPassword ? <EyeOff size={18} color="#64748B" /> : <Eye size={18} color="#64748B" />}
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Submit Credentials Button */}
+            <TouchableOpacity
+              style={[styles.submitButton, isSubmittingCredentials && styles.buttonDisabled]}
+              onPress={handleSubmitCredentials}
+              disabled={isSubmittingCredentials}
+            >
+              {isSubmittingCredentials ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <View style={styles.buttonInner}>
+                  <Text style={styles.submitButtonText}>Verify & Proceed to 2FA</Text>
+                  <ArrowRight size={18} color="#ffffff" style={{ marginLeft: 8 }} />
+                </View>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       {/* Security Notice */}
       <View style={styles.securityNotice}>
         <Shield size={14} color="#64748B" style={{ marginRight: 6 }} />
         <Text style={styles.securityNoticeText}>
-          Protected by Hardware SecureStore, Play Integrity & 2FA Enforcement
+          Protected by Prefix Gate, Hardware SecureStore & 2FA Enforcement
         </Text>
       </View>
 
@@ -240,7 +370,7 @@ export default function AdminLoginScreen() {
             </View>
             <Text style={styles.modalTitle}>Two-Factor Authentication</Text>
             <Text style={styles.modalSub}>
-              {otpInfo || 'Enter the 6-digit security code dispatched to your registered phone.'}
+              {otpInfo || 'Enter the 6-digit security code dispatched to your registered device.'}
             </Text>
 
             {otpError && (
@@ -262,11 +392,11 @@ export default function AdminLoginScreen() {
             />
 
             <TouchableOpacity
-              style={[styles.modalVerifyBtn, loginState === 'VERIFYING_OTP' && styles.buttonDisabled]}
+              style={[styles.modalVerifyBtn, isVerifyingOtp && styles.buttonDisabled]}
               onPress={handleVerifyOtp}
-              disabled={loginState === 'VERIFYING_OTP'}
+              disabled={isVerifyingOtp}
             >
-              {loginState === 'VERIFYING_OTP' ? (
+              {isVerifyingOtp ? (
                 <ActivityIndicator color="#ffffff" />
               ) : (
                 <Text style={styles.modalVerifyBtnText}>Establish Administrator Session</Text>
@@ -285,7 +415,10 @@ export default function AdminLoginScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() => setShowOtpModal(false)}
+                onPress={() => {
+                  setShowOtpModal(false);
+                  setStep(2);
+                }}
                 style={styles.cancelBtn}
               >
                 <Text style={styles.cancelText}>Cancel</Text>
@@ -308,7 +441,7 @@ const styles = StyleSheet.create({
   },
   headerArea: {
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 20,
   },
   logoBadge: {
     width: 68,
@@ -348,6 +481,23 @@ const styles = StyleSheet.create({
     color: '#EF4444',
     letterSpacing: 0.5,
   },
+  stepIndicatorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+    gap: 8,
+  },
+  stepDot: {
+    width: 24,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#334155',
+  },
+  stepDotActive: {
+    backgroundColor: '#38BDF8',
+    width: 36,
+  },
   card: {
     width: '100%',
     maxWidth: 420,
@@ -366,7 +516,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#94A3B8',
     marginTop: 4,
-    marginBottom: 20,
+    marginBottom: 18,
   },
   boldText: {
     color: '#F1F5F9',
@@ -387,8 +537,50 @@ const styles = StyleSheet.create({
     fontSize: 13,
     flex: 1,
   },
-  inputGroup: {
+  infoBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderWidth: 1,
+    borderColor: '#10B981',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  infoText: {
+    color: '#6EE7B7',
+    fontSize: 13,
+    flex: 1,
+  },
+  prefixVerifiedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.3)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     marginBottom: 18,
+  },
+  prefixVerifiedLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  prefixVerifiedText: {
+    color: '#BAE6FD',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  changePrefixBtnText: {
+    color: '#38BDF8',
+    fontSize: 11,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
+  },
+  inputGroup: {
+    marginBottom: 16,
   },
   label: {
     fontSize: 11,
@@ -418,18 +610,28 @@ const styles = StyleSheet.create({
   eyeBtn: {
     padding: 8,
   },
+  helperText: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 6,
+  },
   submitButton: {
     backgroundColor: '#D32F2F',
     borderRadius: 10,
     height: 48,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 6,
+  },
+  buttonInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   submitButtonText: {
     color: '#FFFFFF',
     fontWeight: '700',
-    fontSize: 15,
+    fontSize: 14,
   },
   buttonDisabled: {
     opacity: 0.6,
