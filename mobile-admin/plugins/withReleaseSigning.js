@@ -40,7 +40,7 @@ function configureAppBuildGradle(contents) {
       const targetStr = 'signingConfig signingConfigs.debug';
       const targetIdx = contents.indexOf(targetStr, releaseIdx);
       if (targetIdx !== -1) {
-        const replacement = `signingConfig ((project.hasProperty('RELEASE_STORE_FILE') || System.getenv('ANDROID_KEYSTORE_PATH')) ? signingConfigs.release : (project.hasProperty('ALLOW_INSECURE_DEBUG_SIGNING') ? signingConfigs.debug : { throw new GradleException("[SECURITY FATAL] Android release build requires a valid release keystore via RELEASE_STORE_FILE or ANDROID_KEYSTORE_PATH. Debug signing fallback in release mode is forbidden.") }()))`;
+        const replacement = `signingConfig ((project.hasProperty('RELEASE_STORE_FILE') || System.getenv('ANDROID_KEYSTORE_PATH')) ? signingConfigs.release : (gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') } && !project.hasProperty('ALLOW_INSECURE_DEBUG_SIGNING') ? { throw new GradleException("[SECURITY FATAL] Android release build requires a valid release keystore via RELEASE_STORE_FILE or ANDROID_KEYSTORE_PATH. Debug signing fallback in release mode is forbidden.") }() : signingConfigs.debug))`;
         contents = contents.substring(0, targetIdx) + replacement + contents.substring(targetIdx + targetStr.length);
       }
     }
