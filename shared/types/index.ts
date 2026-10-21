@@ -58,6 +58,22 @@ export enum OtpPurpose {
   ACCOUNT_DELETION = 'ACCOUNT_DELETION'
 }
 
+export enum WelcomeDeliveryStatus {
+  PENDING = 'PENDING',
+  SENDING = 'SENDING',
+  ACCEPTED = 'ACCEPTED',
+  DELIVERED = 'DELIVERED',
+  FAILED_RETRYABLE = 'FAILED_RETRYABLE'
+}
+
+export enum DeletionOperationStatus {
+  PENDING = 'PENDING',
+  IN_PROGRESS = 'IN_PROGRESS',
+  FAILED_RETRYABLE = 'FAILED_RETRYABLE',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED'
+}
+
 export interface UserDto {
   id: string;
   mobile: string;

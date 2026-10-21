@@ -5,6 +5,7 @@ import { KycService } from '../services/kyc.service';
 import { PaymentService } from '../services/payment.service';
 import { prisma } from '../db';
 import { getIstYearAndMonth } from '../utils/timezone.utils';
+import { generateBlindIndex } from '../utils/crypto.utils';
 import { getOrCreateOpsAdmin } from './test_helpers';
 
 describe('Concurrency & Financial Integrity Tests', () => {
@@ -322,7 +323,7 @@ describe('Concurrency & Financial Integrity Tests', () => {
     expect(failures.length).toBe(1);
 
     const accountsInDb = await prisma.paymentAccount.findMany({
-      where: { upiId: targetUpi },
+      where: { beneficiaryBlindIndex: generateBlindIndex(`UPI:${targetUpi.toLowerCase().trim()}`) },
     });
     expect(accountsInDb.length).toBe(1);
 

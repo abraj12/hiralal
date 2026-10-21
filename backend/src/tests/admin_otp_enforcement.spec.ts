@@ -81,6 +81,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
   afterAll(async () => {
     await resetAdmins(prisma);
+    await prisma.wallet.deleteMany({ where: { user: { mobile: workerMobile } } });
     await prisma.user.deleteMany({ where: { mobile: workerMobile } });
     await prisma.$disconnect();
   });

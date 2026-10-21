@@ -1,7 +1,19 @@
+import fs from 'fs';
 import { Request, Response, NextFunction } from 'express';
 import { PlayIntegrityService, IntegrityAction } from '../services/integrity/playIntegrity.service';
 import { AuthenticatedRequest } from './auth.middleware';
 import { computeIntegrityRequestHash } from '../utils/integrityRequestHash';
+
+function cleanupUploadedFile(req: Request): void {
+  const file = (req as any).file;
+  if (file?.path && typeof file.path === 'string') {
+    try {
+      if (fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+    } catch (_) {}
+  }
+}
 
 /**
  * Express middleware to enforce Google Play Integrity device attestation on protected actions.
@@ -32,6 +44,7 @@ export function requireActionIntegrity(action: IntegrityAction) {
     // In production or when enforcement is enabled: attestation is strictly required
     if (isEnforcing) {
       if (!integrityToken || !integrityNonce) {
+        cleanupUploadedFile(req);
         res.status(403).json({
           success: false,
           code: 'INTEGRITY_REQUIRED',
@@ -52,6 +65,7 @@ export function requireActionIntegrity(action: IntegrityAction) {
     try {
       requestHash = computeIntegrityRequestHash(action, req);
     } catch (err: any) {
+      cleanupUploadedFile(req);
       console.warn(`[Integrity] Request hash computation failed for action ${action}:`, err?.message || err);
       res.status(403).json({
         success: false,
@@ -78,6 +92,7 @@ export function requireActionIntegrity(action: IntegrityAction) {
       });
 
       if (!verdict.success) {
+        cleanupUploadedFile(req);
         res.status(403).json({
           success: false,
           code: 'INTEGRITY_FAILED',
@@ -91,6 +106,7 @@ export function requireActionIntegrity(action: IntegrityAction) {
       (req as any).integrityVerdict = verdict;
       next();
     } catch (err: any) {
+      cleanupUploadedFile(req);
       console.error(`[Integrity] Device integrity check error for action ${action}:`, err?.message || err);
       res.status(403).json({
         success: false,

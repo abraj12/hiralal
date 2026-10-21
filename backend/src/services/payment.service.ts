@@ -191,7 +191,7 @@ export class PaymentService {
           return await tx.paymentAccount.update({
             where: { id: existingSelf.id },
             data: {
-              upiId: cleanUpi,
+              upiId: null, // Zero plaintext storage of financial PII (DEFECT-PII-01)
               upiIdEncrypted,
               accountHolderName: providerRegisteredName || user.fullName,
               providerRegisteredName,
@@ -208,7 +208,7 @@ export class PaymentService {
           data: {
             userId,
             accountType: 'UPI',
-            upiId: cleanUpi,
+            upiId: null, // Zero plaintext storage of financial PII (DEFECT-PII-01)
             upiIdEncrypted,
             beneficiaryBlindIndex,
             accountHolderName: providerRegisteredName || user.fullName,

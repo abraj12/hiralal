@@ -19,6 +19,17 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
+function cleanupUploadedFile(req: Request): void {
+  const file = (req as any).file;
+  if (file?.path && typeof file.path === 'string') {
+    try {
+      if (fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+    } catch (_) {}
+  }
+}
+
 const diskStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     cb(null, uploadDir);
@@ -66,6 +77,7 @@ router.post(
     const { invoiceNumber, invoiceDate, billAmount, remarks } = req.body;
 
     if (!invoiceNumber || typeof invoiceNumber !== 'string' || !invoiceNumber.trim()) {
+      cleanupUploadedFile(req);
       return res.status(400).json({
         success: false,
         message: 'A valid invoice number is required.',
@@ -74,6 +86,7 @@ router.post(
 
     const cleanInvoiceNumber = invoiceNumber.trim();
     if (cleanInvoiceNumber.length > 100) {
+      cleanupUploadedFile(req);
       return res.status(400).json({
         success: false,
         message: 'Invoice number cannot exceed 100 characters.',
@@ -81,6 +94,7 @@ router.post(
     }
 
     if (!invoiceDate || typeof invoiceDate !== 'string' || !invoiceDate.trim()) {
+      cleanupUploadedFile(req);
       return res.status(400).json({
         success: false,
         message: 'A valid invoice date is required.',
@@ -91,6 +105,7 @@ router.post(
     try {
       parsedDate = parseIndiaBusinessDate(invoiceDate.trim());
     } catch (err: any) {
+      cleanupUploadedFile(req);
       return res.status(400).json({
         success: false,
         message: err.message || 'Invoice date is invalid. Please supply a valid date (YYYY-MM-DD).',
@@ -102,12 +117,14 @@ router.post(
     const tomorrowIndia = new Date(todayIndia.getTime() + 24 * 60 * 60 * 1000);
     const fiveYearsAgo = new Date(todayIndia.getTime() - 5 * 365 * 24 * 60 * 60 * 1000);
     if (parsedDate > tomorrowIndia) {
+      cleanupUploadedFile(req);
       return res.status(400).json({
         success: false,
         message: 'Invoice date cannot be in the future.',
       });
     }
     if (parsedDate < fiveYearsAgo) {
+      cleanupUploadedFile(req);
       return res.status(400).json({
         success: false,
         message: 'Invoice date is too old to be eligible for rewards.',
@@ -122,6 +139,7 @@ router.post(
           : '';
 
     if (!amountText || !/^\d+(?:\.\d{1,2})?$/.test(amountText)) {
+      cleanupUploadedFile(req);
       return res.status(400).json({
         success: false,
         message: 'Valid bill amount greater than zero with at most two decimal places is required.',
@@ -130,6 +148,7 @@ router.post(
 
     const parsedAmount = Number(amountText);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      cleanupUploadedFile(req);
       return res.status(400).json({
         success: false,
         message: 'Bill amount must be a finite positive number greater than zero.',
@@ -139,6 +158,7 @@ router.post(
     const rawMaxBillAmount = parseFloat(process.env.BILL_MAX_AMOUNT || '50000000');
     const maxBillAmount = Number.isFinite(rawMaxBillAmount) && rawMaxBillAmount > 0 ? rawMaxBillAmount : 50000000;
     if (parsedAmount > maxBillAmount) {
+      cleanupUploadedFile(req);
       return res.status(400).json({
         success: false,
         message: 'Bill amount exceeds maximum permitted single invoice limit.',
@@ -146,6 +166,7 @@ router.post(
     }
 
     if (remarks && (typeof remarks !== 'string' || remarks.length > 500)) {
+      cleanupUploadedFile(req);
       return res.status(400).json({
         success: false,
         message: 'Remarks cannot exceed 500 characters.',
@@ -220,6 +241,7 @@ router.post(
       },
     });
   } catch (err: any) {
+    cleanupUploadedFile(req);
     res.status(400).json({ success: false, message: err.message });
   }
 });

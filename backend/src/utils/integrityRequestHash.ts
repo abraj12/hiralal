@@ -1,6 +1,82 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { Request } from 'express';
 import { IntegrityAction } from '../services/integrity/playIntegrity.service';
+
+/**
+ * Safely computes the SHA-256 hash of a file on disk using 64KB streaming chunks
+ * to avoid memory amplification while enforcing file type and size bounds.
+ */
+export function computeSha256FromFile(filePath: string, maxBytes: number): string {
+  let fd: number;
+  try {
+    fd = fs.openSync(filePath, 'r');
+  } catch (err: any) {
+    throw new Error(`Failed to access uploaded file: ${err?.message || 'Access error'}`);
+  }
+
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) {
+      throw new Error('Uploaded entity is not a regular file.');
+    }
+    if (stat.size <= 0) {
+      throw new Error('Invoice file content is required to compute integrity request hash.');
+    }
+    if (stat.size > maxBytes) {
+      throw new Error(`Uploaded file exceeds maximum permitted size of ${maxBytes} bytes.`);
+    }
+
+    const hash = crypto.createHash('sha256');
+    const chunkSize = 64 * 1024; // 64KB chunk buffer to prevent memory amplification
+    const buffer = Buffer.alloc(chunkSize);
+    let totalRead = 0;
+    let bytesRead = 0;
+
+    while ((bytesRead = fs.readSync(fd, buffer, 0, chunkSize, null)) > 0) {
+      totalRead += bytesRead;
+      if (totalRead > maxBytes) {
+        throw new Error(`Uploaded file exceeds maximum permitted size of ${maxBytes} bytes.`);
+      }
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+
+    if (totalRead === 0) {
+      throw new Error('Invoice file content is required to compute integrity request hash.');
+    }
+
+    return hash.digest('hex').toLowerCase();
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch (_) {}
+  }
+}
+
+/**
+ * Validates that an upload path returned by Multer is safely located inside
+ * the designated application uploads directory.
+ */
+export function validateUploadPath(filePath: string, destination?: string): string {
+  if (!filePath || typeof filePath !== 'string' || !filePath.trim()) {
+    throw new Error('Invalid upload file path.');
+  }
+
+  const normalized = path.resolve(filePath);
+  const uploadsBase = path.resolve(process.cwd(), 'uploads');
+  const allowedBase = destination ? path.resolve(destination) : uploadsBase;
+
+  // The file must be strictly within the designated uploads base or allowed destination
+  const isWithinUploads = normalized.startsWith(uploadsBase + path.sep);
+  const isWithinDestination = destination ? (normalized.startsWith(allowedBase + path.sep) || normalized === allowedBase) : false;
+
+  if (!isWithinUploads && !isWithinDestination) {
+    throw new Error('Uploaded file is outside the permitted storage directory.');
+  }
+
+  return normalized;
+}
 
 export function normalizeAmountTwoDecimals(amount: number | string): string {
   const num = typeof amount === 'number' ? amount : parseFloat(String(amount).trim());
@@ -268,18 +344,41 @@ export function computeIntegrityRequestHash(
 ): string {
   switch (action) {
     case 'BILL_UPLOAD': {
-      let fileBuffer: Buffer | null = null;
-      if (req.file && req.file.buffer) {
-        fileBuffer = req.file.buffer;
+      const rawMaxUploadMb = parseInt(process.env.BILL_MAX_UPLOAD_SIZE_MB || '10', 10);
+      const maxUploadMb = Number.isFinite(rawMaxUploadMb) && rawMaxUploadMb > 0 ? rawMaxUploadMb : 10;
+      const maxUploadBytes = maxUploadMb * 1024 * 1024;
+
+      let fileSha256: string | null = null;
+
+      if (req.file) {
+        const file = req.file as any;
+        if (file.path && typeof file.path === 'string') {
+          const safePath = validateUploadPath(file.path, file.destination);
+          fileSha256 = computeSha256FromFile(safePath, maxUploadBytes);
+        } else if (file.buffer && Buffer.isBuffer(file.buffer)) {
+          if (file.buffer.length === 0) {
+            throw new Error('Invoice file content is required to compute integrity request hash.');
+          }
+          if (file.buffer.length > maxUploadBytes) {
+            throw new Error(`Uploaded file exceeds maximum permitted size of ${maxUploadBytes} bytes.`);
+          }
+          fileSha256 = computeSha256Bytes(file.buffer);
+        }
       } else if (req.body?.fileBase64 && typeof req.body.fileBase64 === 'string') {
-        fileBuffer = Buffer.from(req.body.fileBase64, 'base64');
+        const fileBuffer = Buffer.from(req.body.fileBase64, 'base64');
+        if (fileBuffer.length === 0) {
+          throw new Error('Invoice file content is required to compute integrity request hash.');
+        }
+        if (fileBuffer.length > maxUploadBytes) {
+          throw new Error(`Uploaded file exceeds maximum permitted size of ${maxUploadBytes} bytes.`);
+        }
+        fileSha256 = computeSha256Bytes(fileBuffer);
       }
 
-      if (!fileBuffer || fileBuffer.length === 0) {
+      if (!fileSha256) {
         throw new Error('Invoice file content is required to compute integrity request hash.');
       }
 
-      const fileSha256 = computeSha256Bytes(fileBuffer);
       const payload = buildCanonicalBillUploadPayload(
         req.body?.invoiceNumber,
         req.body?.invoiceDate,

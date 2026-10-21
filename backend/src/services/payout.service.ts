@@ -1,7 +1,7 @@
 import { prisma } from '../db';
 import { config } from '../config';
 import { PayoutStatus, Profession } from '@prisma/client';
-import { getIstDate } from '../utils/timezone.utils';
+import { getIstDate, formatIstIso } from '../utils/timezone.utils';
 import { toPaise, fromPaise } from '../utils/money.utils';
 import { areNamesMatching } from '../utils/name.utils';
 
@@ -94,7 +94,7 @@ export class PayoutService {
       settings,
       isWindowOpen,
       serverTime: now.toISOString(),
-      businessTimeIst: getIstDate(now).toISOString(),
+      businessTimeIst: formatIstIso(now),
     };
   }
 

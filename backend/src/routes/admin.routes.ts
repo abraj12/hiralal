@@ -621,8 +621,9 @@ router.post('/users/:id/verify-mononymous-kyc', requireOperationsAdmin, adminAct
 
 /**
  * 4. Bills Management with Strict Server-Side Profession & Status Filtering
+ * DEADLOCK-01-GAP: requireAdmin allows both BILL_ADMIN and OPERATIONS_ADMIN to view the review queue
  */
-router.get('/bills', requireBillAdmin, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/bills', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const status = req.query.status as string;
     // F-17: validate profession via shared helper to prevent enum injection
@@ -648,7 +649,7 @@ router.get('/bills', requireBillAdmin, async (req: AuthenticatedRequest, res: Re
 /**
  * 4.1 Fresh Signed Document URL for Bill Inspection (Admin Only)
  */
-router.get('/bills/:id/document-url', requireBillAdmin, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/bills/:id/document-url', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const bill = await prisma.bill.findUnique({
@@ -690,7 +691,7 @@ router.get('/bills/:id/document-url', requireBillAdmin, async (req: Authenticate
  */
 router.get(
   '/bills/:id/review-config',
-  requireBillAdmin,
+  requireAdmin,
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const bill = await prisma.bill.findUnique({
@@ -776,9 +777,9 @@ router.post('/bills/:id/verify', requireAdmin, adminActionLimiter, async (req: A
     const admin = req.user!;
     const { action, rejectionReason, gstIncluded, gstRate, gstRuleId, gstOverrideReason } = req.body;
 
-    // DEADLOCK-01: Standard bill verification is reserved for BILL_ADMIN.
-    // OPERATIONS_ADMIN is permitted strictly when resolving secondary approval upward deviations (correctedGrossAmount).
-    if (admin.role === 'OPERATIONS_ADMIN' && !req.body.correctedGrossAmount) {
+    // DEADLOCK-01-GAP: Standard bill approval without upward deviation is reserved for BILL_ADMIN.
+    // OPERATIONS_ADMIN is permitted when approving upward deviations (correctedGrossAmount) or rejecting invalid bills.
+    if (admin.role === 'OPERATIONS_ADMIN' && action === 'APPROVE' && !req.body.correctedGrossAmount) {
       return res.status(403).json({
         success: false,
         code: 'BILL_ADMIN_ROLE_REQUIRED',

@@ -1,6 +1,13 @@
-import { toZonedTime, format } from 'date-fns-tz';
+import { toZonedTime, format, formatInTimeZone } from 'date-fns-tz';
 
 export const TIMEZONE_IST = 'Asia/Kolkata';
+
+/**
+ * Formats a Date into Asia/Kolkata ISO 8601 string with explicit offset (e.g., 2026-10-22T02:19:23.094+05:30).
+ */
+export function formatIstIso(date: Date = new Date()): string {
+  return formatInTimeZone(date, TIMEZONE_IST, "yyyy-MM-dd'T'HH:mm:ss.SSSxxx");
+}
 
 /**
  * Returns current date and time converted to Asia/Kolkata timezone.

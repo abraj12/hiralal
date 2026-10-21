@@ -1,7 +1,7 @@
 import { prisma } from '../db';
 import { config } from '../config';
 import { toPaise } from '../utils/money.utils';
-import { decryptSensitive } from '../utils/crypto.utils';
+import { decryptSensitive, encryptSensitive } from '../utils/crypto.utils';
 import { PayoutService } from '../services/payout.service';
 
 export function resolveBankAccountNumber(account: {
@@ -35,11 +35,20 @@ export function resolveUpiAddress(account: {
     throw new Error('UPI details requested for a non-UPI account.');
   }
 
-  let raw = account.upiId;
-  if (!raw && account.upiIdEncrypted) {
+  // Primary: Decrypt from AES-256-GCM ciphertext
+  let raw: string | null = null;
+  if (account.upiIdEncrypted) {
     try {
       raw = decryptSensitive(account.upiIdEncrypted);
-    } catch (_) {}
+    } catch (_) {
+      raw = null;
+    }
+  }
+
+  // Safe migration fallback: For unmigrated legacy rows lacking upiIdEncrypted,
+  // allow fallback to legacy upiId so in-flight payouts do not fail
+  if (!raw && account.upiId) {
+    raw = account.upiId;
   }
 
   if (!raw || !/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(raw.trim())) {
@@ -143,6 +152,18 @@ export class PayoutWorker {
     try {
       if (payout.paymentAccount.accountType === 'UPI') {
         upiAddress = resolveUpiAddress(payout.paymentAccount);
+        // Opportunistically migrate legacy unencrypted UPI row to AES-256-GCM
+        if (payout.paymentAccount.upiId && !payout.paymentAccount.upiIdEncrypted) {
+          try {
+            await prisma.paymentAccount.update({
+              where: { id: payout.paymentAccount.id },
+              data: {
+                upiIdEncrypted: encryptSensitive(upiAddress),
+                upiId: null,
+              },
+            });
+          } catch (_) {}
+        }
       } else {
         bankAccountNumber = resolveBankAccountNumber(payout.paymentAccount);
       }

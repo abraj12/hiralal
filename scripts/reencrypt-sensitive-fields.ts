@@ -129,8 +129,38 @@ export async function reencryptSensitiveFields(options: {
     }
   }
 
-  console.log(`[REENCRYPT-COMPLETE] KycRecords: ${kycSuccess}/${kycRecords.length}, PaymentAccounts: ${paymentSuccess}/${paymentAccounts.length}`);
-  return { kycSuccess, paymentSuccess, totalKyc: kycRecords.length, totalPayment: paymentAccounts.length };
+  // 3. Migrate any legacy unencrypted PaymentAccount.upiId rows (DEFECT-PII-01)
+  const legacyUpiAccounts = await prisma.paymentAccount.findMany({
+    where: {
+      accountType: 'UPI',
+      upiId: { not: null },
+    },
+    select: { id: true, upiId: true, upiIdEncrypted: true },
+  });
+
+  console.log(`[REENCRYPT] Found ${legacyUpiAccounts.length} legacy PaymentAccount entries with plaintext upiId to sanitize...`);
+  let upiMigrated = 0;
+  for (const acc of legacyUpiAccounts) {
+    if (!acc.upiId) continue;
+    try {
+      const encrypted = acc.upiIdEncrypted ? encryptWithKey(decryptWithKey(acc.upiIdEncrypted, oldKey), newKey) : encryptWithKey(acc.upiId.trim(), newKey);
+      if (!dryRun) {
+        await prisma.paymentAccount.update({
+          where: { id: acc.id },
+          data: {
+            upiIdEncrypted: encrypted,
+            upiId: null, // sanitize plaintext
+          },
+        });
+      }
+      upiMigrated++;
+    } catch (err: any) {
+      console.error(`[REENCRYPT-ERROR] Failed to sanitize UPI account ${acc.id}:`, err.message);
+    }
+  }
+
+  console.log(`[REENCRYPT-COMPLETE] KycRecords: ${kycSuccess}/${kycRecords.length}, PaymentAccounts: ${paymentSuccess}/${paymentAccounts.length}, Legacy UPI sanitized: ${upiMigrated}/${legacyUpiAccounts.length}`);
+  return { kycSuccess, paymentSuccess, upiMigrated, totalKyc: kycRecords.length, totalPayment: paymentAccounts.length };
 }
 
 if (require.main === module) {

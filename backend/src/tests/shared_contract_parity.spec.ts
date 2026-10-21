@@ -7,6 +7,8 @@ import {
   TransactionType as PrismaTransactionType,
   KycStatus as PrismaKycStatus,
   PaymentType as PrismaPaymentType,
+  WelcomeDeliveryStatus as PrismaWelcomeDeliveryStatus,
+  DeletionOperationStatus as PrismaDeletionOperationStatus,
 } from '@prisma/client';
 
 import fs from 'fs';
@@ -94,5 +96,10 @@ describe('Shared Contract Parity & Enum Invariants', () => {
   it('PaymentType and KycStatus enums match @prisma/client', () => {
     expect(extractSharedEnum('PaymentType')).toEqual(Object.values(PrismaPaymentType).sort());
     expect(extractSharedEnum('KycStatus')).toEqual(Object.values(PrismaKycStatus).sort());
+  });
+
+  it('WelcomeDeliveryStatus and DeletionOperationStatus match @prisma/client', () => {
+    expect(extractSharedEnum('WelcomeDeliveryStatus')).toEqual(Object.values(PrismaWelcomeDeliveryStatus).sort());
+    expect(extractSharedEnum('DeletionOperationStatus')).toEqual(Object.values(PrismaDeletionOperationStatus).sort());
   });
 });

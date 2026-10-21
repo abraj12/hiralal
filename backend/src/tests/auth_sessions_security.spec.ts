@@ -16,6 +16,7 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
     await checkRedisConnection();
     // Clean up test data
     await prisma.authSession.deleteMany({ where: { user: { mobile: testMobile } } });
+    await prisma.wallet.deleteMany({ where: { user: { mobile: testMobile } } });
     await prisma.verificationToken.deleteMany({ where: { mobile: testMobile } });
     await prisma.otpRequest.deleteMany({ where: { mobile: testMobile } });
     await prisma.user.deleteMany({ where: { mobile: testMobile } });
@@ -23,6 +24,7 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
 
   afterAll(async () => {
     await prisma.authSession.deleteMany({ where: { user: { mobile: testMobile } } });
+    await prisma.wallet.deleteMany({ where: { user: { mobile: testMobile } } });
     await prisma.verificationToken.deleteMany({ where: { mobile: testMobile } });
     await prisma.otpRequest.deleteMany({ where: { mobile: testMobile } });
     await prisma.user.deleteMany({ where: { mobile: testMobile } });

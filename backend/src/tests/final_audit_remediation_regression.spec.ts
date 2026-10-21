@@ -27,6 +27,8 @@ describe('Final Audit Remediation Verification — Security, Financial, and Reli
 
     const mobiles = [userMobile, opsAdminMobile, billAdminMobile];
     await prisma.authSession.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.otpRequest.deleteMany({ where: { mobile: { in: mobiles } } });
+    await prisma.verificationToken.deleteMany({ where: { mobile: { in: mobiles } } });
     await prisma.payout.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
     await prisma.paymentAccount.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
     await prisma.kycRecord.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
@@ -104,6 +106,8 @@ describe('Final Audit Remediation Verification — Security, Financial, and Reli
   afterAll(async () => {
     const mobiles = [userMobile, opsAdminMobile, billAdminMobile];
     await prisma.authSession.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
+    await prisma.otpRequest.deleteMany({ where: { mobile: { in: mobiles } } });
+    await prisma.verificationToken.deleteMany({ where: { mobile: { in: mobiles } } });
     await prisma.payout.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
     await prisma.paymentAccount.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
     await prisma.kycRecord.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
@@ -603,6 +607,29 @@ describe('Final Audit Remediation Verification — Security, Financial, and Reli
       expect(compareNames('RAMESH', 'RAMESH GUPTA')).toBe(false);
       // Conflicting initials
       expect(compareNames('A K SHARMA', 'B K SHARMA')).toBe(false);
+    });
+  });
+
+  // ==========================================
+  // 9. DEFECT-TZ-01: Timezone Offset ISO Formatting
+  // ==========================================
+  describe('DEFECT-TZ-01 — IST ISO String with Explicit Timezone Offset', () => {
+    test('getRedemptionSettings returns businessTimeIst with +05:30 offset and without double UTC shift', async () => {
+      const settings = await PayoutService.getRedemptionSettings();
+      expect(settings).toBeDefined();
+      expect(settings.businessTimeIst).toBeDefined();
+      expect(typeof settings.businessTimeIst).toBe('string');
+      // Must match ISO string ending with +05:30 (Asia/Kolkata offset), NOT ending with 'Z'
+      expect(settings.businessTimeIst).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+05:30$/);
+      expect(settings.businessTimeIst.endsWith('Z')).toBe(false);
+
+      // Verify serverTime is standard UTC with 'Z'
+      expect(settings.serverTime).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
+      // Verify parsing both produces equivalent timestamps within 5 seconds tolerance
+      const parsedUtc = new Date(settings.serverTime).getTime();
+      const parsedIst = new Date(settings.businessTimeIst).getTime();
+      expect(Math.abs(parsedUtc - parsedIst)).toBeLessThan(5000);
     });
   });
 });

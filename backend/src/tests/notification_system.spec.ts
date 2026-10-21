@@ -213,7 +213,7 @@ describe('Task L & N — Notification System, In-App Center, Operations Broadcas
       where: { user: { mobile: { in: [plumberMobile, tileWorkerMobile, opsAdminMobile, billAdminMobile] } } },
     });
     await prisma.user.deleteMany({
-      where: { mobile: { in: [plumberMobile, tileWorkerMobile] } },
+      where: { mobile: { in: [plumberMobile, tileWorkerMobile, opsAdminMobile, billAdminMobile] } },
     });
     await prisma.$disconnect();
     await closeRedis();
