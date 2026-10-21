@@ -512,6 +512,9 @@ jobs:
         working-directory: mobile
         run: npm ci --legacy-peer-deps
 
+      - name: Link Mobile Dependencies to Mobile Admin
+        run: ln -sf ../mobile/node_modules mobile-admin/node_modules
+
       - name: TypeScript Typecheck
         working-directory: mobile
         run: npx tsc --noEmit
@@ -526,6 +529,8 @@ jobs:
 
       - name: Run Mobile Admin Unit Tests
         working-directory: mobile-admin
+        env:
+          NODE_PATH: ../mobile/node_modules:node_modules
         run: npm test
 
   mobile-android-build:
