@@ -61,6 +61,7 @@ export default function LoginScreen() {
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
   const [forgotError, setForgotError] = useState<string | null>(null);
   const [forgotLoading, setForgotLoading] = useState(false);
+  const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
 
   // Cooldown countdown timer for OTP resend
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { prisma } from '../db';
 import { migrateLegacyPanRecords } from '../scripts/migrate-legacy-pan';
-import { decryptSensitive, generateBlindIndex } from '../utils/crypto.utils';
+import { encryptSensitive, decryptSensitive, generateBlindIndex } from '../utils/crypto.utils';
 
 describe('Phase 6 — PAN Data Migration & Blind Index Backfill', () => {
   let user1: any;
@@ -166,6 +166,32 @@ describe('Phase 6 — PAN Data Migration & Blind Index Backfill', () => {
     // Clean up
     await prisma.kycRecord.delete({ where: { id: duplicate.id } });
     await prisma.kycRecord.delete({ where: { id: existing.id } });
+  });
+
+  describe('Versioned Crypto Envelope & Legacy Backward Compatibility', () => {
+    it('encrypts with v1 envelope prefix and decrypts successfully', () => {
+      const plaintext = 'ABCDE1234F';
+      const ciphertext = encryptSensitive(plaintext);
+      expect(ciphertext.startsWith('v1:')).toBe(true);
+      expect(ciphertext.split(':').length).toBe(4);
+      expect(decryptSensitive(ciphertext)).toBe(plaintext);
+    });
+
+    it('decrypts legacy unversioned 3-part ciphertext (iv:tag:ct)', () => {
+      const plaintext = 'XYZAB5678C';
+      const v1Cipher = encryptSensitive(plaintext);
+      // Strip v1: prefix to simulate unversioned legacy database record
+      const legacyCipher = v1Cipher.slice(3);
+      expect(legacyCipher.split(':').length).toBe(3);
+      expect(decryptSensitive(legacyCipher)).toBe(plaintext);
+    });
+
+    it('handles empty inputs and malformed ciphertext safely', () => {
+      expect(encryptSensitive('')).toBe('');
+      expect(decryptSensitive('')).toBe('');
+      expect(() => decryptSensitive('malformed')).toThrow('Invalid encrypted data format.');
+      expect(() => decryptSensitive('v1:only_two:parts')).toThrow('Invalid versioned encrypted data format.');
+    });
   });
 });
 

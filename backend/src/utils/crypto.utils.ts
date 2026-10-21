@@ -47,7 +47,10 @@ export function decryptSensitive(cipherPackage: string): string {
   const parts = cipherPackage.split(':');
   
   let ivHex: string, tagHex: string, encryptedText: string;
-  if (parts.length === 4 && parts[0] === 'v1') {
+  if (parts[0] === 'v1') {
+    if (parts.length !== 4) {
+      throw new Error('Invalid versioned encrypted data format.');
+    }
     [, ivHex, tagHex, encryptedText] = parts;
   } else if (parts.length === 3) {
     // Backwards compatibility with unversioned legacy records

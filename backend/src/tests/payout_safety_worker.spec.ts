@@ -227,6 +227,11 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
       },
     });
 
+    await prisma.wallet.update({
+      where: { id: user.wallet.id },
+      data: { processingAmount: 1000.0 },
+    });
+
     const eventId = `evt_dedup_${Date.now()}`;
     const payload = {
       id: eventId,

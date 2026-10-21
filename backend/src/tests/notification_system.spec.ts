@@ -40,6 +40,12 @@ describe('Task L & N — Notification System, In-App Center, Operations Broadcas
     await prisma.bill.deleteMany({
       where: { user: { mobile: { in: [plumberMobile, tileWorkerMobile] } } },
     });
+    await prisma.walletTransaction.deleteMany({
+      where: { wallet: { user: { mobile: { in: [plumberMobile, tileWorkerMobile] } } } },
+    });
+    await prisma.payout.deleteMany({
+      where: { user: { mobile: { in: [plumberMobile, tileWorkerMobile] } } },
+    });
     await prisma.wallet.deleteMany({
       where: { user: { mobile: { in: [plumberMobile, tileWorkerMobile] } } },
     });
@@ -192,6 +198,12 @@ describe('Task L & N — Notification System, In-App Center, Operations Broadcas
       where: { createdByAdmin: { mobile: { in: [opsAdminMobile, billAdminMobile] } } },
     });
     await prisma.bill.deleteMany({
+      where: { user: { mobile: { in: [plumberMobile, tileWorkerMobile] } } },
+    });
+    await prisma.walletTransaction.deleteMany({
+      where: { wallet: { user: { mobile: { in: [plumberMobile, tileWorkerMobile] } } } },
+    });
+    await prisma.payout.deleteMany({
       where: { user: { mobile: { in: [plumberMobile, tileWorkerMobile] } } },
     });
     await prisma.wallet.deleteMany({

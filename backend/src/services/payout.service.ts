@@ -798,10 +798,12 @@ export class PayoutService {
         return payout;
       } else {
         // In-flight payout (PENDING, PAYOUT_INITIATED, PROCESSING)
+        const currentProcessing = Number(payout.wallet.processingAmount || 0);
+        const processingDecrement = Math.min(currentProcessing, payoutAmount);
         await tx.wallet.update({
           where: { id: payout.walletId },
           data: {
-            processingAmount: { decrement: payoutAmount },
+            processingAmount: { decrement: processingDecrement },
             availableBalance: { increment: payoutAmount },
             version: { increment: 1 },
           },
@@ -912,11 +914,13 @@ export class PayoutService {
       }
 
       const payoutAmount = Number(payout.amount);
+      const currentProcessing = Number(payout.wallet?.processingAmount || 0);
+      const processingDecrement = Math.min(currentProcessing, payoutAmount);
 
       await tx.wallet.update({
         where: { id: payout.walletId },
         data: {
-          processingAmount: { decrement: payoutAmount },
+          processingAmount: { decrement: processingDecrement },
           totalRedeemed: { increment: payoutAmount },
           version: { increment: 1 },
         },
