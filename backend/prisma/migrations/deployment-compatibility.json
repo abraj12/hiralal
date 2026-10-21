@@ -195,6 +195,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Additive columns statutoryRetentionExpiresAt and legalHold on User, indexes, and removes CASCADE on KycRecord and PaymentAccount in favor of RESTRICT."
+    },
+    {
+      "id": "20261022020000_add_upi_id_encrypted_to_payment_account",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive column upiIdEncrypted on PaymentAccount for AES-256-GCM encrypted UPI address storage."
     }
   ]
 }
