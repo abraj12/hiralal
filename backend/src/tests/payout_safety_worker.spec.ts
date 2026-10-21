@@ -386,4 +386,48 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
     expect(claim1.count + claim2.count).toBe(1);
     expect([claim1.count, claim2.count].sort()).toEqual([0, 1]);
   });
+
+  test('7. PayoutService.queryGatewayByReference: gateway query handling', async () => {
+    // Unconfigured credentials case
+    const origKey = config.razorpayx.keyId;
+    config.razorpayx.keyId = '';
+    const unconfigured = await PayoutService.queryGatewayByReference('ref_test_123');
+    expect(unconfigured.found).toBe(false);
+    expect(unconfigured.message).toBe('Payment gateway credentials unconfigured');
+    config.razorpayx.keyId = origKey;
+
+    // Mock fetch for gateway response
+    const origFetch = global.fetch;
+    try {
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ items: [{ id: 'pout_12345', status: 'processed' }] }),
+      } as any);
+      const found = await PayoutService.queryGatewayByReference('ref_test_123');
+      expect(found.found).toBe(true);
+      expect(found.payout.id).toBe('pout_12345');
+
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ items: [] }),
+      } as any);
+      const notFound = await PayoutService.queryGatewayByReference('ref_test_empty');
+      expect(notFound.found).toBe(false);
+
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+      } as any);
+      const failed = await PayoutService.queryGatewayByReference('ref_test_fail');
+      expect(failed.found).toBe(false);
+      expect(failed.message).toContain('Gateway query returned status 500');
+
+      global.fetch = jest.fn().mockRejectedValueOnce(new Error('Network failure'));
+      const errorRes = await PayoutService.queryGatewayByReference('ref_test_err');
+      expect(errorRes.found).toBe(false);
+      expect(errorRes.message).toBe('Network failure');
+    } finally {
+      global.fetch = origFetch;
+    }
+  });
 });

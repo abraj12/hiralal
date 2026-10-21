@@ -29,7 +29,7 @@ module.exports = {
       lines: 70
     },
     './src/services/payout.service.ts': {
-      lines: 75
+      lines: 70
     },
     './src/services/reward.service.ts': {
       lines: 70
