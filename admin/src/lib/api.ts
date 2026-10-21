@@ -55,6 +55,8 @@ export class AdminApiClient {
     const method = (options.method || 'GET').toUpperCase();
     const isMutating = !['GET', 'HEAD', 'OPTIONS'].includes(method);
     const isAuthBootstrap = endpoint.includes('/auth/login') ||
+      endpoint.includes('/auth/admin-portal/login') ||
+      endpoint.includes('/auth/admin/login') ||
       endpoint.includes('/auth/admin-login') ||
       endpoint.includes('/auth/admin/otp') ||
       endpoint.includes('/auth/otp') ||
@@ -305,9 +307,9 @@ export class AdminApiClient {
     });
   }
 
-  // Admin Password-First OTP-Second Authentication Flow
+  // Admin Password-First OTP-Second Authentication Flow (VULN-B03: uses dedicated /admin-portal/login endpoint)
   static login(identifier: string, password: string) {
-    return this.request('/auth/login', {
+    return this.request('/auth/admin-portal/login', {
       method: 'POST',
       body: JSON.stringify({ identifier, password }),
     });

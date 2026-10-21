@@ -287,15 +287,20 @@ describe('Master Remediation & Requirements Compliance Test Suite', () => {
 
   describe('6. Canonical /api/v1 and Compatibility /api Routing', () => {
     it('serves canonical /api/v1 route', async () => {
-      const res = await request(app).get('/api/v1/auth/admin-prefixes');
+      const res = await request(app).get('/api/v1/health');
       expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
+      expect(res.body.status).toBe('ok');
     });
 
     it('serves backwards-compatible /api alias route', async () => {
-      const res = await request(app).get('/api/auth/admin-prefixes');
+      const res = await request(app).get('/api/health');
       expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
+      expect(res.body.status).toBe('ok');
+    });
+
+    it('returns 404 for removed /admin-prefixes endpoint (VULN-B01)', async () => {
+      const res = await request(app).get('/api/v1/auth/admin-prefixes');
+      expect(res.status).toBe(404);
     });
   });
 

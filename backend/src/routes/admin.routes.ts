@@ -86,6 +86,7 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
       },
     });
 
+    const isBillAdmin = req.user?.role === 'BILL_ADMIN';
     const mappedRecentBills = await Promise.all(
       recentBills.map(async (b) => ({
         ...b,
@@ -96,7 +97,8 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
         eligibleRewardAmount: b.eligibleRewardAmount !== null ? Number(b.eligibleRewardAmount) : Number(b.billAmount),
         calculatedReward: Number(b.calculatedReward),
         rewardPercentage: b.rewardPercentage !== null ? Number(b.rewardPercentage) : null,
-        fileUrl: b.fileKey ? await StorageService.getSignedInvoiceUrl(b.fileKey, 1800) : '',
+        // G-02: Restrict presigned document URLs strictly to authorized BILL_ADMIN
+        fileUrl: isBillAdmin && b.fileKey ? await StorageService.getSignedInvoiceUrl(b.fileKey, 1800) : '',
       }))
     );
 
@@ -396,7 +398,8 @@ router.get('/users/:id', requireOperationsAdmin, async (req: AuthenticatedReques
           gstAmount: b.gstAmount !== null ? Number(b.gstAmount) : 0,
           eligibleRewardAmount: b.eligibleRewardAmount !== null ? Number(b.eligibleRewardAmount) : Number(b.billAmount),
           calculatedReward: Number(b.calculatedReward),
-          fileUrl: b.fileKey ? await StorageService.getSignedInvoiceUrl(b.fileKey, 1800) : '',
+          // G-02: OPERATIONS_ADMIN is not permitted to access invoice document URLs
+          fileUrl: '',
         }))
       ),
       payouts: user.payouts.map((p) => ({

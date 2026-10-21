@@ -899,7 +899,9 @@ export class AccountDeletionService {
             );
           }
 
-          // 3. Purge active push tokens, redact AppInstallation, sessions, and OTP requests
+          // 3. Purge active push tokens, notifications, redact AppInstallation, sessions, and OTP requests
+          // E-04: Notifications containing PII must be purged upon account deletion
+          await tx.notification.deleteMany({ where: { userId: u.id } });
           await tx.pushDeviceToken.deleteMany({ where: { userId: u.id } });
           await tx.appInstallation.updateMany({
             where: { userId: u.id },
@@ -933,9 +935,11 @@ export class AccountDeletionService {
                 verifiedName: 'ANONYMIZED_STATUTORY_RETENTION',
               },
             });
+            // E-03: Scrub personal phone-number-based UPI IDs even during statutory retention
             await tx.paymentAccount.updateMany({
               where: { userId: u.id },
               data: {
+                upiId: null,
                 accountHolderName: 'ANONYMIZED_STATUTORY_RETENTION',
                 providerRegisteredName: 'ANONYMIZED_STATUTORY_RETENTION',
                 isDefault: false,

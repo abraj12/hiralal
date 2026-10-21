@@ -537,25 +537,155 @@ export class PayoutService {
   }
 
   /**
+   * Queries or cancels a payout at the RazorpayX payment gateway.
+   * Required before releasing reserved funds for in-flight payouts (FIN-04).
+   */
+  static async cancelGatewayPayout(razorpayPayoutId: string): Promise<{ success: boolean; status: string; message?: string }> {
+    if (!config.razorpayx.keyId || !config.razorpayx.keySecret) {
+      if (config.nodeEnv === 'test') {
+        return { success: true, status: 'cancelled' };
+      }
+      return { success: false, status: 'unconfigured', message: 'Payment gateway credentials are not configured.' };
+    }
+
+    const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      let cancelRes: any;
+      try {
+        cancelRes = await fetch(`https://api.razorpay.com/v1/payouts/${razorpayPayoutId}/cancel`, {
+          method: 'POST',
+          headers: {
+            Authorization: auth,
+            'Content-Type': 'application/json',
+          },
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (cancelRes.ok) {
+        const data: any = await cancelRes.json();
+        return { success: true, status: data.status || 'cancelled' };
+      }
+
+      // If cancellation endpoint returns non-200, query authoritative current status from gateway
+      const statusRes = await fetch(`https://api.razorpay.com/v1/payouts/${razorpayPayoutId}`, {
+        headers: { Authorization: auth },
+      });
+
+      if (statusRes.ok) {
+        const payoutData: any = await statusRes.json();
+        const currentStatus = payoutData.status; // 'processed', 'processing', 'queued', 'cancelled', 'rejected', 'reversed'
+        if (currentStatus === 'cancelled' || currentStatus === 'rejected' || currentStatus === 'reversed') {
+          return { success: true, status: currentStatus };
+        }
+        return {
+          success: false,
+          status: currentStatus,
+          message: `Payout cannot be cancelled because its gateway status is '${currentStatus}'. Funds may still settle or have settled.`,
+        };
+      }
+
+      return {
+        success: false,
+        status: 'ambiguous',
+        message: `Gateway cancellation returned HTTP ${cancelRes.status} and status lookup failed.`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        status: 'error',
+        message: `Gateway cancellation request failed: ${err.message}`,
+      };
+    }
+  }
+
+  /**
    * Rejects a redemption request before final settlement.
    * Atomically restores reserved processingAmount back to availableBalance,
    * creates immutable PAYOUT_REVERSAL ledger entry, updates payout status to FAILED with rejection reason,
    * creates audit log, and notifies user.
+   *
+   * SEC-FIN: Enforces strict Wallet-first row-level lock hierarchy (E-02) and verifies gateway
+   * cancellation before in-flight payout rejection (FIN-04).
    */
   static async rejectRedemption(payoutId: string, adminId: string, reason: string) {
     if (!reason || !reason.trim()) {
       throw new Error('Rejection reason is required.');
     }
 
+    // Inspect payout metadata before transaction
+    const payoutMeta = await prisma.payout.findUnique({
+      where: { id: payoutId },
+      select: { id: true, walletId: true, status: true, razorpayPayoutId: true, amount: true, requiresManualReview: true },
+    });
+
+    if (!payoutMeta) {
+      throw new Error(`Payout ${payoutId} not found`);
+    }
+
+    const isPending = payoutMeta.status === 'PENDING';
+    const isApproved = payoutMeta.status === 'APPROVED';
+    const isInFlight = payoutMeta.status === 'PROCESSING' || payoutMeta.status === 'PAYOUT_INITIATED';
+
+    if (!isPending && !isApproved && !isInFlight) {
+      if (payoutMeta.status === 'SUCCESS') {
+        throw new Error(`Cannot reject payout ${payoutId} because it has already successfully completed.`);
+      }
+      throw new Error(
+        `Cannot manually reject payout in ${payoutMeta.status} state. Manual rejection is permitted only before payout dispatch or for confirmed cancelled payouts.`
+      );
+    }
+
+    // FIN-04: Cannot reject an in-flight payout without verified gateway cancellation
+    if (isInFlight) {
+      if (payoutMeta.razorpayPayoutId) {
+        const cancelRes = await this.cancelGatewayPayout(payoutMeta.razorpayPayoutId);
+        if (!cancelRes.success) {
+          // Flag for manual reconciliation and keep funds safely reserved
+          await prisma.payout.update({
+            where: { id: payoutMeta.id },
+            data: {
+              requiresManualReview: true,
+              manualReviewReason: `Rejection attempt blocked: ${cancelRes.message}`,
+            },
+          });
+          throw new Error(
+            `Cannot reject in-flight payout: ${cancelRes.message || 'Gateway transfer could not be cancelled.'} Funds must remain reserved to prevent double-spending.`
+          );
+        }
+      } else if (config.nodeEnv !== 'test') {
+        throw new Error('Cannot reject in-flight payout without gateway payout identifier. Payout must be reconciled first.');
+      }
+    }
+
     return await prisma.$transaction(async (tx) => {
-      const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+      // 1. Lock Wallet FIRST (E-02: global lock ordering hierarchy prevents 40P01 deadlocks)
+      const lockedWallet = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Wallet"
+        WHERE "id" = ${payoutMeta.walletId}
+        FOR UPDATE
+      `;
+
+      if (!lockedWallet || lockedWallet.length === 0) {
+        throw new Error(`Wallet ${payoutMeta.walletId} not found`);
+      }
+
+      // 2. Lock Payout SECOND
+      const lockedPayout = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
         FROM "Payout"
         WHERE "id" = ${payoutId}
         FOR UPDATE
       `;
 
-      if (!lockedRows || lockedRows.length === 0) {
+      if (!lockedPayout || lockedPayout.length === 0) {
         throw new Error(`Payout ${payoutId} not found`);
       }
 
@@ -566,26 +696,25 @@ export class PayoutService {
 
       if (!payout) throw new Error(`Payout ${payoutId} not found`);
 
-      const isPending = payout.status === 'PENDING';
-      const isApproved = payout.status === 'APPROVED';
-      const isStuckUnderReview =
-        (payout.status === 'PROCESSING' || payout.status === 'PAYOUT_INITIATED') &&
-        payout.requiresManualReview === true;
+      if (payout.status === 'FAILED' || payout.status === 'REVERSED') {
+        throw new Error(`Cannot manually reject payout in ${payout.status} state.`);
+      }
 
-      const isEligibleForManualRejection = isPending || isApproved || isStuckUnderReview;
-
-      if (!isEligibleForManualRejection) {
-        if (payout.status === 'SUCCESS') {
-          throw new Error(`Cannot reject payout ${payoutId} because it has already successfully completed.`);
-        }
-        throw new Error(
-          `Cannot manually reject payout in ${payout.status} state. Manual rejection is permitted only before payout dispatch or for stuck payouts under manual review.`
-        );
+      if (payout.status === 'SUCCESS') {
+        throw new Error(`Cannot reject payout ${payoutId} because it has already successfully completed.`);
       }
 
       const payoutAmount = Number(payout.amount);
+      const currentProcessing = Number(payout.wallet?.processingAmount || 0);
 
-      // Atomically shift funds from processingAmount back to availableBalance (SEC-MED-07: atomic return without read skew)
+      // FIN-01 / E-01: Ledger invariant validation under row lock
+      if (currentProcessing < payoutAmount) {
+        throw new Error(
+          `Ledger invariant violation: Wallet processingAmount (${currentProcessing}) is less than rejection payout amount (${payoutAmount}) for payout ${payoutId}`
+        );
+      }
+
+      // Atomically shift funds from processingAmount back to availableBalance
       const updatedWallet = await tx.wallet.update({
         where: { id: payout.walletId },
         data: {
@@ -651,6 +780,7 @@ export class PayoutService {
       return updatedPayout;
     });
   }
+
   /**
    * Fails a payout before external provider dispatch has occurred.
    * Atomically reverts processingAmount back to availableBalance,
@@ -665,9 +795,33 @@ export class PayoutService {
    * Reverses a failed payout: refunds funds from processingAmount back to availableBalance,
    * creates an immutable PAYOUT_REVERSAL transaction, updates payout status to FAILED,
    * and notifies the user.
+   *
+   * SEC-FIN: Enforces Wallet-first locking (E-02) and verifies exact processing funds (FIN-01).
    */
   static async reversePayout(payoutId: string, reason: string) {
+    const payoutMeta = await prisma.payout.findUnique({
+      where: { id: payoutId },
+      select: { id: true, walletId: true },
+    });
+
+    if (!payoutMeta) {
+      throw new Error(`Payout ${payoutId} not found`);
+    }
+
     return await prisma.$transaction(async (tx) => {
+      // 1. Lock Wallet FIRST (E-02: lock hierarchy prevents deadlocks)
+      const lockedWallet = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Wallet"
+        WHERE "id" = ${payoutMeta.walletId}
+        FOR UPDATE
+      `;
+
+      if (!lockedWallet || lockedWallet.length === 0) {
+        throw new Error(`Wallet ${payoutMeta.walletId} not found`);
+      }
+
+      // 2. Lock Payout SECOND
       const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
         FROM "Payout"
@@ -697,6 +851,14 @@ export class PayoutService {
       }
 
       const payoutAmount = Number(payout.amount);
+      const currentProcessing = Number(payout.wallet?.processingAmount || 0);
+
+      // FIN-01: Enforce ledger invariant
+      if (currentProcessing < payoutAmount) {
+        throw new Error(
+          `Ledger invariant violation: Wallet processingAmount (${currentProcessing}) is less than payout amount (${payoutAmount}) for reversePayout ${payoutId}`
+        );
+      }
 
       // Atomically shift funds from processingAmount back to availableBalance
       await tx.wallet.update({
@@ -755,9 +917,33 @@ export class PayoutService {
   /**
    * Handles confirmed post-settlement or in-flight payout reversal (e.g. payout.reversed gateway webhook event).
    * Restores funds to user's available balance and creates an immutable audit and ledger trail.
+   *
+   * SEC-FIN: Eliminates unbacked point creation (FIN-01) and locks Wallet before Payout (E-02).
    */
   static async handleReversedPayout(payoutId: string, reason: string) {
+    const payoutMeta = await prisma.payout.findUnique({
+      where: { id: payoutId },
+      select: { id: true, walletId: true },
+    });
+
+    if (!payoutMeta) {
+      throw new Error(`Payout ${payoutId} not found`);
+    }
+
     return await prisma.$transaction(async (tx) => {
+      // 1. Lock Wallet FIRST (E-02)
+      const lockedWallet = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Wallet"
+        WHERE "id" = ${payoutMeta.walletId}
+        FOR UPDATE
+      `;
+
+      if (!lockedWallet || lockedWallet.length === 0) {
+        throw new Error(`Wallet ${payoutMeta.walletId} not found`);
+      }
+
+      // 2. Lock Payout SECOND
       const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
         FROM "Payout"
@@ -798,12 +984,19 @@ export class PayoutService {
         return payout;
       } else {
         // In-flight payout (PENDING, PAYOUT_INITIATED, PROCESSING)
-        const currentProcessing = Number(payout.wallet.processingAmount || 0);
-        const processingDecrement = Math.min(currentProcessing, payoutAmount);
+        const currentProcessing = Number(payout.wallet?.processingAmount || 0);
+
+        // FIN-01: Remove unsafe clamping that mints unbacked points
+        if (currentProcessing < payoutAmount) {
+          throw new Error(
+            `Ledger invariant violation: Wallet processingAmount (${currentProcessing}) is less than reversal payout amount (${payoutAmount}) for payout ${payoutId}`
+          );
+        }
+
         await tx.wallet.update({
           where: { id: payout.walletId },
           data: {
-            processingAmount: { decrement: processingDecrement },
+            processingAmount: { decrement: payoutAmount },
             availableBalance: { increment: payoutAmount },
             version: { increment: 1 },
           },
@@ -870,9 +1063,34 @@ export class PayoutService {
   /**
    * Finalizes a successful payout: moves funds out of processingAmount, increments totalRedeemed,
    * updates payout status to SUCCESS, and notifies user.
+   *
+   * SEC-FIN: Enforces DEFECT-J01 double-spend prevention, exact processing deduction (FIN-01),
+   * row-level locking (E-01), and Wallet-first lock ordering (E-02).
    */
   static async finalizeSuccess(payoutId: string, razorpayPayoutId?: string, adminId?: string) {
+    const payoutMeta = await prisma.payout.findUnique({
+      where: { id: payoutId },
+      select: { id: true, walletId: true },
+    });
+
+    if (!payoutMeta) {
+      throw new Error(`Payout ${payoutId} not found`);
+    }
+
     return await prisma.$transaction(async (tx) => {
+      // 1. Lock Wallet FIRST (E-02: global lock ordering hierarchy)
+      const lockedWallet = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Wallet"
+        WHERE "id" = ${payoutMeta.walletId}
+        FOR UPDATE
+      `;
+
+      if (!lockedWallet || lockedWallet.length === 0) {
+        throw new Error(`Wallet ${payoutMeta.walletId} not found`);
+      }
+
+      // 2. Lock Payout SECOND
       const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
         FROM "Payout"
@@ -892,7 +1110,7 @@ export class PayoutService {
       if (!payout) throw new Error(`Payout ${payoutId} not found`);
       if (payout.status === 'SUCCESS') return payout;
 
-      // Forbidden transition: Cannot finalize a payout that was already FAILED or REVERSED
+      // DEFECT-J01: Forbidden transition: Cannot finalize a payout that was already FAILED or REVERSED
       if (payout.status === 'FAILED' || payout.status === 'REVERSED') {
         throw new Error(`Cannot finalize payout ${payoutId} because it is already in terminal state ${payout.status}`);
       }
@@ -915,12 +1133,18 @@ export class PayoutService {
 
       const payoutAmount = Number(payout.amount);
       const currentProcessing = Number(payout.wallet?.processingAmount || 0);
-      const processingDecrement = Math.min(currentProcessing, payoutAmount);
+
+      // FIN-01: Do not clamp decrement. Verify exact reserved funds exist.
+      if (currentProcessing < payoutAmount) {
+        throw new Error(
+          `Ledger invariant violation: Wallet processingAmount (${currentProcessing}) is less than payout amount (${payoutAmount}) for finalizeSuccess on payout ${payoutId}`
+        );
+      }
 
       await tx.wallet.update({
         where: { id: payout.walletId },
         data: {
-          processingAmount: { decrement: processingDecrement },
+          processingAmount: { decrement: payoutAmount },
           totalRedeemed: { increment: payoutAmount },
           version: { increment: 1 },
         },

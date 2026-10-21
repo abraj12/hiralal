@@ -642,11 +642,6 @@ export class MobileApiClient {
     });
   }
 
-  // Public Admin Discovery
-  static getAdminPrefixes(): Promise<{ success: boolean; prefixes: { billAdmin: string; operationsAdmin: string } }> {
-    return this.request('/auth/admin-prefixes');
-  }
-
   // Payment Accounts
   static verifyUpi(upiId: string, accountHolderName?: string, attestation?: RequiredActionAttestation) {
     const extraHeaders: Record<string, string> = {};

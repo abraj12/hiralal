@@ -1109,20 +1109,17 @@ describe('Canonical Play Integrity Request Binding Cross-Check', () => {
 });
 
 // ==========================================
-// 6. Admin Prefix Discovery API
+// 6. Admin Prefix Discovery API (Removed in VULN-B01)
 // ==========================================
-describe('Admin Prefix Discovery — Dynamic Server-Configured Prefixes', () => {
-  test('GET /api/auth/admin-prefixes returns configured prefixes without authentication', async () => {
+describe('Admin Prefix Discovery — Removed Endpoint (VULN-B01)', () => {
+  test('GET /api/auth/admin-prefixes returns 404 to prevent prefix enumeration', async () => {
     const res = await request(app).get('/api/auth/admin-prefixes');
+    expect(res.status).toBe(404);
+  });
 
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.prefixes).toBeDefined();
-    expect(typeof res.body.prefixes.billAdmin).toBe('string');
-    expect(typeof res.body.prefixes.operationsAdmin).toBe('string');
-    expect(res.body.prefixes.billAdmin.length).toBeGreaterThan(0);
-    expect(res.body.prefixes.operationsAdmin.length).toBeGreaterThan(0);
-    expect(res.body.prefixes.billAdmin).not.toBe(res.body.prefixes.operationsAdmin);
+  test('GET /api/v1/auth/admin-prefixes returns 404 to prevent prefix enumeration', async () => {
+    const res = await request(app).get('/api/v1/auth/admin-prefixes');
+    expect(res.status).toBe(404);
   });
 
   test('Standard mobile login with non-admin prefix follows user auth path', async () => {

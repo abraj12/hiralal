@@ -99,11 +99,22 @@ app.use(['/api/v1/webhooks', '/api/webhooks'], express.json({
   },
 }));
 
-// 2. Global strict 100kb body parser for standard REST API routes to prevent memory exhaustion DoS (Finding B-01 / SEC-B01)
-// Large payload parsing for bill uploads is mounted exclusively on authenticated sub-routes.
-app.use(express.json({
-  limit: '100kb',
+// 2. High-capacity body parser for bill invoice submissions (Base64 documents up to 15MB)
+// VULN-B08: Evaluated before global 100kb parser to prevent premature HTTP 413 rejections
+app.use(['/api/v1/bills', '/api/bills'], express.json({
+  limit: process.env.JSON_BODY_LIMIT || '15mb',
 }));
+
+// 3. Global strict 100kb body parser for standard REST API routes to prevent memory exhaustion DoS
+app.use((req: Request, res: Response, next: NextFunction) => {
+  // If the request was already parsed by a specialized route parser above, skip
+  if (req.body !== undefined) {
+    return next();
+  }
+  express.json({
+    limit: '100kb',
+  })(req, res, next);
+});
 
 // Static assets (logos, cards, banners for mobile and admin)
 const sharedAssetsPath = path.join(__dirname, '../../shared/assets');

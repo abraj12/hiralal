@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Download actionlint
         id: get_actionlint
@@ -66,10 +66,10 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 22
           cache: 'npm'
@@ -162,7 +162,7 @@ jobs:
 
       - name: Upload Test Output Log Artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: jest-test-log
           path: backend/test_output.log
@@ -170,7 +170,7 @@ jobs:
 
       - name: Upload Part 2A.5 Audit Remediation Report Artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: part-2a5-audit-remediation-report
           path: docs/audits/part_2a5_audit_remediation_report.md
@@ -179,7 +179,7 @@ jobs:
 
       - name: Upload Part 2 Master Remediation Report Artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: part-2-master-remediation-report
           path: docs/audits/part_2_master_remediation_report.md
@@ -188,7 +188,7 @@ jobs:
 
       - name: Upload Part 2 Play Integrity Hardening Report Artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: part-2-play-integrity-hardening-report
           path: docs/audits/part_2_play_integrity_hardening_report.md
@@ -201,10 +201,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 22
           cache: 'npm'
@@ -255,13 +255,13 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
 
       - name: Build Backend Docker Image for linux/amd64
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@4a13e500e55cf31b7a5d59a38ab2040ab0f42f56 # v5.1.0
         with:
           context: ./backend
           file: ./backend/Dockerfile
@@ -270,7 +270,7 @@ jobs:
           tags: hiralal-backend:ci-amd64-test
 
       - name: Build Admin Panel Docker Image for linux/amd64
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@4a13e500e55cf31b7a5d59a38ab2040ab0f42f56 # v5.1.0
         with:
           context: ./admin
           file: ./admin/Dockerfile
@@ -279,7 +279,7 @@ jobs:
           tags: hiralal-admin:ci-amd64-test
 
       - name: Build Migration Runner Docker Image for linux/amd64
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@4a13e500e55cf31b7a5d59a38ab2040ab0f42f56 # v5.1.0
         with:
           context: ./backend
           file: ./backend/Dockerfile.migrate
@@ -294,7 +294,7 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Generate Fallback SSL Certificates for Nginx
         run: |
@@ -349,7 +349,7 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.ci.yml config
 
       - name: Setup Node.js 22 for Migration Runner
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 22
           cache: 'npm'
@@ -483,7 +483,7 @@ jobs:
 
       - name: Upload Diagnostic Logs on Failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: compose-smoke-test-failure-logs
           path: ci-artifacts/compose-logs/
@@ -499,10 +499,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 22
           cache: 'npm'
@@ -539,17 +539,17 @@ jobs:
     needs: [mobile-check]
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 22
           cache: 'npm'
           cache-dependency-path: mobile/package-lock.json
 
       - name: Setup Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@8df1039502a140fb602334f147a24f97be6693b1 # v4.5.0
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -581,7 +581,7 @@ jobs:
 
       - name: Upload Debug APK Artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: mobile-debug-apk
           path: mobile/android/app/build/outputs/apk/debug/*.apk

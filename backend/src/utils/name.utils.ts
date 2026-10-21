@@ -118,9 +118,9 @@ export function buildCanonicalFullName(
 }
 
 /**
- * Normalizes a name string for reliable comparison against PAN tax records:
+ * Normalizes a name string for reliable comparison against PAN and Banking records:
  * - Trims and converts to uppercase
- * - Strips common honorific titles (MR, MRS, MS, SHRI, SMT, DR)
+ * - Strips common Indian honorific titles and business prefixes (MR, MRS, MS, SHRI, SHREE, SMT, DR, M/S)
  * - Replaces non-alphanumeric punctuation with single spaces
  * - Collapses consecutive spaces
  */
@@ -129,18 +129,34 @@ export function normalizeName(name: string): string {
 
   let cleaned = name.trim().toUpperCase();
 
-  // Replace punctuation like dots, dashes, commas with space
+  // Replace punctuation like dots, dashes, slashes, commas with space
   cleaned = cleaned.replace(/[^A-Z0-9\s]/g, ' ');
 
   // Collapse multiple whitespaces
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
   // Strip common honorific prefixes (Note: 'MD' is NOT stripped as it represents Mohammad in Indian names)
-  const prefixes = ['SHRI ', 'SMT ', 'MR ', 'MRS ', 'MS ', 'DR '];
-  for (const prefix of prefixes) {
-    if (cleaned.startsWith(prefix)) {
-      cleaned = cleaned.substring(prefix.length).trim();
-      break;
+  // Strip iteratively in case multiple honorifics are combined (e.g. "SHREE MR")
+  const prefixes = [
+    'SHREE ',
+    'SHRI ',
+    'SMT ',
+    'MR ',
+    'MRS ',
+    'MS ',
+    'DR ',
+    'M S ', // M/S becomes "M S " after punctuation replacement
+  ];
+
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (const prefix of prefixes) {
+      if (cleaned.startsWith(prefix)) {
+        cleaned = cleaned.substring(prefix.length).trim();
+        stripped = true;
+        break;
+      }
     }
   }
 
@@ -148,11 +164,14 @@ export function normalizeName(name: string): string {
 }
 
 /**
- * Compares an account name with a verified PAN holder name:
+ * Compares an account beneficiary name with a verified PAN holder name:
  * 1. Checks exact normalized string match.
  * 2. Checks token set equality (e.g. "RAJESH KUMAR SHARMA" matches "SHARMA RAJESH KUMAR").
- * 3. Handles initial expansion (e.g. "R K SHARMA" vs "RAJESH KUMAR SHARMA") requiring at least
+ * 3. Handles omitted middle names / token subset matching (e.g. "RAMESH GUPTA" matches "RAMESH CHANDRA GUPTA"),
+ *    requiring at least 2 tokens in both names and exact matches on the common anchor tokens.
+ * 4. Handles initial expansion (e.g. "R K SHARMA" vs "RAJESH KUMAR SHARMA") requiring at least
  *    one anchor token of length >= 2 to match exactly to prevent ambiguous single-letter false matches.
+ * 5. Rejects single-token matches or conflicting anchor tokens to prevent fraudulent account takeovers.
  */
 export function compareNames(accountName: string, panVerifiedName: string): boolean {
   const normAccount = normalizeName(accountName);
@@ -160,41 +179,102 @@ export function compareNames(accountName: string, panVerifiedName: string): bool
 
   if (!normAccount || !normPan) return false;
 
-  // Exact normalized match
+  // 1. Exact normalized match
   if (normAccount === normPan) return true;
 
   const accountTokens = normAccount.split(' ').filter(Boolean);
   const panTokens = normPan.split(' ').filter(Boolean);
 
-  // Set-based token comparison (order independence for Indian names)
+  if (accountTokens.length === 0 || panTokens.length === 0) return false;
+
+  // 2. Set-based token comparison (order independence for Indian names)
   if (accountTokens.length === panTokens.length) {
     const sortedAccount = [...accountTokens].sort().join(' ');
     const sortedPan = [...panTokens].sort().join(' ');
     if (sortedAccount === sortedPan) return true;
   }
 
-  // Token subset match for single initials (e.g., "R K SHARMA" vs "RAJESH KUMAR SHARMA")
-  // Requires at least one anchor token (length >= 2) that is an exact identical match (e.g. surname)
+  // 3. Token-length equality with initial matching (e.g. "R K SHARMA" vs "RAJESH KUMAR SHARMA" or swapped)
   if (accountTokens.length === panTokens.length && accountTokens.length >= 2) {
-    let hasExactAnchorToken = false;
-    let allTokensMatch = true;
-    for (let i = 0; i < accountTokens.length; i++) {
-      const aTok = accountTokens[i];
-      const pTok = panTokens[i];
-      if (aTok === pTok) {
-        if (aTok.length >= 2) {
-          hasExactAnchorToken = true;
+    // Try matching tokens with order independence
+    const matchedPanIndices = new Set<number>();
+    let anchorMatched = false;
+    let allTokensMatched = true;
+
+    for (const aTok of accountTokens) {
+      let foundMatch = false;
+      for (let pIdx = 0; pIdx < panTokens.length; pIdx++) {
+        if (matchedPanIndices.has(pIdx)) continue;
+        const pTok = panTokens[pIdx];
+
+        if (aTok === pTok) {
+          if (aTok.length >= 2) anchorMatched = true;
+          matchedPanIndices.add(pIdx);
+          foundMatch = true;
+          break;
+        } else if (
+          (aTok.length === 1 && pTok.startsWith(aTok)) ||
+          (pTok.length === 1 && aTok.startsWith(pTok))
+        ) {
+          matchedPanIndices.add(pIdx);
+          foundMatch = true;
+          break;
         }
-        continue;
       }
-      // Single character initial match
-      if ((aTok.length === 1 && pTok.startsWith(aTok)) || (pTok.length === 1 && aTok.startsWith(pTok))) {
-        continue;
+      if (!foundMatch) {
+        allTokensMatched = false;
+        break;
       }
-      allTokensMatch = false;
-      break;
     }
-    if (allTokensMatch && hasExactAnchorToken) return true;
+
+    if (allTokensMatched && anchorMatched && matchedPanIndices.size === panTokens.length) {
+      return true;
+    }
+  }
+
+  // 4. Omitted middle name / token subset matching (REC-03 / REC-04)
+  // Indian bank accounts frequently omit middle names present on PAN cards (e.g. "RAMESH GUPTA" vs "RAMESH CHANDRA GUPTA")
+  // Both names must have at least 2 tokens to prevent matching single first names.
+  const [shorterTokens, longerTokens] =
+    accountTokens.length <= panTokens.length
+      ? [accountTokens, panTokens]
+      : [panTokens, accountTokens];
+
+  if (shorterTokens.length >= 2 && longerTokens.length > shorterTokens.length) {
+    let exactAnchorsCount = 0;
+    const matchedLongerIndices = new Set<number>();
+    let allShortTokensMatched = true;
+
+    for (const sTok of shorterTokens) {
+      let foundMatch = false;
+      for (let lIdx = 0; lIdx < longerTokens.length; lIdx++) {
+        if (matchedLongerIndices.has(lIdx)) continue;
+        const lTok = longerTokens[lIdx];
+
+        if (sTok === lTok) {
+          if (sTok.length >= 2) exactAnchorsCount++;
+          matchedLongerIndices.add(lIdx);
+          foundMatch = true;
+          break;
+        } else if (
+          (sTok.length === 1 && lTok.startsWith(sTok)) ||
+          (lTok.length === 1 && sTok.startsWith(lTok))
+        ) {
+          matchedLongerIndices.add(lIdx);
+          foundMatch = true;
+          break;
+        }
+      }
+      if (!foundMatch) {
+        allShortTokensMatched = false;
+        break;
+      }
+    }
+
+    // Must match all tokens of the shorter name, and have at least 2 exact anchor tokens (e.g. First Name & Last Name)
+    if (allShortTokensMatched && exactAnchorsCount >= 2) {
+      return true;
+    }
   }
 
   return false;

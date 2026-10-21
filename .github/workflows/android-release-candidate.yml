@@ -89,7 +89,7 @@ jobs:
           echo "All required Android release signing secrets are present."
 
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.event.inputs.release_sha }}
           fetch-depth: 0
@@ -126,14 +126,14 @@ jobs:
           echo "Verified: Passing CI workflow exists for release commit ${RELEASE_SHA}."
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 22
           cache: 'npm'
           cache-dependency-path: mobile/package-lock.json
 
       - name: Setup Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@8df1039502a140fb602334f147a24f97be6693b1 # v4.5.0
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -356,7 +356,7 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Signed Release Candidate Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: android-release-${{ env.VALIDATED_RELEASE_SHA }}
           path: release-artifacts/*

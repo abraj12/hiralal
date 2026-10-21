@@ -83,15 +83,8 @@ router.post(['/admin/verify-prefix', '/verify-admin-prefix'], adminPrefixesLimit
   });
 });
 
-router.get('/admin-prefixes', adminPrefixesLimiter, (_req: Request, res: Response) => {
-  res.json({
-    success: true,
-    prefixes: {
-      billAdmin: config.admin.billAdminPrefix,
-      operationsAdmin: config.admin.operationsAdminPrefix,
-    },
-  });
-});
+// VULN-B01: Removed unauthenticated /admin-prefixes endpoint. Administrative prefixes
+// must never be publicly discoverable via API and are configured at deployment time.
 
 // ==========================================
 // 1. OTP REQUEST & VERIFICATION
@@ -217,6 +210,75 @@ router.post('/register', registerIpLimiter, async (req: Request, res: Response) 
 // 3. LOGIN & SESSIONS
 // ==========================================
 
+/**
+ * Dedicated Web Admin Login Endpoint (VULN-B03)
+ * Provides cleanly separated authentication flow for administrative portal browser sessions.
+ * Strictly enforces administrative prefix gating, dedicated brute-force rate limits,
+ * and mandatory two-factor authentication (ADMIN_OTP_REQUIRED).
+ */
+router.post(
+  '/admin-portal/login',
+  loginIpLimiter,
+  adminLoginLimiter,
+  adminAccountLoginLimiter,
+  async (req: Request, res: Response) => {
+    const rawIdentifier = String(req.body?.identifier || req.body?.mobile || '').trim();
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+    if (!rawIdentifier || !password) {
+      return res.status(400).json({ success: false, message: 'Administrator identifier and password are required.' });
+    }
+
+    const isAdminCandidate = AuthService.isConfiguredAdminPrefix(rawIdentifier);
+    if (!isAdminCandidate) {
+      return res.status(403).json({
+        success: false,
+        code: 'ADMIN_ACCESS_DENIED',
+        message: 'Invalid administrator credentials. Access denied.',
+      });
+    }
+
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+
+    try {
+      const result = await AuthService.authenticatePasswordFirst({
+        identifier: rawIdentifier,
+        password,
+        ipAddress,
+        userAgent,
+      });
+
+      if (result.kind === 'USER_AUTHENTICATED') {
+        // Administrative accounts strictly require 2FA. Ordinary user sessions cannot be established here.
+        return res.status(403).json({
+          success: false,
+          code: 'ADMIN_ACCESS_DENIED',
+          message: 'Invalid administrator credentials. Access denied.',
+        });
+      }
+
+      if (result.kind === 'ADMIN_OTP_REQUIRED') {
+        return res.status(200).json({
+          success: true,
+          type: 'ADMIN_OTP_REQUIRED',
+          requiresOtp: true,
+          challengeId: result.challengeId,
+          challengeToken: result.challengeToken,
+          role: result.role,
+          mobileMasked: result.mobileMasked,
+          message: result.message,
+          cooldownSeconds: result.cooldownSeconds,
+        });
+      }
+
+      return res.status(400).json({ success: false, message: 'Authentication failed.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err.message || 'Authentication failed.' });
+    }
+  }
+);
+
 router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Response) => {
   const rawIdentifier = String(req.body?.identifier || req.body?.mobile || '').trim();
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
@@ -266,33 +328,13 @@ router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Re
       });
     }
   } else if (isEnforcing) {
-    // In enforcing mode, only browser sessions from configured Web Admin origins
-    // are exempt from mobile device integrity attestation.
-    // SEC-HIGH-02: Use strict parsed URL origin equality to eliminate prefix/subdomain spoofing
-    const origin = (req.headers.origin || req.headers.referer || '') as string;
-    let isAllowedWebAdminOrigin = false;
-    if (isAdminCandidate && origin) {
-      try {
-        const parsedOrigin = new URL(origin).origin;
-        isAllowedWebAdminOrigin = config.cors.allowedOrigins.some((allowed) => {
-          try {
-            return new URL(allowed).origin === parsedOrigin;
-          } catch {
-            return allowed === parsedOrigin;
-          }
-        });
-      } catch {
-        isAllowedWebAdminOrigin = false;
-      }
-    }
-
-    if (!isAllowedWebAdminOrigin) {
-      return res.status(403).json({
-        success: false,
-        code: 'INTEGRITY_REQUIRED',
-        message: 'Device integrity attestation is required for mobile login.',
-      });
-    }
+    // VULN-B03: Client-supplied Origin/Referer headers CANNOT bypass mobile attestation.
+    // Web Admin uses the separated POST /api/v1/auth/admin/login route.
+    return res.status(403).json({
+      success: false,
+      code: 'INTEGRITY_REQUIRED',
+      message: 'Device integrity attestation is required for mobile login.',
+    });
   }
 
   const ipAddress = req.ip || req.socket.remoteAddress;
