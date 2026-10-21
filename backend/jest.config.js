@@ -23,7 +23,8 @@ module.exports = {
       lines: 80
     },
     './src/services/auth.service.ts': {
-      lines: 70
+      lines: 70,
+      branches: 70
     },
     './src/services/bill.service.ts': {
       lines: 70
