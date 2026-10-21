@@ -141,6 +141,7 @@ export function normalizeName(name: string): string {
     'SHREE ',
     'SHRI ',
     'SMT ',
+    'KUMARI ',
     'MR ',
     'MRS ',
     'MS ',
@@ -163,17 +164,25 @@ export function normalizeName(name: string): string {
   return cleaned;
 }
 
+export interface NameComparisonOptions {
+  strictTokenCount?: boolean;
+}
+
 /**
  * Compares an account beneficiary name with a verified PAN holder name:
  * 1. Checks exact normalized string match.
  * 2. Checks token set equality (e.g. "RAJESH KUMAR SHARMA" matches "SHARMA RAJESH KUMAR").
- * 3. Handles omitted middle names / token subset matching (e.g. "RAMESH GUPTA" matches "RAMESH CHANDRA GUPTA"),
- *    requiring at least 2 tokens in both names and exact matches on the common anchor tokens.
- * 4. Handles initial expansion (e.g. "R K SHARMA" vs "RAJESH KUMAR SHARMA") requiring at least
+ * 3. Handles initial expansion (e.g. "R K SHARMA" vs "RAJESH KUMAR SHARMA") requiring at least
  *    one anchor token of length >= 2 to match exactly to prevent ambiguous single-letter false matches.
+ * 4. Handles omitted middle names / token subset matching (e.g. "RAMESH GUPTA" matches "RAMESH CHANDRA GUPTA"),
+ *    requiring at least 2 tokens in both names and exact matches on the common anchor tokens (first name and surname).
  * 5. Rejects single-token matches or conflicting anchor tokens to prevent fraudulent account takeovers.
  */
-export function compareNames(accountName: string, panVerifiedName: string): boolean {
+export function compareNames(
+  accountName: string,
+  panVerifiedName: string,
+  options?: NameComparisonOptions
+): boolean {
   const normAccount = normalizeName(accountName);
   const normPan = normalizeName(panVerifiedName);
 
@@ -232,52 +241,92 @@ export function compareNames(accountName: string, panVerifiedName: string): bool
     }
   }
 
-  // 4. Omitted middle name / token subset matching (REC-03 / REC-04)
+  if (options?.strictTokenCount) {
+    return false;
+  }
+
+  // 4. Positional omitted middle name matching (REC-03 / REC-04)
   // Indian bank accounts frequently omit middle names present on PAN cards (e.g. "RAMESH GUPTA" vs "RAMESH CHANDRA GUPTA")
   // Both names must have at least 2 tokens to prevent matching single first names.
+  // The first token (given name) and last token (surname) of the longer name must both match the shorter name's anchors.
+  // The omitted token(s) must strictly be intermediate middle names, preventing surname drops (e.g., "AMIT KUMAR" vs "AMIT KUMAR VERMA")
+  // or first name drops (e.g., "KUMAR VERMA" vs "SUNIL KUMAR VERMA").
   const [shorterTokens, longerTokens] =
     accountTokens.length <= panTokens.length
       ? [accountTokens, panTokens]
       : [panTokens, accountTokens];
 
   if (shorterTokens.length >= 2 && longerTokens.length > shorterTokens.length) {
-    let exactAnchorsCount = 0;
-    const matchedLongerIndices = new Set<number>();
-    let allShortTokensMatched = true;
+    const longerFirst = longerTokens[0];
+    const longerLast = longerTokens[longerTokens.length - 1];
 
-    for (const sTok of shorterTokens) {
-      let foundMatch = false;
-      for (let lIdx = 0; lIdx < longerTokens.length; lIdx++) {
-        if (matchedLongerIndices.has(lIdx)) continue;
-        const lTok = longerTokens[lIdx];
+    const matchesLongerToken = (lTok: string): boolean => {
+      for (const sTok of shorterTokens) {
+        if (sTok === lTok) return true;
+        if (sTok.length === 1 && lTok.startsWith(sTok)) return true;
+        if (lTok.length === 1 && sTok.startsWith(lTok)) return true;
+      }
+      return false;
+    };
 
-        if (sTok === lTok) {
-          if (sTok.length >= 2) exactAnchorsCount++;
-          matchedLongerIndices.add(lIdx);
-          foundMatch = true;
-          break;
-        } else if (
-          (sTok.length === 1 && lTok.startsWith(sTok)) ||
-          (lTok.length === 1 && sTok.startsWith(lTok))
-        ) {
-          matchedLongerIndices.add(lIdx);
-          foundMatch = true;
+    const firstMatches = matchesLongerToken(longerFirst);
+    const lastMatches = matchesLongerToken(longerLast);
+
+    if (firstMatches && lastMatches) {
+      const matchedLongerIndices = new Set<number>();
+      let allShortMatched = true;
+
+      for (const sTok of shorterTokens) {
+        let found = false;
+        for (let lIdx = 0; lIdx < longerTokens.length; lIdx++) {
+          if (matchedLongerIndices.has(lIdx)) continue;
+          const lTok = longerTokens[lIdx];
+          if (
+            sTok === lTok ||
+            (sTok.length === 1 && lTok.startsWith(sTok)) ||
+            (lTok.length === 1 && sTok.startsWith(lTok))
+          ) {
+            matchedLongerIndices.add(lIdx);
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          allShortMatched = false;
           break;
         }
       }
-      if (!foundMatch) {
-        allShortTokensMatched = false;
-        break;
-      }
-    }
 
-    // Must match all tokens of the shorter name, and have at least 2 exact anchor tokens (e.g. First Name & Last Name)
-    if (allShortTokensMatched && exactAnchorsCount >= 2) {
-      return true;
+      if (allShortMatched) {
+        let onlyIntermediateOmitted = true;
+        for (let lIdx = 0; lIdx < longerTokens.length; lIdx++) {
+          if (!matchedLongerIndices.has(lIdx)) {
+            if (lIdx === 0 || lIdx === longerTokens.length - 1) {
+              onlyIntermediateOmitted = false;
+              break;
+            }
+          }
+        }
+        if (onlyIntermediateOmitted) {
+          return true;
+        }
+      }
     }
   }
 
   return false;
 }
 
-export const areNamesMatching = compareNames;
+export function areNamesMatching(
+  beneficiaryName: string,
+  panHolderName: string,
+  options?: { isMononymousApproved?: boolean }
+): boolean {
+  if (options?.isMononymousApproved) {
+    const bTokens = beneficiaryName.trim().toUpperCase().split(/\s+/);
+    const pTokens = panHolderName.trim().toUpperCase().split(/\s+/);
+    if (bTokens.length === 1 && pTokens.includes(bTokens[0])) return true;
+    if (pTokens.length === 1 && bTokens.includes(pTokens[0])) return true;
+  }
+  return compareNames(beneficiaryName, panHolderName, { strictTokenCount: true });
+}

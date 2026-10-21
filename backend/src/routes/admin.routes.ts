@@ -19,6 +19,7 @@ import { AuthService } from '../services/auth.service';
 import { NotificationService } from '../services/notification.service';
 import { BillStatus, Profession, UserStatus } from '@prisma/client';
 import { getIstYearAndMonth, parseStrictIndiaTimestamp } from '../utils/timezone.utils';
+import { adminActionLimiter } from '../middleware/rateLimit.middleware';
 
 const router = Router();
 
@@ -282,16 +283,26 @@ router.get('/users', requireOperationsAdmin, async (req: AuthenticatedRequest, r
       ];
     }
 
-    const users = await prisma.user.findMany({
-      where,
-      include: {
-        wallet: true,
-        kycRecords: { orderBy: { createdAt: 'desc' }, take: 1 },
-        paymentAccounts: { where: { isDefault: true }, orderBy: { createdAt: 'desc' }, take: 1 },
-        _count: { select: { bills: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    // VULN-MED-05: Enforce server-side pagination with default 50 and ceiling 100
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 50));
+    const skip = (page - 1) * limit;
+
+    const [total, users] = await Promise.all([
+      prisma.user.count({ where }),
+      prisma.user.findMany({
+        where,
+        include: {
+          wallet: true,
+          kycRecords: { orderBy: { createdAt: 'desc' }, take: 1 },
+          paymentAccounts: { where: { isDefault: true }, orderBy: { createdAt: 'desc' }, take: 1 },
+          _count: { select: { bills: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
 
     const result = users.map((u) => {
       const kyc = u.kycRecords[0] || null;
@@ -313,7 +324,16 @@ router.get('/users', requireOperationsAdmin, async (req: AuthenticatedRequest, r
       };
     });
 
-    res.json({ success: true, users: result });
+    res.json({
+      success: true,
+      users: result,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, message: 'Administrative operation failed. Please retry.' });
   }
@@ -448,6 +468,62 @@ router.put('/users/:id/name', requireOperationsAdmin, async (req: AuthenticatedR
       message: 'User name corrected successfully. Re-verification policy has been enforced.',
       user: updatedUser,
     });
+  } catch (err: any) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * 3c. Admin Privileged Mononymous KYC Manual Verification (Unresolved Finding A)
+ */
+router.post('/users/:id/verify-mononymous-kyc', requireOperationsAdmin, adminActionLimiter, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const admin = req.user!;
+    const userId = req.params.id;
+    const { reason } = req.body;
+    if (!reason || typeof reason !== 'string' || reason.trim().length < 10) {
+      return res.status(400).json({ success: false, message: 'Detailed justification reason is required for manual mononymous verification (minimum 10 characters).' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { kycRecords: { orderBy: { createdAt: 'desc' }, take: 1 } },
+    });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    const pendingKyc = user.kycRecords[0];
+    if (!pendingKyc || pendingKyc.panStatus !== 'PENDING') {
+      return res.status(400).json({ success: false, message: 'No pending KYC verification found for this user.' });
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const kyc = await tx.kycRecord.update({
+        where: { id: pendingKyc.id },
+        data: {
+          panStatus: 'VERIFIED',
+          nameMatched: true,
+          rejectionReason: null,
+          verifiedAt: new Date(),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: 'KYC_MANUAL_MONONYMOUS_VERIFIED',
+          entityType: 'KycRecord',
+          entityId: kyc.id,
+          adminId: admin.id,
+          newValue: `Admin ${admin.id} manually approved mononymous KYC for user ${userId}. Reason: ${reason.trim()}`,
+        },
+      });
+
+      return kyc;
+    });
+
+    res.json({ success: true, message: 'Mononymous KYC verified successfully by Operations Administrator.', kyc: updated });
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }
@@ -604,7 +680,7 @@ router.get(
 /**
  * 5. Bill Verification (Approve / Reject with GST and Financial Snapshot)
  */
-router.post('/bills/:id/verify', requireBillAdmin, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/bills/:id/verify', requireBillAdmin, adminActionLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { action, rejectionReason, gstIncluded, gstRate, gstRuleId, gstOverrideReason } = req.body;
     const admin = req.user!;
@@ -691,14 +767,24 @@ router.get('/payouts', requireOperationsAdmin, async (req: AuthenticatedRequest,
       where.user = { profession: profFilter };
     }
 
-    const payouts = await prisma.payout.findMany({
-      where,
-      include: {
-        user: { select: { fullName: true, mobile: true, profession: true } },
-        paymentAccount: { select: { accountType: true, maskedInfo: true, bankName: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    // VULN-MED-05: Enforce server-side pagination with default 50 and ceiling 100
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 50));
+    const skip = (page - 1) * limit;
+
+    const [total, payouts] = await Promise.all([
+      prisma.payout.count({ where }),
+      prisma.payout.findMany({
+        where,
+        include: {
+          user: { select: { fullName: true, mobile: true, profession: true } },
+          paymentAccount: { select: { accountType: true, maskedInfo: true, bankName: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
 
     res.json({
       success: true,
@@ -730,13 +816,19 @@ router.get('/payouts', requireOperationsAdmin, async (req: AuthenticatedRequest,
         createdAt: p.createdAt,
         completedAt: p.completedAt,
       })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
     });
   } catch (err: any) {
     res.status(500).json({ success: false, message: 'Administrative operation failed. Please retry.' });
   }
 });
 
-router.post('/payouts/:id/action', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/payouts/:id/action', requireOperationsAdmin, adminActionLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { action, reason } = req.body;
     const { id } = req.params;

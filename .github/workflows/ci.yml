@@ -19,7 +19,15 @@ jobs:
 
       - name: Download actionlint
         id: get_actionlint
-        run: bash <(curl -sSf https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+        run: |
+          ACTIONLINT_VERSION="1.7.7"
+          ACTIONLINT_SHA256="023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
+          TARBALL="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSLO "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${TARBALL}"
+          echo "${ACTIONLINT_SHA256}  ${TARBALL}" | sha256sum -c -
+          tar -xzf "${TARBALL}" actionlint
+          chmod +x actionlint
+          echo "executable=$(pwd)/actionlint" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - name: Run actionlint

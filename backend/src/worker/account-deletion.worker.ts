@@ -147,6 +147,17 @@ export class AccountDeletionWorker {
       if (result.errors.length > 0) {
         console.error(`⚠️ [ACCOUNT-DELETION-WORKER] Encountered ${result.errors.length} deletion error(s):`, result.errors);
       }
+
+      // VULN-HIGH-05: Purge expired statutory records (8-year retention expired and no legal hold)
+      try {
+        const purgedCount = await AccountDeletionService.purgeExpiredStatutoryRecords(prisma);
+        if (purgedCount > 0) {
+          console.log(`🧹 [ACCOUNT-DELETION-WORKER] Purged ${purgedCount} expired statutory retention record(s).`);
+        }
+      } catch (purgeErr: any) {
+        console.error('⚠️ [ACCOUNT-DELETION-WORKER] Failed to purge expired statutory records:', purgeErr.message);
+      }
+
       return {
         processedCount: result.processedCount,
         errorsCount: result.errors.length,

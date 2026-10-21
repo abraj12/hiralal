@@ -75,7 +75,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - redis-cli -a "$$REDIS_PASSWORD" ping
+        - REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping
       interval: 5s
       timeout: 3s
       retries: 5
@@ -172,6 +172,7 @@ services:
     volumes:
       - uploads:/app/uploads
       - ./shared/assets:/shared/assets:ro
+      - ./scripts:/app/scripts:ro
     networks:
       - hiralal_net
     healthcheck:
@@ -320,8 +321,10 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '0.5'
           memory: 128M
         reservations:
+          cpus: '0.1'
           memory: 32M
     ports:
       - '80:80'

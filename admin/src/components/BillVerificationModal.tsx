@@ -107,17 +107,9 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
     };
   }, [bill?.id]);
 
-  const sanitizeDocUrl = (url?: string | null): string | null => {
-    if (!url) return null;
-    const trimmed = url.trim();
-    // Allow https://, http://, blob:, or absolute path / (rejecting protocol-relative //)
-    if (/^(https?:\/\/|blob:|\/(?!\/))/i.test(trimmed)) {
-      return trimmed;
-    }
-    return null;
-  };
-
-  const targetUrl = sanitizeDocUrl(docUrl || bill.fileUrl);
+  // VULN-MED-09: Use authoritative safeDocumentUrl to strictly reject backslashes and protocol-relative injections
+  const rawTarget = safeDocumentUrl(docUrl || bill?.fileUrl);
+  const targetUrl = rawTarget !== '#' ? rawTarget : null;
   const isPdf = Boolean(
     bill.fileName?.toLowerCase().endsWith('.pdf') ||
     bill.mimeType === 'application/pdf' ||

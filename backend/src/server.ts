@@ -99,11 +99,18 @@ app.use(['/api/v1/webhooks', '/api/webhooks'], express.json({
   },
 }));
 
-// 2. High-capacity body parser for bill invoice submissions (Base64 documents up to 15MB)
-// VULN-B08: Evaluated before global 100kb parser to prevent premature HTTP 413 rejections
-app.use(['/api/v1/bills', '/api/bills'], express.json({
+// 2. High-capacity body parser scoped strictly to bill invoice submissions (Base64 documents up to 15MB)
+// VULN-B08 / VULN-MED-03: Scoped strictly to POST /bills uploads, preventing 15MB allocation on other endpoints
+const billUploadParser = express.json({
   limit: process.env.JSON_BODY_LIMIT || '15mb',
-}));
+});
+
+app.use(['/api/v1/bills', '/api/bills'], (req: Request, res: Response, next: NextFunction) => {
+  if (req.method === 'POST' && (req.path === '/' || req.path === '')) {
+    return billUploadParser(req, res, next);
+  }
+  next();
+});
 
 // 3. Global strict 100kb body parser for standard REST API routes to prevent memory exhaustion DoS
 app.use((req: Request, res: Response, next: NextFunction) => {

@@ -187,6 +187,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Indexes on Payout foreign keys, removes CASCADE on financial history in favor of RESTRICT, and adds non-negative balance CHECK constraints."
+    },
+    {
+      "id": "20261021200000_statutory_retention_and_cascade_hardening",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive columns statutoryRetentionExpiresAt and legalHold on User, indexes, and removes CASCADE on KycRecord and PaymentAccount in favor of RESTRICT."
     }
   ]
 }

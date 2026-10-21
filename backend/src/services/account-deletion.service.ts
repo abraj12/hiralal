@@ -927,21 +927,26 @@ export class AccountDeletionService {
           const requiresStatutoryRetention = Boolean(hasFinancialPayouts || hasApprovedInvoices);
 
           if (requiresStatutoryRetention) {
-            // Statutory retention: anonymize display names but retain encrypted PAN and blind index for regulatory audits
+            // Statutory retention: anonymize display names and release unique blind indexes so returning users/re-registration
+            // is not blocked, while retaining encrypted PAN/account and masked info for statutory audit compliance (PMLA/tax)
             await tx.kycRecord.updateMany({
               where: { userId: u.id },
               data: {
                 panName: 'ANONYMIZED_STATUTORY_RETENTION',
                 verifiedName: 'ANONYMIZED_STATUTORY_RETENTION',
+                panBlindIndex: null,
+                panNumber: null,
               },
             });
-            // E-03: Scrub personal phone-number-based UPI IDs even during statutory retention
+            // E-03: Scrub personal phone-number-based UPI IDs and release unique beneficiary blind index
             await tx.paymentAccount.updateMany({
               where: { userId: u.id },
               data: {
                 upiId: null,
                 accountHolderName: 'ANONYMIZED_STATUTORY_RETENTION',
                 providerRegisteredName: 'ANONYMIZED_STATUTORY_RETENTION',
+                beneficiaryBlindIndex: null,
+                isVerified: false,
                 isDefault: false,
               },
             });
@@ -977,6 +982,10 @@ export class AccountDeletionService {
 
           // 5. Anonymize User record (retain ID for ledger foreign keys)
           const anonymizedMobile = `DEL_${u.id.replace(/-/g, '').slice(0, 8)}_${crypto.randomBytes(4).toString('hex')}`;
+          const retentionExpiry = requiresStatutoryRetention
+            ? new Date(Date.now() + 8 * 365.25 * 24 * 60 * 60 * 1000)
+            : null;
+
           await tx.user.update({
             where: { id: u.id },
             data: {
@@ -992,6 +1001,7 @@ export class AccountDeletionService {
               activeSessionId: null,
               deletionRequestedAt: null,
               deletionScheduledAt: null,
+              statutoryRetentionExpiresAt: retentionExpiry,
             },
           });
 
@@ -1041,5 +1051,54 @@ export class AccountDeletionService {
     }
 
     return { processedCount, errors };
+  }
+
+  /**
+   * Purges expired statutory retention records (older than 8 years)
+   * where legalHold is false and user is SUSPENDED.
+   */
+  static async purgeExpiredStatutoryRecords(db: any = prisma): Promise<number> {
+    const now = new Date();
+    const expiredUsers = await db.user.findMany({
+      where: {
+        status: 'SUSPENDED',
+        legalHold: false,
+        statutoryRetentionExpiresAt: { lte: now },
+      },
+      select: { id: true },
+      take: 50,
+    });
+
+    if (expiredUsers.length === 0) return 0;
+
+    const userIds = expiredUsers.map((u: any) => u.id);
+
+    await db.$transaction(async (tx: any) => {
+      // Cryptographically scrub encrypted PAN and payment accounts
+      await tx.kycRecord.updateMany({
+        where: { userId: { in: userIds } },
+        data: {
+          panNumberEncrypted: null,
+          maskedPan: 'ANONYMIZED_EXPIRED',
+        },
+      });
+
+      await tx.paymentAccount.updateMany({
+        where: { userId: { in: userIds } },
+        data: {
+          accountNumberEncrypted: null,
+          maskedInfo: 'ANONYMIZED_EXPIRED',
+        },
+      });
+
+      await tx.user.updateMany({
+        where: { id: { in: userIds } },
+        data: {
+          statutoryRetentionExpiresAt: null,
+        },
+      });
+    });
+
+    return userIds.length;
   }
 }

@@ -354,3 +354,12 @@ export const webhookLimiter = createRateLimiter({
   message: 'Too many webhook events from this address.',
 });
 
+// VULN-MED-04: Admin mutative action limiter to prevent administrative API flooding / brute-force operations
+export const adminActionLimiter = createRateLimiter({
+  keyPrefix: 'admin:action',
+  limit: config.isProduction ? 60 : 300,
+  windowSeconds: 60, // 60 mutative actions per minute
+  getIdentifier: (req: any) => (req.user?.id ? `admin:${req.user.id}` : `ip:${req.ip || 'unknown'}`),
+  message: 'Administrator action rate limit reached. Please slow down and try again shortly.',
+});
+

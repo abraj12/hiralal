@@ -14,12 +14,14 @@ const HKDF_FIELD_ENC_INFO = Buffer.from('hiralal-field-encryption-v1');
  * domain-separated info strings to prevent cross-purpose key reuse.
  * HKDF replaces the previous raw SHA-256 approach (audit finding F-14).
  */
+function deriveKeyFromSecret(secret: string): Buffer {
+  const keyMaterial = Buffer.from(secret, 'utf8');
+  return Buffer.from(crypto.hkdfSync('sha256', keyMaterial, Buffer.alloc(0), HKDF_FIELD_ENC_INFO, 32));
+}
+
 function getDerivedKey(): Buffer {
   const keySource = config.fieldEncryptionKey || config.encryptionKey;
-  const keyMaterial = Buffer.from(keySource, 'utf8');
-  // Empty salt is acceptable in HKDF when the key material already has high entropy
-  // Buffer.from() converts the ArrayBuffer returned by hkdfSync to a Node.js Buffer
-  return Buffer.from(crypto.hkdfSync('sha256', keyMaterial, Buffer.alloc(0), HKDF_FIELD_ENC_INFO, 32));
+  return deriveKeyFromSecret(keySource);
 }
 
 
@@ -41,6 +43,7 @@ export function encryptSensitive(plaintext: string): string {
 
 /**
  * Decrypts AES-256-GCM ciphertext supporting both v1 versioned envelope and legacy unversioned formats.
+ * Supports cryptographic key rotation with automatic fallback to previousFieldEncryptionKeys.
  */
 export function decryptSensitive(cipherPackage: string): string {
   if (!cipherPackage) return '';
@@ -62,13 +65,28 @@ export function decryptSensitive(cipherPackage: string): string {
   const iv = Buffer.from(ivHex, 'hex');
   const tag = Buffer.from(tagHex, 'hex');
 
-  const decipher = crypto.createDecipheriv(ALGORITHM, getDerivedKey(), iv);
-  decipher.setAuthTag(tag);
+  // Candidate keys: current primary key first, followed by previous keys for rotation
+  const candidateKeySources = [
+    config.fieldEncryptionKey || config.encryptionKey,
+    ...(config.previousFieldEncryptionKeys || []),
+  ].filter(Boolean);
 
-  let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
+  let lastError: Error | null = null;
+  for (const keySource of candidateKeySources) {
+    try {
+      const derivedKey = deriveKeyFromSecret(keySource);
+      const decipher = crypto.createDecipheriv(ALGORITHM, derivedKey, iv);
+      decipher.setAuthTag(tag);
 
-  return decrypted;
+      let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+      decrypted += decipher.final('utf8');
+      return decrypted;
+    } catch (err: any) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('Decryption failed with all candidate keys.');
 }
 
 /**
@@ -98,8 +116,15 @@ export function generateSecureOtp(): string {
  */
 export function generateBlindIndex(plaintext: string): string {
   if (!plaintext) return '';
-  const normalized = plaintext.trim().toUpperCase();
-  const hmacKey = config.blindIndexSecret || config.fieldEncryptionKey || config.encryptionKey;
+  let normalized = plaintext.trim().toUpperCase();
+  // VULN-MED-20: Domain separation for PAN blind index to prevent collision with banking keys
+  if (!normalized.includes(':') && /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(normalized)) {
+    normalized = `PAN:${normalized}`;
+  }
+  const hmacKey = config.blindIndexSecret;
+  if (!hmacKey) {
+    throw new Error('BLIND_INDEX_SECRET is required to compute blind indexes.');
+  }
   return crypto.createHmac('sha256', hmacKey).update(normalized).digest('hex');
 }
 

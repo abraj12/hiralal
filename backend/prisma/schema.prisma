@@ -106,6 +106,8 @@ model User {
   deletionRequestedAt   DateTime?
   deletionScheduledAt   DateTime?
   lastDeletionRequestAt DateTime?
+  statutoryRetentionExpiresAt DateTime?
+  legalHold             Boolean          @default(false)
   createdAt             DateTime         @default(now())
   updatedAt             DateTime         @updatedAt
 
@@ -125,6 +127,7 @@ model User {
   @@index([mobile])
   @@index([profession])
   @@index([role])
+  @@index([statutoryRetentionExpiresAt])
 }
 
 model AuthSession {
@@ -287,7 +290,7 @@ model RedemptionSettings {
 model KycRecord {
   id                 String    @id @default(uuid())
   userId             String
-  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user               User      @relation(fields: [userId], references: [id], onDelete: Restrict)
   panNumber          String?
   panName            String
   panStatus          KycStatus @default(PENDING)
@@ -313,7 +316,7 @@ model KycRecord {
 model PaymentAccount {
   id                     String      @id @default(uuid())
   userId                 String
-  user                   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                   User        @relation(fields: [userId], references: [id], onDelete: Restrict)
   accountType            PaymentType
   upiId                  String?
   beneficiaryBlindIndex  String?     @unique

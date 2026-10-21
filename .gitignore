@@ -87,3 +87,8 @@ scripts/__pycache__/
 
 # Test results
 test-results/
+
+# React Native / Android bundles
+*.bundle
+*.bundle.*
+index.android.bundle

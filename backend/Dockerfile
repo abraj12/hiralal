@@ -45,8 +45,8 @@ COPY prisma ./prisma/
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
-# Create uploads directory and set permissions
-RUN mkdir -p /app/uploads && chown -R node:node /app
+# Create uploads and scripts directory and set permissions
+RUN mkdir -p /app/uploads /app/scripts && chown -R node:node /app
 
 USER node
 

@@ -316,13 +316,29 @@ describe('Final Audit Remediation Verification — Security, Financial, and Reli
       expect(res.status).toBe(404);
     });
 
-    test('VULN-B03: Dedicated POST /api/v1/auth/admin-portal/login handles administrative authentication', async () => {
+    test('VULN-B03 & VULN-MED-08: Dedicated POST /api/v1/auth/admin-portal/login requires Tier-1 token and handles administrative authentication', async () => {
       const adminPrefix = config.admin.operationsAdminPrefix;
       const fullIdentifier = `${adminPrefix}${opsAdminMobile}`;
 
-      const res = await request(app)
+      // 1. Calling Tier-2 without Tier-1 token is strictly rejected (VULN-MED-08)
+      const unverifiedRes = await request(app)
         .post('/api/v1/auth/admin-portal/login')
         .send({ identifier: fullIdentifier, password: testPassword });
+      expect(unverifiedRes.status).toBe(403);
+      expect(unverifiedRes.body.code).toBe('TIER_1_VERIFICATION_REQUIRED');
+
+      // 2. Perform Tier-1 prefix verification to acquire signed tier1Token
+      const prefixRes = await request(app)
+        .post('/api/v1/auth/admin/verify-prefix')
+        .send({ prefix: adminPrefix });
+      expect(prefixRes.status).toBe(200);
+      expect(prefixRes.body.tier1Token).toBeDefined();
+
+      // 3. Submit Tier-2 credentials with verified tier1Token
+      const res = await request(app)
+        .post('/api/v1/auth/admin-portal/login')
+        .set('X-Tier1-Token', prefixRes.body.tier1Token)
+        .send({ identifier: fullIdentifier, password: testPassword, tier1Token: prefixRes.body.tier1Token });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);

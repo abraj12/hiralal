@@ -307,11 +307,12 @@ export class AdminApiClient {
     });
   }
 
-  // Admin Password-First OTP-Second Authentication Flow (VULN-B03: uses dedicated /admin-portal/login endpoint)
-  static login(identifier: string, password: string) {
+  // Admin Password-First OTP-Second Authentication Flow (VULN-B03: uses dedicated /admin-portal/login endpoint; VULN-MED-08: requires tier1Token)
+  static login(identifier: string, password: string, tier1Token?: string) {
     return this.request('/auth/admin-portal/login', {
       method: 'POST',
-      body: JSON.stringify({ identifier, password }),
+      headers: tier1Token ? { 'X-Tier1-Token': tier1Token } : {},
+      body: JSON.stringify({ identifier, password, tier1Token }),
     });
   }
 

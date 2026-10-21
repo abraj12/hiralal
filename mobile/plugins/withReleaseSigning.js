@@ -6,7 +6,7 @@ const { withAppBuildGradle, createRunOncePlugin } = require('expo/config-plugins
  * Falls back safely to debug keystore when release credentials are not provided (e.g. dev/CI).
  */
 function configureAppBuildGradle(contents) {
-  if (contents.includes("System.getenv('ANDROID_KEYSTORE_PATH')")) {
+  if (contents.includes('[SECURITY FATAL] Android release build requires a valid release keystore')) {
     return contents;
   }
 

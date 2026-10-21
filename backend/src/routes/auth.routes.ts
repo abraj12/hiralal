@@ -68,13 +68,28 @@ router.post(['/admin/verify-prefix', '/verify-admin-prefix'], adminPrefixesLimit
   const isOps = Boolean(opsPrefix && rawPrefix === opsPrefix);
 
   if (isBill || isOps) {
+    // VULN-MED-08: Issue a signed, short-lived (10-minute) Tier-1 challenge token
+    // Binding the verified prefix SHA-256 hash to prevent direct Tier-2 bypass
+    const tier1Token = jwt.sign(
+      {
+        purpose: 'ADMIN_TIER_1_VERIFIED',
+        prefixHash: crypto.createHash('sha256').update(rawPrefix).digest('hex'),
+      },
+      config.jwt.accessSecret,
+      { expiresIn: '10m' }
+    );
+
+    // VULN-MED-06: Do not disclose specific administrative role to unauthenticated callers
     return res.json({
       success: true,
       verified: true,
-      role: isBill ? 'BILL_ADMIN' : 'OPERATIONS_ADMIN',
+      tier1Token,
       message: 'Security prefix verified successfully.',
     });
   }
+
+  const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+  console.warn(`[SECURITY] Invalid admin prefix verification attempt from IP: ${clientIp}`);
 
   return res.status(401).json({
     success: false,
@@ -224,6 +239,7 @@ router.post(
   async (req: Request, res: Response) => {
     const rawIdentifier = String(req.body?.identifier || req.body?.mobile || '').trim();
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const tier1Token = (req.headers['x-tier1-token'] as string) || req.body?.tier1Token;
 
     if (!rawIdentifier || !password) {
       return res.status(400).json({ success: false, message: 'Administrator identifier and password are required.' });
@@ -235,6 +251,33 @@ router.post(
         success: false,
         code: 'ADMIN_ACCESS_DENIED',
         message: 'Invalid administrator credentials. Access denied.',
+      });
+    }
+
+    // VULN-MED-08: Enforce Tier-1 administrator verification before Tier-2 credential validation
+    if (!tier1Token) {
+      return res.status(403).json({
+        success: false,
+        code: 'TIER_1_VERIFICATION_REQUIRED',
+        message: 'Tier-1 security prefix verification is required prior to credential submission.',
+      });
+    }
+
+    try {
+      const decoded: any = jwt.verify(tier1Token, config.jwt.accessSecret);
+      if (decoded?.purpose !== 'ADMIN_TIER_1_VERIFIED') {
+        throw new Error('Invalid Tier-1 token purpose.');
+      }
+      const matchedPrefix = AuthService.resolveAdminIdentifier(rawIdentifier).prefix;
+      const expectedHash = crypto.createHash('sha256').update(matchedPrefix).digest('hex');
+      if (decoded?.prefixHash !== expectedHash) {
+        throw new Error('Tier-1 token does not match supplied administrator prefix.');
+      }
+    } catch (tokenErr: any) {
+      return res.status(403).json({
+        success: false,
+        code: 'INVALID_TIER_1_TOKEN',
+        message: 'Tier-1 security verification has expired or is invalid. Please verify prefix again.',
       });
     }
 
@@ -625,12 +668,22 @@ router.post('/admin/otp/verify', adminLoginLimiter, adminAccountLoginLimiter, ot
       setAdminCookie(res, result.accessToken || result.token);
     }
 
-    // Return token in JSON body for native mobile admin clients (F-01 / Critical Fix)
-    const isMobileClient =
-      req.headers['x-client-type'] === 'mobile-admin' ||
-      req.body?.clientType === 'mobile-admin';
+    // VULN-MED-01: Disallow client-controlled header spoofing for web browsers.
+    // If request has web browser headers (sec-ch-ua, sec-fetch-*, web Origin),
+    // strictly enforce HttpOnly cookie transport and never expose raw JWT in JSON body.
+    const hasBrowserHeaders = Boolean(
+      req.headers['sec-ch-ua'] ||
+      req.headers['sec-fetch-mode'] ||
+      req.headers['sec-fetch-site'] ||
+      req.headers['sec-fetch-dest'] ||
+      req.headers['origin']
+    );
 
-    if (isMobileClient) {
+    const isExplicitMobileClient =
+      !hasBrowserHeaders &&
+      (req.headers['x-client-type'] === 'mobile-admin' || req.body?.clientType === 'mobile-admin');
+
+    if (isExplicitMobileClient) {
       return res.json(result);
     }
 

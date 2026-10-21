@@ -279,6 +279,7 @@ export class BillService {
           gstRuleId?: string;
           gstOverrideReason?: string;
           correctedGrossAmount?: number;
+          isOperationsAdminApproved?: boolean;
         },
     adminIdArg?: string,
     optionsArg?: {
@@ -287,6 +288,7 @@ export class BillService {
       gstRuleId?: string;
       gstOverrideReason?: string;
       correctedGrossAmount?: number;
+      isOperationsAdminApproved?: boolean;
     }
   ) {
     let billId: string;
@@ -297,6 +299,7 @@ export class BillService {
       gstRuleId?: string;
       gstOverrideReason?: string;
       correctedGrossAmount?: number;
+      isOperationsAdminApproved?: boolean;
     } | undefined;
 
     if (typeof billIdOrParams === 'object') {
@@ -392,14 +395,15 @@ export class BillService {
       if (options?.correctedGrossAmount && Number(options.correctedGrossAmount) > 0) {
         const corrected = Number(options.correctedGrossAmount);
         const original = Number(bill.grossBillAmount || bill.billAmount);
-        // SEC-CRIT-02: Hard ceiling ₹5,00,000 and max deviation cap to prevent arbitrary loyalty minting
+        // VULN-MED-17: Tightened upward deviation cap: Math.max(original * 1.25, original + 2000)
+        // prevents arbitrary inflation on small invoices by individual bill reviewers without dual authorization.
         const absoluteMaxCeiling = 500000;
-        const maxAllowedDeviation = original > 0 ? Math.max(original * 1.5, 25000) : 50000;
+        const maxAllowedDeviation = original > 0 ? Math.max(original * 1.25, original + 2000) : 5000;
         if (corrected > absoluteMaxCeiling) {
           throw new Error(`Corrected gross amount ₹${corrected} exceeds the maximum allowable threshold of ₹${absoluteMaxCeiling}.`);
         }
-        if (original > 0 && corrected > maxAllowedDeviation) {
-          throw new Error(`Corrected gross amount ₹${corrected} exceeds the maximum allowable deviation (submitted: ₹${original}).`);
+        if (original > 0 && corrected > maxAllowedDeviation && !options?.isOperationsAdminApproved) {
+          throw new Error(`Corrected gross amount ₹${corrected} exceeds the maximum allowable single-reviewer deviation (submitted: ₹${original}, allowed max: ₹${maxAllowedDeviation}). Secondary operations approval required.`);
         }
         gross = corrected;
         grossWasCorrected = true;

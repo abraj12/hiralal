@@ -6,6 +6,18 @@ import { MockKycProvider } from './mock.provider';
 import { encryptSensitive, generateBlindIndex } from '../../utils/crypto.utils';
 import { compareNames } from '../../utils/name.utils';
 
+function maskNameForAudit(name: string): string {
+  if (!name) return '***';
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((part) => {
+      if (part.length <= 2) return part[0] + '*';
+      return part[0] + '*'.repeat(Math.min(part.length - 2, 4)) + part.slice(-1);
+    })
+    .join(' ');
+}
+
 export class KycService {
   private static provider: KycProvider | null = null;
 
@@ -131,6 +143,7 @@ export class KycService {
       where: {
         OR: [{ panBlindIndex }, { panNumber: cleanPan }],
         userId: { not: userId },
+        user: { status: 'ACTIVE' },
       },
     });
 
@@ -171,14 +184,44 @@ export class KycService {
     const isNameMatched = compareNames(user.fullName, verifiedPanName);
 
     if (!isNameMatched) {
+      const userTokens = user.fullName.trim().split(/\s+/);
+      const panTokens = verifiedPanName.split(/\s+/);
+      const isMononymousCandidate = userTokens.length === 1 || panTokens.length === 1;
+
+      // VULN-MED-19: Minimize PII in immutable audit logs by masking names
       await prisma.auditLog.create({
         data: {
-          action: 'KYC_NAME_MISMATCH',
+          action: isMononymousCandidate ? 'KYC_MONONYMOUS_REVIEW_REQUIRED' : 'KYC_NAME_MISMATCH',
           entityType: 'KycRecord',
           entityId: userId,
-          newValue: `Account name "${user.fullName}" did not match PAN holder name "${verifiedPanName}"`,
+          newValue: isMononymousCandidate
+            ? `Single-token mononymous name flagged for manual review: User "${maskNameForAudit(user.fullName)}" vs PAN "${maskNameForAudit(verifiedPanName)}"`
+            : `Account name "${maskNameForAudit(user.fullName)}" did not match PAN holder name "${maskNameForAudit(verifiedPanName)}"`,
         },
       });
+
+      if (isMononymousCandidate) {
+        // Record pending KYC record flagged for manual administrator review (Unresolved Finding A)
+        await prisma.kycRecord.create({
+          data: {
+            userId,
+            panName: verifiedPanName,
+            panStatus: 'PENDING',
+            maskedPan: this.maskPan(cleanPan),
+            panNumberEncrypted: encryptSensitive(cleanPan),
+            provider: 'SIGNCARE',
+            providerRequestId: result.providerRequestId || null,
+            nameMatched: false,
+            rejectionReason: 'MONONYMOUS_APPLICANT_MANUAL_REVIEW_REQUIRED: Single-name applicant requires authorized manual document review.',
+            consent: true,
+            consentTimestamp: new Date(),
+          },
+        });
+
+        throw new Error(
+          'Your profile name appears to be a single name (mononymous). To protect your financial security, your PAN verification has been submitted for manual administrator review.'
+        );
+      }
 
       throw new Error(
         `Name mismatch: Your account name "${user.fullName}" does not match the name on your PAN card ("${verifiedPanName}"). Please correct your account name in Profile Settings.`

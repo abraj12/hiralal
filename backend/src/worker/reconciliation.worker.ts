@@ -82,12 +82,13 @@ export class ReconciliationWorker {
           }
         }
 
-        // 2. Fallback: Search by our payout reference_id
+        // 2. Fallback: Search by our payout reference_id with mandatory account_number (VULN-HIGH-03)
         if (!razorpayPayout) {
           const controller2 = new AbortController();
           const timer2 = setTimeout(() => controller2.abort(), 10000);
           try {
-            const res = await fetch(`https://api.razorpay.com/v1/payouts?reference_id=${payout.id}`, {
+            const accountNumberParam = config.razorpayx.accountNumber ? `&account_number=${encodeURIComponent(config.razorpayx.accountNumber)}` : '';
+            const res = await fetch(`https://api.razorpay.com/v1/payouts?reference_id=${payout.id}${accountNumberParam}`, {
               headers: { Authorization: auth },
               signal: controller2.signal,
             });
@@ -206,7 +207,8 @@ export class ReconciliationWorker {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 10000);
       try {
-        const res = await fetch(`https://api.razorpay.com/v1/payouts?reference_id=${payout.id}`, {
+        const accountNumberParam = config.razorpayx.accountNumber ? `&account_number=${encodeURIComponent(config.razorpayx.accountNumber)}` : '';
+        const res = await fetch(`https://api.razorpay.com/v1/payouts?reference_id=${payout.id}${accountNumberParam}`, {
           headers: { Authorization: auth },
           signal: controller.signal,
         });
@@ -297,25 +299,44 @@ export class ReconciliationWorker {
         const eventType = event.eventType;
         if (eventType === 'payout.processed') {
           if (payoutRecord.status === 'FAILED' || payoutRecord.status === 'REVERSED') {
-            await prisma.payout.update({
-              where: { id: payoutRecord.id },
-              data: {
-                requiresManualReview: true,
-                manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway processed payout after local status was marked ${payoutRecord.status}.`,
-              },
-            });
-            await prisma.auditLog.create({
-              data: {
-                action: 'CRITICAL_FINANCIAL_DRIFT',
-                entityType: 'Payout',
-                entityId: payoutRecord.id,
-                newValue: JSON.stringify({
-                  payoutId: payoutRecord.id,
-                  eventId: event.eventId,
-                  razorpayPayoutId,
-                  localStatus: payoutRecord.status,
-                }),
-              },
+            await prisma.$transaction(async (tx) => {
+              // 1. Lock wallet and freeze available balance to 0
+              await tx.$queryRaw`SELECT "id" FROM "Wallet" WHERE "id" = ${payoutRecord.walletId} FOR UPDATE`;
+              await tx.wallet.update({
+                where: { id: payoutRecord.walletId },
+                data: { availableBalance: 0, version: { increment: 1 } },
+              });
+              // 2. Suspend user account and invalidate active sessions
+              await tx.user.update({
+                where: { id: payoutRecord.userId },
+                data: { status: 'SUSPENDED' },
+              });
+              await tx.authSession.deleteMany({
+                where: { userId: payoutRecord.userId },
+              });
+              // 3. Mark payout for urgent manual review
+              await tx.payout.update({
+                where: { id: payoutRecord.id },
+                data: {
+                  requiresManualReview: true,
+                  manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway processed payout after local status was marked ${payoutRecord.status}. Account suspended and wallet frozen.`,
+                },
+              });
+              // 4. Audit log
+              await tx.auditLog.create({
+                data: {
+                  action: 'CRITICAL_FINANCIAL_DRIFT',
+                  entityType: 'Payout',
+                  entityId: payoutRecord.id,
+                  newValue: JSON.stringify({
+                    payoutId: payoutRecord.id,
+                    eventId: event.eventId,
+                    razorpayPayoutId,
+                    localStatus: payoutRecord.status,
+                    actionTaken: 'USER_SUSPENDED_WALLET_FROZEN',
+                  }),
+                },
+              });
             });
           } else {
             await PayoutService.finalizeSuccess(payoutRecord.id, razorpayPayoutId);

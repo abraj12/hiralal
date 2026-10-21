@@ -185,26 +185,45 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
         if (eventType === 'payout.processed') {
           if (payoutRecord.status === 'FAILED' || payoutRecord.status === 'REVERSED') {
             console.error(`🚨 [WEBHOOK-CRITICAL] Financial drift detected! Payout ${payoutRecord.id} was ${payoutRecord.status} but gateway reported payout.processed!`);
-            await prisma.payout.update({
-              where: { id: payoutRecord.id },
-              data: {
-                requiresManualReview: true,
-                manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}. Immediate operator audit and balance clawback required.`,
-              },
-            });
-            await prisma.auditLog.create({
-              data: {
-                action: 'CRITICAL_FINANCIAL_DRIFT',
-                entityType: 'Payout',
-                entityId: payoutRecord.id,
-                newValue: JSON.stringify({
-                  payoutId: payoutRecord.id,
-                  eventId,
-                  razorpayPayoutId,
-                  localStatus: payoutRecord.status,
-                  warning: 'Wallet balance was refunded and gateway disbursed funds concurrently. Manual operator clawback required.',
-                }),
-              },
+            await prisma.$transaction(async (tx) => {
+              // 1. Lock wallet and freeze available balance to 0 to prevent double-spending
+              await tx.$queryRaw`SELECT "id" FROM "Wallet" WHERE "id" = ${payoutRecord.walletId} FOR UPDATE`;
+              await tx.wallet.update({
+                where: { id: payoutRecord.walletId },
+                data: { availableBalance: 0, version: { increment: 1 } },
+              });
+              // 2. Suspend user account and invalidate active sessions
+              await tx.user.update({
+                where: { id: payoutRecord.userId },
+                data: { status: 'SUSPENDED' },
+              });
+              await tx.authSession.deleteMany({
+                where: { userId: payoutRecord.userId },
+              });
+              // 3. Mark payout for urgent manual review
+              await tx.payout.update({
+                where: { id: payoutRecord.id },
+                data: {
+                  requiresManualReview: true,
+                  manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}. Account suspended and wallet frozen. Immediate operator audit and balance clawback required.`,
+                },
+              });
+              // 4. Audit log
+              await tx.auditLog.create({
+                data: {
+                  action: 'CRITICAL_FINANCIAL_DRIFT',
+                  entityType: 'Payout',
+                  entityId: payoutRecord.id,
+                  newValue: JSON.stringify({
+                    payoutId: payoutRecord.id,
+                    eventId,
+                    razorpayPayoutId,
+                    localStatus: payoutRecord.status,
+                    actionTaken: 'USER_SUSPENDED_WALLET_FROZEN',
+                    warning: 'Wallet balance was refunded and gateway disbursed funds concurrently. Account suspended and wallet frozen pending operator clawback.',
+                  }),
+                },
+              });
             });
           } else {
             await PayoutService.finalizeSuccess(payoutRecord.id, razorpayPayoutId);

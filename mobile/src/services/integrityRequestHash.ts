@@ -120,7 +120,17 @@ export async function createPayoutRedemptionRequestHash(data: {
 export async function createAccountDeletionRequestHash(data?: {
   password?: string;
   otpCode?: string;
+  integrityRequestSalt?: string;
 }): Promise<string> {
+  if (data?.integrityRequestSalt) {
+    const canonicalPayload = {
+      version: 2,
+      action: 'ACCOUNT_DELETION_REQUEST',
+      integrityRequestSalt: String(data.integrityRequestSalt).trim(),
+    };
+    return sha256Json(canonicalPayload);
+  }
+
   const canonicalPayload = {
     version: 1,
     action: 'ACCOUNT_DELETION_REQUEST',

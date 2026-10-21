@@ -73,6 +73,11 @@ cleanup() {
       echo "[ROLLBACK PRESERVED] Pre-restore emergency safety snapshot is PRESERVED at: ${SNAPSHOT_FILE}" >&2
       echo "[ROLLBACK INSTRUCTION] To rollback manually: gunzip -c '${SNAPSHOT_FILE}' | docker exec -i '${DB_CONTAINER}' psql -U '${DB_USER}' -d '${TARGET_DB}'" >&2
     fi
+    # VULN-HIGH-13: Make restore failures recoverable by restarting services
+    if [ "${SERVICES_STOPPED:-false}" = "true" ]; then
+      echo "[RECOVERY] Resuming backend and worker application services after restore failure..." >&2
+      docker compose start backend worker 2>/dev/null || docker start hiralal_backend hiralal_worker 2>/dev/null || true
+    fi
   fi
 }
 trap cleanup EXIT
@@ -113,6 +118,7 @@ fi
 # SEC-CRIT-04: Suspend live web & background worker traffic to eliminate connection pool deadlocks and data loss
 echo "[$(date -u)] Suspending application traffic during restoration..."
 docker compose stop backend worker 2>/dev/null || docker stop hiralal_backend hiralal_worker 2>/dev/null || true
+SERVICES_STOPPED=true
 
 # Terminate active client connections on target database to permit single-transaction schema cleanup
 docker exec -i "${DB_CONTAINER}" psql -U "${DB_USER}" -d postgres -c "

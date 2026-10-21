@@ -448,15 +448,22 @@ export class FcmProvider {
     let failed = 0;
     let skipped = 0;
 
-    for (const token of tokens) {
-      const res = await this.sendPush({ token, title, body, data });
-      results.push(res);
-      if (res.skipped) {
-        skipped++;
-      } else if (res.success) {
-        sent++;
-      } else {
-        failed++;
+    // VULN-MED-02: Bounded chunking of 50 concurrent dispatches to prevent worker thread starvation and connection pool exhaustion
+    const CHUNK_SIZE = 50;
+    for (let i = 0; i < tokens.length; i += CHUNK_SIZE) {
+      const chunk = tokens.slice(i, i + CHUNK_SIZE);
+      const chunkResults = await Promise.all(
+        chunk.map((token) => this.sendPush({ token, title, body, data }))
+      );
+      for (const res of chunkResults) {
+        results.push(res);
+        if (res.skipped) {
+          skipped++;
+        } else if (res.success) {
+          sent++;
+        } else {
+          failed++;
+        }
       }
     }
 

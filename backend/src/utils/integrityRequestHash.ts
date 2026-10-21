@@ -318,6 +318,15 @@ export function computeIntegrityRequestHash(
     }
 
     case 'ACCOUNT_DELETION_REQUEST': {
+      const salt = req.headers['x-integrity-request-salt'] || req.body?.integrityRequestSalt;
+      if (salt && typeof salt === 'string') {
+        const payload = {
+          version: 2,
+          action: 'ACCOUNT_DELETION_REQUEST',
+          integrityRequestSalt: salt.trim(),
+        };
+        return computeSha256Json(payload);
+      }
       const payload = {
         version: 1,
         action: 'ACCOUNT_DELETION_REQUEST',

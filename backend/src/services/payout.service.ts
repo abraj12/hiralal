@@ -69,7 +69,7 @@ export class PayoutService {
       settings = await tx.redemptionSettings.create({
         data: {
           id: 'default',
-          profession: profession || null,
+          profession: null, // VULN-MED-18: Global default settings must have profession: null to prevent cross-profession collision
           isEnabled: false, // Default CLOSED until explicitly opened
           startAt: null,
           endAt: null,
@@ -642,6 +642,7 @@ export class PayoutService {
       );
     }
 
+    let gatewayCancellationConfirmed = false;
     // FIN-04: Cannot reject an in-flight payout without verified gateway cancellation
     if (isInFlight) {
       if (payoutMeta.razorpayPayoutId) {
@@ -659,8 +660,11 @@ export class PayoutService {
             `Cannot reject in-flight payout: ${cancelRes.message || 'Gateway transfer could not be cancelled.'} Funds must remain reserved to prevent double-spending.`
           );
         }
+        gatewayCancellationConfirmed = true;
       } else if (config.nodeEnv !== 'test') {
         throw new Error('Cannot reject in-flight payout without gateway payout identifier. Payout must be reconciled first.');
+      } else {
+        gatewayCancellationConfirmed = true;
       }
     }
 
@@ -702,6 +706,26 @@ export class PayoutService {
 
       if (payout.status === 'SUCCESS') {
         throw new Error(`Cannot reject payout ${payoutId} because it has already successfully completed.`);
+      }
+
+      // VULN-CRIT-01: Revalidate payout state inside the transaction under row locks.
+      // If payout transitioned to in-flight (PAYOUT_INITIATED or PROCESSING) concurrently before lock acquisition,
+      // or if cancellation was not positively confirmed, abort rejection immediately to prevent double spending.
+      if (payout.status === 'PAYOUT_INITIATED' || payout.status === 'PROCESSING') {
+        if (!gatewayCancellationConfirmed) {
+          throw new Error(
+            `Cannot reject payout ${payoutId}: Payout transitioned to ${payout.status} concurrently before lock acquisition. Rejection aborted to prevent double-spending.`
+          );
+        }
+      }
+
+      if (
+        payout.status !== 'PENDING' &&
+        payout.status !== 'APPROVED' &&
+        payout.status !== 'PROCESSING' &&
+        payout.status !== 'PAYOUT_INITIATED'
+      ) {
+        throw new Error(`Cannot reject payout ${payoutId} in ${payout.status} state.`);
       }
 
       const payoutAmount = Number(payout.amount);
@@ -1022,12 +1046,22 @@ export class PayoutService {
         },
       });
 
+      const user = await tx.user.findUnique({
+        where: { id: payout.userId },
+        select: { status: true, mobile: true },
+      });
+
+      const isUserDeletedOrSuspended = user?.status === 'SUSPENDED' || (user?.mobile && user.mobile.startsWith('DEL_'));
+
       const updatedPayout = await tx.payout.update({
         where: { id: payout.id },
         data: {
           status: 'REVERSED',
           failureReason: reason,
-          requiresManualReview: false,
+          requiresManualReview: Boolean(isUserDeletedOrSuspended),
+          manualReviewReason: isUserDeletedOrSuspended
+            ? `Post-deletion reversal: Payout reversed after user account was deleted/suspended. Manual offline settlement required: ${reason}`
+            : null,
         },
       });
 

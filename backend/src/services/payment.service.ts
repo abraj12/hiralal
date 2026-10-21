@@ -75,6 +75,7 @@ export class PaymentService {
         ],
         userId: { not: userId },
         isVerified: true,
+        user: { status: 'ACTIVE' },
       },
     });
     if (existingOther) {
@@ -265,6 +266,7 @@ export class PaymentService {
         beneficiaryBlindIndex,
         userId: { not: params.userId },
         isVerified: true,
+        user: { status: 'ACTIVE' },
       },
     });
     if (existingOther) {
@@ -278,6 +280,7 @@ export class PaymentService {
         userId: { not: params.userId },
         isVerified: true,
         beneficiaryBlindIndex: null,
+        user: { status: 'ACTIVE' },
       },
       select: {
         id: true,

@@ -301,13 +301,21 @@ export class PayoutWorker {
           await PayoutService.finalizeSuccess(payout.id, razorpayPayoutId);
         } else {
           // Queued or Processing: Wait for webhook or reconciliation
-          await prisma.payout.update({
-            where: { id: payout.id },
+          // VULN-CRIT-02: Protect terminal states with CAS updates (do not overwrite SUCCESS/FAILED/REVERSED/REJECTED)
+          const updated = await prisma.payout.updateMany({
+            where: { id: payout.id, status: 'PAYOUT_INITIATED' },
             data: {
               status: 'PROCESSING',
               razorpayPayoutId,
             },
           });
+          if (updated.count === 0 && razorpayPayoutId) {
+            // Payout already reached terminal or non-INITIATED state; attach gateway ID safely without regressing status
+            await prisma.payout.updateMany({
+              where: { id: payout.id, razorpayPayoutId: null },
+              data: { razorpayPayoutId },
+            });
+          }
         }
       } else {
         const isTransientClientError = [408, 409, 423, 429].includes(payoutRes.status);
@@ -315,8 +323,8 @@ export class PayoutWorker {
           // Transient 4xx Client Error: Rate limit (429), timeout (408), or conflict/in-flight (409)
           // TIMEOUT/TRANSIENT SAFETY: DO NOT REVERSE WALLET! Move to PROCESSING for reconciliation.
           console.warn(`[PAYOUT-WORKER] Gateway returned transient status ${payoutRes.status} for payout ${payout.id}. Moving to PROCESSING.`);
-          await prisma.payout.update({
-            where: { id: payout.id },
+          await prisma.payout.updateMany({
+            where: { id: payout.id, status: 'PAYOUT_INITIATED' },
             data: {
               status: 'PROCESSING',
               failureReason: `Gateway transient status ${payoutRes.status}: ${payoutData.error?.description || 'Transient client error'} (Pending reconciliation)`,
@@ -331,8 +339,8 @@ export class PayoutWorker {
           // 5xx Server Error: Gateway is in ambiguous state!
           // TIMEOUT SAFETY: DO NOT REVERSE WALLET! Move to PROCESSING for reconciliation.
           console.error(`[PAYOUT-WORKER] Gateway 5xx response for payout ${payout.id}. Moving to PROCESSING.`);
-          await prisma.payout.update({
-            where: { id: payout.id },
+          await prisma.payout.updateMany({
+            where: { id: payout.id, status: 'PAYOUT_INITIATED' },
             data: {
               status: 'PROCESSING',
               failureReason: `Gateway returned status ${payoutRes.status} (Pending reconciliation)`,
@@ -345,8 +353,8 @@ export class PayoutWorker {
       // Distributed payout safety rule: Network timeouts or connection drops MUST NOT reverse funds!
       // The transaction might have been accepted by the gateway. Move to PROCESSING.
       console.error(`[PAYOUT-WORKER] Network error/timeout for payout ${payout.id}: ${err.message}. Holding in PROCESSING for reconciliation.`);
-      await prisma.payout.update({
-        where: { id: payout.id },
+      await prisma.payout.updateMany({
+        where: { id: payout.id, status: 'PAYOUT_INITIATED' },
         data: {
           status: 'PROCESSING',
           failureReason: `Network error/timeout: ${err.message} (Pending reconciliation)`,

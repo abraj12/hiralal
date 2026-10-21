@@ -68,13 +68,18 @@ export class AuthService {
     const billPrefix = normalizeAdminPrefix(config.admin.billAdminPrefix);
     const opsPrefix = normalizeAdminPrefix(config.admin.operationsAdminPrefix);
 
-    if (billPrefix && cleanRaw.startsWith(billPrefix)) {
-      const remainder = cleanRaw.slice(billPrefix.length);
-      return /^[6-9]\d{9}$/.test(remainder);
-    }
-    if (opsPrefix && cleanRaw.startsWith(opsPrefix)) {
-      const remainder = cleanRaw.slice(opsPrefix.length);
-      return /^[6-9]\d{9}$/.test(remainder);
+    // VULN-HIGH-07: Match longest prefix first to prevent prefix shadowing
+    const prefixes = [
+      { prefix: billPrefix },
+      { prefix: opsPrefix },
+    ].filter((p): p is { prefix: string } => Boolean(p.prefix))
+     .sort((a, b) => b.prefix.length - a.prefix.length);
+
+    for (const { prefix } of prefixes) {
+      if (cleanRaw.startsWith(prefix)) {
+        const remainder = cleanRaw.slice(prefix.length);
+        if (/^[6-9]\d{9}$/.test(remainder)) return true;
+      }
     }
     return false;
   }
@@ -145,7 +150,7 @@ export class AuthService {
    * Resolves an admin identifier with prefix (e.g. XYZ9876543210 or ABC9876543210)
    * to designated role ('BILL_ADMIN' or 'OPERATIONS_ADMIN') and 10-digit mobile number.
    */
-  static resolveAdminIdentifier(identifier: string): { role: UserRole; mobile: string } {
+  static resolveAdminIdentifier(identifier: string): { role: UserRole; mobile: string; prefix: string } {
     if (!identifier || typeof identifier !== 'string') {
       throw new Error('Invalid login credentials. Please check your details and try again.');
     }
@@ -154,20 +159,21 @@ export class AuthService {
     const billPrefix = normalizeAdminPrefix(config.admin.billAdminPrefix);
     const opsPrefix = normalizeAdminPrefix(config.admin.operationsAdminPrefix);
 
-    if (billPrefix && cleanRaw.startsWith(billPrefix)) {
-      const remainder = cleanRaw.slice(billPrefix.length);
-      if (!/^[6-9]\d{9}$/.test(remainder)) {
-        throw new Error('Invalid Bill Admin identifier format. Must be prefix followed by 10-digit mobile.');
-      }
-      return { role: 'BILL_ADMIN', mobile: remainder };
-    }
+    // VULN-HIGH-07: Match longest prefix first to prevent prefix shadowing
+    const prefixes: Array<{ prefix: string; role: UserRole }> = [
+      { prefix: billPrefix, role: 'BILL_ADMIN' },
+      { prefix: opsPrefix, role: 'OPERATIONS_ADMIN' },
+    ].filter((p): p is { prefix: string; role: UserRole } => Boolean(p.prefix))
+     .sort((a, b) => b.prefix.length - a.prefix.length);
 
-    if (opsPrefix && cleanRaw.startsWith(opsPrefix)) {
-      const remainder = cleanRaw.slice(opsPrefix.length);
-      if (!/^[6-9]\d{9}$/.test(remainder)) {
-        throw new Error('Invalid Operations Admin identifier format. Must be prefix followed by 10-digit mobile.');
+    for (const { prefix, role } of prefixes) {
+      if (cleanRaw.startsWith(prefix)) {
+        const remainder = cleanRaw.slice(prefix.length);
+        if (!/^[6-9]\d{9}$/.test(remainder)) {
+          throw new Error(`Invalid ${role === 'BILL_ADMIN' ? 'Bill' : 'Operations'} Admin identifier format. Must be prefix followed by 10-digit mobile.`);
+        }
+        return { role, mobile: remainder, prefix };
       }
-      return { role: 'OPERATIONS_ADMIN', mobile: remainder };
     }
 
     throw new Error('Invalid login credentials. Please check your details and try again.');

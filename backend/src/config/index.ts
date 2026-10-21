@@ -13,6 +13,7 @@ export interface AppConfig {
   databaseUrl: string;
   encryptionKey: string;
   fieldEncryptionKey: string;
+  previousFieldEncryptionKeys: string[];
   blindIndexSecret: string;
   retainApprovedBillsForAudit: boolean;
   storageHmacSecret: string;
@@ -388,8 +389,10 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     }
     const p1 = env.BILL_ADMIN_PREFIX.trim().toUpperCase();
     const p2 = env.OPERATIONS_ADMIN_PREFIX.trim().toUpperCase();
-    if (p1 === p2) {
-      throw new Error('[FATAL] BILL_ADMIN_PREFIX and OPERATIONS_ADMIN_PREFIX must be distinct non-empty prefixes.');
+    if (p1 === p2 || p1.startsWith(p2) || p2.startsWith(p1)) {
+      throw new Error(
+        '[FATAL] BILL_ADMIN_PREFIX and OPERATIONS_ADMIN_PREFIX must be distinct non-overlapping prefixes where neither is a prefix of the other.'
+      );
     }
     if (['XYZ', 'ABC'].includes(p1) || ['XYZ', 'ABC'].includes(p2)) {
       throw new Error('[FATAL] Insecure default admin prefixes (XYZ, ABC) are rejected in production.');
@@ -822,8 +825,12 @@ export const config: AppConfig = {
   databaseUrl: process.env.DATABASE_URL || 'postgresql://postgres:1234@localhost:5432/hiralal_rewards?schema=public',
   encryptionKey: process.env.ENCRYPTION_KEY || 'hiralal_aes256_secret_key_32bytes_sample_dev_only!',
   fieldEncryptionKey: process.env.FIELD_ENCRYPTION_KEY || 'hiralal_field_aes256_32bytes_key_dev_only!',
+  previousFieldEncryptionKeys: (process.env.PREVIOUS_FIELD_ENCRYPTION_KEYS || '')
+    .split(',')
+    .map((k) => k.trim())
+    .filter(Boolean),
   // SEC-HIGH-05: Dedicated blind index secret to prevent cryptographic key reuse across AES and HMAC primitives
-  blindIndexSecret: process.env.BLIND_INDEX_SECRET || (isProduction ? (() => { throw new Error('BLIND_INDEX_SECRET must be explicitly configured in production to prevent key reuse.'); })() : process.env.FIELD_ENCRYPTION_KEY || 'hiralal_field_aes256_32bytes_key_dev_only!'),
+  blindIndexSecret: process.env.BLIND_INDEX_SECRET || (isProduction ? (() => { throw new Error('BLIND_INDEX_SECRET must be explicitly configured in production to prevent key reuse.'); })() : 'hiralal_blind_index_secret_dev_only_32bytes!'),
   // CGST Act Section 36: Retain approved tax invoices for 72 months statutory tax audit by default in production
   retainApprovedBillsForAudit: isProduction
     ? process.env.RETAIN_APPROVED_BILLS_FOR_AUDIT !== 'false'
