@@ -133,12 +133,18 @@ docker exec -i "${DB_CONTAINER}" psql -U "${DB_USER}" -d postgres -c "
   WHERE datname = '${TARGET_DB}' AND pid <> pg_backend_pid();
 " >/dev/null 2>&1 || true
 
+# VULN-DR-02: Ensure target database exists on fresh Postgres instances prior to restoration
+DB_EXISTS=$(docker exec -i "${DB_CONTAINER}" psql -U "${DB_USER}" -d postgres -t -A -c "
+  SELECT 1 FROM pg_database WHERE datname = '${TARGET_DB}';
+" 2>/dev/null || true)
+
+if [ "${DB_EXISTS}" != "1" ]; then
+  echo "[$(date -u)] Target database '${TARGET_DB}' does not exist. Creating database on fresh instance..."
+  docker exec -i "${DB_CONTAINER}" psql -U "${DB_USER}" -d postgres -c "CREATE DATABASE \"${TARGET_DB}\";"
+fi
+
 echo "[$(date -u)] [3/4] Restoring SQL dump into database '${TARGET_DB}' in container '${DB_CONTAINER}' (atomic single-transaction)..."
 docker exec -i "${DB_CONTAINER}" psql -v ON_ERROR_STOP=1 --single-transaction -U "${DB_USER}" -d "${TARGET_DB}" < "${SQL_FILE}"
-
-# Restart suspended services after successful restoration
-echo "[$(date -u)] Resuming application traffic..."
-docker compose start backend worker 2>/dev/null || docker start hiralal_backend hiralal_worker 2>/dev/null || true
 
 echo "[$(date -u)] [4/4] Commencing deep financial integrity & ledger reconciliation verification..."
 
@@ -214,6 +220,11 @@ if [ "${UNCOMPENSATED_PAYOUTS}" -ne 0 ]; then
 fi
 
 echo "[$(date -u)] Payout state machine & ledger correlation PASSED."
+
+# SEC-DR-01 / VULN-DR-01: Restart suspended services ONLY after deep financial integrity verification passes
+echo "[$(date -u)] Resuming application traffic (all integrity audits passed)..."
+docker compose start backend worker 2>/dev/null || docker start hiralal_backend hiralal_worker 2>/dev/null || true
+
 echo "[$(date -u)] =============================================================="
 echo "[$(date -u)] RESTORE & FINANCIAL AUDIT SUCCESSFUL for '${TARGET_DB}'"
 echo "[$(date -u)] =============================================================="

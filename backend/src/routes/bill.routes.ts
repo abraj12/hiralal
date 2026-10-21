@@ -14,8 +14,23 @@ const router = Router();
 const initialMaxUploadMb = parseInt(process.env.BILL_MAX_UPLOAD_SIZE_MB || '10', 10);
 const safeInitialMaxUploadMb = Number.isFinite(initialMaxUploadMb) && initialMaxUploadMb > 0 ? initialMaxUploadMb : 10;
 
+const uploadDir = path.join(process.cwd(), 'uploads', 'tmp');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const diskStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  },
+});
+
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: diskStorage,
   limits: {
     fileSize: safeInitialMaxUploadMb * 1024 * 1024,
     files: 1, // Only 1 file per upload
@@ -41,7 +56,7 @@ router.post(
   authenticate,
   requireUser,
   billUploadLimiter,
-  express.json({ limit: process.env.JSON_BODY_LIMIT || '15mb' }),
+  express.json({ limit: process.env.JSON_BODY_LIMIT || '500kb' }),
   requirePreStreamIntegrityHeaders('BILL_UPLOAD'),
   upload.single('invoiceFile'),
   requireActionIntegrity('BILL_UPLOAD'),
@@ -146,7 +161,12 @@ router.post(
     let mimeType: string;
 
     if (req.file) {
-      fileBuffer = req.file.buffer;
+      if ((req.file as any).path) {
+        fileBuffer = fs.readFileSync((req.file as any).path);
+        try { fs.unlinkSync((req.file as any).path); } catch (_) {}
+      } else {
+        fileBuffer = req.file.buffer;
+      }
       fileName = req.file.originalname;
       mimeType = req.file.mimetype;
     } else if (req.body.fileBase64 && typeof req.body.fileBase64 === 'string') {

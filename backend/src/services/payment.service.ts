@@ -185,11 +185,14 @@ export class PaymentService {
           },
         });
 
+        const upiIdEncrypted = encryptSensitive(cleanUpi);
+
         if (existingSelf) {
           return await tx.paymentAccount.update({
             where: { id: existingSelf.id },
             data: {
               upiId: cleanUpi,
+              upiIdEncrypted,
               accountHolderName: providerRegisteredName || user.fullName,
               providerRegisteredName,
               providerNameVerified,
@@ -206,6 +209,7 @@ export class PaymentService {
             userId,
             accountType: 'UPI',
             upiId: cleanUpi,
+            upiIdEncrypted,
             beneficiaryBlindIndex,
             accountHolderName: providerRegisteredName || user.fullName,
             providerRegisteredName,

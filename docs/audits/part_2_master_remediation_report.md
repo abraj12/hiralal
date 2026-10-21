@@ -288,7 +288,7 @@ Before deploying to production AWS infrastructure or releasing mobile builds to 
 - [ ] **Production Secrets Provisioning (BLOCKED):** Production `.env` file must be provisioned on the EC2 host with high-entropy rotated secrets (`POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `JWT_ACCESS_SECRET`, `ENCRYPTION_KEY`, `STORAGE_HMAC_SECRET`).
 - [ ] **Provider Credentials Provisioning (BLOCKED):** Real credentials for MSG91, SignCare, RazorpayX, Firebase, Cloudflare R2, and Google Play Integrity must be obtained and configured in the production environment.
 - [ ] **Physical Device Play Integrity Signing (BLOCKED):** Google Play Console linked Cloud Project credentials, production SHA-256 certificate digests, and release signing keystores are required for production mobile app attestation on physical Android devices.
-- [ ] **DNS & Origin SSL Cutover (BLOCKED):** Domain `rewards.hiralalandsons.com` must be pointed via Cloudflare proxy to the AWS Elastic IP, with Origin CA certificates installed in `/etc/nginx/ssl`.
+- [ ] **DNS & Origin SSL Cutover (BLOCKED):** Domain `hsspl.algions.in` (and alias `hsspl.aglions.in`) must be pointed via Cloudflare proxy to the AWS Elastic IP, with Origin CA certificates installed in `/etc/nginx/ssl`.
 
 ---
 

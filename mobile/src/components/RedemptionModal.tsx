@@ -19,6 +19,7 @@ import {
   createPayoutRedemptionRequestHash,
   createBeneficiaryVerificationRequestHash,
 } from '../services/integrityRequestHash';
+import * as LocalAuthentication from 'expo-local-authentication';
 
 interface RedemptionModalProps {
   visible: boolean;
@@ -236,6 +237,22 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
     }
 
     try {
+      // VULN-MOB-02: Enforce biometric / device PIN step-up verification before disbursal
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      if (hasHardware && isEnrolled) {
+        const authResult = await LocalAuthentication.authenticateAsync({
+          promptMessage: 'Confirm reward payout redemption',
+          fallbackLabel: 'Enter Device Passcode',
+          cancelLabel: 'Cancel',
+        });
+        if (!authResult.success) {
+          setErrorMsg('Biometric authentication is required to confirm redemption.');
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       const requestHash = await createPayoutRedemptionRequestHash({
         idempotencyKey: currentKey,
       });

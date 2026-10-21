@@ -209,6 +209,7 @@ export class KycService {
             panStatus: 'PENDING',
             maskedPan: this.maskPan(cleanPan),
             panNumberEncrypted: encryptSensitive(cleanPan),
+            panBlindIndex,
             provider: 'SIGNCARE',
             providerRequestId: result.providerRequestId || null,
             nameMatched: false,

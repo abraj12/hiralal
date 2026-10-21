@@ -28,16 +28,15 @@ build/
 backend/dist/
 *.tsbuildinfo
 
-# Environment variables & local secrets
+# Environment variables & local secrets (VULN-GIT-01: match all .env variants)
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env*
 *.env
 
-# Keep .env.example
+# Keep example files
 !.env.example
+!.env.*.example
+!*.example
 !backend/.env.example
 !mobile/.env.example
 

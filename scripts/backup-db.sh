@@ -130,8 +130,8 @@ if [ ! -f "${UPLOAD_SCRIPT}" ]; then
   exit 3
 fi
 
-# Run upload and verification runner
-if command -v node >/dev/null 2>&1; then
+# Run upload and verification runner (VULN-DR-03: verify host Node has @aws-sdk/client-s3 installed before invoking host runner)
+if command -v node >/dev/null 2>&1 && node -e "require('@aws-sdk/client-s3')" >/dev/null 2>&1; then
   if ! node "${UPLOAD_SCRIPT}" "${ENC_BACKUP}" "${REMOTE_PREFIX}" "${R2_BACKUP_BUCKET}"; then
     echo "[FATAL ERROR] Offsite upload or remote verification FAILED." >&2
     echo "[EMERGENCY RECOVERY] Encrypted local file retained at: ${ENC_BACKUP}" >&2

@@ -11,10 +11,10 @@ module.exports = {
   },
   coverageThreshold: {
     global: {
-      statements: 50,
-      branches: 30,
-      functions: 38,
-      lines: 52
+      statements: 70,
+      branches: 70,
+      functions: 70,
+      lines: 70
     },
     './src/utils/crypto.utils.ts': {
       lines: 90

@@ -604,7 +604,7 @@ export default function ProfileScreen() {
               <Mail size={20} color="#16A34A" />
               <View>
                 <Text style={styles.supportLabel}>Email Support</Text>
-                <Text style={styles.supportValue}>support@hiralalandsons.com</Text>
+                <Text style={styles.supportValue}>support@hsspl.algions.in</Text>
                 <Text style={styles.supportTime}>Response within 24 hours</Text>
               </View>
             </View>

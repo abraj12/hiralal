@@ -275,7 +275,8 @@ export class AuthService {
       where: { mobile, role: role as UserRole },
     });
 
-    const DUMMY_HASH = '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
+    // VULN-CRYPTO-01: Cost 12 dummy hash to match real password hashing cost factor and eliminate timing oracles
+    const DUMMY_HASH = '$2a$12$jHE.gfGaFakB2NGhVAW/sOFtME3Z60H5Npbm8HoygCnjfg35SS4Zi';
     if (!admin || admin.status !== 'ACTIVE') {
       await bcrypt.compare(params.password, DUMMY_HASH);
       throw new Error('Invalid login credentials. Please check your details and try again.');
@@ -1502,7 +1503,8 @@ export class AuthService {
       include: { wallet: true },
     });
 
-    const DUMMY_HASH = '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
+    // VULN-CRYPTO-01: Cost 12 dummy hash to match real password hashing cost factor and eliminate timing oracles
+    const DUMMY_HASH = '$2a$12$jHE.gfGaFakB2NGhVAW/sOFtME3Z60H5Npbm8HoygCnjfg35SS4Zi';
     if (!user) {
       await bcrypt.compare(pass, DUMMY_HASH);
       throw new Error('Invalid mobile number or password.');

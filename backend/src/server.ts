@@ -103,10 +103,10 @@ app.use(['/api/v1/webhooks', '/api/webhooks'], express.json({
   },
 }));
 
-// 2. High-capacity body parser scoped strictly to bill invoice submissions (Base64 documents up to 15MB)
-// VULN-B08 / VULN-MED-03: Scoped strictly to POST /bills uploads, preventing 15MB allocation on other endpoints
+// 2. High-capacity body parser scoped strictly to bill invoice submissions (Base64 documents up to 500KB)
+// VULN-B08 / VULN-MED-03 / DOS-01: Scoped strictly to POST /bills uploads, preventing 15MB allocation on other endpoints
 const billUploadParser = express.json({
-  limit: process.env.JSON_BODY_LIMIT || '15mb',
+  limit: process.env.JSON_BODY_LIMIT || '500kb',
 });
 
 app.use(['/api/v1/bills', '/api/bills'], (req: Request, res: Response, next: NextFunction) => {

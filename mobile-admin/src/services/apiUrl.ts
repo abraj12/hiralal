@@ -26,8 +26,10 @@ export function validateProductionApiUrl(
     .toLowerCase()
     .trim();
 
+  const allowedHosts = Array.from(new Set([expectedHost, 'hsspl.algions.in', 'hsspl.aglions.in']));
+
   if (
-    parsed.hostname.toLowerCase() !== expectedHost ||
+    !allowedHosts.includes(parsed.hostname.toLowerCase()) ||
     parsed.pathname.replace(/\/+$/, '') !== '/api/v1' ||
     parsed.search !== '' ||
     parsed.hash !== ''

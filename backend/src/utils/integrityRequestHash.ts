@@ -110,6 +110,7 @@ export interface CanonicalBeneficiaryPayload {
   accountType: 'UPI' | 'BANK';
   identifier: string;
   ifscCode?: string;
+  bankName?: string;
   accountHolderName?: string;
 }
 
@@ -117,7 +118,8 @@ export function buildCanonicalBeneficiaryPayload(
   accountType: 'UPI' | 'BANK',
   identifier: string,
   ifscCode?: string,
-  accountHolderName?: string
+  accountHolderName?: string,
+  bankName?: string
 ): CanonicalBeneficiaryPayload {
   return {
     version: 1,
@@ -125,6 +127,7 @@ export function buildCanonicalBeneficiaryPayload(
     accountType,
     identifier: String(identifier || '').trim(),
     ...(ifscCode ? { ifscCode: String(ifscCode).trim().toUpperCase() } : {}),
+    ...(bankName ? { bankName: String(bankName).trim() } : {}),
     ...(accountHolderName ? { accountHolderName: String(accountHolderName).trim() } : {}),
   };
 }
@@ -152,6 +155,8 @@ export type RegistrationIntegrityPayload = {
   middleName: string;
   lastName: string;
   fullName: string;
+  passwordSha256?: string;
+  verificationToken?: string;
 };
 
 export function normalizeRegistrationIntegrityPayload(input: {
@@ -161,6 +166,8 @@ export function normalizeRegistrationIntegrityPayload(input: {
   middleName?: string;
   lastName?: string;
   fullName?: string;
+  password?: string;
+  verificationToken?: string;
 }): RegistrationIntegrityPayload {
   const mobile = String(input.mobile || '').replace(/\D/g, '').slice(-10);
   const profession = String(input.profession || '').trim().toUpperCase();
@@ -181,6 +188,11 @@ export function normalizeRegistrationIntegrityPayload(input: {
     : [firstName, middleName, lastName].filter(Boolean).join(' ')
   ).replace(/\s+/g, ' ');
 
+  const passwordSha256 = input.password
+    ? crypto.createHash('sha256').update(String(input.password)).digest('hex').toLowerCase()
+    : undefined;
+  const verificationToken = input.verificationToken ? String(input.verificationToken).trim() : undefined;
+
   return {
     version: 2,
     action: 'REGISTRATION',
@@ -190,6 +202,8 @@ export function normalizeRegistrationIntegrityPayload(input: {
     middleName,
     lastName,
     fullName,
+    ...(passwordSha256 ? { passwordSha256 } : {}),
+    ...(verificationToken ? { verificationToken } : {}),
   };
 }
 
@@ -200,6 +214,8 @@ export function buildCanonicalRegistrationPayload(input: {
   middleName?: string;
   lastName?: string;
   fullName?: string;
+  password?: string;
+  verificationToken?: string;
 }): RegistrationIntegrityPayload {
   return normalizeRegistrationIntegrityPayload(input);
 }
@@ -295,18 +311,20 @@ export function computeIntegrityRequestHash(
     }
 
     case 'BENEFICIARY_VERIFY': {
-      const isUpi = Boolean(req.body?.upiId);
-      const payload = isUpi
+      const url = req.originalUrl || req.baseUrl || req.path || '';
+      const isBank = url.includes('/bank') || (!url.includes('/upi') && Boolean(req.body?.accountNumber));
+      const payload = isBank
         ? buildCanonicalBeneficiaryPayload(
-            'UPI',
-            req.body?.upiId,
-            undefined,
-            req.body?.accountHolderName
-          )
-        : buildCanonicalBeneficiaryPayload(
             'BANK',
             req.body?.accountNumber,
             req.body?.ifscCode,
+            req.body?.accountHolderName,
+            req.body?.bankName
+          )
+        : buildCanonicalBeneficiaryPayload(
+            'UPI',
+            req.body?.upiId,
+            undefined,
             req.body?.accountHolderName
           );
       return computeSha256Json(payload);
@@ -352,6 +370,8 @@ export function computeIntegrityRequestHash(
         middleName: req.body?.middleName,
         lastName: req.body?.lastName,
         fullName: req.body?.fullName,
+        password: req.body?.password,
+        verificationToken: req.body?.verificationToken,
       });
       return computeSha256Json(payload);
     }

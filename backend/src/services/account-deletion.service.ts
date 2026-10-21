@@ -943,6 +943,7 @@ export class AccountDeletionService {
               where: { userId: u.id },
               data: {
                 upiId: null,
+                upiIdEncrypted: null,
                 accountHolderName: 'ANONYMIZED_STATUTORY_RETENTION',
                 providerRegisteredName: 'ANONYMIZED_STATUTORY_RETENTION',
                 beneficiaryBlindIndex: null,
@@ -967,6 +968,7 @@ export class AccountDeletionService {
               where: { userId: u.id },
               data: {
                 upiId: null,
+                upiIdEncrypted: null,
                 accountHolderName: 'ANONYMIZED',
                 providerRegisteredName: 'ANONYMIZED',
                 accountNumber: null,
@@ -1002,6 +1004,20 @@ export class AccountDeletionService {
               deletionRequestedAt: null,
               deletionScheduledAt: null,
               statutoryRetentionExpiresAt: retentionExpiry,
+            },
+          });
+
+          // 6. VULN-DEL-01: Scrub personal names, IP addresses, and user agents in AuditLog for deleted accounts
+          await tx.auditLog.updateMany({
+            where: {
+              OR: [
+                { entityId: u.id },
+                { adminId: u.id },
+              ],
+            },
+            data: {
+              ipAddress: '0.0.0.0',
+              userAgent: 'ANONYMIZED',
             },
           });
 

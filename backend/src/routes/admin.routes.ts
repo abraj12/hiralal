@@ -20,6 +20,7 @@ import { NotificationService } from '../services/notification.service';
 import { BillStatus, Profession, UserStatus } from '@prisma/client';
 import { getIstYearAndMonth, parseStrictIndiaTimestamp } from '../utils/timezone.utils';
 import { adminActionLimiter } from '../middleware/rateLimit.middleware';
+import { decryptSensitive, generateBlindIndex } from '../utils/crypto.utils';
 
 const router = Router();
 
@@ -67,15 +68,16 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
     const { year: istYear, month: istMonth } = getIstYearAndMonth();
     const startOfMonth = new Date(`${istYear}-${String(istMonth).padStart(2, '0')}-01T00:00:00+05:30`);
 
-    const monthBills = await prisma.bill.findMany({
+    // DOS-04: Use database aggregation instead of unbounded findMany + in-memory reduce
+    const monthBillsAgg = await prisma.bill.aggregate({
       where: {
         ...billWhere,
         status: 'APPROVED',
         updatedAt: { gte: startOfMonth },
       },
-      select: { calculatedReward: true },
+      _sum: { calculatedReward: true },
     });
-    const rewardsThisMonth = monthBills.reduce((acc, b) => acc + Number(b.calculatedReward), 0);
+    const rewardsThisMonth = Number(monthBillsAgg._sum.calculatedReward || 0);
 
     // 10 most recent bills
     const recentBills = await prisma.bill.findMany({
@@ -569,6 +571,14 @@ router.post('/users/:id/verify-mononymous-kyc', requireOperationsAdmin, adminAct
       return res.status(400).json({ success: false, message: 'No pending KYC verification found for this user.' });
     }
 
+    let backfilledBlindIndex = pendingKyc.panBlindIndex;
+    if (!backfilledBlindIndex && pendingKyc.panNumberEncrypted) {
+      const decryptedPan = decryptSensitive(pendingKyc.panNumberEncrypted);
+      if (decryptedPan) {
+        backfilledBlindIndex = generateBlindIndex(decryptedPan.trim().toUpperCase());
+      }
+    }
+
     const updated = await prisma.$transaction(async (tx) => {
       const kyc = await tx.kycRecord.update({
         where: { id: pendingKyc.id },
@@ -577,6 +587,7 @@ router.post('/users/:id/verify-mononymous-kyc', requireOperationsAdmin, adminAct
           nameMatched: true,
           rejectionReason: null,
           verifiedAt: new Date(),
+          ...(backfilledBlindIndex ? { panBlindIndex: backfilledBlindIndex } : {}),
         },
       });
 
@@ -758,11 +769,22 @@ router.get(
 
 /**
  * 5. Bill Verification (Approve / Reject with GST and Financial Snapshot)
+ * DEADLOCK-01: Use requireAdmin so OPERATIONS_ADMIN can resolve bills requiring secondary approval (>25% upward deviation)
  */
-router.post('/bills/:id/verify', requireBillAdmin, adminActionLimiter, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/bills/:id/verify', requireAdmin, adminActionLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { action, rejectionReason, gstIncluded, gstRate, gstRuleId, gstOverrideReason } = req.body;
     const admin = req.user!;
+    const { action, rejectionReason, gstIncluded, gstRate, gstRuleId, gstOverrideReason } = req.body;
+
+    // DEADLOCK-01: Standard bill verification is reserved for BILL_ADMIN.
+    // OPERATIONS_ADMIN is permitted strictly when resolving secondary approval upward deviations (correctedGrossAmount).
+    if (admin.role === 'OPERATIONS_ADMIN' && !req.body.correctedGrossAmount) {
+      return res.status(403).json({
+        success: false,
+        code: 'BILL_ADMIN_ROLE_REQUIRED',
+        message: 'Standard bill verification is restricted to Bill Review Administrators. Operations Administrators may only verify secondary approval upward deviations.',
+      });
+    }
 
     if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'customRewardAmount')) {
       return res.status(400).json({

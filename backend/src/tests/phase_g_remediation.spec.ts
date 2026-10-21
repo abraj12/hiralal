@@ -92,7 +92,7 @@ const validProductionEnv: Record<string, string> = {
   RAZORPAYX_WEBHOOK_SECRET: 'valid_webhook_secret',
   MSG91_AUTH_KEY: 'valid_msg91_auth',
   MSG91_TEMPLATE_ID: 'valid_template',
-  CORS_ALLOWED_ORIGINS: 'https://hiralal.com',
+  CORS_ALLOWED_ORIGINS: 'https://hsspl.algions.in',
   BILL_ADMIN_MOBILE: '9876540001',
   OPERATIONS_ADMIN_MOBILE: '9876540002',
   BILL_ADMIN_INITIAL_PASSWORD: 'ValidBillPass2026!',
@@ -976,7 +976,7 @@ describe('Admin Bill Review Configuration Alignment', () => {
           grossBillAmount: 10000.0,
           calculatedReward: 75.0,
           status: 'PENDING',
-          fileUrl: 'https://r2.hiralal.com/bills/test.pdf',
+          fileUrl: 'https://storage.hsspl.algions.in/bills/test.pdf',
           fileKey: 'bills/test.pdf',
           createdAt: historicalSubmission,
         },
@@ -1020,7 +1020,7 @@ describe('Admin Bill Review Configuration Alignment', () => {
           grossBillAmount: 5000.0,
           calculatedReward: 25.0,
           status: 'PENDING',
-          fileUrl: 'https://r2.hiralal.com/bills/ancient.pdf',
+          fileUrl: 'https://storage.hsspl.algions.in/bills/ancient.pdf',
           fileKey: 'bills/ancient.pdf',
           createdAt: ancientSubmission,
         },
@@ -1853,9 +1853,6 @@ describe('Phase G.3 — Account Deletion Concurrency, Lease Fencing & Lock Order
       const resSubsequent = await AccountDeletionService.processScheduledDeletions(prisma, undefined, 'worker-J-again');
       expect(resSubsequent.processedCount).toBe(0);
     } finally {
-      await prisma.accountDeletionOperation.deleteMany({ where: { userId: user.id } });
-      await prisma.auditLog.deleteMany({ where: { entityId: user.id } });
-      await prisma.user.deleteMany({ where: { id: user.id } });
       await cleanG3User(mobile);
     }
   });

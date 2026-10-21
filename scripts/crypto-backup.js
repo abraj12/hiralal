@@ -10,6 +10,10 @@ const crypto = require('crypto');
 const GCM_MAGIC = Buffer.from('GCM2026', 'utf8'); // 7 bytes
 const OPENSSL_MAGIC = Buffer.from('Salted__', 'utf8'); // 8 bytes
 
+// VULN-CRYPTO-02: 600,000 iterations for PBKDF2 key derivation (OWASP/NIST SP 800-132 recommendation)
+const PBKDF2_ITERATIONS = 600000;
+const LEGACY_PBKDF2_ITERATIONS = 100000;
+
 function encryptBackupGcm(dataBuffer, passphrase) {
   if (!passphrase || typeof passphrase !== 'string') {
     throw new Error('A secure passphrase is required for backup encryption.');
@@ -20,7 +24,7 @@ function encryptBackupGcm(dataBuffer, passphrase) {
 
   const salt = crypto.randomBytes(16);
   const iv = crypto.randomBytes(12);
-  const key = crypto.pbkdf2Sync(passphrase, salt, 100000, 32, 'sha256');
+  const key = crypto.pbkdf2Sync(passphrase, salt, PBKDF2_ITERATIONS, 32, 'sha256');
 
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   const encrypted = Buffer.concat([cipher.update(dataBuffer), cipher.final()]);
@@ -41,11 +45,18 @@ function decryptBackup(encryptedBuffer, passphrase) {
     const tag = encryptedBuffer.subarray(35, 51);
     const ciphertext = encryptedBuffer.subarray(51);
 
-    const key = crypto.pbkdf2Sync(passphrase, salt, 100000, 32, 'sha256');
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(tag);
-
-    return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    // Try current 600,000 iterations first, then fall back to legacy 100,000
+    try {
+      const key = crypto.pbkdf2Sync(passphrase, salt, PBKDF2_ITERATIONS, 32, 'sha256');
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(tag);
+      return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    } catch (gcmErr) {
+      const key = crypto.pbkdf2Sync(passphrase, salt, LEGACY_PBKDF2_ITERATIONS, 32, 'sha256');
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(tag);
+      return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    }
   }
 
   // 2. Check for Legacy OpenSSL AES-256-CBC with PBKDF2
@@ -114,7 +125,7 @@ function encryptFileStream(inputFile, outputFile, passphrase) {
   return new Promise((resolve, reject) => {
     const salt = crypto.randomBytes(16);
     const iv = crypto.randomBytes(12);
-    const key = crypto.pbkdf2Sync(passphrase, salt, 100000, 32, 'sha256');
+    const key = crypto.pbkdf2Sync(passphrase, salt, PBKDF2_ITERATIONS, 32, 'sha256');
     const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
 
     const tempCipherPath = `${outputFile}.tmp_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
@@ -173,7 +184,7 @@ function decryptFileStream(inputFile, outputFile, passphrase) {
         const iv = header.subarray(23, 35);
         const tag = header.subarray(35, 51);
 
-        const key = crypto.pbkdf2Sync(passphrase, salt, 100000, 32, 'sha256');
+        const key = crypto.pbkdf2Sync(passphrase, salt, PBKDF2_ITERATIONS, 32, 'sha256');
         const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
         decipher.setAuthTag(tag);
 

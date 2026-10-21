@@ -163,6 +163,7 @@ export async function createBeneficiaryVerificationRequestHash(data: {
   identifier: string;
   ifscCode?: string;
   accountHolderName?: string;
+  bankName?: string;
 }): Promise<string> {
   const canonicalPayload = {
     version: 1,
@@ -170,6 +171,7 @@ export async function createBeneficiaryVerificationRequestHash(data: {
     accountType: data.accountType,
     identifier: String(data.identifier || '').trim(),
     ...(data.ifscCode ? { ifscCode: String(data.ifscCode).trim().toUpperCase() } : {}),
+    ...(data.bankName ? { bankName: String(data.bankName).trim() } : {}),
     ...(data.accountHolderName ? { accountHolderName: String(data.accountHolderName).trim() } : {}),
   };
 
@@ -183,6 +185,8 @@ export function normalizeRegistrationIntegrityPayload(input: {
   middleName?: string;
   lastName?: string;
   fullName?: string;
+  passwordSha256?: string;
+  verificationToken?: string;
 }) {
   const mobile = String(input.mobile || '').replace(/\D/g, '').slice(-10);
   const profession = String(input.profession || '').trim().toUpperCase();
@@ -212,6 +216,8 @@ export function normalizeRegistrationIntegrityPayload(input: {
     middleName,
     lastName,
     fullName,
+    ...(input.passwordSha256 ? { passwordSha256: input.passwordSha256 } : {}),
+    ...(input.verificationToken ? { verificationToken: String(input.verificationToken).trim() } : {}),
   };
 }
 
@@ -225,8 +231,22 @@ export async function createRegistrationRequestHash(input: {
   middleName?: string;
   lastName?: string;
   fullName?: string;
+  password?: string;
+  verificationToken?: string;
 }): Promise<string> {
-  const payload = normalizeRegistrationIntegrityPayload(input);
+  let passwordSha256: string | undefined = undefined;
+  if (input.password) {
+    passwordSha256 = await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      input.password,
+      { encoding: Crypto.CryptoEncoding.HEX }
+    );
+  }
+  const payload = {
+    ...normalizeRegistrationIntegrityPayload(input),
+    ...(passwordSha256 ? { passwordSha256: passwordSha256.toLowerCase() } : {}),
+    ...(input.verificationToken ? { verificationToken: String(input.verificationToken).trim() } : {}),
+  };
   return sha256Json(payload);
 }
 

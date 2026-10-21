@@ -349,6 +349,8 @@ router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Re
   const isEnforcing = PlayIntegrityService.isEnforcingActions();
   const isAdminCandidate = AuthService.isConfiguredAdminPrefix(rawIdentifier);
 
+  // VULN-API-01 & VULN-B03: If admin candidate, strictly rate limit using admin rate limiters.
+  // Administrative candidates are never issued sessions directly; they must pass password verification and 2FA OTP.
   if (isAdminCandidate) {
     let allowed = false;
     await new Promise<void>((resolve) => {
@@ -406,7 +408,14 @@ router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Re
       userAgent,
     });
 
-    if (result.kind === 'USER_AUTHENTICATED' && result.session?.user?.role === 'USER') {
+    if (result.kind === 'USER_AUTHENTICATED') {
+      if (result.session?.user?.role && result.session.user.role !== 'USER') {
+        return res.status(403).json({
+          success: false,
+          code: 'ADMIN_TIER_REQUIRED',
+          message: 'Administrative accounts must authenticate via the designated admin portal.',
+        });
+      }
       return res.status(200).json({
         success: true,
         type: 'USER_AUTHENTICATED',

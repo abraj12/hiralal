@@ -132,7 +132,11 @@ export class PayoutService {
       return { isValid: false, reason: 'Authoritative beneficiary name is missing from payment provider verification.' };
     }
 
-    const match = areNamesMatching(beneficiaryName, panHolderName);
+    const isMononymousApproved =
+      Boolean((verifiedKycRecord as any)?.rejectionReason?.includes('MONONYMOUS')) ||
+      panHolderName.split(/\s+/).filter(Boolean).length === 1;
+
+    const match = areNamesMatching(beneficiaryName, panHolderName, { isMononymousApproved });
     if (!match) {
       return { isValid: false, reason: 'Registered payment account beneficiary name does not match verified PAN name.' };
     }

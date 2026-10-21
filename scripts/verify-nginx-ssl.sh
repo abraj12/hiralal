@@ -127,7 +127,7 @@ fi
 STRICT_DOMAIN_CHECK="${STRICT_DOMAIN_CHECK:-true}"
 if command -v openssl >/dev/null 2>&1; then
   CERT_TEXT=$(openssl x509 -in "${CERT_FILE}" -text -noout)
-  if echo "${CERT_TEXT}" | grep -qE "(CN\s*=\s*\*?\.?hsspl\.algions\.in|DNS:\*?\.?hsspl\.algions\.in)"; then
+  if echo "${CERT_TEXT}" | grep -qE "(CN\s*=\s*\*?\.?hsspl\.a[lg][gl]ions\.in|DNS:\*?\.?hsspl\.a[lg][gl]ions\.in)"; then
     echo "✅ [CHECK 6/6] Certificate matches target domain: ${REQUIRED_DOMAIN}"
   else
     if [ "${STRICT_DOMAIN_CHECK}" = "false" ]; then

@@ -29,16 +29,24 @@ export function resolveBankAccountNumber(account: {
 export function resolveUpiAddress(account: {
   accountType: string;
   upiId?: string | null;
+  upiIdEncrypted?: string | null;
 }): string {
   if (account.accountType !== 'UPI') {
     throw new Error('UPI details requested for a non-UPI account.');
   }
 
-  if (!account.upiId || !/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(account.upiId.trim())) {
+  let raw = account.upiId;
+  if (!raw && account.upiIdEncrypted) {
+    try {
+      raw = decryptSensitive(account.upiIdEncrypted);
+    } catch (_) {}
+  }
+
+  if (!raw || !/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(raw.trim())) {
     throw new Error('Stored UPI handle details are invalid.');
   }
 
-  return account.upiId.trim();
+  return raw.trim();
 }
 
 export class PayoutWorker {
@@ -372,23 +380,34 @@ export class PayoutWorker {
   }
 
   /**
-   * Polls OutboxEvent table for unprocessed PAYOUT_DISPATCH events.
+   * Polls OutboxEvent table for unprocessed PAYOUT_DISPATCH events with exponential backoff.
    */
   static async processOutboxEvents(): Promise<void> {
-    const leaseTimeout = new Date(Date.now() - 5 * 60 * 1000);
+    const now = Date.now();
+    const leaseTimeout = new Date(now - 5 * 60 * 1000);
     const candidateEvents = await prisma.outboxEvent.findMany({
       where: {
         eventType: 'PAYOUT_DISPATCH',
-        OR: [
-          { status: 'PENDING' },
-          { status: 'PROCESSING', updatedAt: { lt: leaseTimeout } },
-        ],
+        status: { in: ['PENDING', 'PROCESSING'] },
       },
-      take: 20,
+      take: 50,
       orderBy: { createdAt: 'asc' },
     });
 
-    for (const event of candidateEvents) {
+    // DOS-03: Apply exponential backoff delay based on attempts to prevent head-of-line blocking:
+    // Delay = attempts * 30 seconds (30s, 60s, 90s...). Fresh events (attempts=0) execute immediately.
+    const runnableEvents = candidateEvents.filter((event) => {
+      if (event.status === 'PROCESSING') {
+        return event.updatedAt < leaseTimeout;
+      }
+      if (event.attempts === 0) {
+        return true;
+      }
+      const backoffMs = event.attempts * 30 * 1000;
+      return now - new Date(event.updatedAt).getTime() >= backoffMs;
+    }).slice(0, 20);
+
+    for (const event of runnableEvents) {
       try {
         // Atomic compare-and-swap claim to guarantee single worker execution
         const claimResult = await prisma.outboxEvent.updateMany({
@@ -425,7 +444,7 @@ export class PayoutWorker {
         await prisma.outboxEvent.update({
           where: { id: event.id },
           data: {
-            status: event.attempts >= 3 ? 'FAILED' : 'PENDING',
+            status: event.attempts >= 5 ? 'FAILED' : 'PENDING',
             lastError: err.message,
           },
         });

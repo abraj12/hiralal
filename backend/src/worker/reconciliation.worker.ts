@@ -316,9 +316,13 @@ export class ReconciliationWorker {
         });
 
         if (!payoutRecord) {
+          const isDeadLetter = (event.attempts + 1) >= 5;
           await prisma.webhookEvent.update({
             where: { id: event.id },
-            data: { processingStartedAt: null },
+            data: {
+              processingStartedAt: null,
+              ...(isDeadLetter ? { isProcessed: true, lastError: '[DEAD-LETTER] No local payout matched after 5 attempts' } : {}),
+            },
           });
           continue;
         }
@@ -407,9 +411,14 @@ export class ReconciliationWorker {
         });
         processedCount++;
       } catch (err: any) {
+        const isDeadLetter = (event.attempts + 1) >= 5;
         await prisma.webhookEvent.update({
           where: { id: event.id },
-          data: { processingStartedAt: null, lastError: err.message },
+          data: {
+            processingStartedAt: null,
+            lastError: isDeadLetter ? `[DEAD-LETTER] Exceeded 5 attempts: ${err.message}` : err.message,
+            ...(isDeadLetter ? { isProcessed: true } : {}),
+          },
         });
       }
     }

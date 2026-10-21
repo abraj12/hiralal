@@ -37,7 +37,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
-      - hiralal_net
+      - hiralal_backend_net
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-hiralal_rewards}']
       interval: 5s
@@ -71,7 +71,7 @@ services:
     volumes:
       - redisdata:/data
     networks:
-      - hiralal_net
+      - hiralal_backend_net
     healthcheck:
       test:
         - CMD-SHELL
@@ -174,7 +174,8 @@ services:
       - ./shared/assets:/shared/assets:ro
       - ./scripts:/app/scripts:ro
     networks:
-      - hiralal_net
+      - hiralal_frontend_net
+      - hiralal_backend_net
     healthcheck:
       test: ['CMD', 'node', '-e', 'fetch("http://127.0.0.1:5000/health/ready").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))']
       interval: 5s
@@ -204,7 +205,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public
     networks:
-      - hiralal_net
+      - hiralal_backend_net
     logging:
       driver: 'json-file'
       options:
@@ -301,7 +302,7 @@ services:
     expose:
       - '3000'
     networks:
-      - hiralal_net
+      - hiralal_frontend_net
     healthcheck:
       test: ['CMD', 'node', '-e', 'fetch("http://127.0.0.1:3000").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))']
       interval: 5s
@@ -343,7 +344,7 @@ services:
       timeout: 3s
       retries: 5
     networks:
-      - hiralal_net
+      - hiralal_frontend_net
     logging:
       driver: 'json-file'
       options:
@@ -351,7 +352,9 @@ services:
         max-file: '5'
 
 networks:
-  hiralal_net:
+  hiralal_frontend_net:
+    driver: bridge
+  hiralal_backend_net:
     driver: bridge
 
 volumes:

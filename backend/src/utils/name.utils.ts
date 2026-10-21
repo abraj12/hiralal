@@ -235,8 +235,42 @@ export function areNamesMatching(
   if (options?.isMononymousApproved) {
     const aTokens = normAccount.split(' ').filter(Boolean);
     const pTokens = normPan.split(' ').filter(Boolean);
-    if (aTokens.length === 1 && pTokens.length === 1 && aTokens[0] === pTokens[0]) {
-      return true;
+
+    // When PAN verified name is a single token
+    if (pTokens.length === 1) {
+      const singlePan = pTokens[0];
+      if (aTokens.length === 1 && aTokens[0] === singlePan) {
+        return true;
+      }
+      // Bank enters single name in both First Name and Last Name fields (e.g. "RAMESH RAMESH")
+      if (aTokens.length === 2 && aTokens[0] === singlePan && aTokens[1] === singlePan) {
+        return true;
+      }
+      // Bank enters single name with dot or single-character initial (e.g. "RAMESH ." or "RAMESH K")
+      if (aTokens.length === 2) {
+        if (aTokens[0] === singlePan && (aTokens[1].length === 1 || aTokens[1] === '.')) {
+          return true;
+        }
+        if (aTokens[1] === singlePan && (aTokens[0].length === 1 || aTokens[0] === '.')) {
+          return true;
+        }
+      }
+    }
+
+    // When Bank Account beneficiary name is a single token
+    if (aTokens.length === 1) {
+      const singleAccount = aTokens[0];
+      if (pTokens.length === 2 && pTokens[0] === singleAccount && pTokens[1] === singleAccount) {
+        return true;
+      }
+      if (pTokens.length === 2) {
+        if (pTokens[0] === singleAccount && (pTokens[1].length === 1 || pTokens[1] === '.')) {
+          return true;
+        }
+        if (pTokens[1] === singleAccount && (pTokens[0].length === 1 || pTokens[0] === '.')) {
+          return true;
+        }
+      }
     }
   }
 

@@ -3,7 +3,8 @@ import crypto from 'crypto';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { NotificationService } from '../services/notification.service';
 import { FcmProvider } from '../services/push/fcm.provider';
-import { createRateLimiter } from '../middleware/rateLimit.middleware';
+import { createRateLimiter, pushTokenLimiter } from '../middleware/rateLimit.middleware';
+import { DeviceTokenInputSchema } from '../schemas/validation.schemas';
 import { prisma } from '../db';
 
 const router = Router();
@@ -320,17 +321,21 @@ router.patch('/:id/read', async (req: AuthenticatedRequest, res: Response) => {
 
 /**
  * POST /api/notifications/device-token
- * Registers or updates a device push token for the authenticated user.
+ * Registers or updates a device push token for the authenticated user (VULN-API-02: protected by pushTokenLimiter).
  */
-router.post('/device-token', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/device-token', pushTokenLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const { token, platform } = req.body;
+    const parsed = DeviceTokenInputSchema.safeParse(req.body);
 
-    if (!token) {
-      return res.status(400).json({ success: false, message: 'Device token is required.' });
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: parsed.error.issues[0]?.message || 'Device token is required.',
+      });
     }
 
+    const { token, platform } = parsed.data;
     const deviceToken = await NotificationService.registerDeviceToken(userId, { token, platform });
     res.status(201).json({ success: true, deviceToken });
   } catch (err: any) {

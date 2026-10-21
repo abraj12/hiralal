@@ -313,6 +313,7 @@ model PaymentAccount {
   user                   User        @relation(fields: [userId], references: [id], onDelete: Restrict)
   accountType            PaymentType
   upiId                  String?
+  upiIdEncrypted         String?
   beneficiaryBlindIndex  String?     @unique
   accountHolderName      String?
   providerRegisteredName String?
