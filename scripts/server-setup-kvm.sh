@@ -37,7 +37,9 @@ apt-get install -y \
   python3-certbot-nginx \
   unattended-upgrades \
   apparmor \
-  apparmor-utils
+  apparmor-utils \
+  iptables-persistent \
+  netfilter-persistent
 
 # 2. Linux Kernel & Sysctl Network Hardening
 echo "==> [2/7] Applying Linux kernel and sysctl network security hardening..."
@@ -120,6 +122,10 @@ if [ "${RESTRICT_CLOUDFLARE_IPS:-true}" = "true" ]; then
     done
     ip6tables -A DOCKER-USER -p tcp -m multiport --dports 80,443 -j DROP
     ip6tables -A DOCKER-USER -j RETURN
+  fi
+
+  if command -v netfilter-persistent >/dev/null 2>&1; then
+    netfilter-persistent save || true
   fi
 else
   ufw allow 80/tcp comment "Nginx HTTP / ACME Challenge"

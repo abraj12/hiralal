@@ -1,6 +1,7 @@
 import { prisma } from '../db';
 import { config } from '../config';
 import { PayoutService } from '../services/payout.service';
+import { toPaise } from '../utils/money.utils';
 
 export class ReconciliationWorker {
   private static isRunning = false;
@@ -255,11 +256,16 @@ export class ReconciliationWorker {
    * Retries unprocessed or previously unmatched webhook events.
    */
   static async retryUnprocessedWebhooks(): Promise<number> {
+    const leaseThreshold = new Date(Date.now() - 60 * 1000);
     const candidateEvents = await prisma.webhookEvent.findMany({
       where: {
         isProcessed: false,
         provider: 'RAZORPAYX',
         attempts: { lt: 5 },
+        OR: [
+          { processingStartedAt: null },
+          { processingStartedAt: { lt: leaseThreshold } },
+        ],
       },
       take: 20,
       orderBy: { createdAt: 'asc' },
@@ -267,13 +273,33 @@ export class ReconciliationWorker {
 
     let processedCount = 0;
     for (const event of candidateEvents) {
+      // Atomic CAS lease claim
+      const claim = await prisma.webhookEvent.updateMany({
+        where: {
+          id: event.id,
+          isProcessed: false,
+          OR: [
+            { processingStartedAt: null },
+            { processingStartedAt: { lt: leaseThreshold } },
+          ],
+        },
+        data: {
+          processingStartedAt: new Date(),
+          attempts: { increment: 1 },
+        },
+      });
+
+      if (claim.count === 0) {
+        continue;
+      }
+
       try {
         const payload = event.payload as any;
         const payoutEntity = payload?.payload?.payout?.entity;
         if (!payoutEntity) {
           await prisma.webhookEvent.update({
             where: { id: event.id },
-            data: { isProcessed: true, processedAt: new Date() },
+            data: { isProcessed: true, processedAt: new Date(), processingStartedAt: null },
           });
           continue;
         }
@@ -286,14 +312,27 @@ export class ReconciliationWorker {
               { id: payoutEntity.reference_id },
             ],
           },
+          include: { wallet: true },
         });
 
         if (!payoutRecord) {
           await prisma.webhookEvent.update({
             where: { id: event.id },
-            data: { attempts: { increment: 1 } },
+            data: { processingStartedAt: null },
           });
           continue;
+        }
+
+        // Validate payload invariants: currency and amount
+        if (!payoutEntity.currency || typeof payoutEntity.currency !== 'string' || payoutEntity.currency !== 'INR') {
+          throw new Error(`[RECONCILIATION] Invalid currency: expected INR, got ${payoutEntity.currency}`);
+        }
+        if (payoutEntity.amount === undefined || payoutEntity.amount === null || isNaN(Number(payoutEntity.amount))) {
+          throw new Error('[RECONCILIATION] Missing or invalid amount in payload');
+        }
+        const expectedPaise = Number(toPaise(payoutRecord.amount));
+        if (Number(payoutEntity.amount) !== expectedPaise) {
+          throw new Error(`[RECONCILIATION] Amount mismatch: expected ${expectedPaise} paise, got ${payoutEntity.amount} paise`);
         }
 
         const eventType = event.eventType;
@@ -322,7 +361,20 @@ export class ReconciliationWorker {
                   manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway processed payout after local status was marked ${payoutRecord.status}. Account suspended and wallet frozen.`,
                 },
               });
-              // 4. Audit log
+              // 4. Double-entry ledger adjustment entry
+              await tx.walletTransaction.create({
+                data: {
+                  walletId: payoutRecord.walletId,
+                  userId: payoutRecord.userId,
+                  amount: 0,
+                  type: 'MANUAL_ADJUSTMENT',
+                  balanceAfter: 0,
+                  referenceType: 'PAYOUT',
+                  referenceId: payoutRecord.id,
+                  description: `Wallet balance frozen to 0 due to CRITICAL FINANCIAL DRIFT: Gateway processed payout after local status was ${payoutRecord.status}.`,
+                },
+              });
+              // 5. Audit log
               await tx.auditLog.create({
                 data: {
                   action: 'CRITICAL_FINANCIAL_DRIFT',
@@ -351,13 +403,13 @@ export class ReconciliationWorker {
 
         await prisma.webhookEvent.update({
           where: { id: event.id },
-          data: { isProcessed: true, processedAt: new Date(), lastError: null },
+          data: { isProcessed: true, processedAt: new Date(), processingStartedAt: null, lastError: null },
         });
         processedCount++;
       } catch (err: any) {
         await prisma.webhookEvent.update({
           where: { id: event.id },
-          data: { attempts: { increment: 1 }, lastError: err.message },
+          data: { processingStartedAt: null, lastError: err.message },
         });
       }
     }

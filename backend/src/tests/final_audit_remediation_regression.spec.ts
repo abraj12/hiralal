@@ -578,20 +578,20 @@ describe('Final Audit Remediation Verification — Security, Financial, and Reli
       expect(normalizeName('M/S SHARMA ENTERPRISES')).toBe('SHARMA ENTERPRISES');
     });
 
-    test('Correctly matches omitted middle names (e.g. RAMESH GUPTA vs RAMESH CHANDRA GUPTA)', () => {
-      expect(compareNames('RAMESH GUPTA', 'RAMESH CHANDRA GUPTA')).toBe(true);
-      expect(compareNames('RAMESH CHANDRA GUPTA', 'RAMESH GUPTA')).toBe(true);
-      expect(compareNames('SUDHIR KUMAR AGARWAL', 'SUDHIR AGARWAL')).toBe(true);
+    test('Strictly rejects omitted middle names (e.g. RAMESH GUPTA vs RAMESH CHANDRA GUPTA)', () => {
+      expect(compareNames('RAMESH GUPTA', 'RAMESH CHANDRA GUPTA')).toBe(false);
+      expect(compareNames('RAMESH CHANDRA GUPTA', 'RAMESH GUPTA')).toBe(false);
+      expect(compareNames('SUDHIR KUMAR AGARWAL', 'SUDHIR AGARWAL')).toBe(false);
     });
 
-    test('Correctly matches token order swaps for Indian names', () => {
-      expect(compareNames('GUPTA RAMESH', 'RAMESH GUPTA')).toBe(true);
-      expect(compareNames('SHARMA RAJESH KUMAR', 'RAJESH KUMAR SHARMA')).toBe(true);
+    test('Strictly rejects token order swaps for Indian names under exact matching mandate', () => {
+      expect(compareNames('GUPTA RAMESH', 'RAMESH GUPTA')).toBe(false);
+      expect(compareNames('SHARMA RAJESH KUMAR', 'RAJESH KUMAR SHARMA')).toBe(false);
     });
 
-    test('Correctly matches initials with anchor surnames', () => {
-      expect(compareNames('R K SHARMA', 'RAJESH KUMAR SHARMA')).toBe(true);
-      expect(compareNames('SHARMA R K', 'RAJESH KUMAR SHARMA')).toBe(true);
+    test('Strictly rejects initials under exact matching mandate', () => {
+      expect(compareNames('R K SHARMA', 'RAJESH KUMAR SHARMA')).toBe(false);
+      expect(compareNames('SHARMA R K', 'RAJESH KUMAR SHARMA')).toBe(false);
     });
 
     test('Rejects conflicting names to prevent fraud', () => {

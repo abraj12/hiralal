@@ -159,7 +159,9 @@ npm run seed
 ```bash
 npm test -- --runInBand --forceExit
 ```
-All unit, integration, and security test suites run in-band and maintain a 100% pass rate in CI (see latest CI workflow run for authoritative real-time test counts):
+All unit, integration, and security test suites run in-band and maintain a **100% pass rate** (816/816 tests passing across all workspaces: 741 backend, 18 admin, 29 mobile, 28 mobile-admin):
+- `exact_name_matching.spec.ts` (**Mandatory exact PAN card to bank account holder name matching policy**; approved prefix stripping only, complete rejection of fuzzy, subset, swapped, or omitted names)
+- `final_audit_remediation_regression.spec.ts` (Comprehensive regression suite covering findings `VERIF-01` through `VERIF-17`)
 - `global_reward_cap.spec.ts` (Pool-free reward credit integrity, volume scaling, concurrent race condition approval, providerNameVerified checks)
 - `config_safety.spec.ts` (Strict environment validation, admin credential segregation, demo number rejection)
 - `migration_scenarios.spec.ts` (Fresh deployment, idempotent migrations, fail-closed legacy admin migration)
@@ -175,6 +177,8 @@ All unit, integration, and security test suites run in-band and maintain a 100% 
 - `payout_restore_reconciliation.spec.ts` (Reconciliation edge cases and disaster recovery integrity)
 - `seed_safety.spec.ts` (Production seed safety barriers and environment checks)
 - Additional business logic, security middleware, and end-to-end suites
+
+For comprehensive documentation, see [**Documentation Index (`docs/README.md`)**](docs/README.md).
 
 ---
 

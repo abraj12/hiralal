@@ -37,6 +37,7 @@ export default function AdminLoginScreen() {
   const [prefix, setPrefix] = useState('');
   const [showPrefix, setShowPrefix] = useState(false);
   const [verifiedPrefix, setVerifiedPrefix] = useState('');
+  const [tier1Token, setTier1Token] = useState<string | null>(null);
   const [isVerifyingPrefix, setIsVerifyingPrefix] = useState(false);
 
   // Step 2: Credentials State
@@ -84,6 +85,9 @@ export default function AdminLoginScreen() {
       const res = await MobileApiClient.verifyPrefix(cleanPrefix);
       if (res?.verified || res?.success) {
         setVerifiedPrefix(cleanPrefix);
+        if (res?.tier1Token) {
+          setTier1Token(res.tier1Token);
+        }
         setInfoMsg('Security prefix verified. Please enter your administrator credentials.');
         setStep(2);
       } else {
@@ -115,7 +119,7 @@ export default function AdminLoginScreen() {
     setIsSubmittingCredentials(true);
 
     try {
-      const res = await loginAdmin(fullIdentifier, password);
+      const res = await loginAdmin(fullIdentifier, password, tier1Token || undefined);
 
       if (res?.requiresOtp) {
         setChallengeToken(res.challengeToken || null);

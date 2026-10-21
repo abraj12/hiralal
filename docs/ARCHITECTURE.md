@@ -116,10 +116,15 @@ Financial integrity requires strict bank-side name verification before funds can
 1. **Provider Verification (`providerNameVerified`)**:
    - `PaymentAccount.providerNameVerified` defaults to `false`.
    - Set to `true` strictly when RazorpayX fund account validation returns `active: true` and a registered provider name (`registered_name` or `name`).
-2. **PAN vs. Beneficiary Matching**:
+2. **PAN vs. Beneficiary Matching (Exact Normalized Name Policy)**:
    - Both `checkUserEligibility` and `requestRedemption` enforce `validateBeneficiaryMatch`.
-   - Requires verified payment account, `providerNameVerified === true`, `panStatus === 'VERIFIED'`, and `areNamesMatching(beneficiaryName, panHolderName)` returning true with >= 0.75 Jaro-Winkler similarity.
-   - Payout requests fail if identity congruence is not met.
+   - Requires verified payment account, `providerNameVerified === true`, `panStatus === 'VERIFIED'`, and `areNamesMatching(beneficiaryName, panHolderName)` returning `true`.
+   - **Strict Matching Policy**: The beneficiary name must match the verified PAN holder name **exactly** after removing approved prefixes (`MR`, `MRS`, `MS`, `DR`, `SHRI`, `SHREE`, `SRI`, `SMT`, `KUMARI`, `M/S`). All fuzzy matching (Levenshtein, Jaro-Winkler), subset matching, token swapping, initials expansion, and surname-omission matching are strictly prohibited.
+   - Genuine name tokens containing prefix syllables (e.g. `SRIDHAR`, `KUMAR`, `ANITA KUMARI`) are preserved.
+   - Payout requests fail if exact identity congruence is not met.
+3. **Mononymous Name Locking**:
+   - Approving a mononymous customer via KYC exception atomically sets `isNameLocked = true` and `nameLockedAt = new Date()`.
+   - The user profile route permanently prohibits name updates once `isNameLocked` is set or if verified KYC records exist.
 
 ---
 

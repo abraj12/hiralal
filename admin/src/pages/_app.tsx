@@ -10,34 +10,62 @@ export default function App({ Component, pageProps }: AppProps) {
   const [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
+    let mounted = true;
     const pathname = router.pathname;
     const isLogin = pathname === '/login';
-    const user = AdminApiClient.getUser();
 
-    if (!user && !isLogin) {
-      setAuthorized(false);
-      router.replace('/login');
-    } else if (user && isLogin) {
-      setAuthorized(true);
-      router.replace('/');
-    } else if (user) {
-      const role = user.role;
-      const billAdminAllowed = ['/', '/bills'];
-      const opsAdminAllowed = ['/', '/users', '/rewards', '/payouts', '/audit-logs', '/notifications', '/settings'];
+    const verifySession = async () => {
+      try {
+        const res = await AdminApiClient.getMe();
+        if (!mounted) return;
+        if (res?.success && res?.user) {
+          AdminApiClient.setUser(res.user);
+          const role = res.user.role;
+          const billAdminAllowed = ['/', '/bills'];
+          const opsAdminAllowed = ['/', '/users', '/rewards', '/payouts', '/audit-logs', '/notifications', '/settings'];
 
-      const isAllowed =
-        (role === 'BILL_ADMIN' && billAdminAllowed.includes(pathname)) ||
-        (role === 'OPERATIONS_ADMIN' && opsAdminAllowed.includes(pathname));
+          if (isLogin) {
+            setAuthorized(true);
+            router.replace('/');
+            return;
+          }
 
-      if (!isAllowed && pathname !== '/') {
-        setAuthorized(false);
-        router.replace('/');
-      } else {
-        setAuthorized(true);
+          const isAllowed =
+            (role === 'BILL_ADMIN' && billAdminAllowed.includes(pathname)) ||
+            (role === 'OPERATIONS_ADMIN' && opsAdminAllowed.includes(pathname));
+
+          if (!isAllowed && pathname !== '/') {
+            setAuthorized(false);
+            router.replace('/');
+          } else {
+            setAuthorized(true);
+          }
+        } else {
+          AdminApiClient.clearToken();
+          if (!isLogin) {
+            setAuthorized(false);
+            router.replace('/login');
+          }
+        }
+      } catch {
+        if (!mounted) return;
+        AdminApiClient.clearToken();
+        if (!isLogin) {
+          setAuthorized(false);
+          router.replace('/login');
+        }
       }
+    };
+
+    if (!isLogin) {
+      verifySession();
     } else {
       setAuthorized(true);
     }
+
+    return () => {
+      mounted = false;
+    };
   }, [router.pathname]);
 
   return (

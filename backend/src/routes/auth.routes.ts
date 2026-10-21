@@ -225,6 +225,38 @@ router.post('/register', registerIpLimiter, async (req: Request, res: Response) 
 // 3. LOGIN & SESSIONS
 // ==========================================
 
+export function verifyTier1Token(
+  tier1Token: string | undefined,
+  identifier: string
+): { valid: boolean; code?: string; error?: string } {
+  if (!tier1Token) {
+    return {
+      valid: false,
+      code: 'TIER_1_VERIFICATION_REQUIRED',
+      error: 'Tier-1 security prefix verification is required prior to credential submission.',
+    };
+  }
+
+  try {
+    const decoded: any = jwt.verify(tier1Token, config.jwt.accessSecret);
+    if (decoded?.purpose !== 'ADMIN_TIER_1_VERIFIED') {
+      return { valid: false, code: 'INVALID_TIER_1_TOKEN', error: 'Invalid Tier-1 token purpose.' };
+    }
+    const matchedPrefix = AuthService.resolveAdminIdentifier(identifier).prefix;
+    const expectedHash = crypto.createHash('sha256').update(matchedPrefix).digest('hex');
+    if (decoded?.prefixHash !== expectedHash) {
+      return { valid: false, code: 'INVALID_TIER_1_TOKEN', error: 'Tier-1 token does not match supplied administrator prefix.' };
+    }
+    return { valid: true };
+  } catch (tokenErr: any) {
+    return {
+      valid: false,
+      code: 'INVALID_TIER_1_TOKEN',
+      error: 'Tier-1 security verification has expired or is invalid. Please verify prefix again.',
+    };
+  }
+}
+
 /**
  * Dedicated Web Admin Login Endpoint (VULN-B03)
  * Provides cleanly separated authentication flow for administrative portal browser sessions.
@@ -255,29 +287,12 @@ router.post(
     }
 
     // VULN-MED-08: Enforce Tier-1 administrator verification before Tier-2 credential validation
-    if (!tier1Token) {
+    const tier1Check = verifyTier1Token(tier1Token, rawIdentifier);
+    if (!tier1Check.valid) {
       return res.status(403).json({
         success: false,
-        code: 'TIER_1_VERIFICATION_REQUIRED',
-        message: 'Tier-1 security prefix verification is required prior to credential submission.',
-      });
-    }
-
-    try {
-      const decoded: any = jwt.verify(tier1Token, config.jwt.accessSecret);
-      if (decoded?.purpose !== 'ADMIN_TIER_1_VERIFIED') {
-        throw new Error('Invalid Tier-1 token purpose.');
-      }
-      const matchedPrefix = AuthService.resolveAdminIdentifier(rawIdentifier).prefix;
-      const expectedHash = crypto.createHash('sha256').update(matchedPrefix).digest('hex');
-      if (decoded?.prefixHash !== expectedHash) {
-        throw new Error('Tier-1 token does not match supplied administrator prefix.');
-      }
-    } catch (tokenErr: any) {
-      return res.status(403).json({
-        success: false,
-        code: 'INVALID_TIER_1_TOKEN',
-        message: 'Tier-1 security verification has expired or is invalid. Please verify prefix again.',
+        code: tier1Check.code,
+        message: tier1Check.error,
       });
     }
 
@@ -391,7 +406,7 @@ router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Re
       userAgent,
     });
 
-    if (result.kind === 'USER_AUTHENTICATED') {
+    if (result.kind === 'USER_AUTHENTICATED' && result.session?.user?.role === 'USER') {
       return res.status(200).json({
         success: true,
         type: 'USER_AUTHENTICATED',
@@ -625,6 +640,17 @@ router.post('/admin/otp/request', adminLoginLimiter, adminAccountLoginLimiter, o
     if (!identifier || !password) {
       return res.status(400).json({ success: false, message: 'Invalid login credentials. Please check your details and try again.' });
     }
+
+    const tier1Token = (req.headers['x-tier1-token'] as string) || req.body?.tier1Token;
+    const tier1Check = verifyTier1Token(tier1Token, identifier);
+    if (!tier1Check.valid) {
+      return res.status(403).json({
+        success: false,
+        code: tier1Check.code,
+        message: tier1Check.error,
+      });
+    }
+
     const ipAddress = req.ip || req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'];
     const result = await AuthService.requestAdminOtp({ identifier, password, ipAddress, userAgent });
@@ -735,9 +761,22 @@ router.put('/profile/name', authenticate, requireUser, async (req: Authenticated
   }
 });
 
-router.get('/me', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
+    if (user.role === 'BILL_ADMIN' || user.role === 'OPERATIONS_ADMIN') {
+      return res.json({
+        success: true,
+        user: {
+          id: user.id,
+          fullName: user.fullName,
+          mobile: user.mobile,
+          role: user.role,
+          status: user.status,
+        },
+      });
+    }
+
     const freshUser = await prisma.user.findUnique({
       where: { id: user.id },
       include: {

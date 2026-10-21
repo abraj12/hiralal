@@ -208,7 +208,20 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
                   manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}. Account suspended and wallet frozen. Immediate operator audit and balance clawback required.`,
                 },
               });
-              // 4. Audit log
+              // 4. Double-entry ledger adjustment entry
+              await tx.walletTransaction.create({
+                data: {
+                  walletId: payoutRecord.walletId,
+                  userId: payoutRecord.userId,
+                  amount: 0,
+                  type: 'MANUAL_ADJUSTMENT',
+                  balanceAfter: 0,
+                  referenceType: 'PAYOUT',
+                  referenceId: payoutRecord.id,
+                  description: `Wallet balance frozen to 0 due to CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}.`,
+                },
+              });
+              // 5. Audit log
               await tx.auditLog.create({
                 data: {
                   action: 'CRITICAL_FINANCIAL_DRIFT',
@@ -249,12 +262,12 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
            transitionErr.message.includes('already failed'))
         ) {
           console.warn(`[WEBHOOK] Out-of-order delivery: event ${eventType} acknowledged for payout ${payoutRecord.id}: ${transitionErr.message}`);
-          if (eventType === 'payout.processed') {
+          if (eventType === 'payout.processed' || eventType === 'payout.failed' || eventType === 'payout.rejected') {
             await prisma.payout.update({
               where: { id: payoutRecord.id },
               data: {
                 requiresManualReview: true,
-                manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway processed webhook arrived for terminal payout (${transitionErr.message}). Operator audit required.`,
+                manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway event ${eventType} arrived for terminal payout (${transitionErr.message}). Operator audit required.`,
               },
             });
             await prisma.auditLog.create({
@@ -265,6 +278,7 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
                 newValue: JSON.stringify({
                   payoutId: payoutRecord.id,
                   eventId,
+                  eventType,
                   razorpayPayoutId,
                   error: transitionErr.message,
                 }),

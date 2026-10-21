@@ -113,9 +113,13 @@ export function generateSecureOtp(): string {
 /**
  * Computes a keyed blind index (HMAC-SHA256) for high-entropy unique lookups
  * without exposing plaintext PII in database indexes.
+ * Returns null on falsy or blank input to prevent duplicate empty string collisions on unique indexes.
  */
-export function generateBlindIndex(plaintext: string): string {
-  if (!plaintext) return '';
+export function generateBlindIndex(plaintext: string): string;
+export function generateBlindIndex(plaintext: null | undefined): null;
+export function generateBlindIndex(plaintext?: string | null): string | null;
+export function generateBlindIndex(plaintext?: string | null): string | null {
+  if (!plaintext || !plaintext.trim()) return null;
   let normalized = plaintext.trim().toUpperCase();
   // VULN-MED-20: Domain separation for PAN blind index to prevent collision with banking keys
   if (!normalized.includes(':') && /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(normalized)) {

@@ -1,6 +1,7 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Readable } from 'stream';
+import path from 'path';
 import { StorageProvider, UploadResult } from './storage.interface';
 import { config } from '../../config';
 import { sha256Hash } from '../../utils/crypto.utils';
@@ -73,9 +74,23 @@ export class R2StorageProvider implements StorageProvider {
   }
 
   async getSignedUrl(key: string, expiresInSeconds = parseInt(process.env.R2_SIGNED_URL_TTL_SECONDS || '1800', 10)): Promise<string> {
+    const ext = path.extname(key).toLowerCase();
+    let contentType = 'application/octet-stream';
+    if (ext === '.pdf') {
+      contentType = 'application/pdf';
+    } else if (ext === '.jpg' || ext === '.jpeg') {
+      contentType = 'image/jpeg';
+    } else if (ext === '.png') {
+      contentType = 'image/png';
+    } else if (ext === '.webp') {
+      contentType = 'image/webp';
+    }
+
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: key,
+      ResponseContentType: contentType,
+      ResponseContentDisposition: `inline; filename="invoice${ext}"`,
     });
     return await getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
   }

@@ -53,14 +53,14 @@ TEMP_DIR=$(mktemp -d /tmp/hiralal_restore_XXXXXX)
 # Guarantees that pre-restore safety snapshots are preserved across failure/cancellation (SEC-CRIT-03)
 SNAPSHOT_DIR="${EMERGENCY_SNAPSHOT_DIR:-/var/backups/hiralal/emergency_snapshots}"
 if ! mkdir -p "${SNAPSHOT_DIR}" 2>/dev/null; then
-  SNAPSHOT_DIR="/tmp/hiralal_emergency_snapshots"
-  mkdir -p "${SNAPSHOT_DIR}" 2>/dev/null || true
+  echo "[FATAL ERROR] Emergency snapshot directory '${SNAPSHOT_DIR}' is not writable. Aborting restore to prevent unrecoverable data loss." >&2
+  exit 1
 fi
 SNAPSHOT_FILE="${SNAPSHOT_DIR}/pre_restore_snapshot_${TARGET_DB}_$(date +%s).sql.gz"
 
 cleanup() {
   local exit_code=$?
-  rm -f "${DEC_FILE:-}" "${SQL_FILE:-}"
+  rm -f "${DEC_FILE:-}" "${SQL_FILE:-}" "${ENV_FILE:-}"
   if [ -n "${BACKEND_CONTAINER:-}" ] && command -v docker >/dev/null 2>&1; then
     docker exec "${BACKEND_CONTAINER}" rm -f /tmp/restore_enc.sql.gz.enc /tmp/restore_dec.sql.gz 2>/dev/null || true
   fi
@@ -73,10 +73,10 @@ cleanup() {
       echo "[ROLLBACK PRESERVED] Pre-restore emergency safety snapshot is PRESERVED at: ${SNAPSHOT_FILE}" >&2
       echo "[ROLLBACK INSTRUCTION] To rollback manually: gunzip -c '${SNAPSHOT_FILE}' | docker exec -i '${DB_CONTAINER}' psql -U '${DB_USER}' -d '${TARGET_DB}'" >&2
     fi
-    # VULN-HIGH-13: Make restore failures recoverable by restarting services
+    # Services MUST REMAIN HALTED on restore failure to protect system state from an inconsistent database
     if [ "${SERVICES_STOPPED:-false}" = "true" ]; then
-      echo "[RECOVERY] Resuming backend and worker application services after restore failure..." >&2
-      docker compose start backend worker 2>/dev/null || docker start hiralal_backend hiralal_worker 2>/dev/null || true
+      echo "[SAFETY WARNING] Backend and worker application services REMAIN HALTED to protect data integrity against an incomplete database." >&2
+      echo "[SAFETY WARNING] Please rollback using the emergency snapshot or repair the database before restarting services manually." >&2
     fi
   fi
 }
@@ -97,8 +97,15 @@ if command -v node >/dev/null 2>&1; then
 else
   # Container fallback if host Node.js is not installed
   BACKEND_CONTAINER="${BACKEND_CONTAINER:-hiralal_backend}"
+  ENV_FILE=$(mktemp /tmp/hiralal_restore_env_XXXXXX)
+  chmod 600 "${ENV_FILE}"
+  cat << EOF > "${ENV_FILE}"
+BACKUP_ENCRYPTION_PASSPHRASE=${BACKUP_ENCRYPTION_PASSPHRASE}
+BACKUP_ENCRYPTION_KEY=${BACKUP_ENCRYPTION_PASSPHRASE}
+EOF
   docker cp "${ENC_BACKUP}" "${BACKEND_CONTAINER}:/tmp/restore_enc.sql.gz.enc"
-  docker exec -e BACKUP_ENCRYPTION_PASSPHRASE="${BACKUP_ENCRYPTION_PASSPHRASE}" -e BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_PASSPHRASE}" "${BACKEND_CONTAINER}" node /app/scripts/crypto-backup.js decrypt "/tmp/restore_enc.sql.gz.enc" "/tmp/restore_dec.sql.gz"
+  docker exec --env-file "${ENV_FILE}" "${BACKEND_CONTAINER}" node /app/scripts/crypto-backup.js decrypt "/tmp/restore_enc.sql.gz.enc" "/tmp/restore_dec.sql.gz"
+  rm -f "${ENV_FILE}"
   docker cp "${BACKEND_CONTAINER}:/tmp/restore_dec.sql.gz" "${DEC_FILE}"
   docker exec "${BACKEND_CONTAINER}" rm -f /tmp/restore_enc.sql.gz.enc /tmp/restore_dec.sql.gz
 fi

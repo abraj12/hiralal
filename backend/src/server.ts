@@ -86,6 +86,10 @@ const corsOptions: cors.CorsOptions = {
     'x-razorpay-signature',
     'x-razorpay-event-id',
     'x-test-rate-limit',
+    'x-tier1-token',
+    'X-Tier1-Token',
+    'x-client-type',
+    'X-Client-Type',
   ],
 };
 app.use(cors(corsOptions));

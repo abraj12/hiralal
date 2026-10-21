@@ -18,7 +18,7 @@ interface AdminAppContextType {
   role: AdminRole | null;
   currentScreen: 'LOGIN' | 'MAIN';
   isLoading: boolean;
-  loginAdmin: (identifier: string, pass: string) => Promise<any>;
+  loginAdmin: (identifier: string, pass: string, tier1Token?: string) => Promise<any>;
   verifyAdminOtp: (identifier: string, otp: string, challengeToken?: string) => Promise<void>;
   logout: () => Promise<void>;
   setCurrentScreen: (screen: 'LOGIN' | 'MAIN') => void;
@@ -76,8 +76,8 @@ export const AdminAppProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
   }, []);
 
-  const loginAdmin = async (identifier: string, pass: string) => {
-    const res = await MobileApiClient.login(identifier, pass);
+  const loginAdmin = async (identifier: string, pass: string, tier1Token?: string) => {
+    const res = await MobileApiClient.loginAdminPortal(identifier, pass, tier1Token);
     return res;
   };
 

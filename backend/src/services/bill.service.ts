@@ -413,7 +413,12 @@ export class BillService {
       let effectiveGstRate = 0.0;
       let selectedGstRuleId: string | null = null;
 
-      if (options?.gstRuleId) {
+      if (isGstIncluded) {
+        if (!options?.gstRuleId) {
+          throw new Error(
+            '[NO_APPLICABLE_GST_RULE] A valid applicable GST rule is required when GST is included. Bill Review Administrators cannot manually override GST rates; rates are determined strictly by Operations Administrator rules.'
+          );
+        }
         const gstRule = await tx.gstRule.findUnique({ where: { id: options.gstRuleId } });
         if (
           !gstRule ||
@@ -424,18 +429,15 @@ export class BillService {
           throw new Error('The selected GST rule is invalid or not applicable to this bill');
         }
         selectedGstRuleId = gstRule.id;
-        if (isGstIncluded) {
-          effectiveGstRate = Number(gstRule.ratePercentage);
-          if (typeof options?.gstRate === 'number' && Number.isFinite(options.gstRate)) {
-            if (Math.abs(options.gstRate - effectiveGstRate) > 0.001) {
-              throw new Error(`Submitted GST rate ${options.gstRate}% conflicts with configured rule rate ${effectiveGstRate}%.`);
-            }
+        effectiveGstRate = Number(gstRule.ratePercentage);
+        if (typeof options?.gstRate === 'number' && Number.isFinite(options.gstRate)) {
+          if (Math.abs(options.gstRate - effectiveGstRate) > 0.001) {
+            throw new Error(`Submitted GST rate ${options.gstRate}% conflicts with configured rule rate ${effectiveGstRate}%.`);
           }
         }
-      } else if (isGstIncluded) {
-        throw new Error(
-          '[NO_APPLICABLE_GST_RULE] A valid applicable GST rule is required when GST is included. Bill Review Administrators cannot manually override GST rates; rates are determined strictly by Operations Administrator rules.'
-        );
+      } else {
+        selectedGstRuleId = null;
+        effectiveGstRate = 0.0;
       }
 
       const gstCalc = GstService.calculateReverseGst(gross, isGstIncluded, isGstIncluded ? effectiveGstRate : null);

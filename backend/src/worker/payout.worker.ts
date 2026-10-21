@@ -173,10 +173,12 @@ export class PayoutWorker {
     }
 
     // Real RazorpayX Dispatch Flow
-    try {
-      const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
-      const paymentAccount = payout.paymentAccount;
+    const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
+    const paymentAccount = payout.paymentAccount;
 
+    // Pre-dispatch setup: Contact and Fund Account creation
+    let fundAccountId: string;
+    try {
       // 1. Resolve Contact on RazorpayX using authoritative beneficiary name
       const contactController = new AbortController();
       const contactTimer = setTimeout(() => contactController.abort(), 10000);
@@ -245,7 +247,7 @@ export class PayoutWorker {
       }
 
       const fundAccData: any = await fundAccRes.json();
-      const fundAccountId = fundAccData.id;
+      fundAccountId = fundAccData.id;
 
       if (!fundAccRes.ok || !fundAccountId || typeof fundAccountId !== 'string') {
         throw new Error(fundAccData.error?.description || `Failed to create fund account on RazorpayX (HTTP ${fundAccRes.status})`);
@@ -256,8 +258,14 @@ export class PayoutWorker {
         where: { id: payout.id },
         data: { razorpayFundAccountId: fundAccountId },
       });
+    } catch (setupErr: any) {
+      console.error(`[PAYOUT-WORKER] Pre-dispatch setup failed for payout ${payout.id}: ${setupErr.message}. Refunding user balance.`);
+      await PayoutService.failBeforeDispatch(payout.id, `Gateway account setup failed: ${setupErr.message}`);
+      return;
+    }
 
-      // 3. Dispatch Payout with AbortController for network timeout handling
+    // 3. Dispatch Payout with AbortController for network timeout handling
+    try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s network timeout
 

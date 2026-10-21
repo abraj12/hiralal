@@ -813,10 +813,27 @@ export class MobileApiClient {
     });
   }
 
-  static requestAdminOtp(identifier: string, password?: string) {
+  static requestAdminOtp(identifier: string, password?: string, tier1Token?: string) {
+    const headers: Record<string, string> = {};
+    if (tier1Token) {
+      headers['X-Tier1-Token'] = tier1Token;
+    }
     return this.request('/auth/admin/otp/request', {
       method: 'POST',
-      body: JSON.stringify({ identifier, password }),
+      headers,
+      body: JSON.stringify({ identifier, password, tier1Token }),
+    });
+  }
+
+  static loginAdminPortal(identifier: string, password: string, tier1Token?: string) {
+    const headers: Record<string, string> = {};
+    if (tier1Token) {
+      headers['X-Tier1-Token'] = tier1Token;
+    }
+    return this.request('/auth/admin-portal/login', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ identifier, password, tier1Token }),
     });
   }
 

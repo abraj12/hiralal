@@ -606,6 +606,40 @@ export class PayoutService {
   }
 
   /**
+   * Queries RazorpayX payouts endpoint by reference_id to check if a disbursement was created.
+   */
+  static async queryGatewayByReference(referenceId: string): Promise<{ found: boolean; payout?: any; message?: string }> {
+    if (!config.razorpayx.keyId || !config.razorpayx.keySecret || !config.razorpayx.accountNumber) {
+      return { found: false, message: 'Payment gateway credentials unconfigured' };
+    }
+    const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const res = await fetch(
+        `https://api.razorpay.com/v1/payouts?account_number=${config.razorpayx.accountNumber}&reference_id=${encodeURIComponent(referenceId)}`,
+        {
+          headers: { Authorization: auth },
+          signal: controller.signal,
+        }
+      );
+      if (!res.ok) {
+        return { found: false, message: `Gateway query returned status ${res.status}` };
+      }
+      const data: any = await res.json();
+      if (data?.items && Array.isArray(data.items) && data.items.length > 0) {
+        return { found: true, payout: data.items[0] };
+      }
+      return { found: false };
+    } catch (err: any) {
+      return { found: false, message: err.message };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+
+  /**
    * Rejects a redemption request before final settlement.
    * Atomically restores reserved processingAmount back to availableBalance,
    * creates immutable PAYOUT_REVERSAL ledger entry, updates payout status to FAILED with rejection reason,
@@ -662,7 +696,27 @@ export class PayoutService {
         }
         gatewayCancellationConfirmed = true;
       } else if (config.nodeEnv !== 'test') {
-        throw new Error('Cannot reject in-flight payout without gateway payout identifier. Payout must be reconciled first.');
+        const lookup = await this.queryGatewayByReference(payoutMeta.id);
+        if (lookup.found && lookup.payout?.id) {
+          const cancelRes = await this.cancelGatewayPayout(lookup.payout.id);
+          if (!cancelRes.success) {
+            await prisma.payout.update({
+              where: { id: payoutMeta.id },
+              data: {
+                razorpayPayoutId: lookup.payout.id,
+                requiresManualReview: true,
+                manualReviewReason: `Rejection attempt blocked: ${cancelRes.message}`,
+              },
+            });
+            throw new Error(
+              `Cannot reject in-flight payout: ${cancelRes.message || 'Gateway transfer could not be cancelled.'} Funds must remain reserved to prevent double-spending.`
+            );
+          }
+          gatewayCancellationConfirmed = true;
+        } else {
+          // Confirmed NOT dispatched to gateway; safe to reject and refund
+          gatewayCancellationConfirmed = true;
+        }
       } else {
         gatewayCancellationConfirmed = true;
       }

@@ -87,12 +87,30 @@ All financial values are denominated in Indian Rupees (₹) with 2-decimal paise
   }
   ```
 
-#### 1.4 Admin Login (Two-Step Password & OTP Challenge Flow)
-Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN`) via prefix-based identifiers (`BILL_ADMIN_PREFIX` or `OPERATIONS_ADMIN_PREFIX`) and a mandatory two-step OTP challenge flow:
+#### 1.4 Admin Login (Three-Tier Password & OTP Challenge Flow)
+Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN`) via prefix-based identifiers (`BILL_ADMIN_PREFIX` or `OPERATIONS_ADMIN_PREFIX`), a Tier-1 pre-authentication token (`X-Tier1-Token`), and a mandatory OTP challenge flow:
 
-**Step 1: Admin OTP & Challenge Request**
+**Step 1: Admin Prefix Verification (Tier 1)**
+- **Method**: `POST`
+- **Path**: `/auth/admin/verify-prefix`
+- **Body**:
+  ```json
+  {
+    "prefix": "BADM"
+  }
+  ```
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "tier1Token": "<TIER1_PREAUTH_JWT>"
+  }
+  ```
+
+**Step 2: Admin OTP & Challenge Request (Tier 2)**
 - **Method**: `POST`
 - **Path**: `/auth/admin/otp/request`
+- **Headers**: `X-Tier1-Token: <TIER1_PREAUTH_JWT>`
 - **Body**:
   ```json
   {
@@ -113,7 +131,7 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
   }
   ```
 
-**Step 2: Verify OTP Challenge**
+**Step 3: Verify OTP Challenge (Tier 3)**
 - **Method**: `POST`
 - **Path**: `/auth/admin/otp/verify`
 - **Body**:
@@ -138,6 +156,7 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
       "role": "BILL_ADMIN"
     }
   }
+  ```
   ```
 
 > [!NOTE]
@@ -518,6 +537,55 @@ Requests 100% full available balance redemption. Requires redemption window to b
     "payout": {
       "id": "payout-uuid",
       "status": "APPROVED"
+    }
+  }
+  ```
+
+#### 5.7 Update User Status & Session Invalidation (Operations Admin Only)
+- **Method**: `PATCH`
+- **Path**: `/admin/users/:id/status`
+- **Headers**: `Authorization: Bearer <OPERATIONS_ADMIN_TOKEN>`
+- **Body**:
+  ```json
+  {
+    "status": "SUSPENDED", // "ACTIVE", "SUSPENDED", or "BLOCKED"
+    "reason": "Security review following suspicious bill uploads."
+  }
+  ```
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "message": "User status updated to SUSPENDED. All active sessions invalidated.",
+    "user": {
+      "id": "uuid",
+      "mobile": "9876543210",
+      "status": "SUSPENDED"
+    }
+  }
+  ```
+
+#### 5.8 Verify Mononymous KYC (Operations Admin Only)
+- **Method**: `POST`
+- **Path**: `/admin/users/:id/verify-mononymous-kyc`
+- **Headers**: `Authorization: Bearer <OPERATIONS_ADMIN_TOKEN>`
+- **Body**:
+  ```json
+  {
+    "mononymousName": "RAMESH",
+    "notes": "Verified single name on official government PAN card."
+  }
+  ```
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "message": "Mononymous KYC approved. Profile name locked permanently against subsequent modifications.",
+    "kyc": {
+      "id": "kyc-uuid",
+      "status": "VERIFIED",
+      "isMononymous": true,
+      "isNameLocked": true
     }
   }
   ```

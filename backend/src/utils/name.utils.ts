@@ -117,17 +117,38 @@ export function buildCanonicalFullName(
     .join(' ');
 }
 
+export const APPROVED_HONORIFIC_PREFIXES = [
+  'SHREE',
+  'SHRI',
+  'SRI',
+  'SMT',
+  'KUMARI',
+  'MRS',
+  'MR',
+  'MS',
+  'DR',
+  'M/S',
+  'M S',
+] as const;
+
 /**
  * Normalizes a name string for reliable comparison against PAN and Banking records:
  * - Trims and converts to uppercase
- * - Strips common Indian honorific titles and business prefixes (MR, MRS, MS, SHRI, SHREE, SMT, DR, M/S)
+ * - Strips only explicitly approved leading Indian honorific titles and business prefixes
+ *   (MR, MRS, MS, DR, SHRI, SHREE, SRI, SMT, KUMARI, M/S)
+ * - Removes prefixes from the beginning of the name only, preserving all remaining name components and their exact order
  * - Replaces non-alphanumeric punctuation with single spaces
  * - Collapses consecutive spaces
+ * - Never deletes genuine name components (e.g. KUMAR, SINGH, middle names, surnames)
  */
 export function normalizeName(name: string): string {
-  if (!name) return '';
+  if (!name || typeof name !== 'string') return '';
 
   let cleaned = name.trim().toUpperCase();
+  if (!cleaned) return '';
+
+  // Handle leading M/S, M.S., or M/S. variations cleanly
+  cleaned = cleaned.replace(/^M\s*[\/\.]\s*S\.?\s+/i, '');
 
   // Replace punctuation like dots, dashes, slashes, commas with space
   cleaned = cleaned.replace(/[^A-Z0-9\s]/g, ' ');
@@ -135,26 +156,29 @@ export function normalizeName(name: string): string {
   // Collapse multiple whitespaces
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
-  // Strip common honorific prefixes (Note: 'MD' is NOT stripped as it represents Mohammad in Indian names)
-  // Strip iteratively in case multiple honorifics are combined (e.g. "SHREE MR")
-  const prefixes = [
-    'SHREE ',
-    'SHRI ',
-    'SMT ',
-    'KUMARI ',
-    'MR ',
-    'MRS ',
-    'MS ',
-    'DR ',
-    'M S ', // M/S becomes "M S " after punctuation replacement
+  // Strip approved prefixes iteratively from the start only
+  const prefixTokens = [
+    'SHREE',
+    'KUMARI',
+    'SHRI',
+    'SMT',
+    'SRI',
+    'MRS',
+    'MR',
+    'MS',
+    'DR',
+    'M S',
   ];
 
   let stripped = true;
   while (stripped) {
     stripped = false;
-    for (const prefix of prefixes) {
-      if (cleaned.startsWith(prefix)) {
-        cleaned = cleaned.substring(prefix.length).trim();
+    for (const prefix of prefixTokens) {
+      if (cleaned === prefix) {
+        break;
+      }
+      if (cleaned.startsWith(prefix + ' ')) {
+        cleaned = cleaned.substring(prefix.length + 1).trim();
         stripped = true;
         break;
       }
@@ -166,167 +190,55 @@ export function normalizeName(name: string): string {
 
 export interface NameComparisonOptions {
   strictTokenCount?: boolean;
+  isMononymousApproved?: boolean;
 }
 
 /**
- * Compares an account beneficiary name with a verified PAN holder name:
- * 1. Checks exact normalized string match.
- * 2. Checks token set equality (e.g. "RAJESH KUMAR SHARMA" matches "SHARMA RAJESH KUMAR").
- * 3. Handles initial expansion (e.g. "R K SHARMA" vs "RAJESH KUMAR SHARMA") requiring at least
- *    one anchor token of length >= 2 to match exactly to prevent ambiguous single-letter false matches.
- * 4. Handles omitted middle names / token subset matching (e.g. "RAMESH GUPTA" matches "RAMESH CHANDRA GUPTA"),
- *    requiring at least 2 tokens in both names and exact matches on the common anchor tokens (first name and surname).
- * 5. Rejects single-token matches or conflicting anchor tokens to prevent fraudulent account takeovers.
+ * Authoritative comparison function between two legal names (e.g. PAN card name vs Bank Account / Beneficiary name).
+ * Enforces the strict business mandate:
+ * THE BANK ACCOUNT HOLDER NAME MUST MATCH THE NAME ON THE CUSTOMER'S PAN CARD EXACTLY AFTER REMOVING APPROVED PREFIXES/HONORIFICS.
+ * No fuzzy matching, partial matching, subset matching, surname omission, middle-name omission, or token reordering is permitted.
  */
 export function compareNames(
   accountName: string,
   panVerifiedName: string,
   options?: NameComparisonOptions
 ): boolean {
-  const normAccount = normalizeName(accountName);
-  const normPan = normalizeName(panVerifiedName);
-
-  if (!normAccount || !normPan) return false;
-
-  // 1. Exact normalized match
-  if (normAccount === normPan) return true;
-
-  const accountTokens = normAccount.split(' ').filter(Boolean);
-  const panTokens = normPan.split(' ').filter(Boolean);
-
-  if (accountTokens.length === 0 || panTokens.length === 0) return false;
-
-  // 2. Set-based token comparison (order independence for Indian names)
-  if (accountTokens.length === panTokens.length) {
-    const sortedAccount = [...accountTokens].sort().join(' ');
-    const sortedPan = [...panTokens].sort().join(' ');
-    if (sortedAccount === sortedPan) return true;
-  }
-
-  // 3. Token-length equality with initial matching (e.g. "R K SHARMA" vs "RAJESH KUMAR SHARMA" or swapped)
-  if (accountTokens.length === panTokens.length && accountTokens.length >= 2) {
-    // Try matching tokens with order independence
-    const matchedPanIndices = new Set<number>();
-    let anchorMatched = false;
-    let allTokensMatched = true;
-
-    for (const aTok of accountTokens) {
-      let foundMatch = false;
-      for (let pIdx = 0; pIdx < panTokens.length; pIdx++) {
-        if (matchedPanIndices.has(pIdx)) continue;
-        const pTok = panTokens[pIdx];
-
-        if (aTok === pTok) {
-          if (aTok.length >= 2) anchorMatched = true;
-          matchedPanIndices.add(pIdx);
-          foundMatch = true;
-          break;
-        } else if (
-          (aTok.length === 1 && pTok.startsWith(aTok)) ||
-          (pTok.length === 1 && aTok.startsWith(pTok))
-        ) {
-          matchedPanIndices.add(pIdx);
-          foundMatch = true;
-          break;
-        }
-      }
-      if (!foundMatch) {
-        allTokensMatched = false;
-        break;
-      }
-    }
-
-    if (allTokensMatched && anchorMatched && matchedPanIndices.size === panTokens.length) {
-      return true;
-    }
-  }
-
-  if (options?.strictTokenCount) {
-    return false;
-  }
-
-  // 4. Positional omitted middle name matching (REC-03 / REC-04)
-  // Indian bank accounts frequently omit middle names present on PAN cards (e.g. "RAMESH GUPTA" vs "RAMESH CHANDRA GUPTA")
-  // Both names must have at least 2 tokens to prevent matching single first names.
-  // The first token (given name) and last token (surname) of the longer name must both match the shorter name's anchors.
-  // The omitted token(s) must strictly be intermediate middle names, preventing surname drops (e.g., "AMIT KUMAR" vs "AMIT KUMAR VERMA")
-  // or first name drops (e.g., "KUMAR VERMA" vs "SUNIL KUMAR VERMA").
-  const [shorterTokens, longerTokens] =
-    accountTokens.length <= panTokens.length
-      ? [accountTokens, panTokens]
-      : [panTokens, accountTokens];
-
-  if (shorterTokens.length >= 2 && longerTokens.length > shorterTokens.length) {
-    const longerFirst = longerTokens[0];
-    const longerLast = longerTokens[longerTokens.length - 1];
-
-    const matchesLongerToken = (lTok: string): boolean => {
-      for (const sTok of shorterTokens) {
-        if (sTok === lTok) return true;
-        if (sTok.length === 1 && lTok.startsWith(sTok)) return true;
-        if (lTok.length === 1 && sTok.startsWith(lTok)) return true;
-      }
-      return false;
-    };
-
-    const firstMatches = matchesLongerToken(longerFirst);
-    const lastMatches = matchesLongerToken(longerLast);
-
-    if (firstMatches && lastMatches) {
-      const matchedLongerIndices = new Set<number>();
-      let allShortMatched = true;
-
-      for (const sTok of shorterTokens) {
-        let found = false;
-        for (let lIdx = 0; lIdx < longerTokens.length; lIdx++) {
-          if (matchedLongerIndices.has(lIdx)) continue;
-          const lTok = longerTokens[lIdx];
-          if (
-            sTok === lTok ||
-            (sTok.length === 1 && lTok.startsWith(sTok)) ||
-            (lTok.length === 1 && sTok.startsWith(lTok))
-          ) {
-            matchedLongerIndices.add(lIdx);
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          allShortMatched = false;
-          break;
-        }
-      }
-
-      if (allShortMatched) {
-        let onlyIntermediateOmitted = true;
-        for (let lIdx = 0; lIdx < longerTokens.length; lIdx++) {
-          if (!matchedLongerIndices.has(lIdx)) {
-            if (lIdx === 0 || lIdx === longerTokens.length - 1) {
-              onlyIntermediateOmitted = false;
-              break;
-            }
-          }
-        }
-        if (onlyIntermediateOmitted) {
-          return true;
-        }
-      }
-    }
-  }
-
-  return false;
+  return areNamesMatching(accountName, panVerifiedName, options);
 }
 
+/**
+ * Checks whether a beneficiary name matches the verified PAN card name under the mandatory exact-matching policy:
+ * 1. Removes approved leading prefixes (MR, MRS, MS, DR, SHRI, SHREE, SRI, SMT, KUMARI, M/S) from either name.
+ * 2. Normalizes case, harmless punctuation, and whitespace.
+ * 3. Enforces exact equality across all name components and their exact order.
+ * 4. Rejects token omissions (e.g. omitted middle name or surname), token additions, token reorderings, and initials.
+ */
 export function areNamesMatching(
   beneficiaryName: string,
   panHolderName: string,
   options?: { isMononymousApproved?: boolean }
 ): boolean {
-  if (options?.isMononymousApproved) {
-    const bTokens = beneficiaryName.trim().toUpperCase().split(/\s+/);
-    const pTokens = panHolderName.trim().toUpperCase().split(/\s+/);
-    if (bTokens.length === 1 && pTokens.includes(bTokens[0])) return true;
-    if (pTokens.length === 1 && bTokens.includes(pTokens[0])) return true;
+  if (!beneficiaryName || !panHolderName) return false;
+
+  const normAccount = normalizeName(beneficiaryName);
+  const normPan = normalizeName(panHolderName);
+
+  if (!normAccount || !normPan) return false;
+
+  // Exact normalized match is required
+  if (normAccount === normPan) {
+    return true;
   }
-  return compareNames(beneficiaryName, panHolderName, { strictTokenCount: true });
+
+  // Handle mononymous applicant if and only if approved by administrative review
+  if (options?.isMononymousApproved) {
+    const aTokens = normAccount.split(' ').filter(Boolean);
+    const pTokens = normPan.split(' ').filter(Boolean);
+    if (aTokens.length === 1 && pTokens.length === 1 && aTokens[0] === pTokens[0]) {
+      return true;
+    }
+  }
+
+  return false;
 }

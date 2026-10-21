@@ -145,6 +145,17 @@ export class AdminApiClient {
     });
   }
 
+  static updateUserStatus(id: string, data: { status: 'ACTIVE' | 'SUSPENDED'; reason?: string }) {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  static getMe() {
+    return this.request('/auth/me');
+  }
+
   // Bills Management & Verification
   static getBills(status = 'ALL', profession = 'ALL', search = '') {
     const params = new URLSearchParams({ status, profession });

@@ -23,7 +23,7 @@ umask 077
 
 # SEC-CRIT-01: Idempotent exit trap to ensure unencrypted raw dumps are never abandoned on disk
 cleanup_backup_artifacts() {
-  rm -f "${RAW_BACKUP:-}" 2>/dev/null || true
+  rm -f "${RAW_BACKUP:-}" "${ENV_FILE:-}" "${R2_ENV_FILE:-}" 2>/dev/null || true
   if [ -n "${BACKEND_CONTAINER:-}" ] && command -v docker >/dev/null 2>&1; then
     docker exec "${BACKEND_CONTAINER}" rm -f /tmp/raw_backup.sql.gz /tmp/enc_backup.sql.gz.enc 2>/dev/null || true
   fi
@@ -92,8 +92,15 @@ if command -v node >/dev/null 2>&1; then
 else
   # Container fallback if host Node.js is not installed
   BACKEND_CONTAINER="${BACKEND_CONTAINER:-hiralal_backend}"
+  ENV_FILE=$(mktemp /tmp/hiralal_backup_env_XXXXXX)
+  chmod 600 "${ENV_FILE}"
+  cat << EOF > "${ENV_FILE}"
+BACKUP_ENCRYPTION_PASSPHRASE=${BACKUP_ENCRYPTION_PASSPHRASE}
+BACKUP_ENCRYPTION_KEY=${BACKUP_ENCRYPTION_PASSPHRASE}
+EOF
   docker cp "${RAW_BACKUP}" "${BACKEND_CONTAINER}:/tmp/raw_backup.sql.gz"
-  docker exec -e BACKUP_ENCRYPTION_PASSPHRASE="${BACKUP_ENCRYPTION_PASSPHRASE}" -e BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_PASSPHRASE}" "${BACKEND_CONTAINER}" node /app/scripts/crypto-backup.js encrypt "/tmp/raw_backup.sql.gz" "/tmp/enc_backup.sql.gz.enc"
+  docker exec --env-file "${ENV_FILE}" "${BACKEND_CONTAINER}" node /app/scripts/crypto-backup.js encrypt "/tmp/raw_backup.sql.gz" "/tmp/enc_backup.sql.gz.enc"
+  rm -f "${ENV_FILE}"
   docker cp "${BACKEND_CONTAINER}:/tmp/enc_backup.sql.gz.enc" "${ENC_BACKUP}"
   docker exec "${BACKEND_CONTAINER}" rm -f /tmp/raw_backup.sql.gz /tmp/enc_backup.sql.gz.enc
 fi
@@ -134,14 +141,24 @@ if command -v node >/dev/null 2>&1; then
 else
   # Container fallback if host Node.js is not installed
   BACKEND_CONTAINER="${BACKEND_CONTAINER:-hiralal_backend}"
+  R2_ENV_FILE=$(mktemp /tmp/hiralal_r2_env_XXXXXX)
+  chmod 600 "${R2_ENV_FILE}"
+  cat << EOF > "${R2_ENV_FILE}"
+R2_BACKUP_BUCKET=${R2_BACKUP_BUCKET}
+R2_ENDPOINT=${R2_ENDPOINT}
+R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}
+R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
+EOF
   docker cp "${ENC_BACKUP}" "${BACKEND_CONTAINER}:/tmp/enc_backup.sql.gz.enc"
-  if ! docker exec -e R2_BACKUP_BUCKET="${R2_BACKUP_BUCKET}" -e R2_ENDPOINT="${R2_ENDPOINT}" -e R2_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}" -e R2_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}" "${BACKEND_CONTAINER}" node /app/scripts/upload-backup.js "/tmp/enc_backup.sql.gz.enc" "${REMOTE_PREFIX}" "${R2_BACKUP_BUCKET}"; then
+  if ! docker exec --env-file "${R2_ENV_FILE}" "${BACKEND_CONTAINER}" node /app/scripts/upload-backup.js "/tmp/enc_backup.sql.gz.enc" "${REMOTE_PREFIX}" "${R2_BACKUP_BUCKET}"; then
+    rm -f "${R2_ENV_FILE}"
     docker exec "${BACKEND_CONTAINER}" rm -f /tmp/enc_backup.sql.gz.enc
     echo "[FATAL ERROR] Offsite upload or remote verification FAILED." >&2
     echo "[EMERGENCY RECOVERY] Encrypted local file retained at: ${ENC_BACKUP}" >&2
     echo "Backup status: FAILED." >&2
     exit 4
   fi
+  rm -f "${R2_ENV_FILE}"
   docker exec "${BACKEND_CONTAINER}" rm -f /tmp/enc_backup.sql.gz.enc
 fi
 

@@ -474,6 +474,76 @@ router.put('/users/:id/name', requireOperationsAdmin, async (req: AuthenticatedR
 });
 
 /**
+ * 3b.1. Admin Privileged User Status Update (ACTIVE / SUSPENDED)
+ */
+router.patch('/users/:id/status', requireOperationsAdmin, adminActionLimiter, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const admin = req.user!;
+    const { status, reason } = req.body;
+
+    if (!status || !['ACTIVE', 'SUSPENDED'].includes(status)) {
+      return res.status(400).json({ success: false, message: 'Status must be ACTIVE or SUSPENDED.' });
+    }
+
+    const targetUser = await prisma.user.findUnique({
+      where: { id: req.params.id },
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    if (targetUser.role !== 'USER') {
+      return res.status(403).json({ success: false, message: 'Administrator accounts cannot be modified via user status management.' });
+    }
+
+    const updatedUser = await prisma.$transaction(async (tx) => {
+      const u = await tx.user.update({
+        where: { id: targetUser.id },
+        data: {
+          status: status as UserStatus,
+          ...(status === 'SUSPENDED' ? { activeSessionId: null } : {}),
+        },
+      });
+
+      if (status === 'SUSPENDED') {
+        await tx.authSession.updateMany({
+          where: { userId: targetUser.id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
+
+      await tx.auditLog.create({
+        data: {
+          adminId: admin.id,
+          action: status === 'SUSPENDED' ? 'USER_SUSPENDED' : 'USER_ACTIVATED',
+          entityType: 'User',
+          entityId: targetUser.id,
+          ipAddress: req.ip || req.socket.remoteAddress,
+          userAgent: req.headers['user-agent'],
+          newValue: JSON.stringify({
+            userId: targetUser.id,
+            previousStatus: targetUser.status,
+            newStatus: status,
+            reason: reason || null,
+          }),
+        },
+      });
+
+      return u;
+    });
+
+    res.json({
+      success: true,
+      message: `User status successfully updated to ${status}.`,
+      user: updatedUser,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: 'Failed to update user status. Please retry.' });
+  }
+});
+
+/**
  * 3c. Admin Privileged Mononymous KYC Manual Verification (Unresolved Finding A)
  */
 router.post('/users/:id/verify-mononymous-kyc', requireOperationsAdmin, adminActionLimiter, async (req: AuthenticatedRequest, res: Response) => {
@@ -507,6 +577,15 @@ router.post('/users/:id/verify-mononymous-kyc', requireOperationsAdmin, adminAct
           nameMatched: true,
           rejectionReason: null,
           verifiedAt: new Date(),
+        },
+      });
+
+      // SEC-KYC-01: Lock user's legal name on manual mononymous KYC approval
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          isNameLocked: true,
+          nameLockedAt: new Date(),
         },
       });
 
@@ -721,6 +800,7 @@ router.post('/bills/:id/verify', requireBillAdmin, adminActionLimiter, async (re
         gstRuleId: gstIncluded ? (typeof gstRuleId === 'string' && gstRuleId.trim() ? gstRuleId.trim() : undefined) : undefined,
         gstOverrideReason: gstIncluded && typeof gstOverrideReason === 'string' ? gstOverrideReason.trim() : undefined,
         correctedGrossAmount: typeof req.body.correctedGrossAmount === 'number' && req.body.correctedGrossAmount > 0 ? req.body.correctedGrossAmount : undefined,
+        isOperationsAdminApproved: admin.role === 'OPERATIONS_ADMIN',
       });
 
       res.json({

@@ -222,11 +222,18 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
     // 7. Dedicated administrator OTP issuance rejects a wrong password without issuing a usable administrator challenge or OTP
     test('7. Dedicated admin OTP issuance rejects a wrong password without issuing challenge or OTP', async () => {
+      const prefixRes = await request(app)
+        .post('/api/v1/auth/admin/verify-prefix')
+        .send({ prefix: config.admin.billAdminPrefix });
+      const tier1Token = prefixRes.body.tier1Token;
+
       const res = await request(app)
         .post('/api/v1/auth/admin/otp/request')
+        .set('X-Tier1-Token', tier1Token)
         .send({
           identifier: `${config.admin.billAdminPrefix}${billAdminMobile}`,
           password: 'WrongPassword123!',
+          tier1Token,
         });
 
       expect(res.status).toBe(401);
@@ -246,12 +253,19 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
     // 8. Correct password followed by the correct OTP succeeds through the intended dedicated path
     test('8. Correct password followed by correct OTP succeeds through intended dedicated path', async () => {
+      const prefixRes = await request(app)
+        .post('/api/v1/auth/admin/verify-prefix')
+        .send({ prefix: config.admin.billAdminPrefix });
+      const tier1Token = prefixRes.body.tier1Token;
+
       // 1. Password check & challenge issuance
       const reqRes = await request(app)
         .post('/api/v1/auth/admin/otp/request')
+        .set('X-Tier1-Token', tier1Token)
         .send({
           identifier: `${config.admin.billAdminPrefix}${billAdminMobile}`,
           password: testPassword,
+          tier1Token,
         });
 
       expect(reqRes.status).toBe(200);

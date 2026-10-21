@@ -387,12 +387,12 @@ describe('Part B & C — Pool-Free Reward Integrity, Volume Scaling, Self-Approv
   });
 
   describe('3. Payment Account Beneficiary Matching (Part C)', () => {
-    it('verifies areNamesMatching accurately handles identical and token-reordered Indian names', () => {
+    it('verifies areNamesMatching strictly enforces exact normalized PAN to bank matching and rejects fuzzy/reordered names', () => {
       expect(areNamesMatching('Ramesh Kumar', 'Ramesh Kumar')).toBe(true);
       expect(areNamesMatching('Ramesh Kumar', 'RAMESH KUMAR')).toBe(true);
-      expect(areNamesMatching('Kumar Ramesh', 'Ramesh Kumar')).toBe(true);
       expect(areNamesMatching('Shri Ramesh Kumar', 'Ramesh Kumar')).toBe(true);
-      expect(areNamesMatching('R K Sharma', 'Rajesh Kumar Sharma')).toBe(true);
+      expect(areNamesMatching('Kumar Ramesh', 'Ramesh Kumar')).toBe(false);
+      expect(areNamesMatching('R K Sharma', 'Rajesh Kumar Sharma')).toBe(false);
       expect(areNamesMatching('Rahul Singh', 'Rahul Kumar Singh')).toBe(false);
       expect(areNamesMatching('Amit Kumar', 'Amit Kumar Verma')).toBe(false);
       expect(areNamesMatching('Ramesh Kumar', 'Vijay Mallya')).toBe(false);

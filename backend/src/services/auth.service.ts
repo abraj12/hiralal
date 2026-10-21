@@ -108,9 +108,17 @@ export class AuthService {
       )
       UPDATE "User" u
       SET
-        "failedPasswordAttempts" = u."failedPasswordAttempts" + 1,
+        "failedPasswordAttempts" = CASE
+          WHEN u."updatedAt" < clock.now - INTERVAL '15 minutes' THEN 1
+          ELSE u."failedPasswordAttempts" + 1
+        END,
         "lockedUntil" = CASE
-          WHEN u."failedPasswordAttempts" + 1 >= ${maxFailedAttempts}
+          WHEN (
+            CASE
+              WHEN u."updatedAt" < clock.now - INTERVAL '15 minutes' THEN 1
+              ELSE u."failedPasswordAttempts" + 1
+            END
+          ) >= ${maxFailedAttempts}
             AND (u."lockedUntil" IS NULL OR u."lockedUntil" <= clock.now)
           THEN clock.now + (${lockoutSeconds} * INTERVAL '1 second')
           ELSE u."lockedUntil"
@@ -1971,7 +1979,11 @@ export class AuthService {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new Error('User not found.');
 
-    if (user.isNameLocked) {
+    const hasVerifiedKyc = await prisma.kycRecord.findFirst({
+      where: { userId, panStatus: 'VERIFIED', nameMatched: true },
+    });
+
+    if (user.isNameLocked || hasVerifiedKyc) {
       throw new Error('Your name is locked following identity verification. Please contact an administrator for any corrections.');
     }
 

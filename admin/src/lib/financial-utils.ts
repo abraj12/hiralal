@@ -32,12 +32,21 @@ export function calculateBillFinancials(
 export function safeDocumentUrl(url: string | undefined | null): string {
   if (!url) return '#';
   const trimmed = url.trim();
+
+  // Decode URI components safely to catch obfuscated/encoded traversals or backslashes (%5C, %2F%2F)
+  let decoded = trimmed;
+  try {
+    decoded = decodeURIComponent(trimmed);
+  } catch {
+    return '#';
+  }
+
   // Reject backslashes completely to prevent browser protocol-relative normalization (e.g. /\attacker.com)
-  if (trimmed.includes('\\')) {
+  if (decoded.includes('\\') || trimmed.includes('\\')) {
     return '#';
   }
   // Reject protocol-relative URLs (e.g. //attacker.com)
-  if (/^[/\\]{2,}/.test(trimmed)) {
+  if (/^[/\\]{2,}/.test(trimmed) || /^[/\\]{2,}/.test(decoded)) {
     return '#';
   }
   // Strict relative path validation
