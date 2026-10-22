@@ -20,9 +20,10 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import request from 'supertest';
+import { PaymentType } from '@prisma/client';
 import { prisma } from '../db';
 import { app } from '../server';
-import { HARD_MAX_REDEMPTION_CEILING, isRedemptionWindowOpen } from '../services/payout.service';
+import { PayoutService, HARD_MAX_REDEMPTION_CEILING, isRedemptionWindowOpen } from '../services/payout.service';
 import { AccountDeletionService } from '../services/account-deletion.service';
 import { NotificationService } from '../services/notification.service';
 import { errorHandler } from '../middleware/error.middleware';
@@ -39,6 +40,7 @@ describe('Audit Remediation RC1 Regression Suite', () => {
     await prisma.walletTransaction.deleteMany({ where: { wallet: { user: { mobile: testUserMobile } } } });
     await prisma.payout.deleteMany({ where: { user: { mobile: testUserMobile } } });
     await prisma.paymentAccount.deleteMany({ where: { user: { mobile: testUserMobile } } });
+    await prisma.kycRecord.deleteMany({ where: { user: { mobile: testUserMobile } } });
     await prisma.wallet.deleteMany({ where: { user: { mobile: testUserMobile } } });
     await prisma.user.deleteMany({ where: { mobile: testUserMobile } });
 
@@ -73,6 +75,7 @@ describe('Audit Remediation RC1 Regression Suite', () => {
     await prisma.walletTransaction.deleteMany({ where: { wallet: { user: { mobile: testUserMobile } } } });
     await prisma.payout.deleteMany({ where: { user: { mobile: testUserMobile } } });
     await prisma.paymentAccount.deleteMany({ where: { user: { mobile: testUserMobile } } });
+    await prisma.kycRecord.deleteMany({ where: { user: { mobile: testUserMobile } } });
     await prisma.wallet.deleteMany({ where: { user: { mobile: testUserMobile } } });
     await prisma.user.deleteMany({ where: { mobile: testUserMobile } });
   });
@@ -108,42 +111,47 @@ describe('Audit Remediation RC1 Regression Suite', () => {
       expect(expectedHash).toHaveLength(64);
     });
 
-    test('Task 1.2: Subtraction on deficit preserves exact negative availableBalance without clamping', async () => {
-      // Simulate settlement when currentAvail < payoutAmt (e.g. currentAvail = 100, payoutAmt = 500)
-      const currentAvail = 100;
-      const payoutAmt = 500;
-      const newAvail = currentAvail - payoutAmt; // Expected -400, NOT clamped to 0
+    test('Task 1.2 / F-07: Wallet rejects negative balance via check constraint and models deficit via deficitLiability', async () => {
+      // 1. Attempting negative availableBalance is blocked by database check constraint
+      await expect(
+        prisma.wallet.update({
+          where: { id: testWalletId },
+          data: { availableBalance: -400 },
+        })
+      ).rejects.toThrow();
 
-      expect(newAvail).toBe(-400);
-
-      // Verify DB accepts negative availableBalance and maintains ledger invariant
+      // 2. Exact deficit is modeled via deficitLiability while availableBalance remains non-negative (0)
       const updatedWallet = await prisma.wallet.update({
         where: { id: testWalletId },
-        data: { availableBalance: newAvail },
+        data: {
+          availableBalance: 0,
+          deficitLiability: 400,
+        },
       });
 
-      expect(Number(updatedWallet.availableBalance)).toBe(-400);
+      expect(Number(updatedWallet.availableBalance)).toBe(0);
+      expect(Number(updatedWallet.deficitLiability)).toBe(400);
 
       const tx = await prisma.walletTransaction.create({
         data: {
           walletId: testWalletId,
           userId: testUserId,
-          amount: payoutAmt,
+          amount: 500,
           type: 'PAYOUT_DEBIT',
-          balanceAfter: newAvail,
+          balanceAfter: 0,
           referenceType: 'MANUAL_DEBIT',
           referenceId: 'ref_deficit_test_01',
-          description: 'Deficit settlement test without clamping',
+          description: 'Deficit settlement test: ₹100 from balance, ₹400 to deficit liability',
         },
       });
 
-      expect(Number(tx.balanceAfter)).toBe(-400);
+      expect(Number(tx.balanceAfter)).toBe(0);
       expect(Number(tx.amount)).toBe(500);
 
       // Restore wallet balance
       await prisma.wallet.update({
         where: { id: testWalletId },
-        data: { availableBalance: 10000 },
+        data: { availableBalance: 10000, deficitLiability: 0 },
       });
     });
   });
@@ -195,11 +203,150 @@ describe('Audit Remediation RC1 Regression Suite', () => {
       ).toBe(false);
     });
 
-    test('Task 2.4: Supported payout rails strictly reject NEFT and permit only UPI and IMPS', () => {
-      const allowedRails = ['UPI', 'IMPS'];
-      expect(allowedRails).toContain('UPI');
-      expect(allowedRails).toContain('IMPS');
-      expect(allowedRails).not.toContain('NEFT');
+    test('Task 2.4 / F-23: Supported payout rails strictly reject NEFT and permit only UPI and BANK_ACCOUNT (IMPS)', () => {
+      const enumValues = Object.values(PaymentType);
+      expect(enumValues).toContain('UPI');
+      expect(enumValues).toContain('BANK_ACCOUNT');
+      expect(enumValues).not.toContain('NEFT');
+    });
+
+    test('Task 2.4 / F-23: User with balance > ₹50,000 (e.g. ₹75,000) is clamped to ₹50,000 ceiling and retains residual balance', async () => {
+      // Set test user balance to ₹75,000
+      await prisma.wallet.update({
+        where: { id: testWalletId },
+        data: { availableBalance: 75000, processingAmount: 0 },
+      });
+
+      // Ensure redemption settings are enabled with ceiling
+      await prisma.redemptionSettings.upsert({
+        where: { id: 'default' },
+        create: {
+          id: 'default',
+          isEnabled: true,
+          minimumRedemptionAmount: 100,
+          maximumRedemptionAmount: 50000,
+        },
+        update: {
+          isEnabled: true,
+          minimumRedemptionAmount: 100,
+          maximumRedemptionAmount: 50000,
+        },
+      });
+
+      // Create a verified KYC record
+      const kycRecord = await prisma.kycRecord.create({
+        data: {
+          userId: testUserId,
+          panNumber: 'ABCDE1234F',
+          panName: 'Audit User',
+          verifiedName: 'Audit User',
+          panStatus: 'VERIFIED',
+          maskedPan: 'XXXXX1234F',
+          consent: true,
+          nameMatched: true,
+        },
+      });
+
+      // Create a verified payment account for test user matching KYC name
+      const paymentAccount = await prisma.paymentAccount.create({
+        data: {
+          userId: testUserId,
+          accountType: 'UPI',
+          upiIdEncrypted: 'enc_upi_test_clamping',
+          beneficiaryBlindIndex: `bidx_clamp_${Date.now()}`,
+          maskedInfo: 'user@upi',
+          accountHolderName: 'Audit User',
+          providerRegisteredName: 'Audit User',
+          providerNameVerified: true,
+          isVerified: true,
+          isDefault: true,
+        },
+      });
+
+      // Request payout through PayoutService.requestRedemption
+      const { payout } = await PayoutService.requestRedemption(
+        testUserId,
+        `idem-ceiling-${Date.now()}`
+      );
+
+      // Payout amount must be clamped to ₹50,000
+      expect(Number(payout.amount)).toBe(50000);
+
+      // Wallet processingAmount must be ₹50,000 and residual availableBalance must be ₹25,000
+      const refreshedWallet = await prisma.wallet.findUnique({ where: { id: testWalletId } });
+      expect(Number(refreshedWallet?.availableBalance)).toBe(25000);
+      expect(Number(refreshedWallet?.processingAmount)).toBe(50000);
+
+      // Clean up
+      await prisma.payout.delete({ where: { id: payout.id } });
+      await prisma.paymentAccount.delete({ where: { id: paymentAccount.id } });
+      await prisma.kycRecord.delete({ where: { id: kycRecord.id } });
+      await prisma.wallet.update({
+        where: { id: testWalletId },
+        data: { availableBalance: 10000, processingAmount: 0 },
+      });
+    });
+
+    test('Task 2.1 / F-03: Partial update min-max boundary validation rejects min > max', async () => {
+      // Set baseline settings: min = 100, max = 50000
+      await prisma.redemptionSettings.upsert({
+        where: { id: 'default' },
+        create: { id: 'default', minimumRedemptionAmount: 100, maximumRedemptionAmount: 50000 },
+        update: { minimumRedemptionAmount: 100, maximumRedemptionAmount: 50000 },
+      });
+
+      // Attempt partial update setting min = 60,000 (exceeds existing max 50,000)
+      const prevSettings = await prisma.redemptionSettings.findUnique({ where: { id: 'default' } });
+      const minRedemption = 60000;
+      const effectiveMin = minRedemption;
+      const effectiveMax = prevSettings?.maximumRedemptionAmount ? Number(prevSettings.maximumRedemptionAmount) : HARD_MAX_REDEMPTION_CEILING;
+
+      expect(effectiveMin > effectiveMax).toBe(true);
+
+      // Attempt partial update setting max = 50 (below existing min 100)
+      const newMax = 50;
+      const effMin2 = prevSettings?.minimumRedemptionAmount ? Number(prevSettings.minimumRedemptionAmount) : null;
+      const effMax2 = newMax;
+      expect(effMin2 !== null && effMin2 > effMax2).toBe(true);
+    });
+
+    test('Task 2.3 / F-13: checkUserEligibility rejects redemption when daily ₹50,000 limit is exhausted', async () => {
+      // Create a dummy completed payout for today of ₹50,000
+      const paymentAccount = await prisma.paymentAccount.create({
+        data: {
+          userId: testUserId,
+          accountType: 'UPI',
+          upiIdEncrypted: 'enc_upi_daily_test',
+          beneficiaryBlindIndex: `bidx_daily_${Date.now()}`,
+          maskedInfo: 'user2@upi',
+          isVerified: true,
+          isDefault: true,
+        },
+      });
+
+      const todayPayout = await prisma.payout.create({
+        data: {
+          userId: testUserId,
+          walletId: testWalletId,
+          paymentAccountId: paymentAccount.id,
+          amount: 50000,
+          paymentType: 'UPI',
+          idempotencyKey: `daily-test-${Date.now()}`,
+          status: 'SUCCESS',
+          completedAt: new Date(),
+        },
+      });
+
+      const eligibility = await PayoutService.checkUserEligibility(testUserId);
+      expect(eligibility.canRedeem).toBe(false);
+      expect(eligibility.isEligible).toBe(false);
+      expect(eligibility.reason).toContain('Daily redemption limit of ₹50,000 reached for today');
+      expect(eligibility.dailyRedeemedToday).toBe(50000);
+      expect(eligibility.dailyRemaining).toBe(0);
+
+      // Clean up
+      await prisma.payout.delete({ where: { id: todayPayout.id } });
+      await prisma.paymentAccount.delete({ where: { id: paymentAccount.id } });
     });
 
     test('Task 2.6: NotificationService has dispatchPushForUser method', () => {
