@@ -173,6 +173,8 @@ export function normalizeRegistrationIntegrityPayload(input: {
   middleName?: string;
   lastName?: string;
   fullName?: string;
+  passwordSha256?: string;
+  verificationToken?: string;
 }) {
   const mobile = String(input.mobile || '').replace(/\D/g, '').slice(-10);
   const profession = String(input.profession || '').trim().toUpperCase();
@@ -202,6 +204,8 @@ export function normalizeRegistrationIntegrityPayload(input: {
     middleName,
     lastName,
     fullName,
+    ...(input.passwordSha256 ? { passwordSha256: input.passwordSha256 } : {}),
+    ...(input.verificationToken ? { verificationToken: String(input.verificationToken).trim() } : {}),
   };
 }
 
@@ -215,6 +219,9 @@ export async function createRegistrationRequestHash(input: {
   middleName?: string;
   lastName?: string;
   fullName?: string;
+  password?: string;
+  passwordSha256?: string;
+  verificationToken?: string;
 }): Promise<string> {
   const payload = normalizeRegistrationIntegrityPayload(input);
   return sha256Json(payload);
