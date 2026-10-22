@@ -65,6 +65,8 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
   } | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showPasswordFallback, setShowPasswordFallback] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   // 100% full balance redemption rule
   const amountToRedeem = Number(wallet.availableBalance || 0);
@@ -77,6 +79,8 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
     setLoadingEligibility(true);
     setErrorMsg(null);
     setPayoutResult(null);
+    setShowPasswordFallback(false);
+    setConfirmPassword('');
     setIdempotencyKey(`idem-${Date.now()}-${Math.random().toString(36).substring(2, 12)}`);
 
     MobileApiClient.getPayoutEligibility()
@@ -252,7 +256,7 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
     }
 
     try {
-      // VULN-MOB-02: Enforce biometric / device PIN step-up verification before disbursal
+      // VULN-MOB-02 / F-19: Enforce biometric step-up, with password fallback on unenrolled devices
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
       if (hasHardware && isEnrolled) {
@@ -263,6 +267,19 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
         });
         if (!authResult.success) {
           setErrorMsg('Biometric authentication is required to confirm redemption.');
+          setIsSubmitting(false);
+          return;
+        }
+      } else {
+        // Fallback for devices without biometric hardware or enrolled biometrics (F-19)
+        if (!confirmPassword) {
+          setShowPasswordFallback(true);
+          setErrorMsg('Please enter your account password to verify redemption.');
+          setIsSubmitting(false);
+          return;
+        }
+        if (confirmPassword.length < 6) {
+          setErrorMsg('Please enter a valid password (minimum 6 characters).');
           setIsSubmitting(false);
           return;
         }
@@ -666,6 +683,26 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
                       </View>
                     </View>
                   </View>
+
+                  {showPasswordFallback && (
+                    <View style={{ marginTop: 12, marginBottom: 8, padding: 12, backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' }}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#1E293B', marginBottom: 4 }}>
+                        Security Verification
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#64748B', marginBottom: 8 }}>
+                        Device biometrics are not enrolled. Please enter your account password to confirm redemption:
+                      </Text>
+                      <TextInput
+                        style={styles.input}
+                        value={confirmPassword}
+                        onChangeText={setConfirmPassword}
+                        placeholder="Enter account password"
+                        placeholderTextColor="#94A3B8"
+                        secureTextEntry
+                        autoCapitalize="none"
+                      />
+                    </View>
+                  )}
 
                   {eligibility && !eligibility.canRedeem && (
                     <View style={styles.warningBox}>

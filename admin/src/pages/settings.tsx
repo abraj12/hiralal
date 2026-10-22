@@ -719,7 +719,7 @@ export default function AdminSettingsPage() {
                             )}
                           </td>
                           <td className="py-3.5 px-4 text-slate-500">
-                            {new Date(g.effectiveFrom).toLocaleDateString('en-IN')}
+                            {new Date(g.effectiveFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}
                           </td>
                           <td className="py-3.5 px-4">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${

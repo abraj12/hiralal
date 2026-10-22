@@ -247,7 +247,7 @@ export default function AdminPayoutsPage() {
                         </span>
                       </td>
                       <td className="py-4 px-4 text-slate-500 font-medium whitespace-nowrap">
-                        {new Date(p.createdAt).toLocaleDateString('en-IN')}
+                        {new Date(p.createdAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}
                       </td>
                       <td className="py-4 px-5 text-right space-x-2 whitespace-nowrap">
                         <button
@@ -445,9 +445,9 @@ export default function AdminPayoutsPage() {
                 )}
 
                 <div className="grid grid-cols-2 gap-3 text-slate-500 text-[11px] pt-1">
-                  <div>Initiated: {new Date(inspectPayout.createdAt).toLocaleString('en-IN')}</div>
+                  <div>Initiated: {new Date(inspectPayout.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</div>
                   {inspectPayout.completedAt && (
-                    <div>Completed: {new Date(inspectPayout.completedAt).toLocaleString('en-IN')}</div>
+                    <div>Completed: {new Date(inspectPayout.completedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</div>
                   )}
                 </div>
               </div>
