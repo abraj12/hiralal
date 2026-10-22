@@ -21,7 +21,7 @@ sudo systemctl start hiralal-stack.service
 ### Option B: Standalone Node.js & Next.js Services
 For direct host execution without containers:
 - `hiralal-backend.service`: Express API (Port 5000, 1024 MB RAM limit, auto-restart on failure).
-- `hiralal-worker.service`: Payout & Outbox BullMQ worker (Port 5001, 768 MB RAM limit, auto-restart).
+- `hiralal-worker.service`: Payout & Outbox Worker Daemon (Background processor, 768 MB RAM limit, auto-restart).
 - `hiralal-admin.service`: Next.js Admin Panel (Port 3000, 768 MB RAM limit, auto-restart).
 
 Alternatively, PM2 process management can be used via `ecosystem.config.js`:

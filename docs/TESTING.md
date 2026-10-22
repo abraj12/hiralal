@@ -98,7 +98,7 @@ cd mobile-admin
 npm test
 
 # Direct execution:
-node --test plugins/withPlayIntegrity.test.js plugins/withReleaseSigning.test.js plugins/apiUrlValidation.test.js plugins/adminPrefixValidation.test.js tests/adminAuth.test.js
+node --test plugins/withPlayIntegrity.test.js plugins/withReleaseSigning.test.js plugins/apiUrlValidation.test.js plugins/adminPrefixValidation.test.js plugins/dateUtils.test.js tests/adminAuth.test.js
 ```
 - **`adminAuth.test.js`**: Asserts that only `BILL_ADMIN` and `OPERATIONS_ADMIN` roles are recognized, package ID is `com.admin.login`, and SecureStore storage is enforced.
 

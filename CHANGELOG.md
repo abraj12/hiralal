@@ -5,6 +5,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.2.0] - 2026-10-22
+
+### Build, CI & Type Safety (F-01, F-02, F-24)
+- **Mobile Admin TypeScript Compilation (`F-01`)**: Resolved TypeScript union mismatch in `mobile-admin/App.tsx` by importing and typing `opsAdminTab` as `OpsAdminTab` (`'DASHBOARD' | 'BILLS' | 'USERS' | 'PAYOUTS' | 'MORE'`).
+- **CI Pipeline Typecheck Integration (`F-02`)**: Added `Mobile Admin TypeScript Typecheck` step (`npx tsc --noEmit`) to `.github/workflows/ci.yml` and added `"typecheck": "tsc --noEmit"` to `mobile-admin/package.json`.
+- **Mobile Admin Test Registration (`F-24`)**: Registered `plugins/dateUtils.test.js` in `mobile-admin/package.json` test script, bringing suite to 32 passing unit tests.
+
+### Financial Integrity & Hard Invariants (F-03, F-04, F-07, F-13, F-16)
+- **Wallet Non-Negative Check & Deficit Liability Modeling (`F-07`)**: Re-added PostgreSQL check constraint `chk_wallet_available_balance_non_negative` on `Wallet` (`availableBalance >= 0`) and added `deficitLiability Decimal(12, 2)` column in migration `20261022210000`. Delayed gateway reconciliation liabilities are recorded to `deficitLiability` without driving `availableBalance` negative.
+- **Partial Settings Update Validation (`F-03`)**: `PUT /settings/redemption` pre-fetches existing settings to enforce $min \le max$ across partial updates and preserves `isEnabled` state.
+- **Mobile Admin Maximum Redemption UI (`F-04`)**: Added maximum redemption configuration input to `mobile-admin/src/screens/OpsAdminMoreScreen.tsx` bounded between ₹0 and ₹50,000, passing `maximumRedemptionAmount` in API updates.
+- **Daily Payout Limit Eligibility Evaluation (`F-13`)**: `PayoutService.checkUserEligibility()` now calculates daily disbursements in `Asia/Kolkata` IST and returns `canRedeem = false` when the ₹50,000 daily quota is reached.
+- **Single Payout Gateway Drift Clawback (`F-16`)**: `reconcileSinglePayout()` detects terminal local states (`FAILED` / `REVERSED`) on processed payouts and triggers standard financial drift clawback via `PayoutService.handleFinancialDriftClawback()`.
+
+### Security, Concurrency & Access Control (F-05, F-06, F-08, F-12, F-14, F-15, F-18, F-21)
+- **Separation of Duties in Bill Verification (`F-05`)**: Standard non-deviated invoices require `BILL_ADMIN` review. High-deviation invoices require secondary `OPERATIONS_ADMIN` approval, with mandatory verification that the secondary approver is distinct from the primary verifier (`secondaryApprovedByAdminId !== verifiedByAdminId`).
+- **Expanded Advisory Locks on Invoices (`F-06`)**: `BillService.submitBill` computes file hash before holding PostgreSQL advisory locks across duplicate check, R2 upload, and DB creation within a single transaction, preventing orphaned storage uploads and race conditions.
+- **Dashboard Authorization Guard (`F-08`)**: Fixed client-side role guard in `admin/src/pages/_app.tsx` so unauthorized roles visiting root `/` are redirected to `/login` with tokens cleared.
+- **Row-Level Lock on Statutory Purge (`F-12`)**: `AccountDeletionService.purgeExpiredStatutoryRecords` locks candidate users with `SELECT "id" FROM "User" ... FOR UPDATE` before scrubbing records.
+- **Admin Lockout Timing Oracle Defense (`F-14`)**: `AuthService.requestAdminOtp` evaluates cost-12 dummy bcrypt hash comparison on locked accounts before throwing, returning generic credentials error in API response.
+- **Legal Hold Management Endpoint (`F-15`)**: Added `PATCH /api/v1/admin/users/:id/legal-hold` restricted to `OPERATIONS_ADMIN` requiring a mandatory justification reason and logging to `AuditLog`.
+- **Registration Hash Synchronization (`F-18`)**: Added `passwordSha256` and `verificationToken` to `normalizeRegistrationIntegrityPayload` in `mobile-admin/src/services/integrityRequestHash.ts`.
+- **Designated Host Allowlist in Safe Document URLs (`F-21`)**: Restricted `safeDocumentUrl` in `admin/src/lib/financial-utils.ts` to designated Cloudflare R2 / AWS S3 storage hosts and authorized application domains.
+
+### Web, Mobile & Documentation Truth (F-09, F-11, F-17, F-19, F-20, F-23)
+- **Nginx CSP & Catch-All Hardening (`F-09`)**: Added `'unsafe-inline'` to CSP `script-src` in `nginx/nginx.conf` for Next.js hydration compatibility and configured port 443 `default_server` returning HTTP 444 for unrecognized Host headers.
+- **Query Enum Synchronization (`F-17`)**: Replaced non-existent `'SUBMITTED'` status with `'PENDING'` in `ALLOWED_BILL_STATUSES` in `backend/src/routes/admin.routes.ts`.
+- **Mobile Deep Linking & Biometric Fallback (`F-19`)**: Added `"scheme": "hiralal-rewards"` to `mobile/app.json`, deep-link routing in `mobile/App.tsx`, and account password confirmation fallback in `RedemptionModal.tsx` for devices without enrolled biometrics.
+- **Timezone-Anchored Date Formatting (`F-20`)**: Passed `{ timeZone: 'Asia/Kolkata' }` to all `toLocaleDateString` and `toLocaleString` formatters across admin pages.
+- **Regression Test Hardening (`F-23`)**: Replaced tautological assertions in `audit_remediation_rc1.spec.ts` with assertions on `PaymentType` enum, balance ceiling clamping (>₹50,000 retaining residual balance), partial update validation, and daily limit exhaustion.
+- **Documentation Truth (`F-11`)**: Removed retired `/payouts/webhook` alias from `DEPLOYMENT_GUIDE.md` and `API_DOCUMENTATION.md`; clarified worker daemon architecture in `deploy/systemd/README.md`; updated repository test counts to 900 workspace / 989 total.
+
+---
+
 ## [2.1.0] - 2026-10-21
 
 ### Critical Security & Financial Integrity
