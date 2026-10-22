@@ -81,13 +81,16 @@ export class BillService {
         if (latestRejected.status !== 'REJECTED') {
           throw new Error(`Invoice #${cleanInvoiceNumber} cannot be resubmitted while in status ${latestRejected.status}.`);
         }
-        parentBillId = data.parentBillId || latestRejected.id;
+        // ADV-PARENT-01: Hardcode parentBillId to the immediately preceding rejected bill
+        parentBillId = latestRejected.id;
         revisionNumber = latestRejected.revisionNumber + 1;
 
-        // Check upward deviation against the rejected parent bill (ADV-02: strict 25% threshold)
+        // Check upward deviation against both the rejected parent bill and the root revision (ADV-02 & ADV-CHAIN-01: strict 25% threshold)
+        const rootBill = existingUserBills[existingUserBills.length - 1];
+        const rootGross = Number(rootBill.grossBillAmount || rootBill.billAmount);
         const parentGross = Number(latestRejected.grossBillAmount || latestRejected.billAmount);
         const newGross = data.billAmount;
-        if (parentGross > 0 && newGross > parentGross * 1.25) {
+        if ((parentGross > 0 && newGross > parentGross * 1.25) || (rootGross > 0 && newGross > rootGross * 1.25)) {
           requiresSecondaryApproval = true;
           initialStatus = 'UNDER_REVIEW';
         }

@@ -177,41 +177,32 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
 
     const istStartOfMonth = startOfMonth;
 
-    const monthlyRewardCredits = await prisma.walletTransaction.findMany({
-      where: {
-        type: 'REWARD_CREDIT',
-        createdAt: { gte: istStartOfMonth },
-      },
-      select: {
-        amount: true,
-        wallet: {
-          select: {
-            user: {
-              select: {
-                profession: true,
-              },
-            },
-          },
+    // PERF-RES-02: Use database aggregation instead of fetching all transactions into memory
+    const [plumberAgg, tileAgg] = await Promise.all([
+      prisma.walletTransaction.aggregate({
+        where: {
+          type: 'REWARD_CREDIT',
+          createdAt: { gte: istStartOfMonth },
+          wallet: { user: { profession: 'PLUMBER' } },
         },
-      },
-    });
+        _sum: { amount: true },
+        _count: { id: true },
+      }),
+      prisma.walletTransaction.aggregate({
+        where: {
+          type: 'REWARD_CREDIT',
+          createdAt: { gte: istStartOfMonth },
+          wallet: { user: { profession: 'TILE_INSTALLER' } },
+        },
+        _sum: { amount: true },
+        _count: { id: true },
+      }),
+    ]);
 
-    let plumberTotal = 0;
-    let plumberCount = 0;
-    let tileTotal = 0;
-    let tileCount = 0;
-
-    for (const tx of monthlyRewardCredits) {
-      const prof = tx.wallet?.user?.profession;
-      const amt = Number(tx.amount || 0);
-      if (prof === 'PLUMBER') {
-        plumberTotal += amt;
-        plumberCount += 1;
-      } else if (prof === 'TILE_INSTALLER') {
-        tileTotal += amt;
-        tileCount += 1;
-      }
-    }
+    const plumberTotal = Number(plumberAgg._sum.amount || 0);
+    const plumberCount = plumberAgg._count.id || 0;
+    const tileTotal = Number(tileAgg._sum.amount || 0);
+    const tileCount = tileAgg._count.id || 0;
 
     const programTotals = {
       PLUMBER: {

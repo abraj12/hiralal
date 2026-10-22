@@ -28,6 +28,18 @@ function cleanupUploadedFile(req: Request): void {
       }
     } catch (_) {}
   }
+  const files = (req as any).files;
+  if (Array.isArray(files)) {
+    for (const f of files) {
+      if (f?.path && typeof f.path === 'string') {
+        try {
+          if (fs.existsSync(f.path)) {
+            fs.unlinkSync(f.path);
+          }
+        } catch (_) {}
+      }
+    }
+  }
 }
 
 const diskStorage = multer.diskStorage({
@@ -72,6 +84,7 @@ router.post(
   upload.single('invoiceFile'),
   requireActionIntegrity('BILL_UPLOAD'),
   async (req: AuthenticatedRequest, res: Response) => {
+  let fileBuffer: Buffer | null = null;
   try {
     const user = req.user!;
     const { invoiceNumber, invoiceDate, billAmount, remarks } = req.body;
@@ -177,22 +190,39 @@ router.post(
     const maxUploadMb = Number.isFinite(rawMaxUploadMb) && rawMaxUploadMb > 0 ? rawMaxUploadMb : 10;
     const maxUploadBytes = maxUploadMb * 1024 * 1024;
 
-    let fileBuffer: Buffer;
     let fileName: string;
     let mimeType: string;
 
     if (req.file) {
-      if ((req.file as any).path) {
-        fileBuffer = await fs.promises.readFile((req.file as any).path);
-        try { await fs.promises.unlink((req.file as any).path); } catch (_) {}
-      } else {
+      const tempPath = (req.file as any).path;
+      if (tempPath && typeof tempPath === 'string') {
+        try {
+          fileBuffer = await fs.promises.readFile(tempPath);
+        } finally {
+          // PERF-RES-01: Immediately unlink temporary disk upload upon read completion or failure
+          try {
+            if (fs.existsSync(tempPath)) {
+              await fs.promises.unlink(tempPath);
+            }
+          } catch (_) {}
+        }
+      } else if (req.file.buffer) {
         fileBuffer = req.file.buffer;
+        // Release multer memory buffer reference immediately
+        (req.file as any).buffer = null;
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'A real invoice file document (PDF, JPG, PNG) must be attached to submit a bill.',
+        });
       }
       fileName = req.file.originalname;
       mimeType = req.file.mimetype;
     } else if (req.body.fileBase64 && typeof req.body.fileBase64 === 'string') {
       try {
         fileBuffer = Buffer.from(req.body.fileBase64, 'base64');
+        // PERF-RES-01: Immediately release base64 string from req.body to reclaim V8 heap memory (~13MB)
+        req.body.fileBase64 = undefined;
         if (fileBuffer.length === 0 || fileBuffer.length > maxUploadBytes) {
           return res.status(400).json({
             success: false,
@@ -200,6 +230,7 @@ router.post(
           });
         }
       } catch (e) {
+        req.body.fileBase64 = undefined;
         return res.status(400).json({
           success: false,
           message: 'Invalid base64 file encoding.',
@@ -213,6 +244,13 @@ router.post(
       return res.status(400).json({
         success: false,
         message: 'A real invoice file document (PDF, JPG, PNG) must be attached to submit a bill.',
+      });
+    }
+
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invoice document is empty.',
       });
     }
 
@@ -254,6 +292,26 @@ router.post(
       ? 'Invalid reference provided.'
       : err?.message || 'Invoice submission failed.';
     res.status(400).json({ success: false, message: sanitizedMsg });
+  } finally {
+    // PERF-RES-01: Guaranteed cleanup on all execution exits (success, validation error, unhandled rejection)
+    cleanupUploadedFile(req);
+    if (fileBuffer) {
+      try {
+        fileBuffer.fill(0);
+      } catch (_) {}
+      fileBuffer = null;
+    }
+    if (req.file) {
+      if ((req.file as any).buffer) {
+        try {
+          (req.file as any).buffer.fill(0);
+        } catch (_) {}
+        (req.file as any).buffer = null;
+      }
+    }
+    if (req.body && req.body.fileBase64) {
+      req.body.fileBase64 = undefined;
+    }
   }
 });
 
@@ -336,6 +394,12 @@ router.get('/file', authenticate, async (req: AuthenticatedRequest, res: Respons
       stream.on('error', () => {
         if (!res.headersSent) {
           res.status(500).json({ success: false, message: 'Failed to stream document file.' });
+        }
+      });
+      // PERF-RES-01: Abort stream promptly on client disconnect to prevent buffer leak
+      req.on('close', () => {
+        if (!stream.destroyed) {
+          stream.destroy();
         }
       });
       return stream.pipe(res);

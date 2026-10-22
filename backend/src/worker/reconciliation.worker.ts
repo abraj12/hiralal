@@ -2,13 +2,197 @@ import { prisma } from '../db';
 import { config } from '../config';
 import { PayoutService } from '../services/payout.service';
 import { toPaise } from '../utils/money.utils';
+import { getRedisClient, isRedisReady } from '../redis';
+
+export interface ReconciliationWorkerHeartbeat {
+  worker: 'reconciliation';
+  status: 'idle' | 'running' | 'error' | 'stopped';
+  lastHeartbeat: string;
+  lastPolledAt?: string;
+  lastPollCompletedAt?: string;
+  pollIntervalMs?: number;
+  lastReconciledCount: number;
+  lastWebhooksRetriedCount: number;
+  totalReconciledCount: number;
+  totalWebhooksRetriedCount: number;
+  lastError?: string | null;
+  lastErrorAt?: string | null;
+  pid: number;
+}
+
+export interface ReconciliationWorkerCheckpoint {
+  worker: 'reconciliation';
+  lastReconciledPayoutId: string | null;
+  lastPayoutUpdatedAt: string | null;
+  lastRetriedWebhookId: string | null;
+  lastWebhookCreatedAt: string | null;
+  totalReconciledCount: number;
+  totalWebhooksRetriedCount: number;
+  lastCheckpointAt: string;
+  updatedAt: string;
+}
 
 export class ReconciliationWorker {
   private static isRunning = false;
   private static timer: NodeJS.Timeout | null = null;
 
+  // Redis Keys and State (DEF-EXT-02: Worker polling cursor state & health monitoring)
+  private static readonly HEARTBEAT_KEY = 'worker:reconciliation:heartbeat';
+  private static readonly CHECKPOINT_KEY = 'worker:reconciliation:checkpoint';
+  private static readonly HEARTBEAT_TTL_SECONDS = 600; // 10-minute health check window
+
+  private static totalReconciledCount = 0;
+  private static totalWebhooksRetriedCount = 0;
+  private static lastHeartbeatState: ReconciliationWorkerHeartbeat | null = null;
+  private static lastCheckpointState: ReconciliationWorkerCheckpoint | null = null;
+
+  /**
+   * Safe Redis SET that never crashes the worker if Redis is offline or errors.
+   */
+  private static async safeRedisSet(key: string, value: string, ttlSeconds?: number): Promise<boolean> {
+    try {
+      if (!isRedisReady()) return false;
+      const redis = getRedisClient();
+      if (!redis || redis.status !== 'ready') return false;
+      if (ttlSeconds) {
+        await redis.set(key, value, 'EX', ttlSeconds);
+      } else {
+        await redis.set(key, value);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Safe Redis GET that returns null without throwing if Redis is offline or errors.
+   */
+  private static async safeRedisGet(key: string): Promise<string | null> {
+    try {
+      if (!isRedisReady()) return null;
+      const redis = getRedisClient();
+      if (!redis || redis.status !== 'ready') return null;
+      return await redis.get(key);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Updates reconciliation worker heartbeat in Redis and local memory state.
+   */
+  static async updateHeartbeat(
+    status: 'idle' | 'running' | 'error' | 'stopped',
+    extra: Partial<ReconciliationWorkerHeartbeat> = {}
+  ): Promise<void> {
+    try {
+      const nowIso = new Date().toISOString();
+      const heartbeat: ReconciliationWorkerHeartbeat = {
+        worker: 'reconciliation',
+        status,
+        lastHeartbeat: nowIso,
+        lastPolledAt: extra.lastPolledAt || this.lastHeartbeatState?.lastPolledAt || nowIso,
+        lastPollCompletedAt: extra.lastPollCompletedAt || this.lastHeartbeatState?.lastPollCompletedAt,
+        pollIntervalMs: extra.pollIntervalMs || this.lastHeartbeatState?.pollIntervalMs || 180000,
+        lastReconciledCount: extra.lastReconciledCount ?? (this.lastHeartbeatState?.lastReconciledCount || 0),
+        lastWebhooksRetriedCount: extra.lastWebhooksRetriedCount ?? (this.lastHeartbeatState?.lastWebhooksRetriedCount || 0),
+        totalReconciledCount: this.totalReconciledCount,
+        totalWebhooksRetriedCount: this.totalWebhooksRetriedCount,
+        lastError: extra.lastError !== undefined ? extra.lastError : (status === 'error' ? this.lastHeartbeatState?.lastError : null),
+        lastErrorAt: extra.lastErrorAt || (status === 'error' ? nowIso : null),
+        pid: process.pid,
+      };
+
+      this.lastHeartbeatState = heartbeat;
+      await this.safeRedisSet(this.HEARTBEAT_KEY, JSON.stringify(heartbeat), this.HEARTBEAT_TTL_SECONDS);
+    } catch {
+      // Safe fallback: never throw or break worker execution
+    }
+  }
+
+  /**
+   * Updates reconciliation cursor checkpoint in Redis.
+   * Tracks last reconciled payout ID, webhook ID, and counts for resumption and monitoring (DEF-EXT-02).
+   */
+  static async updateCheckpoint(data: {
+    lastReconciledPayoutId?: string;
+    lastPayoutUpdatedAt?: Date;
+    lastRetriedWebhookId?: string;
+    lastWebhookCreatedAt?: Date;
+    reconciledIncrement?: number;
+    webhookIncrement?: number;
+  }): Promise<void> {
+    try {
+      if (data.reconciledIncrement) {
+        this.totalReconciledCount += data.reconciledIncrement;
+      }
+      if (data.webhookIncrement) {
+        this.totalWebhooksRetriedCount += data.webhookIncrement;
+      }
+      const nowIso = new Date().toISOString();
+      const checkpoint: ReconciliationWorkerCheckpoint = {
+        worker: 'reconciliation',
+        lastReconciledPayoutId: data.lastReconciledPayoutId ?? (this.lastCheckpointState?.lastReconciledPayoutId || null),
+        lastPayoutUpdatedAt: data.lastPayoutUpdatedAt ? data.lastPayoutUpdatedAt.toISOString() : (this.lastCheckpointState?.lastPayoutUpdatedAt || null),
+        lastRetriedWebhookId: data.lastRetriedWebhookId ?? (this.lastCheckpointState?.lastRetriedWebhookId || null),
+        lastWebhookCreatedAt: data.lastWebhookCreatedAt ? data.lastWebhookCreatedAt.toISOString() : (this.lastCheckpointState?.lastWebhookCreatedAt || null),
+        totalReconciledCount: this.totalReconciledCount,
+        totalWebhooksRetriedCount: this.totalWebhooksRetriedCount,
+        lastCheckpointAt: nowIso,
+        updatedAt: nowIso,
+      };
+
+      this.lastCheckpointState = checkpoint;
+      await this.safeRedisSet(this.CHECKPOINT_KEY, JSON.stringify(checkpoint));
+    } catch {
+      // Safe fallback
+    }
+  }
+
+  /**
+   * Reads current heartbeat from Redis, falling back to local memory if offline.
+   */
+  static async getHeartbeat(): Promise<ReconciliationWorkerHeartbeat | null> {
+    try {
+      const raw = await this.safeRedisGet(this.HEARTBEAT_KEY);
+      if (raw) {
+        return JSON.parse(raw);
+      }
+    } catch {
+      // Fall back to local memory state
+    }
+    return this.lastHeartbeatState;
+  }
+
+  /**
+   * Reads persistent cursor checkpoint from Redis, falling back to local memory if offline.
+   */
+  static async getCheckpoint(): Promise<ReconciliationWorkerCheckpoint | null> {
+    try {
+      const raw = await this.safeRedisGet(this.CHECKPOINT_KEY);
+      if (raw) {
+        return JSON.parse(raw);
+      }
+    } catch {
+      // Fall back to local memory state
+    }
+    return this.lastCheckpointState;
+  }
+
+  /**
+   * Resets in-memory tracking metrics (used in test suites).
+   */
+  static resetMetrics(): void {
+    this.totalReconciledCount = 0;
+    this.totalWebhooksRetriedCount = 0;
+    this.lastCheckpointState = null;
+    this.lastHeartbeatState = null;
+  }
+
   /**
    * Reconciles all pending and processing payouts against RazorpayX gateway.
+   * Tracks heartbeat, cursor state, and batch count in Redis for monitoring and graceful resumption (DEF-EXT-02).
    */
   static async reconcileStuckPayouts(): Promise<{ reconciledCount: number; errors: string[] }> {
     const isRazorpayConfigured = Boolean(
@@ -16,6 +200,8 @@ export class ReconciliationWorker {
       config.razorpayx.keySecret &&
       config.razorpayx.accountNumber
     );
+
+    await this.updateHeartbeat('running', { lastPolledAt: new Date().toISOString() });
 
     // Look for payouts stuck in non-terminal states older than 2 minutes.
     // Exclude payouts already flagged for manual review -- operators handle those (F-13).
@@ -113,16 +299,31 @@ export class ReconciliationWorker {
           if (gatewayStatus === 'processed') {
             await PayoutService.finalizeSuccess(payout.id, razorpayPayout.id);
             reconciledCount++;
+            await this.updateCheckpoint({
+              lastReconciledPayoutId: payout.id,
+              lastPayoutUpdatedAt: payout.updatedAt,
+              reconciledIncrement: 1,
+            });
             console.log(`[RECONCILIATION] Payout ${payout.id} finalized as SUCCESS via gateway status.`);
           } else if (gatewayStatus === 'reversed') {
             const reason = razorpayPayout.failure_reason || 'Disbursement reversed on banking network';
             await PayoutService.handleReversedPayout(payout.id, reason);
             reconciledCount++;
+            await this.updateCheckpoint({
+              lastReconciledPayoutId: payout.id,
+              lastPayoutUpdatedAt: payout.updatedAt,
+              reconciledIncrement: 1,
+            });
             console.log(`[RECONCILIATION] Payout ${payout.id} handled post-settlement reversal as REVERSED (${reason}) via gateway status.`);
           } else if (gatewayStatus === 'failed' || gatewayStatus === 'rejected') {
             const reason = razorpayPayout.failure_reason || 'Disbursement rejected on banking network';
             await PayoutService.reversePayout(payout.id, reason);
             reconciledCount++;
+            await this.updateCheckpoint({
+              lastReconciledPayoutId: payout.id,
+              lastPayoutUpdatedAt: payout.updatedAt,
+              reconciledIncrement: 1,
+            });
             console.log(`[RECONCILIATION] Payout ${payout.id} reversed as FAILED (${reason}) via gateway status.`);
           } else {
             // Still in 'queued' or 'processing'
@@ -158,8 +359,11 @@ export class ReconciliationWorker {
       } catch (err: any) {
         errors.push(`Payout ${payout.id}: ${err.message}`);
         console.error(`[RECONCILIATION-ERROR] Failed to reconcile payout ${payout.id}:`, err.message);
+        await this.updateHeartbeat('error', { lastError: err.message, lastErrorAt: new Date().toISOString() });
       }
     }
+
+    await this.updateCheckpoint({});
 
     return { reconciledCount, errors };
   }
@@ -410,6 +614,11 @@ export class ReconciliationWorker {
           data: { isProcessed: true, processedAt: new Date(), processingStartedAt: null, lastError: null },
         });
         processedCount++;
+        await this.updateCheckpoint({
+          lastRetriedWebhookId: event.id,
+          lastWebhookCreatedAt: event.createdAt,
+          webhookIncrement: 1,
+        });
       } catch (err: any) {
         const isDeadLetter = (event.attempts + 1) >= 5;
         await prisma.webhookEvent.update({
@@ -422,6 +631,8 @@ export class ReconciliationWorker {
         });
       }
     }
+
+    await this.updateCheckpoint({});
     return processedCount;
   }
 
@@ -431,13 +642,24 @@ export class ReconciliationWorker {
   static startReconciliation(intervalMs = 180000): void {
     if (this.isRunning) return;
     this.isRunning = true;
+    this.updateHeartbeat('idle', { pollIntervalMs: intervalMs }).catch(() => {});
 
     const run = async () => {
       try {
-        await this.reconcileStuckPayouts();
-        await this.retryUnprocessedWebhooks();
+        await this.updateHeartbeat('running', { lastPolledAt: new Date().toISOString() });
+        const stuckReport = await this.reconcileStuckPayouts();
+        const webhooksRetried = await this.retryUnprocessedWebhooks();
+        await this.updateHeartbeat('idle', {
+          lastPollCompletedAt: new Date().toISOString(),
+          lastReconciledCount: stuckReport.reconciledCount,
+          lastWebhooksRetriedCount: webhooksRetried,
+        });
       } catch (err: any) {
         console.error('[RECONCILIATION-LOOP-ERROR]', err.message);
+        await this.updateHeartbeat('error', {
+          lastError: err.message,
+          lastErrorAt: new Date().toISOString(),
+        });
       } finally {
         if (this.isRunning) {
           this.timer = setTimeout(run, intervalMs);
@@ -454,5 +676,6 @@ export class ReconciliationWorker {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    this.updateHeartbeat('stopped').catch(() => {});
   }
 }

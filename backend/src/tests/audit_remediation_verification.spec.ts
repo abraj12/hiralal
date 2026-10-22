@@ -113,6 +113,9 @@ describe('Audit Remediation & Security Defect Verification Suite', () => {
       });
       expect(billA.id).toBeDefined();
 
+      // Approve User A's bill to activate the global unique barrier (enforced for status = 'APPROVED')
+      await BillService.approveBill(billA.id, opsAdminId);
+
       // User B attempts to submit the same invoice number with a different file
       const fakeJpg2 = Buffer.concat([fakeJpg, Buffer.from([0x01, 0x02, 0x03])]);
       await expect(
@@ -125,7 +128,7 @@ describe('Audit Remediation & Security Defect Verification Suite', () => {
           fileBuffer: fakeJpg2,
           mimeType: 'image/jpeg',
         })
-      ).rejects.toThrow(/already been submitted to the platform/i);
+      ).rejects.toThrow(/already been submitted and approved on the platform/i);
     });
   });
 
@@ -172,6 +175,7 @@ describe('Audit Remediation & Security Defect Verification Suite', () => {
       });
 
       // Admin manual rejection should succeed and refund balance
+      jest.spyOn(PayoutService, 'queryGatewayByReference').mockResolvedValueOnce({ found: false });
       const rejectResult = await PayoutService.rejectRedemption(
         payout.id,
         opsAdminId,
@@ -184,7 +188,9 @@ describe('Audit Remediation & Security Defect Verification Suite', () => {
       // Verify wallet funds were refunded from processingAmount back to availableBalance
       const refreshedWallet = await prisma.wallet.findUnique({ where: { id: userAWallet!.id } });
       expect(Number(refreshedWallet!.processingAmount)).toBe(0);
-      expect(Number(refreshedWallet!.availableBalance)).toBe(1500);
+      expect(Number(refreshedWallet!.availableBalance)).toBe(Number(userAWallet!.availableBalance));
+
+      jest.restoreAllMocks();
     });
   });
 

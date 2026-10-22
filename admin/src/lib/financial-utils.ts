@@ -26,46 +26,68 @@ export function calculateBillFinancials(
 }
 
 /**
- * Sanitizes external document preview URLs to strictly allow https: protocols.
- * Prevents javascript: or dangerous protocol injection (SEC-HIGH-12).
+ * Sanitizes external document preview URLs to strictly allow https: protocols or localhost.
+ * Prevents javascript: or dangerous protocol injection (SEC-HIGH-12, RED-01).
+ * Supports safe relative paths with query parameters and hash fragments while strictly
+ * blocking directory traversal (including multi-pass percent-encoded variants) and protocol-relative prefixes.
  */
 export function safeDocumentUrl(url: string | undefined | null): string {
   if (!url) return '#';
   const trimmed = url.trim();
+  if (!trimmed) return '#';
 
-  // Decode URI components safely to catch obfuscated/encoded traversals or backslashes (%5C, %2F%2F)
+  // Iteratively decode URI components (up to 5 passes) to unpack nested/double-encoded payloads (e.g., %252e%252e)
   let decoded = trimmed;
-  try {
-    decoded = decodeURIComponent(trimmed);
-  } catch {
-    return '#';
+  for (let i = 0; i < 5; i++) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      return '#';
+    }
   }
 
   // Reject backslashes completely to prevent browser protocol-relative normalization (e.g. /\attacker.com)
   if (decoded.includes('\\') || trimmed.includes('\\')) {
     return '#';
   }
-  // VULN-FRONT-01: Reject directory traversal sequences
+
+  // VULN-FRONT-01 / RED-01: Reject directory traversal sequences (both raw and decoded)
   if (trimmed.includes('..') || decoded.includes('..')) {
     return '#';
   }
-  // Reject protocol-relative URLs (e.g. //attacker.com)
-  if (/^[/\\]{2,}/.test(trimmed) || /^[/\\]{2,}/.test(decoded)) {
+
+  // Reject protocol-relative URLs (e.g. //attacker.com or encoded %2F%2Fattacker.com)
+  if (
+    /^\s*[/\\]{2,}/.test(trimmed) ||
+    /^\s*[/\\]{2,}/.test(decoded) ||
+    trimmed.startsWith('//') ||
+    decoded.startsWith('//') ||
+    decoded.trimStart().startsWith('//')
+  ) {
     return '#';
   }
-  // Strict relative path validation
-  if (/^\/(?!\/|\\)[\w\-.~%!$&'()*+,;=:@/]*$/.test(trimmed)) {
+
+  // Strict relative path validation - safely allows valid query strings and hash parameters (e.g. ? and #)
+  if (/^(?:\/(?!\/|\\)|\?|#)[\w\-.~%!$&'()*+,;=:@/?#]*$/.test(trimmed)) {
     return trimmed;
   }
+
+  // External URLs strictly restricted to https:// or http://localhost / http://127.0.0.1
   if (trimmed.startsWith('https://') || trimmed.startsWith('http://localhost') || trimmed.startsWith('http://127.0.0.1')) {
     try {
       const parsed = new URL(trimmed);
-      if (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'))) {
+      if (
+        parsed.protocol === 'https:' ||
+        (parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'))
+      ) {
         return trimmed;
       }
     } catch {
       return '#';
     }
   }
+
   return '#';
 }

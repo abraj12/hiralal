@@ -206,3 +206,90 @@ This document records the chronological history of all security remediations, fi
   - `mobile` unit tests: 29/29 passed (100%).
   - `mobile-admin` unit tests: 28/28 passed (100%).
   - Total Verified Tests: **827 / 827 tests passing (100% green)** across all workspaces.
+
+---
+
+### Record 9: Residual Platform & Security Hardening (Residual Items DEF-EXT-01 to RED-01)
+- **Date:** October 2026
+- **Finding Identifier:** `DEF-EXT-01`, `DEF-EXT-02`, `CRYPTO-AUDIT-01`, `PERF-RES-01`, `PERF-RES-02`, `RED-01`
+- **Severity:** High
+- **Affected Files:**
+  - `backend/src/routes/webhook.routes.ts`
+  - `backend/src/worker/payout.worker.ts`
+  - `backend/src/worker/account-deletion.worker.ts`
+  - `backend/src/utils/crypto.utils.ts`
+  - `backend/src/routes/bill.routes.ts`
+  - `backend/src/middleware/integrity.middleware.ts`
+  - `backend/src/routes/admin.routes.ts`
+  - `admin/src/lib/financial-utils.ts`
+  - `admin/src/utils/url.utils.ts`
+  - `admin/src/lib/components.test.ts`
+- **Root Cause:**
+  1. **DEF-EXT-01:** Webhook callback handling on currency or paise mismatch returned HTTP 200 without flagging the specific payout record with `requiresManualReview: true` and an explanatory reason.
+  2. **DEF-EXT-02:** Background workers lacked continuous heartbeat lease renewal and Redis scan cursor tracking, risking duplicate execution or premature lock loss during prolonged tasks.
+  3. **CRYPTO-AUDIT-01:** AES-256-GCM decrypt routines did not explicitly assert byte lengths on IV (12 bytes) and Auth Tag (16 bytes), permitting potential malformed payload processing.
+  4. **PERF-RES-01:** Disk-stored invoice uploads leaked temporary files in `uploads/tmp` when requests failed during early input validation or Play Integrity verification.
+  5. **PERF-RES-02:** Monthly dashboard metrics retrieved all transactions into Node.js heap memory to iterate and sum via JavaScript loops, creating heap exhaustion risks.
+  6. **RED-01:** Document viewer URL sanitizer used single-pass decoding susceptible to multi-nested percent-encoded directory traversal bypasses while rejecting valid relative paths with query parameters.
+- **Implementation Approach:**
+  1. **Webhook Invariant Review Flagging (DEF-EXT-01):** Marked payout record with `requiresManualReview: true` and detailed mismatch reasons before returning HTTP 200.
+  2. **Worker Heartbeat & Cursor Tracking (DEF-EXT-02):** Integrated periodic Redis heartbeat lease renewal (`assertLease` and 15s interval) with unref timers and deterministic cursor tracking.
+  3. **Explicit Crypto Length Validation (CRYPTO-AUDIT-01):** Injected strict assertions (`iv.length !== 12` and `tag.length !== 16`) before decipher initialization.
+  4. **Disk File Cleanup on Validation Failures (PERF-RES-01):** Added `cleanupUploadedFile(req)` to all early rejection and error branches in bill upload routes and integrity middleware.
+  5. **Database Aggregation Parallelization (PERF-RES-02):** Converted in-memory JS loops to `Promise.all([prisma.walletTransaction.aggregate(...)])` grouped by profession (`PLUMBER`, `TILE_INSTALLER`).
+  6. **Iterative URL Decoding & Parameter Support (RED-01):** Implemented a 5-iteration decoding loop to catch nested traversals while permitting safe query strings and hash parameters (`/^(?:\/(?!\/|\\)|\?|#)[\w\-.~%!$&'()*+,;=:@/?#]*$/`).
+- **Verification Results:**
+  - `admin/src/lib/components.test.ts`: 22/22 passed.
+  - `backend/src/tests/pan_migration.spec.ts`: 8/8 passed.
+  - Verified all residual edge cases resolved.
+
+---
+
+### Record 10: Test Suite Hardening, Rate-Limit Isolation & Legacy Invariant Alignment
+- **Date:** October 2026
+- **Finding Identifier:** `TEST-HARNESS-01`, `TEST-LEGACY-01` through `TEST-LEGACY-07`
+- **Severity:** Medium
+- **Affected Files:**
+  - `backend/src/tests/admin_otp_enforcement.spec.ts`
+  - `backend/src/tests/pan_migration.spec.ts`
+  - `backend/src/tests/phase0_remediation.spec.ts`
+  - `backend/src/tests/phase2_remediation.spec.ts`
+  - `backend/src/tests/exact_name_matching.spec.ts`
+  - `backend/src/tests/immutable_invoices_and_findings_regression.spec.ts`
+  - `backend/src/tests/account_deletion_and_threshold.spec.ts`
+- **Root Cause:**
+  Legacy test suites contained outdated assertions predating master security remediations, including expecting 401 instead of 403 `ADMIN_TIER_REQUIRED` on `/login`, testing fuzzy PAN name matches, expecting mutable gross amounts, and encountering cross-suite rate limit pollution.
+- **Implementation Approach:**
+  1. **TEST-HARNESS-01 (Rate-Limit Isolation):** Isolated Redis rate limiting buckets and cooldown timers between sequential test suites.
+  2. **TEST-LEGACY-01 (Admin Route Gating):** Updated legacy authentication tests to expect 403 `ADMIN_TIER_REQUIRED` when administrative prefixes hit the craftsman login route.
+  3. **TEST-LEGACY-02 (Exact PAN Matching):** Aligned all verification tests with strict normalized string equality (`normAccount === normPan`).
+  4. **TEST-LEGACY-03 (Immutable Invoices):** Updated bill submission and review payloads to excise `correctedGrossAmount`.
+  5. **TEST-LEGACY-04 (Deviation Escalation):** Added tests validating >25% upward revisions escalate to `OPERATIONS_ADMIN`.
+  6. **TEST-LEGACY-05 (Legal Hold Enforcement):** Verified account deletion blocks users with active `legalHold`.
+  7. **TEST-LEGACY-06 (Crypto Length Invariants):** Added test coverage for invalid IV and Auth Tag lengths in `pan_migration.spec.ts`.
+  8. **TEST-LEGACY-07 (Audit Scrubbing Alignment):** Updated consolidated PII scrub string expectations in `phase2_remediation.spec.ts`.
+- **Verification Results:**
+  - **Backend Suites:** 46 suites, 793 passed (100%).
+  - **Admin Suites:** 2 suites, 22 passed (100%).
+  - **Mobile Suites:** 5 suites, 29 passed (100%).
+  - **Mobile Admin Suites:** 5 suites, 28 passed (100%).
+  - **Total Verified Tests:** **872 / 872 tests passing across 58 suites (100% green)**.
+
+---
+
+### Record 11: Chained Revision Upward Creeping & Parent Linkage Hardening
+- **Date:** October 2026
+- **Finding Identifier:** `ADV-CHAIN-01`, `ADV-PARENT-01`
+- **Severity:** Medium
+- **Affected Files:**
+  - `backend/src/services/bill.service.ts`
+  - `backend/src/tests/immutable_invoices_and_findings_regression.spec.ts`
+- **Root Cause:**
+  1. `ADV-CHAIN-01`: Upward deviation checks were evaluated solely against the immediately preceding rejected revision (`latestRejected`), allowing craftsmen to submit multiple incremental revisions (+20% each) that cumulatively exceeded 25% relative to the root invoice without triggering secondary approval.
+  2. `ADV-PARENT-01`: Client-submitted `data.parentBillId` was accepted as a fallback/override, permitting arbitrary linkage to unrelated bill records.
+- **Implementation Approach:**
+  1. In `BillService.submitBill`, hardened parent pointer assignment to `parentBillId = latestRejected.id`, completely disregarding any client-supplied parent pointers.
+  2. Evaluated upward deviation against both `latestRejected` AND the root submission revision (`revisionNumber: 1`). If `newGross > parentGross * 1.25` OR `newGross > rootGross * 1.25`, the revision is escalated with `requiresSecondaryApproval: true` and `status: 'UNDER_REVIEW'`.
+- **Verification Results:**
+  - `src/tests/immutable_invoices_and_findings_regression.spec.ts`: 11/11 passed.
+  - TypeScript compilation: 100% clean.

@@ -80,26 +80,38 @@ describe('Final Audit Remediation Verification — Security, Financial, and Reli
     });
     paymentAccountId = paymentAccount.id;
 
-    const opsAdmin = await prisma.user.create({
-      data: {
-        mobile: opsAdminMobile,
-        fullName: 'Operations Admin User',
-        passwordHash,
-        role: 'OPERATIONS_ADMIN',
-        status: 'ACTIVE',
-      },
-    });
+    const existingOps = await prisma.user.findFirst({ where: { role: 'OPERATIONS_ADMIN' } });
+    const opsAdmin = existingOps
+      ? await prisma.user.update({
+          where: { id: existingOps.id },
+          data: { mobile: opsAdminMobile, passwordHash, status: 'ACTIVE' },
+        })
+      : await prisma.user.create({
+          data: {
+            mobile: opsAdminMobile,
+            fullName: 'Operations Admin User',
+            passwordHash,
+            role: 'OPERATIONS_ADMIN',
+            status: 'ACTIVE',
+          },
+        });
     opsAdminId = opsAdmin.id;
 
-    const billAdmin = await prisma.user.create({
-      data: {
-        mobile: billAdminMobile,
-        fullName: 'Bill Admin User',
-        passwordHash,
-        role: 'BILL_ADMIN',
-        status: 'ACTIVE',
-      },
-    });
+    const existingBill = await prisma.user.findFirst({ where: { role: 'BILL_ADMIN' } });
+    const billAdmin = existingBill
+      ? await prisma.user.update({
+          where: { id: existingBill.id },
+          data: { mobile: billAdminMobile, passwordHash, status: 'ACTIVE' },
+        })
+      : await prisma.user.create({
+          data: {
+            mobile: billAdminMobile,
+            fullName: 'Bill Admin User',
+            passwordHash,
+            role: 'BILL_ADMIN',
+            status: 'ACTIVE',
+          },
+        });
     billAdminId = billAdmin.id;
   });
 
@@ -451,6 +463,124 @@ describe('Final Audit Remediation Verification — Security, Financial, and Reli
       // Must NOT reject with HTTP 400 "Stale webhook timestamp exceeded tolerance window"
       expect(res.status).not.toBe(400);
       expect(res.body.error).toBeUndefined();
+    });
+
+    test('DEF-EXT-01: Webhook currency mismatch updates local Payout to requiresManualReview', async () => {
+      const secret = config.razorpayx.webhookSecret || 'test_webhook_secret_key_1234567890';
+      config.razorpayx.webhookSecret = secret;
+
+      const rzpId = `pout_test_cur_${Date.now()}`;
+      const payout = await prisma.payout.create({
+        data: {
+          userId,
+          walletId,
+          amount: 500.0,
+          status: 'PROCESSING',
+          razorpayPayoutId: rzpId,
+          paymentAccountId,
+          paymentType: 'UPI',
+          idempotencyKey: `idemp_${Date.now()}_cur_mismatch`,
+        },
+      });
+
+      const eventId = `evt_cur_mismatch_${Date.now()}`;
+      const payload = {
+        event: 'payout.processed',
+        id: eventId,
+        created_at: Math.floor(Date.now() / 1000),
+        payload: {
+          payout: {
+            entity: {
+              id: rzpId,
+              currency: 'USD',
+              amount: 50000,
+            },
+          },
+        },
+      };
+
+      const payloadBuffer = Buffer.from(JSON.stringify(payload));
+      const validSig = crypto
+        .createHmac('sha256', secret)
+        .update(payloadBuffer)
+        .digest('hex');
+
+      const res = await request(app)
+        .post('/api/v1/webhooks/razorpayx')
+        .set('Content-Type', 'application/json')
+        .set('x-razorpay-signature', validSig)
+        .send(payload);
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('rejected_unrecoverable');
+      expect(res.body.reason).toBe('currency_mismatch');
+
+      const updated = await prisma.payout.findUnique({ where: { id: payout.id } });
+      expect(updated?.requiresManualReview).toBe(true);
+      expect(updated?.manualReviewReason).toBe('FATAL_CURRENCY_MISMATCH: USD');
+
+      // Cleanup
+      await prisma.payout.delete({ where: { id: payout.id } });
+      await prisma.webhookEvent.deleteMany({ where: { eventId } });
+    });
+
+    test('DEF-EXT-01: Webhook amount mismatch updates local Payout to requiresManualReview', async () => {
+      const secret = config.razorpayx.webhookSecret || 'test_webhook_secret_key_1234567890';
+      config.razorpayx.webhookSecret = secret;
+
+      const rzpId = `pout_test_amt_${Date.now()}`;
+      const payout = await prisma.payout.create({
+        data: {
+          userId,
+          walletId,
+          amount: 500.0,
+          status: 'PROCESSING',
+          razorpayPayoutId: rzpId,
+          paymentAccountId,
+          paymentType: 'UPI',
+          idempotencyKey: `idemp_${Date.now()}_amt_mismatch`,
+        },
+      });
+
+      const eventId = `evt_amt_mismatch_${Date.now()}`;
+      const payload = {
+        event: 'payout.processed',
+        id: eventId,
+        created_at: Math.floor(Date.now() / 1000),
+        payload: {
+          payout: {
+            entity: {
+              id: rzpId,
+              currency: 'INR',
+              amount: 99999,
+            },
+          },
+        },
+      };
+
+      const payloadBuffer = Buffer.from(JSON.stringify(payload));
+      const validSig = crypto
+        .createHmac('sha256', secret)
+        .update(payloadBuffer)
+        .digest('hex');
+
+      const res = await request(app)
+        .post('/api/v1/webhooks/razorpayx')
+        .set('Content-Type', 'application/json')
+        .set('x-razorpay-signature', validSig)
+        .send(payload);
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('rejected_unrecoverable');
+      expect(res.body.reason).toBe('amount_mismatch');
+
+      const updated = await prisma.payout.findUnique({ where: { id: payout.id } });
+      expect(updated?.requiresManualReview).toBe(true);
+      expect(updated?.manualReviewReason).toBe('FATAL_AMOUNT_MISMATCH: expected 50000, received 99999');
+
+      // Cleanup
+      await prisma.payout.delete({ where: { id: payout.id } });
+      await prisma.webhookEvent.deleteMany({ where: { eventId } });
     });
   });
 

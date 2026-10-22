@@ -192,6 +192,44 @@ describe('Phase 6 — PAN Data Migration & Blind Index Backfill', () => {
       expect(() => decryptSensitive('malformed')).toThrow('Invalid encrypted data format.');
       expect(() => decryptSensitive('v1:only_two:parts')).toThrow('Invalid versioned encrypted data format.');
     });
+
+    it('rejects malformed IV and authentication tag lengths (CRYPTO-AUDIT-01)', () => {
+      const plaintext = 'ABCDE1234F';
+      const ciphertext = encryptSensitive(plaintext);
+      const [, ivHex, tagHex, ct] = ciphertext.split(':');
+
+      // Test truncated IV (less than 12 bytes / 24 hex chars)
+      const truncatedIv = ivHex.slice(0, 16); // 8 bytes
+      expect(() => decryptSensitive(`v1:${truncatedIv}:${tagHex}:${ct}`)).toThrow(
+        /Invalid initialization vector length: expected 12 bytes, received 8/
+      );
+
+      // Test expanded IV (more than 12 bytes)
+      const longIv = ivHex + 'abcd'; // 14 bytes
+      expect(() => decryptSensitive(`v1:${longIv}:${tagHex}:${ct}`)).toThrow(
+        /Invalid initialization vector length: expected 12 bytes, received 14/
+      );
+
+      // Test truncated Tag (less than 16 bytes / 32 hex chars)
+      const truncatedTag = tagHex.slice(0, 20); // 10 bytes
+      expect(() => decryptSensitive(`v1:${ivHex}:${truncatedTag}:${ct}`)).toThrow(
+        /Invalid authentication tag length: expected 16 bytes, received 10/
+      );
+
+      // Test expanded Tag (more than 16 bytes)
+      const longTag = tagHex + '1234'; // 18 bytes
+      expect(() => decryptSensitive(`v1:${ivHex}:${longTag}:${ct}`)).toThrow(
+        /Invalid authentication tag length: expected 16 bytes, received 18/
+      );
+
+      // Test unversioned legacy with malformed IV and tag lengths
+      expect(() => decryptSensitive(`${truncatedIv}:${tagHex}:${ct}`)).toThrow(
+        /Invalid initialization vector length: expected 12 bytes, received 8/
+      );
+      expect(() => decryptSensitive(`${ivHex}:${truncatedTag}:${ct}`)).toThrow(
+        /Invalid authentication tag length: expected 16 bytes, received 10/
+      );
+    });
   });
 });
 

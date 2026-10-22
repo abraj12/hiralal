@@ -220,6 +220,25 @@ export function clearRateLimitCache() {
   memoryCache.clear();
 }
 
+/**
+ * TEST-HARNESS-01: Clears all rate limiter state across in-memory cache and Redis.
+ * Ensures complete test isolation across sequential and monolithic test suite runs.
+ */
+export async function resetAllRateLimiters(): Promise<void> {
+  memoryCache.clear();
+  try {
+    if (isRedisReady()) {
+      const redis = getRedisClient();
+      const keys = await redis.keys('ratelimit:*');
+      if (keys && keys.length > 0) {
+        await redis.del(...keys);
+      }
+    }
+  } catch {
+    // Non-fatal if Redis is disconnected or offline during test runs
+  }
+}
+
 export const passwordResetLimiter = createRateLimiter({
   keyPrefix: 'auth:password_reset',
   limit: 3,

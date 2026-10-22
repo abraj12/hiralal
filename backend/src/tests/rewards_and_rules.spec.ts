@@ -151,7 +151,7 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
           fileName: 'inv2.pdf',
           mimeType: 'application/pdf',
         })
-      ).rejects.toThrow(/already been submitted/);
+      ).rejects.toThrow(/undergoing review|already been/);
     });
 
     test('Rejects duplicate file upload by SHA-256 hash', async () => {

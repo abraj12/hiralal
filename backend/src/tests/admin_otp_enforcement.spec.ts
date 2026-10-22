@@ -556,17 +556,42 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
   // 1. Correct administrator password produces an OTP challenge but no authenticated session
   test('1. Correct administrator password produces an OTP challenge but no authenticated session', async () => {
-    const res = await request(app)
+    // ADV-01 route separation: posting admin credentials to /login aborts with 403 ADMIN_TIER_REQUIRED
+    const rejectedRes = await request(app)
       .post('/api/v1/auth/login')
       .send({
         identifier: `${config.admin.billAdminPrefix}${billAdminMobile}`,
         password: testPassword,
       });
 
+    expect(rejectedRes.status).toBe(403);
+    expect(rejectedRes.body.success).toBe(false);
+    expect(rejectedRes.body.code).toBe('ADMIN_TIER_REQUIRED');
+    expect(rejectedRes.body.accessToken).toBeUndefined();
+    expect(rejectedRes.body.token).toBeUndefined();
+    expect(rejectedRes.body.sessionId).toBeUndefined();
+    expect(rejectedRes.headers['set-cookie']).toBeUndefined();
+
+    // Admin login must go through /admin/verify-prefix -> /admin/otp/request -> /admin/otp/verify
+    const prefixRes = await request(app)
+      .post('/api/v1/auth/admin/verify-prefix')
+      .send({ prefix: config.admin.billAdminPrefix });
+    expect(prefixRes.status).toBe(200);
+    expect(prefixRes.body.tier1Token).toBeDefined();
+    const tier1Token = prefixRes.body.tier1Token;
+
+    const res = await request(app)
+      .post('/api/v1/auth/admin/otp/request')
+      .set('X-Tier1-Token', tier1Token)
+      .send({
+        identifier: `${config.admin.billAdminPrefix}${billAdminMobile}`,
+        password: testPassword,
+        tier1Token,
+      });
+
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.type).toBe('ADMIN_OTP_REQUIRED');
-    expect(res.body.requiresOtp).toBe(true);
+    expect(res.body.requireOtp).toBe(true);
     expect(res.body.challengeToken).toBeDefined();
     expect(res.body.role).toBe('BILL_ADMIN');
 

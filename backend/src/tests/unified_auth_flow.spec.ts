@@ -265,16 +265,16 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
       }
     });
 
-    test('Invalid identifiers do NOT issue tokens, sessions, or OTP challenges', async () => {
+    test('Invalid identifiers with admin prefix return 403 ADMIN_TIER_REQUIRED and do NOT issue tokens or OTP challenges', async () => {
       const beforeCount = await prisma.otpRequest.count({ where: { mobile: billAdminMobile } });
 
       const res = await request(app)
         .post('/api/auth/login')
         .send({ identifier: 'XYZ9876599999', password: adminPassword });
 
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(403);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toBe('Invalid login credentials. Please check your details and try again.');
+      expect(res.body.code).toBe('ADMIN_TIER_REQUIRED');
       expect(res.body.token).toBeUndefined();
       expect(res.body.challengeToken).toBeUndefined();
 
@@ -282,16 +282,16 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
       expect(afterCount).toBe(beforeCount); // No OTP created on invalid identifier
     });
 
-    test('Invalid administrator password does NOT issue OTP challenge or authenticated session', async () => {
+    test('Invalid administrator password on craftsman /login does NOT issue OTP challenge or authenticated session (403 ADMIN_TIER_REQUIRED)', async () => {
       const beforeCount = await prisma.otpRequest.count({ where: { mobile: billAdminMobile } });
 
       const res = await request(app)
         .post('/api/auth/login')
         .send({ identifier: `XYZ${billAdminMobile}`, password: 'WrongAdminPassword@999' });
 
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(403);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toBe('Invalid login credentials. Please check your details and try again.');
+      expect(res.body.code).toBe('ADMIN_TIER_REQUIRED');
       expect(res.body.token).toBeUndefined();
       expect(res.body.challengeToken).toBeUndefined();
 
@@ -299,20 +299,17 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
       expect(afterCount).toBe(beforeCount); // Password validation failed before OTP generation
     });
 
-    test('A valid configured administrator identifier follows password-first, OTP-second authentication via unified /login', async () => {
+    test('A valid configured administrator identifier returns 403 ADMIN_TIER_REQUIRED via craftsman /login under ADV-01', async () => {
       const res = await request(app)
         .post('/api/auth/login')
         .send({ identifier: `XYZ${billAdminMobile}`, password: adminPassword });
 
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.type).toBe('ADMIN_OTP_REQUIRED');
-      expect(res.body.requiresOtp).toBe(true);
-      expect(res.body.challengeToken).toBeDefined();
-      expect(res.body.challengeId).toBeDefined();
-      expect(res.body.cooldownSeconds).toBe(60);
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('ADMIN_TIER_REQUIRED');
+      expect(res.body.message).toBe('Administrative accounts must authenticate via the designated admin portal.');
 
-      // Password verification alone MUST NOT grant access token or create authenticated session
+      // Standard login strictly rejects administrative accounts
       expect(res.body.token).toBeUndefined();
       expect(res.body.accessToken).toBeUndefined();
       expect(res.body.user).toBeUndefined();
@@ -492,13 +489,16 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
       expect(res.status).toBe(200);
     });
 
-    test('OPERATIONS_ADMIN is forbidden from bill verification (403)', async () => {
+    test('OPERATIONS_ADMIN is permitted on bill verification endpoints for secondary review', async () => {
       const res = await request(app)
         .post('/api/admin/bills/any-bill/verify')
         .set('Authorization', `Bearer ${opsAdminToken}`)
         .send({ action: 'APPROVE' });
 
-      expect(res.status).toBe(403);
+      // Under commit 4f22a2b / DEADLOCK-01, OPERATIONS_ADMIN can resolve high-deviation bills.
+      // Role check passes; returns 404 for nonexistent bill, NOT 403 Forbidden.
+      expect(res.status).not.toBe(403);
+      expect(res.status).toBe(404);
     });
 
     test('Ordinary Craftsman is forbidden from all admin routes (403)', async () => {
@@ -511,6 +511,12 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
         .get('/api/admin/settings/redemption')
         .set('Authorization', `Bearer ${craftsmanToken}`);
       expect(res2.status).toBe(403);
+
+      const res3 = await request(app)
+        .post('/api/admin/bills/any-bill/verify')
+        .set('Authorization', `Bearer ${craftsmanToken}`)
+        .send({ action: 'APPROVE' });
+      expect(res3.status).toBe(403);
     });
 
     test('Mobile App.tsx navigates to correct role-specific dashboard based on user role', () => {

@@ -430,4 +430,114 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
       global.fetch = origFetch;
     }
   });
+
+  test('8. DEF-EXT-02: PayoutWorker tracks heartbeat, last polled timestamp, and cursor checkpoint in Redis', async () => {
+    PayoutWorker.resetMetrics();
+    await prisma.outboxEvent.deleteMany({ where: { eventType: 'PAYOUT_DISPATCH' } });
+
+    // Create a mock payout to be processed by outbox event
+    const testPayout = await prisma.payout.create({
+      data: {
+        userId: user.id,
+        walletId: user.wallet.id,
+        paymentAccountId: paymentAccount.id,
+        paymentType: 'UPI',
+        amount: 250.0,
+        status: 'APPROVED',
+        idempotencyKey: `idem-outbox-cursor-${Date.now()}`,
+      },
+    });
+
+    // Create an outbox event for this payout
+    const outboxEvent = await prisma.outboxEvent.create({
+      data: {
+        eventType: 'PAYOUT_DISPATCH',
+        payload: { payoutId: testPayout.id },
+        status: 'PENDING',
+        attempts: 0,
+      },
+    });
+
+    try {
+      const processedCount = await PayoutWorker.processOutboxEvents();
+      expect(processedCount).toBeGreaterThanOrEqual(1);
+
+      // Verify worker heartbeat
+      const heartbeat = await PayoutWorker.getHeartbeat();
+      expect(heartbeat).not.toBeNull();
+      expect(heartbeat?.worker).toBe('payout');
+      expect(heartbeat?.status).toBe('idle');
+      expect(heartbeat?.lastPolledAt).toBeDefined();
+      expect(heartbeat?.lastPollCompletedAt).toBeDefined();
+      expect(heartbeat?.lastBatchProcessedCount).toBeGreaterThanOrEqual(1);
+      expect(heartbeat?.totalProcessedCount).toBeGreaterThanOrEqual(1);
+
+      // Verify cursor checkpoint (DEF-EXT-02 resilience)
+      const checkpoint = await PayoutWorker.getCheckpoint();
+      expect(checkpoint).not.toBeNull();
+      expect(checkpoint?.worker).toBe('payout');
+      expect(checkpoint?.lastProcessedEventId).toBe(outboxEvent.id);
+      expect(checkpoint?.cursorTimestamp).toBeDefined();
+      expect(checkpoint?.processedCount).toBeGreaterThanOrEqual(1);
+      expect(checkpoint?.updatedAt).toBeDefined();
+    } finally {
+      await prisma.outboxEvent.deleteMany({ where: { id: outboxEvent.id } });
+      await prisma.payout.deleteMany({ where: { id: testPayout.id } });
+    }
+  });
+
+  test('9. DEF-EXT-02: ReconciliationWorker tracks heartbeat, last polled timestamp, and cursor checkpoint in Redis', async () => {
+    ReconciliationWorker.resetMetrics();
+
+    await ReconciliationWorker.reconcileStuckPayouts();
+
+    // Verify heartbeat
+    const heartbeat = await ReconciliationWorker.getHeartbeat();
+    expect(heartbeat).not.toBeNull();
+    expect(heartbeat?.worker).toBe('reconciliation');
+    expect(heartbeat?.lastPolledAt).toBeDefined();
+    expect(typeof heartbeat?.totalReconciledCount).toBe('number');
+    expect(typeof heartbeat?.totalWebhooksRetriedCount).toBe('number');
+
+    // Verify checkpoint
+    const checkpoint = await ReconciliationWorker.getCheckpoint();
+    expect(checkpoint).not.toBeNull();
+    expect(checkpoint?.worker).toBe('reconciliation');
+    expect(checkpoint?.lastCheckpointAt).toBeDefined();
+    expect(checkpoint?.updatedAt).toBeDefined();
+    expect(typeof checkpoint?.totalReconciledCount).toBe('number');
+  });
+
+  test('10. DEF-EXT-02: Resilience - workers safely continue without crashing when Redis is offline or throws errors', async () => {
+    // Test simulated Redis error during heartbeat & checkpoint update
+    const origSet = (PayoutWorker as any).safeRedisSet;
+    const origGet = (PayoutWorker as any).safeRedisGet;
+
+    try {
+      // Force internal Redis calls to fail
+      (PayoutWorker as any).safeRedisSet = jest.fn().mockRejectedValue(new Error('Redis connection lost ECONNRESET'));
+      (PayoutWorker as any).safeRedisGet = jest.fn().mockRejectedValue(new Error('Redis offline'));
+
+      // Both heartbeat and checkpoint must swallow the error gracefully and continue
+      await expect(PayoutWorker.updateHeartbeat('polling')).resolves.not.toThrow();
+      await expect(PayoutWorker.updateCheckpoint('mock-event-id', new Date(), 1)).resolves.not.toThrow();
+
+      // ReconciliationWorker safe Redis calls
+      (ReconciliationWorker as any).safeRedisSet = jest.fn().mockRejectedValue(new Error('Redis timeout'));
+      (ReconciliationWorker as any).safeRedisGet = jest.fn().mockRejectedValue(new Error('Redis timeout'));
+
+      await expect(ReconciliationWorker.updateHeartbeat('running')).resolves.not.toThrow();
+      await expect(ReconciliationWorker.updateCheckpoint({ reconciledIncrement: 1 })).resolves.not.toThrow();
+
+      // Confirm workers still function cleanly
+      const pHeartbeat = await PayoutWorker.getHeartbeat();
+      expect(pHeartbeat).toBeDefined();
+
+      const rHeartbeat = await ReconciliationWorker.getHeartbeat();
+      expect(rHeartbeat).toBeDefined();
+    } finally {
+      (PayoutWorker as any).safeRedisSet = origSet;
+      (PayoutWorker as any).safeRedisGet = origGet;
+    }
+  });
 });

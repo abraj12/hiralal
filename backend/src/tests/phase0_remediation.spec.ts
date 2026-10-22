@@ -67,7 +67,11 @@ describe('Phase 0 Verification & Regression Suite', () => {
           password: 'WrongPassword!',
         });
 
-      expect(res.status).toBe(401);
+      // ADV-01 route gating rejects admin credentials on standard login with 403 ADMIN_TIER_REQUIRED (or 401 fallback)
+      expect([401, 403]).toContain(res.status);
+      if (res.status === 403) {
+        expect(res.body.code).toBe('ADMIN_TIER_REQUIRED');
+      }
       expect(res.body.token).toBeUndefined();
       expect(res.body.accessToken).toBeUndefined();
       expect(res.body.user).toBeUndefined();

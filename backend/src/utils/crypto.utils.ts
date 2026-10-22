@@ -65,6 +65,13 @@ export function decryptSensitive(cipherPackage: string): string {
   const iv = Buffer.from(ivHex, 'hex');
   const tag = Buffer.from(tagHex, 'hex');
 
+  if (iv.length !== IV_LENGTH) {
+    throw new Error(`Invalid initialization vector length: expected ${IV_LENGTH} bytes, received ${iv.length}`);
+  }
+  if (tag.length !== TAG_LENGTH) {
+    throw new Error(`Invalid authentication tag length: expected ${TAG_LENGTH} bytes, received ${tag.length}`);
+  }
+
   // Candidate keys: current primary key first, followed by previous keys for rotation
   const candidateKeySources = [
     config.fieldEncryptionKey || config.encryptionKey,

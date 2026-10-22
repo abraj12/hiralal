@@ -4,6 +4,8 @@ module.exports = {
   testTimeout: 30000,
   roots: ['<rootDir>/src'],
   testMatch: ['**/*.spec.ts', '**/*.test.ts'],
+  // TEST-HARNESS-01: Global test harness isolation & rate limiting reset hook
+  setupFilesAfterEnv: ['<rootDir>/src/tests/setup/jest.setup.ts'],
   // F-01: Global teardown removes seeded test admin users after the suite to prevent cross-run pollution
   globalTeardown: '<rootDir>/src/tests/setup/global-teardown.ts',
   transform: {

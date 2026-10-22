@@ -34,7 +34,11 @@ describe('Phase 2 Verification & Regression Suite (Medium-Priority Hardening & C
         'backend/src/services/account-deletion.service.ts'
       );
       const content = fs.readFileSync(servicePath, 'utf8');
-      expect(content).toContain('VULN-DEL-01: Scrub personal names, IP addresses, and user agents in AuditLog');
+      // TEST-LEGACY-07: Updated to match consolidated VULN-DEL-01 & SEC-AUDIT-01 comment and scrub structure
+      expect(content).toContain(
+        'VULN-DEL-01 & SEC-AUDIT-01: Scrub personal names, IP addresses, user agents, and serialized values in AuditLog for deleted accounts'
+      );
+      expect(content).toMatch(/tx\.auditLog\.updateMany\(\{[\s\S]*?ipAddress:\s*'0\.0\.0\.0'[\s\S]*?userAgent:\s*'ANONYMIZED'/);
       expect(content).toContain("ipAddress: '0.0.0.0'");
       expect(content).toContain("userAgent: 'ANONYMIZED'");
     });

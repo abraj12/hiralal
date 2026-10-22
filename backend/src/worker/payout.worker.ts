@@ -3,6 +3,31 @@ import { config } from '../config';
 import { toPaise } from '../utils/money.utils';
 import { decryptSensitive, encryptSensitive } from '../utils/crypto.utils';
 import { PayoutService } from '../services/payout.service';
+import { getRedisClient, isRedisReady } from '../redis';
+
+export interface PayoutWorkerHeartbeat {
+  worker: 'payout';
+  status: 'idle' | 'polling' | 'error' | 'stopped';
+  lastHeartbeat: string;
+  lastPolledAt?: string;
+  lastPollCompletedAt?: string;
+  pollIntervalMs?: number;
+  lastBatchProcessedCount: number;
+  totalProcessedCount: number;
+  lastError?: string | null;
+  lastErrorAt?: string | null;
+  pid: number;
+}
+
+export interface PayoutWorkerCheckpoint {
+  worker: 'payout';
+  lastProcessedEventId: string | null;
+  lastEventCreatedAt: string | null;
+  lastPolledAt: string;
+  processedCount: number;
+  cursorTimestamp: number;
+  updatedAt: string;
+}
 
 export function resolveBankAccountNumber(account: {
   accountType: string;
@@ -61,6 +86,142 @@ export function resolveUpiAddress(account: {
 export class PayoutWorker {
   private static isOutboxPolling = false;
   private static pollTimer: NodeJS.Timeout | null = null;
+
+  // Redis Keys and State (DEF-EXT-02: Worker polling cursor state & health monitoring)
+  private static readonly HEARTBEAT_KEY = 'worker:payout:heartbeat';
+  private static readonly CHECKPOINT_KEY = 'worker:payout:checkpoint';
+  private static readonly HEARTBEAT_TTL_SECONDS = 300; // 5-minute health check window
+
+  private static totalProcessedCount = 0;
+  private static lastHeartbeatState: PayoutWorkerHeartbeat | null = null;
+  private static lastCheckpointState: PayoutWorkerCheckpoint | null = null;
+
+  /**
+   * Safe Redis SET that never crashes the worker if Redis is offline or errors.
+   */
+  private static async safeRedisSet(key: string, value: string, ttlSeconds?: number): Promise<boolean> {
+    try {
+      if (!isRedisReady()) return false;
+      const redis = getRedisClient();
+      if (!redis || redis.status !== 'ready') return false;
+      if (ttlSeconds) {
+        await redis.set(key, value, 'EX', ttlSeconds);
+      } else {
+        await redis.set(key, value);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Safe Redis GET that returns null without throwing if Redis is offline or errors.
+   */
+  private static async safeRedisGet(key: string): Promise<string | null> {
+    try {
+      if (!isRedisReady()) return null;
+      const redis = getRedisClient();
+      if (!redis || redis.status !== 'ready') return null;
+      return await redis.get(key);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Updates worker heartbeat in Redis and local memory state.
+   */
+  static async updateHeartbeat(
+    status: 'idle' | 'polling' | 'error' | 'stopped',
+    extra: Partial<PayoutWorkerHeartbeat> = {}
+  ): Promise<void> {
+    try {
+      const nowIso = new Date().toISOString();
+      const heartbeat: PayoutWorkerHeartbeat = {
+        worker: 'payout',
+        status,
+        lastHeartbeat: nowIso,
+        lastPolledAt: extra.lastPolledAt || this.lastHeartbeatState?.lastPolledAt || nowIso,
+        lastPollCompletedAt: extra.lastPollCompletedAt || this.lastHeartbeatState?.lastPollCompletedAt,
+        pollIntervalMs: extra.pollIntervalMs || this.lastHeartbeatState?.pollIntervalMs || 5000,
+        lastBatchProcessedCount: extra.lastBatchProcessedCount ?? (this.lastHeartbeatState?.lastBatchProcessedCount || 0),
+        totalProcessedCount: this.totalProcessedCount,
+        lastError: extra.lastError !== undefined ? extra.lastError : (status === 'error' ? this.lastHeartbeatState?.lastError : null),
+        lastErrorAt: extra.lastErrorAt || (status === 'error' ? nowIso : null),
+        pid: process.pid,
+      };
+
+      this.lastHeartbeatState = heartbeat;
+      await this.safeRedisSet(this.HEARTBEAT_KEY, JSON.stringify(heartbeat), this.HEARTBEAT_TTL_SECONDS);
+    } catch {
+      // Safe fallback: never throw or break worker execution
+    }
+  }
+
+  /**
+   * Updates persistent cursor checkpoint in Redis upon successfully processing an event.
+   * Enables graceful resumption and progress monitoring across worker restarts (DEF-EXT-02).
+   */
+  static async updateCheckpoint(eventId: string, eventCreatedAt: Date, countDelta: number = 1): Promise<void> {
+    try {
+      this.totalProcessedCount += countDelta;
+      const nowIso = new Date().toISOString();
+      const checkpoint: PayoutWorkerCheckpoint = {
+        worker: 'payout',
+        lastProcessedEventId: eventId,
+        lastEventCreatedAt: eventCreatedAt.toISOString(),
+        lastPolledAt: nowIso,
+        processedCount: this.totalProcessedCount,
+        cursorTimestamp: eventCreatedAt.getTime(),
+        updatedAt: nowIso,
+      };
+
+      this.lastCheckpointState = checkpoint;
+      await this.safeRedisSet(this.CHECKPOINT_KEY, JSON.stringify(checkpoint));
+    } catch {
+      // Safe fallback
+    }
+  }
+
+  /**
+   * Reads the current heartbeat from Redis, falling back to local memory if offline.
+   */
+  static async getHeartbeat(): Promise<PayoutWorkerHeartbeat | null> {
+    try {
+      const raw = await this.safeRedisGet(this.HEARTBEAT_KEY);
+      if (raw) {
+        return JSON.parse(raw);
+      }
+    } catch {
+      // Fall back to local memory state
+    }
+    return this.lastHeartbeatState;
+  }
+
+  /**
+   * Reads the persistent cursor checkpoint from Redis, falling back to local memory if offline.
+   */
+  static async getCheckpoint(): Promise<PayoutWorkerCheckpoint | null> {
+    try {
+      const raw = await this.safeRedisGet(this.CHECKPOINT_KEY);
+      if (raw) {
+        return JSON.parse(raw);
+      }
+    } catch {
+      // Fall back to local memory state
+    }
+    return this.lastCheckpointState;
+  }
+
+  /**
+   * Resets in-memory tracking metrics (used in test suites).
+   */
+  static resetMetrics(): void {
+    this.totalProcessedCount = 0;
+    this.lastCheckpointState = null;
+    this.lastHeartbeatState = null;
+  }
 
   /**
    * Dispatches a single payout to RazorpayX with strict timeout safety.
@@ -402,74 +563,100 @@ export class PayoutWorker {
 
   /**
    * Polls OutboxEvent table for unprocessed PAYOUT_DISPATCH events with exponential backoff.
+   * Tracks heartbeat, cursor state, and batch count in Redis for monitoring and graceful resumption (DEF-EXT-02).
    */
-  static async processOutboxEvents(): Promise<void> {
+  static async processOutboxEvents(): Promise<number> {
     const now = Date.now();
+    const pollTimestampIso = new Date(now).toISOString();
+    await this.updateHeartbeat('polling', { lastPolledAt: pollTimestampIso });
+
     const leaseTimeout = new Date(now - 5 * 60 * 1000);
-    const candidateEvents = await prisma.outboxEvent.findMany({
-      where: {
-        eventType: 'PAYOUT_DISPATCH',
-        status: { in: ['PENDING', 'PROCESSING'] },
-      },
-      take: 50,
-      orderBy: { createdAt: 'asc' },
-    });
+    let batchProcessed = 0;
 
-    // DOS-03: Apply exponential backoff delay based on attempts to prevent head-of-line blocking:
-    // Delay = attempts * 30 seconds (30s, 60s, 90s...). Fresh events (attempts=0) execute immediately.
-    const runnableEvents = candidateEvents.filter((event) => {
-      if (event.status === 'PROCESSING') {
-        return event.updatedAt < leaseTimeout;
-      }
-      if (event.attempts === 0) {
-        return true;
-      }
-      const backoffMs = event.attempts * 30 * 1000;
-      return now - new Date(event.updatedAt).getTime() >= backoffMs;
-    }).slice(0, 20);
+    try {
+      const candidateEvents = await prisma.outboxEvent.findMany({
+        where: {
+          eventType: 'PAYOUT_DISPATCH',
+          status: { in: ['PENDING', 'PROCESSING'] },
+        },
+        take: 50,
+        orderBy: { createdAt: 'asc' },
+      });
 
-    for (const event of runnableEvents) {
-      try {
-        // Atomic compare-and-swap claim to guarantee single worker execution
-        const claimResult = await prisma.outboxEvent.updateMany({
-          where: {
-            id: event.id,
-            status: event.status,
-            updatedAt: event.updatedAt,
-          },
-          data: {
-            status: 'PROCESSING',
-            attempts: { increment: 1 },
-          },
-        });
-
-        if (claimResult.count === 0) {
-          // Another worker instance claimed this event concurrently
-          continue;
+      // DOS-03: Apply exponential backoff delay based on attempts to prevent head-of-line blocking:
+      // Delay = attempts * 30 seconds (30s, 60s, 90s...). Fresh events (attempts=0) execute immediately.
+      const runnableEvents = candidateEvents.filter((event) => {
+        if (event.status === 'PROCESSING') {
+          return event.updatedAt < leaseTimeout;
         }
-
-        const payload = event.payload as any;
-        if (payload && payload.payoutId) {
-          await this.processPayout(payload.payoutId);
+        if (event.attempts === 0) {
+          return true;
         }
+        const backoffMs = event.attempts * 30 * 1000;
+        return now - new Date(event.updatedAt).getTime() >= backoffMs;
+      }).slice(0, 20);
 
-        await prisma.outboxEvent.update({
-          where: { id: event.id },
-          data: {
-            status: 'PROCESSED',
-            processedAt: new Date(),
-          },
-        });
-      } catch (err: any) {
-        console.error(`[OUTBOX-ERROR] Failed to process OutboxEvent ${event.id}:`, err.message);
-        await prisma.outboxEvent.update({
-          where: { id: event.id },
-          data: {
-            status: event.attempts >= 5 ? 'FAILED' : 'PENDING',
-            lastError: err.message,
-          },
-        });
+      for (const event of runnableEvents) {
+        try {
+          // Atomic compare-and-swap claim to guarantee single worker execution
+          const claimResult = await prisma.outboxEvent.updateMany({
+            where: {
+              id: event.id,
+              status: event.status,
+              updatedAt: event.updatedAt,
+            },
+            data: {
+              status: 'PROCESSING',
+              attempts: { increment: 1 },
+            },
+          });
+
+          if (claimResult.count === 0) {
+            // Another worker instance claimed this event concurrently
+            continue;
+          }
+
+          const payload = event.payload as any;
+          if (payload && payload.payoutId) {
+            await this.processPayout(payload.payoutId);
+          }
+
+          await prisma.outboxEvent.update({
+            where: { id: event.id },
+            data: {
+              status: 'PROCESSED',
+              processedAt: new Date(),
+            },
+          });
+
+          batchProcessed++;
+          // Persist cursor / checkpoint state in Redis for graceful resumption and monitoring (DEF-EXT-02)
+          await this.updateCheckpoint(event.id, event.createdAt, 1);
+        } catch (err: any) {
+          console.error(`[OUTBOX-ERROR] Failed to process OutboxEvent ${event.id}:`, err.message);
+          await prisma.outboxEvent.update({
+            where: { id: event.id },
+            data: {
+              status: event.attempts >= 5 ? 'FAILED' : 'PENDING',
+              lastError: err.message,
+            },
+          });
+        }
       }
+
+      await this.updateHeartbeat('idle', {
+        lastPollCompletedAt: new Date().toISOString(),
+        lastBatchProcessedCount: batchProcessed,
+      });
+
+      return batchProcessed;
+    } catch (err: any) {
+      console.error('[OUTBOX-ERROR] Failed polling cycle:', err.message);
+      await this.updateHeartbeat('error', {
+        lastError: err.message,
+        lastErrorAt: new Date().toISOString(),
+      });
+      return batchProcessed;
     }
   }
 
@@ -479,6 +666,7 @@ export class PayoutWorker {
   static startOutboxPolling(intervalMs = 5000): void {
     if (this.isOutboxPolling) return;
     this.isOutboxPolling = true;
+    this.updateHeartbeat('idle', { pollIntervalMs: intervalMs }).catch(() => {});
 
     const poll = async () => {
       try {
@@ -501,5 +689,6 @@ export class PayoutWorker {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
+    this.updateHeartbeat('stopped').catch(() => {});
   }
 }

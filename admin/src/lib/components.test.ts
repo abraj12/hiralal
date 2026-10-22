@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { calculateBillFinancials } from './financial-utils.ts';
+import { calculateBillFinancials, safeDocumentUrl } from './financial-utils.ts';
 import { filterNavItemsByRole } from './nav-utils.ts';
 
 test('calculateBillFinancials: correctly handles GST excluded invoices', () => {
@@ -93,4 +93,81 @@ test('calculateBillFinancials: handles float GST rates with paise precision', ()
   assert.strictEqual(result.eligibleRewardAmount, 1000.0);
   assert.strictEqual(result.calculatedReward, 12.5);
 });
+
+test('safeDocumentUrl: permits valid relative paths with query parameters and hash fragments (RED-01)', () => {
+  // Query parameters on relative paths
+  assert.strictEqual(safeDocumentUrl('/uploads/bill-1.pdf?token=xyz'), '/uploads/bill-1.pdf?token=xyz');
+  assert.strictEqual(safeDocumentUrl('/uploads/bill-1.pdf?token=xyz&preview=true'), '/uploads/bill-1.pdf?token=xyz&preview=true');
+  assert.strictEqual(safeDocumentUrl('/documents/invoice-2026.pdf?token=abc123&page=1#view'), '/documents/invoice-2026.pdf?token=abc123&page=1#view');
+
+  // Query-only and hash-only relative URLs
+  assert.strictEqual(safeDocumentUrl('?preview=true'), '?preview=true');
+  assert.strictEqual(safeDocumentUrl('#preview-section'), '#preview-section');
+
+  // Standard safe relative path
+  assert.strictEqual(safeDocumentUrl('/uploads/bill-1.pdf'), '/uploads/bill-1.pdf');
+});
+
+test('safeDocumentUrl: rejects single, double, and multi-encoded directory traversal (RED-01)', () => {
+  // Double-encoded traversal (%252e%252e -> %2e%2e -> ..)
+  assert.strictEqual(safeDocumentUrl('/uploads/%252e%252e/secrets.pdf'), '#');
+  assert.strictEqual(safeDocumentUrl('%252e%252e'), '#');
+  assert.strictEqual(safeDocumentUrl('/uploads/bill-1.pdf?file=%252e%252e/secret.env'), '#');
+
+  // Triple-encoded traversal (%25252e%25252e)
+  assert.strictEqual(safeDocumentUrl('/uploads/%25252e%25252e/secrets.pdf'), '#');
+
+  // Single-encoded traversal (%2e%2e -> ..)
+  assert.strictEqual(safeDocumentUrl('/uploads/%2e%2e/secrets.pdf'), '#');
+  assert.strictEqual(safeDocumentUrl('/uploads/bill-1.pdf?file=%2e%2e/secret.env'), '#');
+
+  // Raw directory traversal sequences
+  assert.strictEqual(safeDocumentUrl('/uploads/../secrets.pdf'), '#');
+  assert.strictEqual(safeDocumentUrl('../secrets.pdf'), '#');
+  assert.strictEqual(safeDocumentUrl('/..%2fadmin/passwords.txt'), '#');
+});
+
+test('safeDocumentUrl: rejects protocol-relative URLs and multi-encoded bypasses', () => {
+  // Standard protocol-relative prefixes
+  assert.strictEqual(safeDocumentUrl('//attacker.com/malicious.pdf'), '#');
+  assert.strictEqual(safeDocumentUrl('///attacker.com/malicious.pdf'), '#');
+
+  // Encoded slash protocol-relative URLs
+  assert.strictEqual(safeDocumentUrl('/%2Fattacker.com'), '#');
+  assert.strictEqual(safeDocumentUrl('%2F%2Fattacker.com'), '#');
+  assert.strictEqual(safeDocumentUrl('%252F%252Fattacker.com'), '#');
+
+  // Backslash normalization bypasses
+  assert.strictEqual(safeDocumentUrl('/\\attacker.com'), '#');
+  assert.strictEqual(safeDocumentUrl('\\attacker.com'), '#');
+  assert.strictEqual(safeDocumentUrl('/%255cattacker.com'), '#');
+  assert.strictEqual(safeDocumentUrl('/%5cattacker.com'), '#');
+});
+
+test('safeDocumentUrl: validates external URLs strictly allowing https and localhost / 127.0.0.1', () => {
+  // Safe external HTTPS URLs
+  assert.strictEqual(safeDocumentUrl('https://s3.amazonaws.com/bills/invoice.pdf'), 'https://s3.amazonaws.com/bills/invoice.pdf');
+  assert.strictEqual(safeDocumentUrl('https://s3.amazonaws.com/bills/invoice.pdf?token=xyz#page1'), 'https://s3.amazonaws.com/bills/invoice.pdf?token=xyz#page1');
+
+  // Local development HTTP URLs
+  assert.strictEqual(safeDocumentUrl('http://localhost:3000/uploads/bill.pdf'), 'http://localhost:3000/uploads/bill.pdf');
+  assert.strictEqual(safeDocumentUrl('http://127.0.0.1:8080/uploads/bill.pdf'), 'http://127.0.0.1:8080/uploads/bill.pdf');
+
+  // Reject insecure HTTP on non-localhost domains
+  assert.strictEqual(safeDocumentUrl('http://insecure-domain.com/bill.pdf'), '#');
+
+  // Reject domain spoofing attempts targeting localhost/127.0.0.1
+  assert.strictEqual(safeDocumentUrl('http://localhost.attacker.com/bill.pdf'), '#');
+  assert.strictEqual(safeDocumentUrl('http://127.0.0.1.attacker.com/bill.pdf'), '#');
+  assert.strictEqual(safeDocumentUrl('http://localhost@attacker.com/bill.pdf'), '#');
+
+  // Reject dangerous protocols and empty inputs
+  assert.strictEqual(safeDocumentUrl('javascript:alert(1)'), '#');
+  assert.strictEqual(safeDocumentUrl('data:text/html,<script>alert(1)</script>'), '#');
+  assert.strictEqual(safeDocumentUrl(null), '#');
+  assert.strictEqual(safeDocumentUrl(undefined), '#');
+  assert.strictEqual(safeDocumentUrl(''), '#');
+  assert.strictEqual(safeDocumentUrl('   '), '#');
+});
+
 

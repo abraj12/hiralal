@@ -177,6 +177,13 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
             processingStartedAt: null,
           },
         });
+        await prisma.payout.update({
+          where: { id: payoutRecord.id },
+          data: {
+            requiresManualReview: true,
+            manualReviewReason: `FATAL_CURRENCY_MISMATCH: ${payoutEntity.currency}`,
+          },
+        });
         res.status(200).json({ status: 'rejected_unrecoverable', reason: 'currency_mismatch' });
         return;
       }
@@ -202,6 +209,13 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
             isProcessed: true,
             lastError: `FATAL_AMOUNT_MISMATCH: expected ${expectedPaise}, received ${payoutEntity.amount}`,
             processingStartedAt: null,
+          },
+        });
+        await prisma.payout.update({
+          where: { id: payoutRecord.id },
+          data: {
+            requiresManualReview: true,
+            manualReviewReason: `FATAL_AMOUNT_MISMATCH: expected ${expectedPaise}, received ${payoutEntity.amount}`,
           },
         });
         res.status(200).json({ status: 'rejected_unrecoverable', reason: 'amount_mismatch' });

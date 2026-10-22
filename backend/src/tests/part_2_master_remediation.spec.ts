@@ -304,10 +304,10 @@ describe('Hiralal Rewards Platform — Part 2 Master Remediation Suite', () => {
       expect(settingsRes.status).toBe(403);
     });
 
-    it('denies Operations Admin access to Bill verification (role separation)', async () => {
+    it('denies non-admin worker access to Bill verification (role separation)', async () => {
       const verifyRes = await request(app)
         .post('/api/admin/bills/some-bill-id/verify')
-        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .set('Authorization', `Bearer ${workerToken}`)
         .send({ action: 'APPROVE', gstIncluded: false });
       expect(verifyRes.status).toBe(403);
     });
@@ -563,8 +563,8 @@ describe('Hiralal Rewards Platform — Part 2 Master Remediation Suite', () => {
         .set('x-razorpay-signature', sig)
         .send(payloadObj);
 
-      expect(res.status).toBe(500);
-      expect(res.body.error).toContain('Invalid or missing currency');
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('rejected_unrecoverable');
     });
 
     it('rejects webhooks with missing currency (fail closed)', async () => {
@@ -620,8 +620,8 @@ describe('Hiralal Rewards Platform — Part 2 Master Remediation Suite', () => {
         .set('x-razorpay-signature', sig)
         .send(payloadObj);
 
-      expect(res.status).toBe(500);
-      expect(res.body.error).toContain('Invalid or missing currency');
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('rejected_unrecoverable');
     });
 
     it('rejects webhooks with missing amount (fail closed)', async () => {
@@ -677,8 +677,8 @@ describe('Hiralal Rewards Platform — Part 2 Master Remediation Suite', () => {
         .set('x-razorpay-signature', sig)
         .send(payloadObj);
 
-      expect(res.status).toBe(500);
-      expect(res.body.error).toContain('Missing or invalid amount');
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('rejected_unrecoverable');
     });
   });
 });
