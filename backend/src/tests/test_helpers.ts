@@ -3,20 +3,23 @@ import bcrypt from 'bcryptjs';
 
 export async function resetAdmins(prisma: PrismaClient) {
   try {
-    await prisma.authSession.deleteMany({
-      where: { user: { role: { in: ['BILL_ADMIN', 'OPERATIONS_ADMIN'] } } },
-    });
-    await prisma.auditLog.deleteMany({
-      where: { admin: { role: { in: ['BILL_ADMIN', 'OPERATIONS_ADMIN'] } } },
-    });
-    await prisma.notificationCampaign.deleteMany({
-      where: { createdByAdmin: { role: { in: ['BILL_ADMIN', 'OPERATIONS_ADMIN'] } } },
-    });
-    await prisma.bill.deleteMany({
-      where: { user: { role: { in: ['BILL_ADMIN', 'OPERATIONS_ADMIN'] } } },
-    });
-    await prisma.user.deleteMany({
-      where: { role: { in: ['BILL_ADMIN', 'OPERATIONS_ADMIN'] } },
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL app.allow_audit_log_cleanup = 'on';`).catch(() => {});
+      await tx.authSession.deleteMany({
+        where: { user: { role: { in: ['BILL_ADMIN', 'OPERATIONS_ADMIN'] } } },
+      });
+      await tx.auditLog.deleteMany({
+        where: { admin: { role: { in: ['BILL_ADMIN', 'OPERATIONS_ADMIN'] } } },
+      });
+      await tx.notificationCampaign.deleteMany({
+        where: { createdByAdmin: { role: { in: ['BILL_ADMIN', 'OPERATIONS_ADMIN'] } } },
+      });
+      await tx.bill.deleteMany({
+        where: { user: { role: { in: ['BILL_ADMIN', 'OPERATIONS_ADMIN'] } } },
+      });
+      await tx.user.deleteMany({
+        where: { role: { in: ['BILL_ADMIN', 'OPERATIONS_ADMIN'] } },
+      });
     });
   } catch (err: any) {
     console.warn('[RESET-ADMINS-WARN]', err.message);

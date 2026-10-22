@@ -66,6 +66,17 @@ export class BillService {
     let uploadedFileKey: string | null = null;
 
     try {
+      // AUDIT-DB-01: Upload file privately to Cloudflare R2 / S3 staging path OUTSIDE interactive transaction
+      // This prevents slow network uplinks (>5s) from triggering Prisma transaction timeouts or connection starvation.
+      const uploadResult = await StorageService.uploadInvoice({
+        userId: data.userId,
+        billId,
+        buffer: data.fileBuffer,
+        originalFilename: data.fileName,
+        mimeType: normalizedMime,
+      });
+      uploadedFileKey = uploadResult.fileKey;
+
       return await prisma.$transaction(async (tx) => {
         // Serialize operations on this invoice number and document hash to eliminate TOCTOU races
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:' + cleanInvoiceNumber}))`;
@@ -135,16 +146,6 @@ export class BillService {
         if (existingGlobalApproved) {
           throw new Error(`Invoice #${cleanInvoiceNumber} has already been submitted and approved on the platform.`);
         }
-
-        // Upload file privately to Cloudflare R2 / S3
-        const uploadResult = await StorageService.uploadInvoice({
-          userId: data.userId,
-          billId,
-          buffer: data.fileBuffer,
-          originalFilename: data.fileName,
-          mimeType: normalizedMime,
-        });
-        uploadedFileKey = uploadResult.fileKey;
 
         return await tx.bill.create({
           data: {
@@ -498,9 +499,15 @@ export class BillService {
         });
       }
 
+      // FIN-FINDING-04: Offset deficit liability from previous financial drift clawbacks
+      const currentDeficit = Number(wallet.deficitLiability || 0);
+      const deficitOffset = Math.min(currentDeficit, finalReward);
+      const netCreditToBalance = finalReward - deficitOffset;
+
       const updatedWalletRows: any[] = await tx.$queryRaw`
         UPDATE "Wallet"
-        SET "availableBalance" = "availableBalance" + ${finalReward}::decimal,
+        SET "availableBalance" = "availableBalance" + ${netCreditToBalance}::decimal,
+            "deficitLiability" = "deficitLiability" - ${deficitOffset}::decimal,
             "version" = "version" + 1,
             "updatedAt" = CURRENT_TIMESTAMP
         WHERE "id" = ${wallet.id}
@@ -520,7 +527,9 @@ export class BillService {
           balanceAfter: newBalance,
           referenceType: 'BILL',
           referenceId: bill.id,
-          description: `Reward of ${Number(finalReward).toLocaleString('en-IN')} Points credited for approved invoice #${bill.invoiceNumber} (${profession})`,
+          description: deficitOffset > 0
+            ? `Reward of ${Number(finalReward).toLocaleString('en-IN')} Points credited (${Number(deficitOffset).toLocaleString('en-IN')} Points offset against deficit liability) for approved invoice #${bill.invoiceNumber} (${profession})`
+            : `Reward of ${Number(finalReward).toLocaleString('en-IN')} Points credited for approved invoice #${bill.invoiceNumber} (${profession})`,
         },
       });
 
@@ -545,7 +554,7 @@ export class BillService {
           rewardRuleId: rule.id,
           gstRuleId: selectedGstRuleId,
           gstOverrideReason: options?.gstOverrideReason || null,
-          verifiedByAdminId: bill.verifiedByAdminId || adminId,
+          verifiedByAdminId: bill.requiresSecondaryApproval ? (bill.verifiedByAdminId || null) : adminId,
           secondaryApprovedByAdminId: options?.isOperationsAdminApproved ? adminId : bill.secondaryApprovedByAdminId,
           secondaryApprovedAt: options?.isOperationsAdminApproved ? new Date() : bill.secondaryApprovedAt,
           rejectionReason: null,

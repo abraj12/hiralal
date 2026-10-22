@@ -164,10 +164,11 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
     const failedPayoutAmount = Number(failedPayoutAgg._sum.amount || 0);
 
     const walletLiabilityAgg = await prisma.wallet.aggregate({
-      _sum: { availableBalance: true, processingAmount: true },
+      _sum: { availableBalance: true, processingAmount: true, deficitLiability: true },
     });
     const availableWalletLiability = Number(walletLiabilityAgg._sum.availableBalance || 0);
     const reservedWalletLiability = Number(walletLiabilityAgg._sum.processingAmount || 0);
+    const deficitWalletLiability = Number(walletLiabilityAgg._sum.deficitLiability || 0);
 
     const totalRewardsCreditedAgg = await prisma.walletTransaction.aggregate({
       where: { type: 'REWARD_CREDIT' },
@@ -232,6 +233,8 @@ router.get('/dashboard', requireAdmin, async (req: AuthenticatedRequest, res: Re
         totalRewardsCredited: Math.round(totalRewardsCredited * 100) / 100,
         availableWalletLiability: Math.round(availableWalletLiability * 100) / 100,
         reservedWalletLiability: Math.round(reservedWalletLiability * 100) / 100,
+        deficitWalletLiability: Math.round(deficitWalletLiability * 100) / 100,
+        netWalletLiability: Math.round((availableWalletLiability + reservedWalletLiability - deficitWalletLiability) * 100) / 100,
         pendingPayouts,
         pendingPayoutAmount: Math.round(pendingPayoutAmount * 100) / 100,
         successfulPayouts,
@@ -730,11 +733,21 @@ router.get('/bills/:id/document-url', requireAdmin, async (req: AuthenticatedReq
         mimeType: true,
         invoiceNumber: true,
         status: true,
+        requiresSecondaryApproval: true,
       },
     });
 
     if (!bill) {
       return res.status(404).json({ success: false, code: 'BILL_NOT_FOUND', message: 'Bill not found.' });
+    }
+
+    // SEC-AUDIT-02: Operations Admin can only inspect bills requiring secondary review
+    if (req.user!.role === 'OPERATIONS_ADMIN' && !bill.requiresSecondaryApproval) {
+      return res.status(403).json({
+        success: false,
+        code: 'BILL_ADMIN_ACCESS_REQUIRED',
+        message: 'Primary invoice inspection is restricted to Bill Review Administrators.',
+      });
     }
 
     if (!bill.fileKey) {
@@ -1154,11 +1167,19 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
       return res.status(400).json({ success: false, message: 'End date and time must be after the start date.' });
     }
 
+    const STRICT_CURRENCY_REGEX = /^(?:0|[1-9]\d{0,6})(?:\.\d{1,2})?$/;
+
     let minRedemption: number | null | undefined = undefined;
     if (minimumRedemptionAmount !== undefined) {
       if (minimumRedemptionAmount === null || minimumRedemptionAmount === '') {
         minRedemption = null;
       } else {
+        if (typeof minimumRedemptionAmount === 'string' && !STRICT_CURRENCY_REGEX.test(minimumRedemptionAmount.trim())) {
+          return res.status(400).json({
+            success: false,
+            message: 'Minimum redemption amount must be a valid positive number format.',
+          });
+        }
         const parsed =
           typeof minimumRedemptionAmount === 'number'
             ? minimumRedemptionAmount
@@ -1178,6 +1199,12 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
       if (maximumRedemptionAmount === null || maximumRedemptionAmount === '') {
         maxRedemption = null;
       } else {
+        if (typeof maximumRedemptionAmount === 'string' && !STRICT_CURRENCY_REGEX.test(maximumRedemptionAmount.trim())) {
+          return res.status(400).json({
+            success: false,
+            message: 'Maximum redemption amount must be between ₹0 and ₹50,000.',
+          });
+        }
         const parsedMax =
           typeof maximumRedemptionAmount === 'number'
             ? maximumRedemptionAmount
@@ -1204,12 +1231,20 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
         ? minRedemption
         : (prevSettings?.minimumRedemptionAmount ? Number(prevSettings.minimumRedemptionAmount) : null);
 
+    // FIN-FINDING-02: Normalize null maximum input to immutable platform ceiling (₹50,000)
     const effectiveMax =
-      maxRedemption !== undefined
+      maxRedemption !== undefined && maxRedemption !== null
         ? maxRedemption
         : (prevSettings?.maximumRedemptionAmount !== null && prevSettings?.maximumRedemptionAmount !== undefined
             ? Number(prevSettings.maximumRedemptionAmount)
             : 50000);
+
+    if (effectiveMin !== null && effectiveMin > 50000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Minimum redemption threshold cannot exceed platform ceiling of ₹50,000.',
+      });
+    }
 
     if (effectiveMax !== 0 && effectiveMin !== null && effectiveMax !== null && effectiveMin > effectiveMax) {
       return res.status(400).json({
@@ -1281,6 +1316,9 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
     }
 
     const updated = await prisma.$transaction(async (tx) => {
+      // FIN-FINDING-06: Concurrency advisory lock prevents lost updates during concurrent settings edits
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'redemption_settings_' + settingId}))`;
+
       const saved = await tx.redemptionSettings.upsert({
         where: prof ? { profession: prof } : { id: settingId },
         update: {

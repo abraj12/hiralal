@@ -11,15 +11,15 @@ Every test suite in the repository has been executed and confirmed passing. The 
 
 | Workspace | Test Runner | Command | Test Suites | Total Tests | Status |
 |---|---|---|---|---|---|
-| **Backend** | Jest (In-Band) | `npm --prefix backend test` | 48 passed / 48 total | 820 passed / 820 total | **100% Green** |
+| **Backend** | Jest (In-Band) | `npm --prefix backend test` | 49 passed / 49 total | 833 passed / 833 total | **100% Green** |
 | **Admin Portal** | Node.js Test Runner | `npm --prefix admin test` | 2 files | 22 passed / 22 total | **100% Green** |
 | **Mobile Client** | Node.js Test Runner | `npm --prefix mobile test` | 5 files | 29 passed / 29 total | **100% Green** |
 | **Mobile Admin** | Node.js Test Runner | `npm --prefix mobile-admin test` | 6 files | 32 passed / 32 total | **100% Green** |
-| **Workspace Subtotal** | — | — | **61 suites / files** | **903 tests** | **0 Failures** |
+| **Workspace Subtotal** | — | — | **62 suites / files** | **916 tests** | **0 Failures** |
 | **Migration Compatibility** | Python Unittest | `python scripts/test_migration_compatibility.py` | 1 suite | 6 passed / 6 total | **100% Green** |
 | **Deployment & Health Probes** | Python Unittest | `python scripts/test_verify_deployment_health.py` | 1 suite | 61 passed / 61 total | **100% Green** |
 | **Security Floor Guards** | Node CLI | `node scripts/test-next-security-floor.cjs` | 1 suite | 22 passed / 22 total | **100% Green** |
-| **Repository Total** | — | — | **64 suites / files** | **992 tests** | **0 Failures** |
+| **Repository Total** | — | — | **65 suites / files** | **1,005 tests** | **0 Failures** |
 
 ---
 
@@ -50,6 +50,7 @@ npm run build
 ```
 
 #### Key Backend Test Suites
+- **`wave7_audit_remediation_regression.spec.ts`**: Verifies Wave 7 audit remediations: clamping 100% full balance redemptions strictly to remaining daily allowance (`dailyRemaining`), rejecting scientific notation and leading signs in redemption settings, normalization of null settings to ₹50,000 platform ceiling, automatic deficit liability offset on bill approval with `DEFICIT_RECOVERY` ledger logging, role segregation restricting Operations Admin on invoice signed document access, push device token input validation, and prevention of duplicate pending mononymous KYC records.
 - **`audit_remediation_rc1.spec.ts`**: Verifies all Phase 1–4 audit remediations: Play Integrity registration request hash with password and verificationToken, removal of `Math.max(0, ...)` balance clamping, hard ₹50,000 per-redemption ceiling, configurable maximum ₹0–₹50,000 (where ₹0 disables redemptions), UPI and IMPS rail enforcement (strictly zero NEFT), admin logout session checks, statutory legal hold row-level lock verification, per-user daily payout limit of ₹50,000 IST, and centralized error handler sanitization.
 - **`auditor_reconciliation_and_retention_regression.spec.ts`** (AUDIT-CRIT-01, AUDIT-HIGH-01, AUDIT-MED-01): Verifies that delayed `payout.processed` in reconciliation worker executes proportional clawback deduction and logs valid `PAYOUT_DEBIT` ledger entry; verifies that statutory retention purge completely scrubs legacy/encrypted PII and re-checks `legalHold: false` under transaction; verifies webhook invalid amount review flagging and gateway polling parity checks.
 - **`test_harness_isolation.spec.ts`** (TEST-HARNESS-01): Verifies rate limit isolation across sequential suites, ensuring `resetAllRateLimiters()` clears `memoryCache` and Redis `ratelimit:*` keys, and `ensureBaselineAdmins()` seamlessly recovers deleted seeded admins.

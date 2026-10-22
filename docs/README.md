@@ -19,7 +19,7 @@ Welcome to the complete documentation index for the Hiralal & Sons rewards and i
 - [**GitHub Secrets & CI/CD Setup**](security/GITHUB_ENVIRONMENT_SETUP.md): Guidance for configuring CI/CD repository secrets and environments.
 
 ### 4. Testing, Quality Assurance & Verification
-- [**Testing & Verification Guide**](TESTING.md): Test commands, package-specific test suites (Backend, Admin, Mobile, Mobile-Admin), mock implementations, and execution evidence for all 903 workspace tests and 992 repository-wide verified tests (100% pass rate).
+- [**Testing & Verification Guide**](TESTING.md): Test commands, package-specific test suites (Backend, Admin, Mobile, Mobile-Admin), mock implementations, and execution evidence for all 916 workspace tests and 1,005 repository-wide verified tests (100% pass rate).
 
 ### 5. Deployment, Operations & Disaster Recovery
 - [**Production Deployment Guide (Runbook)**](DEPLOYMENT.md): Step-by-step instructions for Hostinger KVM 2 VPS deployment using Docker Compose, Nginx SSL termination, and UFW firewall hardening.

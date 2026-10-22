@@ -36,12 +36,27 @@ export async function startWorkerDaemon(): Promise<void> {
   AccountDeletionWorker.startAccountDeletionWorker(deletionIntervalMs);
   console.log(`✅ Account deletion lifecycle worker started (${deletionIntervalMs / 1000}s interval)`);
 
-  const shutdown = () => {
-    console.log('🛑 Shutting down background workers gracefully...');
-    PayoutWorker.stopOutboxPolling();
-    ReconciliationWorker.stopReconciliation();
-    AccountDeletionWorker.stopAccountDeletionWorker();
-    process.exit(0);
+  let isShuttingDown = false;
+  const shutdown = async (signal: string = 'SIGTERM') => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    console.log(`🛑 Received ${signal}. Shutting down background workers gracefully...`);
+    try {
+      PayoutWorker.stopOutboxPolling();
+      ReconciliationWorker.stopReconciliation();
+      AccountDeletionWorker.stopAccountDeletionWorker();
+
+      // AUDIT-DB-03: Await active in-flight task completion before killing process
+      await Promise.allSettled([
+        PayoutWorker.drainInFlightTasks(15000),
+        ReconciliationWorker.drainInFlightTasks(15000),
+        AccountDeletionWorker.drainInFlightTasks(15000),
+      ]);
+    } catch (err: any) {
+      console.error('[WORKER-SHUTDOWN-DRAIN-ERROR]', err?.message);
+    } finally {
+      process.exit(0);
+    }
   };
 
   process.on('SIGTERM', shutdown);

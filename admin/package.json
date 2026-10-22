@@ -7,12 +7,12 @@
     "build": "next build",
     "start": "next start -p 3000 -H 0.0.0.0",
     "lint": "next lint",
-    "test": "node --test src/lib/date-utils.test.ts src/lib/components.test.ts"
+    "test": "node --test --experimental-default-type=module src/lib/date-utils.test.ts src/lib/components.test.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
     "lucide-react": "^0.475.0",
-    "next": "15.5.27",
+    "next": "15.5.28",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^3.0.2"

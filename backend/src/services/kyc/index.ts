@@ -201,23 +201,30 @@ export class KycService {
       });
 
       if (isMononymousCandidate) {
-        // Record pending KYC record flagged for manual administrator review (Unresolved Finding A)
-        await prisma.kycRecord.create({
-          data: {
-            userId,
-            panName: verifiedPanName,
-            panStatus: 'PENDING',
-            maskedPan: this.maskPan(cleanPan),
-            panNumberEncrypted: encryptSensitive(cleanPan),
-            panBlindIndex,
-            provider: 'SIGNCARE',
-            providerRequestId: result.providerRequestId || null,
-            nameMatched: false,
-            rejectionReason: 'MONONYMOUS_APPLICANT_MANUAL_REVIEW_REQUIRED: Single-name applicant requires authorized manual document review.',
-            consent: true,
-            consentTimestamp: new Date(),
-          },
+        // SEC-AUDIT-05: Check for existing pending KYC record to avoid P2002 unique constraint error on resubmission
+        const existingPending = await prisma.kycRecord.findFirst({
+          where: { userId, panBlindIndex, panStatus: 'PENDING' },
         });
+
+        if (!existingPending) {
+          // Record pending KYC record flagged for manual administrator review (Unresolved Finding A)
+          await prisma.kycRecord.create({
+            data: {
+              userId,
+              panName: verifiedPanName,
+              panStatus: 'PENDING',
+              maskedPan: this.maskPan(cleanPan),
+              panNumberEncrypted: encryptSensitive(cleanPan),
+              panBlindIndex,
+              provider: 'SIGNCARE',
+              providerRequestId: result.providerRequestId || null,
+              nameMatched: false,
+              rejectionReason: 'MONONYMOUS_APPLICANT_MANUAL_REVIEW_REQUIRED: Single-name applicant requires authorized manual document review.',
+              consent: true,
+              consentTimestamp: new Date(),
+            },
+          });
+        }
 
         throw new Error(
           'Your profile name appears to be a single name (mononymous). To protect your financial security, your PAN verification has been submitted for manual administrator review.'

@@ -461,6 +461,11 @@ export class PayoutWorker {
 
       const amountInPaise = Number(toPaise(payout.amount));
 
+      // AUDIT-RED-06: Pre-dispatch validation for positive finite payout amount
+      if (amountInPaise <= 0 || !Number.isFinite(amountInPaise)) {
+        throw new Error(`Invalid payout amount for dispatch: ${amountInPaise} paise.`);
+      }
+
       // Operating Rule 7: Hard platform ceiling enforcement (₹50,000 = 5,000,000 paise)
       if (amountInPaise > 5000000) {
         throw new Error(`Payout amount exceeds hard platform ceiling of ₹50,000 (${amountInPaise} paise).`);
@@ -674,6 +679,24 @@ export class PayoutWorker {
     }
   }
 
+  private static activeTasks = new Set<Promise<any>>();
+
+  static trackActiveTask<T>(promise: Promise<T>): Promise<T> {
+    this.activeTasks.add(promise);
+    promise.finally(() => this.activeTasks.delete(promise));
+    return promise;
+  }
+
+  /**
+   * AUDIT-DB-03: Drains in-flight payout operations before container termination.
+   */
+  static async drainInFlightTasks(timeoutMs = 15000): Promise<void> {
+    this.stopOutboxPolling();
+    if (this.activeTasks.size === 0) return;
+    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, timeoutMs));
+    await Promise.race([Promise.allSettled(Array.from(this.activeTasks)), timeoutPromise]);
+  }
+
   /**
    * Starts periodic polling of OutboxEvent.
    */
@@ -684,7 +707,9 @@ export class PayoutWorker {
 
     const poll = async () => {
       try {
-        await this.processOutboxEvents();
+        const task = this.processOutboxEvents();
+        this.trackActiveTask(task);
+        await task;
       } catch (err: any) {
         console.error('[OUTBOX-POLL-ERROR]', err.message);
       } finally {

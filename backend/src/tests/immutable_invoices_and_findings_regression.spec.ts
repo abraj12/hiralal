@@ -26,6 +26,7 @@ describe('Immutable Invoices, Deviations, Legal Holds & Financial Integrity Suit
 
   beforeAll(async () => {
     const mobiles = [testBillAdminMobile, testOpsAdminMobile, testCraftsmanMobile];
+    await prisma.notificationCampaign.deleteMany({ where: { createdByAdmin: { mobile: { in: mobiles } } } });
     await prisma.bill.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
     await prisma.payout.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
     await prisma.paymentAccount.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
@@ -34,7 +35,7 @@ describe('Immutable Invoices, Deviations, Legal Holds & Financial Integrity Suit
     await prisma.wallet.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
     await prisma.accountDeletionOperation.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
     await prisma.authSession.deleteMany({ where: { user: { mobile: { in: mobiles } } } });
-    await prisma.user.deleteMany({ where: { mobile: { in: mobiles } } });
+    await prisma.user.deleteMany({ where: { mobile: testCraftsmanMobile } });
 
     // 1. Create or load Bill Admin
     billAdmin = await prisma.user.findFirst({ where: { role: 'BILL_ADMIN' } });

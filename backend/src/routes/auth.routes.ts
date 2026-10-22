@@ -68,14 +68,16 @@ router.post(['/admin/verify-prefix', '/verify-admin-prefix'], adminPrefixesLimit
   const isOps = Boolean(opsPrefix && rawPrefix === opsPrefix);
 
   if (isBill || isOps) {
-    // VULN-MED-08: Issue a signed, short-lived (10-minute) Tier-1 challenge token
+    // VULN-MED-08 & SEC-AUDIT-01: Issue a signed, short-lived (10-minute) Tier-1 challenge token
     // Binding the verified prefix SHA-256 hash to prevent direct Tier-2 bypass
+    // Uses config.admin.accessSecret with fallback to config.jwt.accessSecret for domain key isolation
+    const tier1Secret = config.admin.accessSecret || config.jwt.accessSecret;
     const tier1Token = jwt.sign(
       {
         purpose: 'ADMIN_TIER_1_VERIFIED',
         prefixHash: crypto.createHash('sha256').update(rawPrefix).digest('hex'),
       },
-      config.jwt.accessSecret,
+      tier1Secret,
       { expiresIn: '10m' }
     );
 
@@ -238,7 +240,17 @@ export function verifyTier1Token(
   }
 
   try {
-    const decoded: any = jwt.verify(tier1Token, config.jwt.accessSecret);
+    const tier1Secret = config.admin.accessSecret || config.jwt.accessSecret;
+    let decoded: any;
+    try {
+      decoded = jwt.verify(tier1Token, tier1Secret);
+    } catch (verifyErr) {
+      if (config.admin.accessSecret && config.jwt.accessSecret) {
+        decoded = jwt.verify(tier1Token, config.jwt.accessSecret);
+      } else {
+        throw verifyErr;
+      }
+    }
     if (decoded?.purpose !== 'ADMIN_TIER_1_VERIFIED') {
       return { valid: false, code: 'INVALID_TIER_1_TOKEN', error: 'Invalid Tier-1 token purpose.' };
     }

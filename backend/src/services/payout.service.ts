@@ -411,19 +411,7 @@ export class PayoutService {
           throw new Error('Rewards redemptions are currently disabled by administration.');
         }
 
-        // 100% full balance redemption capped at effective ceiling
-        const rawAmount = Math.min(currentAvailable, effectiveMax);
-        const payoutAmount = fromPaise(toPaise(rawAmount));
-
-        if (payoutAmount <= 0) {
-          throw new Error('No balance available for redemption.');
-        }
-
-        if (payoutAmount > HARD_MAX_REDEMPTION_CEILING) {
-          throw new Error('Single redemption request cannot exceed the hard platform ceiling of ₹50,000.');
-        }
-
-        // Task 3.8: Concurrency-safe per-user daily payout limit
+        // Task 3.8 & FIN-FINDING-01: Concurrency-safe per-user daily payout limit
         const todayIstString = getIndiaCalendarToday();
         const startOfTodayIst = new Date(`${todayIstString}T00:00:00+05:30`);
         const todayPayouts = await tx.payout.aggregate({
@@ -436,10 +424,30 @@ export class PayoutService {
         });
         const dailySum = Number(todayPayouts._sum?.amount || 0);
         const maxDaily = config.payout?.maxDailyAmount || 50000;
-        if (dailySum + payoutAmount > maxDaily) {
+        const dailyRemaining = Math.max(0, maxDaily - dailySum);
+
+        if (dailyRemaining <= 0) {
           throw new Error(
-            `Daily redemption limit of ₹${maxDaily.toLocaleString('en-IN')} exceeded. You have already redeemed ₹${dailySum.toLocaleString('en-IN')} today.`
+            `Daily redemption limit of ₹${maxDaily.toLocaleString('en-IN')} reached for today. You have already redeemed ₹${dailySum.toLocaleString('en-IN')} today. Redemptions reopen tomorrow at 00:00 IST.`
           );
+        }
+
+        // 100% full balance redemption capped at effective ceiling and daily remaining limit
+        const rawAmount = Math.min(currentAvailable, effectiveMax, dailyRemaining);
+        const payoutAmount = fromPaise(toPaise(rawAmount));
+
+        if (payoutAmount <= 0) {
+          throw new Error('No balance available for redemption.');
+        }
+
+        if (payoutAmount < minThreshold) {
+          throw new Error(
+            `Remaining daily redemption allowance (₹${dailyRemaining.toLocaleString('en-IN')}) is below the minimum redemption threshold of ${Number(minThreshold).toLocaleString('en-IN')} Points.`
+          );
+        }
+
+        if (payoutAmount > HARD_MAX_REDEMPTION_CEILING) {
+          throw new Error('Single redemption request cannot exceed the hard platform ceiling of ₹50,000.');
         }
 
         // Move funds from availableBalance to processingAmount atomically
