@@ -491,7 +491,7 @@ model NotificationCampaign {
   targetAudience   String   @default("ALL") // ALL, PLUMBER, TILE_WORKER, USER
   recipientCount   Int      @default(0)
   createdByAdminId String
-  createdByAdmin   User     @relation(fields: [createdByAdminId], references: [id], onDelete: Cascade)
+  createdByAdmin   User     @relation(fields: [createdByAdminId], references: [id], onDelete: Restrict)
   idempotencyKey   String?  @unique
   metadata         Json?
   createdAt        DateTime @default(now())

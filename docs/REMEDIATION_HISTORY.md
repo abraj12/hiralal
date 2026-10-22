@@ -379,7 +379,55 @@ This document records the chronological history of all security remediations, fi
 
 ---
 
-### Record 14: Comprehensive Deep Audit & Autonomous Remediation (Wave 6)
+### Record 15: Deep Code Audit, 5 Specialized Subagents & Controlled Remediation (Wave 7)
+- **Date:** October 2026
+- **Finding Identifiers:**
+  - `FIN-FINDING-01`: Clamping 100% full balance redemption to `dailyRemaining`
+  - `FIN-FINDING-02`: Redemption settings strict regex rejecting scientific notation and leading signs
+  - `FIN-FINDING-03`: Null `maximumRedemptionAmount` normalization to ₹50,000 backend ceiling
+  - `FIN-FINDING-04`: Deficit liability offset on bill approval with double-entry ledger recovery notes
+  - `FIN-FINDING-05`: Schema validation parity for `'BANK_ACCOUNT'` in `PaymentTypeEnum`
+  - `FIN-FINDING-06`: PostgreSQL advisory transaction lock on redemption settings updates
+  - `SEC-AUDIT-01`: Key-to-role binding for Tier-1 tokens via `config.admin.accessSecret || config.jwt.accessSecret`
+  - `SEC-AUDIT-02`: Role segregation on `/bills/:id/document-url` strictly restricting `OPERATIONS_ADMIN` to secondary review bills
+  - `SEC-AUDIT-04`: Input validation for device token and platform on `POST /push-token/register`
+  - `SEC-AUDIT-05`: Check existing pending mononymous KYC records before creating a new pending record
+  - `AUDIT-DB-01`: Decoupling binary R2 file upload outside interactive database transaction in `submitBill`
+  - `AUDIT-DB-02`: Decoupling physical storage deletion outside statutory purge database transaction
+  - `AUDIT-DB-03` / `AUDIT-RED-06`: In-flight task tracking, graceful drain barriers (`drainInFlightTasks`), and payout worker positive finite amount assertions
+  - `AUDIT-DB-04`: Asynchronous chunked fan-out (`chunkSize = 500`) for push notification campaigns
+  - `AUDIT-DB-05`: Composite OTP provider trying WhatsApp first with automated MSG91 SMS fallback
+  - `AUDIT-DB-06` / `AUDIT-DB-08`: Forward-only migration adding CHECK constraints on non-negative wallet balances and restricting campaign target users
+  - `AUDIT-RED-01`: Updated `docs/API_DOCUMENTATION.md` to canonical `/api/v1/webhooks/razorpayx`
+  - `AUDIT-RED-02`: Segregated role enforcement preventing same-admin secondary approval
+  - `AUDIT-RED-03`: Fixed global teardown cascade hierarchy in Jest teardown hooks
+  - `F-01-ADMIN-ERR-BOUNDARY`: React Error Boundary for Next.js Admin SPA (`AdminErrorBoundary.tsx`)
+  - `F-02-MOB-ERR-BOUNDARY`: React Native Error Boundaries for customer mobile and mobile-admin apps
+  - `F-03-ADMIN-URL-WILDCARD`: Restricted S3 host regex pattern in `safeDocumentUrl`
+  - `F-04-ADMIN-APPROVAL-GATING`: Visual role gating banner and approval button disabled state in `BillVerificationModal.tsx`
+  - `F-05-INFRA-DUP-HEADERS`: Nginx `proxy_hide_header` directives eliminating duplicate upstream headers
+- **Affected Subsystems:** Backend Services, Worker Queues, Database Migrations, Next.js Admin Panel, Expo Mobile Applications, Infrastructure / Nginx Configuration, Living Documentation.
+- **Implementation Approach:**
+  1. Clamped `PayoutService.requestRedemption` to `Math.min(currentAvailable, effectiveMax, dailyRemaining)`.
+  2. In `backend/src/routes/admin.routes.ts`, enforced strict regex `STRICT_CURRENCY_REGEX = /^(?:0|[1-9]\d{0,6})(?:\.\d{1,2})?$/` rejecting scientific notation and leading signs, normalized null to ₹50,000 ceiling, and acquired `pg_advisory_xact_lock(hashtext('redemption_settings_' + settingId))`.
+  3. In `backend/src/services/bill.service.ts`, implemented automatic deficit liability offset: `deficitOffset = Math.min(currentDeficit, finalReward)` crediting only net surplus to `availableBalance` and recording `DEFICIT_RECOVERY` notes in `WalletTransaction`.
+  4. Decoupled Cloudflare R2 uploads and physical deletions outside interactive PostgreSQL database transactions in `submitBill` and `purgeExpiredStatutoryRecords`.
+  5. Implemented `inFlightTasks` tracking and `drainInFlightTasks(15000)` in `payout.worker.ts`, `reconciliation.worker.ts`, `account-deletion.worker.ts`, and `worker/index.ts`. Asserted positive finite amount on payout dispatch.
+  6. Enforced key-to-role binding for Tier-1 tokens via `config.admin.accessSecret || config.jwt.accessSecret` in `auth.routes.ts`.
+  7. Created migration `20261023180000_wallet_check_constraints_and_campaign_restrict` deploying CHECK constraints on `availableBalance >= 0`, `processingAmount >= 0`, and `deficitLiability >= 0`. Registered in `deployment-compatibility.json`.
+  8. Created React error boundaries (`AdminErrorBoundary.tsx`, mobile `ErrorBoundary.tsx`) wrapping root components in Next.js admin, customer mobile, and mobile-admin apps.
+  9. Added visual role gating and informative alert banners in `BillVerificationModal.tsx`.
+  10. Added `proxy_hide_header` for Next.js security headers in `nginx/nginx.conf`.
+- **Verification Results:**
+  - **Backend Suites:** 49 suites, 833 passed / 833 total (100% green, 0 failures).
+  - **Admin Suites:** 2 suites, 22 passed / 22 total (100% green, 0 failures).
+  - **Mobile Suites:** 5 suites, 29 passed / 29 total (100% green, 0 failures).
+  - **Mobile Admin Suites:** 6 suites, 32 passed / 32 total (100% green, 0 failures).
+  - **Migration Compatibility Tests:** 1 suite, 6 passed / 6 total (100% green).
+  - **Deployment Health Tests:** 1 suite, 61 passed / 61 total (100% green).
+  - **Security Floor Tests:** 1 suite, 22 passed / 22 total (100% green).
+  - **Workspace Subtotal:** **916 / 916 passed across 62 test files**.
+  - **Repository Total:** **1,005 / 1,005 tests passing across 65 suites (100% green, 0 failures)**.
 - **Date:** October 2026
 - **Finding Identifiers:**
   - `DEFECT-VERIF-01` / `SEC-AUTH-01`: Logout Contract F Compliance on Missing Credentials (HTTP 400)

@@ -235,6 +235,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Functional partial unique index on LOWER(TRIM(invoice_number)) for approved bills to accelerate lookups and prevent case-insensitive duplicates."
+    },
+    {
+      "id": "20261023180000_wallet_check_constraints_and_campaign_restrict",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Non-negative check constraints on Wallet processingAmount and deficitLiability to enforce double-entry ledger invariants, and Restrict foreign key on NotificationCampaign."
     }
   ]
 }

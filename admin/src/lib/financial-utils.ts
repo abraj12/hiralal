@@ -91,7 +91,7 @@ export function safeDocumentUrl(url: string | undefined | null): string {
         hostname === '127.0.0.1' ||
         hostname === 's3.amazonaws.com' ||
         hostname.endsWith('.s3.amazonaws.com') ||
-        hostname.endsWith('.amazonaws.com') ||
+        /\.s3[.-][\w-]+\.amazonaws\.com$/.test(hostname) ||
         hostname.endsWith('.r2.cloudflarestorage.com') ||
         hostname.endsWith('.r2.dev') ||
         hostname.endsWith('.cloudfront.net') ||

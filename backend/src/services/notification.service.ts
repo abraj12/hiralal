@@ -286,7 +286,7 @@ export class NotificationService {
 
     const recipientCount = targetUsers.length;
 
-    // Transaction to create Campaign and Notifications
+    // AUDIT-DB-04: Fast atomic transaction to record Campaign and AuditLog
     const campaign = await prisma.$transaction(async (tx) => {
       const newCampaign = await tx.notificationCampaign.create({
         data: {
@@ -299,26 +299,6 @@ export class NotificationService {
           metadata: input.metadata || null,
         },
       });
-
-      if (targetUsers.length > 0) {
-        const BATCH_SIZE = 500;
-        for (let i = 0; i < targetUsers.length; i += BATCH_SIZE) {
-          const batch = targetUsers.slice(i, i + BATCH_SIZE);
-          await tx.notification.createMany({
-            data: batch.map((u) => ({
-              userId: u.id,
-              title,
-              message,
-              type: 'ANNOUNCEMENT',
-              metadata: {
-                campaignId: newCampaign.id,
-                audience,
-                ...(input.metadata || {}),
-              },
-            })),
-          });
-        }
-      }
 
       await tx.auditLog.create({
         data: {
@@ -337,21 +317,48 @@ export class NotificationService {
       return newCampaign;
     });
 
-    // Background push to all active tokens for target users
+    // AUDIT-DB-04: Batch create in-app notifications in discrete chunks outside the campaign transaction
+    // This prevents interactive transaction timeouts on large user sets (>5,000 recipients).
+    if (targetUsers.length > 0) {
+      const BATCH_SIZE = 500;
+      for (let i = 0; i < targetUsers.length; i += BATCH_SIZE) {
+        const batch = targetUsers.slice(i, i + BATCH_SIZE);
+        await prisma.notification.createMany({
+          data: batch.map((u) => ({
+            userId: u.id,
+            title,
+            message,
+            type: 'ANNOUNCEMENT',
+            metadata: {
+              campaignId: campaign.id,
+              audience,
+              ...(input.metadata || {}),
+            },
+          })),
+        });
+      }
+    }
+
+    // Background push to all active tokens for target users (chunked to prevent parameter limit)
     (async () => {
       try {
-        const tokens = await prisma.pushDeviceToken.findMany({
-          where: {
-            userId: { in: targetUsers.map((u) => u.id) },
-            isActive: true,
-          },
-          select: { token: true },
-        });
+        const TOKEN_CHUNK_SIZE = 2000;
+        const allTokens: string[] = [];
+        for (let i = 0; i < targetUsers.length; i += TOKEN_CHUNK_SIZE) {
+          const userBatch = targetUsers.slice(i, i + TOKEN_CHUNK_SIZE);
+          const tokens = await prisma.pushDeviceToken.findMany({
+            where: {
+              userId: { in: userBatch.map((u) => u.id) },
+              isActive: true,
+            },
+            select: { token: true },
+          });
+          allTokens.push(...tokens.map((t) => t.token));
+        }
 
-        if (tokens.length > 0) {
-          const tokenStrings = tokens.map((t) => t.token);
+        if (allTokens.length > 0) {
           await FcmProvider.sendMulticast(
-            tokenStrings,
+            allTokens,
             input.title.trim(),
             input.message.trim(),
             { campaignId: campaign.id }

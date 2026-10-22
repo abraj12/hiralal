@@ -58,7 +58,41 @@ export class SmsService {
     language?: string;
   }): Promise<SmsSendResult> {
     const provider = this.getProvider();
-    return await provider.sendOtp(params);
+    try {
+      const res = await provider.sendOtp(params);
+      if (res.success) return res;
+
+      // AUDIT-DB-05: If primary WhatsApp provider returns error, attempt seamless fallback to MSG91 SMS if configured
+      if (provider instanceof WhatsAppOtpProvider && (config.sms.apiKey || config.sms.authKey || process.env.MSG91_AUTH_KEY)) {
+        console.warn(`[OTP-FAILOVER] Primary WhatsApp dispatch failed: ${res.error}. Attempting MSG91 SMS fallback...`);
+        try {
+          const fallback = new MSG91SmsProvider();
+          const fallbackRes = await fallback.sendOtp(params);
+          if (fallbackRes.success) {
+            console.log(`[OTP-FAILOVER-SUCCESS] Dispatched OTP via MSG91 SMS fallback after WhatsApp failure.`);
+            return fallbackRes;
+          }
+        } catch (fallbackErr: any) {
+          console.error(`[OTP-FAILOVER-ERROR] MSG91 SMS fallback failed: ${fallbackErr.message}`);
+        }
+      }
+      return res;
+    } catch (err: any) {
+      if (provider instanceof WhatsAppOtpProvider && (config.sms.apiKey || config.sms.authKey || process.env.MSG91_AUTH_KEY)) {
+        console.warn(`[OTP-FAILOVER] Primary WhatsApp provider threw exception: ${err.message}. Attempting MSG91 SMS fallback...`);
+        try {
+          const fallback = new MSG91SmsProvider();
+          const fallbackRes = await fallback.sendOtp(params);
+          if (fallbackRes.success) {
+            console.log(`[OTP-FAILOVER-SUCCESS] Dispatched OTP via MSG91 SMS fallback after WhatsApp exception.`);
+            return fallbackRes;
+          }
+        } catch (fallbackErr: any) {
+          console.error(`[OTP-FAILOVER-ERROR] MSG91 SMS fallback failed: ${fallbackErr.message}`);
+        }
+      }
+      throw err;
+    }
   }
 }
 

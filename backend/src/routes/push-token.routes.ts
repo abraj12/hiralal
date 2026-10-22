@@ -15,8 +15,12 @@ router.post('/register', pushTokenLimiter, async (req: AuthenticatedRequest, res
     const userId = req.user!.id;
     const { token, platform } = req.body;
 
-    if (!token) {
+    if (!token || typeof token !== 'string' || !token.trim()) {
       return res.status(400).json({ success: false, message: 'Device token is required.' });
+    }
+
+    if (platform && !['ANDROID', 'IOS', 'WEB'].includes(String(platform).toUpperCase())) {
+      return res.status(400).json({ success: false, message: 'Platform must be ANDROID, IOS, or WEB.' });
     }
 
     const deviceToken = await NotificationService.registerDeviceToken(userId, { token, platform });
@@ -33,10 +37,14 @@ router.post('/register', pushTokenLimiter, async (req: AuthenticatedRequest, res
 router.post('/deactivate', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const { token } = req.body;
+    const { token, platform } = req.body;
 
-    if (!token) {
+    if (!token || typeof token !== 'string' || !token.trim()) {
       return res.status(400).json({ success: false, message: 'Device token is required.' });
+    }
+
+    if (platform && !['ANDROID', 'IOS', 'WEB'].includes(String(platform).toUpperCase())) {
+      return res.status(400).json({ success: false, message: 'Platform must be ANDROID, IOS, or WEB.' });
     }
 
     await NotificationService.deactivateDeviceToken(userId, token);
@@ -54,9 +62,14 @@ router.delete('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     const token = (req.body?.token || req.query?.token) as string;
+    const platform = (req.body?.platform || req.query?.platform) as string | undefined;
 
-    if (!token) {
+    if (!token || typeof token !== 'string' || !token.trim()) {
       return res.status(400).json({ success: false, message: 'Device token is required.' });
+    }
+
+    if (platform && !['ANDROID', 'IOS', 'WEB'].includes(String(platform).toUpperCase())) {
+      return res.status(400).json({ success: false, message: 'Platform must be ANDROID, IOS, or WEB.' });
     }
 
     await NotificationService.deactivateDeviceToken(userId, token);

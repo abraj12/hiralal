@@ -1189,7 +1189,7 @@ export class AccountDeletionService {
 
     const candidateUserIds = expiredUsers.map((u: any) => u.id);
 
-    return await db.$transaction(async (tx: any) => {
+    const result = await db.$transaction(async (tx: any) => {
       // Row-level lock candidate users under transaction with FOR UPDATE to prevent TOCTOU race conditions with legal holds
       const lockedUsers = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
@@ -1201,7 +1201,7 @@ export class AccountDeletionService {
         FOR UPDATE
       `;
 
-      if (!lockedUsers || lockedUsers.length === 0) return 0;
+      if (!lockedUsers || lockedUsers.length === 0) return { purgedCount: 0, fileKeysToPurge: [] };
 
       const userIds = lockedUsers.map((u: any) => u.id);
 
@@ -1238,22 +1238,14 @@ export class AccountDeletionService {
         },
       });
 
-      // AUDIT-RET-01: Purge retained invoice storage objects from Cloudflare R2
+      // AUDIT-RET-01 & AUDIT-DB-02: Collect retained invoice storage keys to purge outside transaction
       const allUserBills = await tx.bill.findMany({
         where: { userId: { in: userIds } },
         select: { id: true, fileKey: true },
       });
-      const expiredBills = allUserBills.filter((b: any) => Boolean(b.fileKey));
-
-      for (const bill of expiredBills) {
-        if (bill.fileKey) {
-          try {
-            await StorageService.getProvider().delete(bill.fileKey);
-          } catch (storageErr: any) {
-            console.warn(`[STATUTORY-PURGE] Failed to purge storage object ${bill.fileKey}:`, storageErr.message);
-          }
-        }
-      }
+      const fileKeysToPurge = allUserBills
+        .map((b: any) => b.fileKey)
+        .filter((k: any) => Boolean(k) && k !== 'PURGED');
 
       await tx.bill.updateMany({
         where: { userId: { in: userIds } },
@@ -1267,7 +1259,23 @@ export class AccountDeletionService {
         },
       });
 
-      return userIds.length;
+      return { purgedCount: userIds.length, fileKeysToPurge };
     });
+
+    // AUDIT-DB-02: Purge physical storage objects in parallel OUTSIDE the database transaction
+    // This prevents interactive transaction timeouts and prolonged row-level locks on user records.
+    if (result && Array.isArray(result.fileKeysToPurge) && result.fileKeysToPurge.length > 0) {
+      await Promise.allSettled(
+        result.fileKeysToPurge.map(async (fileKey: string) => {
+          try {
+            await StorageService.getProvider().delete(fileKey);
+          } catch (storageErr: any) {
+            console.warn(`[STATUTORY-PURGE] Failed to purge storage object ${fileKey}:`, storageErr.message);
+          }
+        })
+      );
+    }
+
+    return result ? result.purgedCount : 0;
   }
 }

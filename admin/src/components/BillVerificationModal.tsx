@@ -55,9 +55,17 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   const [submissionTimestamp, setSubmissionTimestamp] = useState<string | null>(
     bill.createdAt || null
   );
+  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
   const [rulesUnavailable, setRulesUnavailable] = useState(false);
   const [cancelMode, setCancelMode] = useState(false);
   const [cancellationReason, setCancellationReason] = useState('');
+
+  useEffect(() => {
+    const user = AdminApiClient.getUser();
+    if (user?.role) {
+      setCurrentUserRole(user.role);
+    }
+  }, []);
 
   // Image zoom control
   const [isZoomed, setIsZoomed] = useState(false);
@@ -201,6 +209,9 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
     calculatedReward = Number(bill.calculatedReward || 0);
   }
 
+  const isSecondary = Boolean(bill.requiresSecondaryApproval);
+  const isRoleAuthorized = !currentUserRole || (isSecondary ? currentUserRole === 'OPERATIONS_ADMIN' : currentUserRole === 'BILL_ADMIN');
+
   const handleApprove = async () => {
     setIsSubmitting(true);
     setError(null);
@@ -319,6 +330,17 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
           <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center space-x-2">
             <AlertTriangle className="w-4 h-4 shrink-0" />
             <span>{error}</span>
+          </div>
+        )}
+
+        {isPending && currentUserRole && !isRoleAuthorized && (
+          <div className="mx-6 mt-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl flex items-center space-x-2">
+            <ShieldCheck className="w-4 h-4 shrink-0 text-amber-600" />
+            <span>
+              {isSecondary
+                ? 'This invoice revision has upward price inflation (>25%) and strictly requires Operations Admin review.'
+                : 'Standard invoice verification must be performed by a Bill Review Administrator.'}
+            </span>
           </div>
         )}
 
@@ -733,12 +755,15 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   isSubmitting ||
                   rulesUnavailable ||
                   rewardPercentage === null ||
-                  (gstIncluded && !selectedGstRuleId)
+                  (gstIncluded && !selectedGstRuleId) ||
+                  !isRoleAuthorized
                 }
+                title={!isRoleAuthorized ? (isSecondary ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
                 className={`px-4 py-2 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center space-x-1.5 ${
                   rulesUnavailable ||
                   rewardPercentage === null ||
-                  (gstIncluded && !selectedGstRuleId)
+                  (gstIncluded && !selectedGstRuleId) ||
+                  !isRoleAuthorized
                     ? 'bg-slate-400 opacity-50 cursor-not-allowed shadow-none'
                     : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
                 }`}

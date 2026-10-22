@@ -26,8 +26,8 @@ The platform is designed around a single unified mobile application with dynamic
                                        |
          -------------------------------------------------------------
          |                |                  |                       |
-   PostgreSQL 16    Cloudflare R2        RazorpayX               SignCare / MSG91
-    Prisma ORM    (Private Invoices)   (Payouts & Webhooks)      (KYC PAN / SMS OTP)
+   PostgreSQL 16    Cloudflare R2        RazorpayX          SignCare / Meta / MSG91
+    Prisma ORM    (Private Invoices)   (Payouts & Webhooks)  (KYC PAN / WhatsApp & SMS OTP)
 ```
 
 ---

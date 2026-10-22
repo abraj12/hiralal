@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, StyleSheet, SafeAreaView, StatusBar, Platform, Text, TouchableOpacity } from 'react-native';
 import { AdminAppProvider, useAdminApp } from './src/context/AdminAppContext';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 import AdminHeader from './src/components/AdminHeader';
 import AdminBottomNav, { OpsAdminTab, BillAdminTab } from './src/components/AdminBottomNav';
 import AdminLoginScreen from './src/screens/AdminLoginScreen';
@@ -132,9 +133,11 @@ function AdminAppNavigator() {
 
 export default function App() {
   return (
-    <AdminAppProvider>
-      <AdminAppNavigator />
-    </AdminAppProvider>
+    <ErrorBoundary>
+      <AdminAppProvider>
+        <AdminAppNavigator />
+      </AdminAppProvider>
+    </ErrorBoundary>
   );
 }
 

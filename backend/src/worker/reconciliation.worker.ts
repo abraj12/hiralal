@@ -705,6 +705,24 @@ export class ReconciliationWorker {
     return processedCount;
   }
 
+  private static activeTasks = new Set<Promise<any>>();
+
+  static trackActiveTask<T>(promise: Promise<T>): Promise<T> {
+    this.activeTasks.add(promise);
+    promise.finally(() => this.activeTasks.delete(promise));
+    return promise;
+  }
+
+  /**
+   * AUDIT-DB-03: Drains in-flight reconciliation tasks before process termination.
+   */
+  static async drainInFlightTasks(timeoutMs = 15000): Promise<void> {
+    this.stopReconciliation();
+    if (this.activeTasks.size === 0) return;
+    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, timeoutMs));
+    await Promise.race([Promise.allSettled(Array.from(this.activeTasks)), timeoutPromise]);
+  }
+
   /**
    * Starts periodic reconciliation loop (runs every 3 minutes).
    */
@@ -715,14 +733,18 @@ export class ReconciliationWorker {
 
     const run = async () => {
       try {
-        await this.updateHeartbeat('running', { lastPolledAt: new Date().toISOString() });
-        const stuckReport = await this.reconcileStuckPayouts();
-        const webhooksRetried = await this.retryUnprocessedWebhooks();
-        await this.updateHeartbeat('idle', {
-          lastPollCompletedAt: new Date().toISOString(),
-          lastReconciledCount: stuckReport.reconciledCount,
-          lastWebhooksRetriedCount: webhooksRetried,
-        });
+        const task = (async () => {
+          await this.updateHeartbeat('running', { lastPolledAt: new Date().toISOString() });
+          const stuckReport = await this.reconcileStuckPayouts();
+          const webhooksRetried = await this.retryUnprocessedWebhooks();
+          await this.updateHeartbeat('idle', {
+            lastPollCompletedAt: new Date().toISOString(),
+            lastReconciledCount: stuckReport.reconciledCount,
+            lastWebhooksRetriedCount: webhooksRetried,
+          });
+        })();
+        this.trackActiveTask(task);
+        await task;
       } catch (err: any) {
         console.error('[RECONCILIATION-LOOP-ERROR]', err.message);
         await this.updateHeartbeat('error', {

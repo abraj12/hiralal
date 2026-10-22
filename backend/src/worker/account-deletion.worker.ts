@@ -170,6 +170,24 @@ export class AccountDeletionWorker {
     }
   }
 
+  private static activeTasks = new Set<Promise<any>>();
+
+  static trackActiveTask<T>(promise: Promise<T>): Promise<T> {
+    this.activeTasks.add(promise);
+    promise.finally(() => this.activeTasks.delete(promise));
+    return promise;
+  }
+
+  /**
+   * AUDIT-DB-03: Drains in-flight account deletion tasks before process termination.
+   */
+  static async drainInFlightTasks(timeoutMs = 15000): Promise<void> {
+    this.stopAccountDeletionWorker();
+    if (this.activeTasks.size === 0) return;
+    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, timeoutMs));
+    await Promise.race([Promise.allSettled(Array.from(this.activeTasks)), timeoutPromise]);
+  }
+
   /**
    * Starts periodic execution of the account deletion lifecycle worker.
    */
@@ -179,7 +197,9 @@ export class AccountDeletionWorker {
 
     const tick = async () => {
       try {
-        await this.processTick();
+        const task = this.processTick();
+        this.trackActiveTask(task);
+        await task;
       } catch (err: any) {
         console.error('[ACCOUNT-DELETION-WORKER-TICK-ERROR]', err.message);
       } finally {

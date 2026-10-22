@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { View, StyleSheet, SafeAreaView, StatusBar, Platform, Linking } from 'react-native';
 import { AppProvider, useApp } from './src/context/AppContext';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 import BottomNav from './src/components/BottomNav';
 import HomeScreen from './src/screens/HomeScreen';
 import BillsScreen from './src/screens/BillsScreen';
@@ -85,9 +86,11 @@ function MainAppNavigator() {
 
 export default function App() {
   return (
-    <AppProvider>
-      <MainAppNavigator />
-    </AppProvider>
+    <ErrorBoundary>
+      <AppProvider>
+        <MainAppNavigator />
+      </AppProvider>
+    </ErrorBoundary>
   );
 }
 

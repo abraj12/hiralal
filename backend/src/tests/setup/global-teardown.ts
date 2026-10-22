@@ -20,14 +20,28 @@ const TEST_ADMIN_MOBILE_PATTERNS = [
 module.exports = async function globalTeardown() {
   const prisma = new PrismaClient();
   try {
-    const deleted = await prisma.user.deleteMany({
+    const adminUsers = await prisma.user.findMany({
       where: {
         role: { in: [UserRole.BILL_ADMIN, UserRole.OPERATIONS_ADMIN] },
         mobile: { in: TEST_ADMIN_MOBILE_PATTERNS },
       },
+      select: { id: true },
     });
-    if (deleted.count > 0) {
-      console.log(`[GlobalTeardown] Cleaned up ${deleted.count} seeded test admin user(s).`);
+
+    const adminUserIds = adminUsers.map((u) => u.id);
+    if (adminUserIds.length > 0) {
+      // AUDIT-RED-03: Delete child records to satisfy RESTRICT foreign keys
+      await prisma.authSession.deleteMany({ where: { userId: { in: adminUserIds } } });
+      await prisma.auditLog.deleteMany({ where: { adminId: { in: adminUserIds } } });
+      await prisma.notificationCampaign.deleteMany({ where: { createdByAdminId: { in: adminUserIds } } });
+      await prisma.bill.deleteMany({ where: { userId: { in: adminUserIds } } });
+
+      const deleted = await prisma.user.deleteMany({
+        where: { id: { in: adminUserIds } },
+      });
+      if (deleted.count > 0) {
+        console.log(`[GlobalTeardown] Cleaned up ${deleted.count} seeded test admin user(s).`);
+      }
     }
   } catch (err: any) {
     // Non-fatal — test results should not be masked by teardown errors

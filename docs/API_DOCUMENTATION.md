@@ -27,7 +27,7 @@ All financial values are denominated in Indian Rupees (₹) with 2-decimal paise
     "message": "OTP sent successfully to +91 9876543210"
   }
   ```
-  *(Note: OTP codes are transmitted via MSG91 SMS and are strictly never returned in API responses).*
+  *(Note: OTP codes are transmitted via WhatsApp Business API with automated MSG91 SMS failover, and are strictly never returned in API responses).*
   Generic OTP routes support only `REGISTRATION` and `LOGIN`. Password recovery is handled only through the dedicated `/auth/password-reset/*` endpoints.
 
 #### 1.2 User Registration
@@ -337,7 +337,7 @@ Requests 100% full available balance redemption. Requires redemption window to b
 
 #### 3.4 RazorpayX Gateway Webhook
 - **Method**: `POST`
-- **Path**: `/webhooks/razorpayx`
+- **Path**: `/api/v1/webhooks/razorpayx`
 - **Headers**: `x-razorpay-signature: <HMAC_SHA256_HEX>`
 - **Body**: RazorpayX event payload (`payout.processed`, `payout.reversed`, `payout.failed`).
 

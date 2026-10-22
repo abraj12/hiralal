@@ -4,6 +4,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { AdminApiClient } from '../lib/api';
+import { AdminErrorBoundary } from '../components/AdminErrorBoundary';
 
 export default function App({ Component, pageProps }: AppProps) {
   const router = useRouter();
@@ -83,7 +84,9 @@ export default function App({ Component, pageProps }: AppProps) {
         <link rel="icon" href="/assets/brand_logo.png" />
       </Head>
       {authorized || router.pathname === '/login' ? (
-        <Component {...pageProps} />
+        <AdminErrorBoundary>
+          <Component {...pageProps} />
+        </AdminErrorBoundary>
       ) : (
         <div className="min-h-screen bg-slate-900 flex items-center justify-center">
           <div className="w-8 h-8 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
