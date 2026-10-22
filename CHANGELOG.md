@@ -5,6 +5,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.3.0] - 2026-10-23
+
+### Wave 6 Comprehensive Audit Remediation & Hardening
+- **Auth & Session Security (`DEFECT-VERIF-01`, `DEFECT-VERIF-02`, `VULN-MOB-BIO-01`)**:
+  - Enforced Contract F compliance on `POST /api/auth/logout`, returning HTTP 400 when invoked without an active session or refresh token.
+  - Aligned admin lockout error messaging on `requestAdminOtp`, preserving HTTP 423 `Account is temporarily locked. Try again later.`.
+  - Added server-side password verification for mobile app biometric fallback during redemption confirmation.
+- **Financial Controls & Payout Rails (`DEFECT-VERIF-03`, `AUDIT-FIN-01`, `FIN-02`, `FEAT-MOB-RED-01`)**:
+  - Implemented fail-closed validation for redemption scheduling windows when `isEnabled: true` is requested without timestamps.
+  - Disallowed administrative rejection of in-flight `PAYOUT_INITIATED` disbursements on gateway `found: false` unless explicitly flagged for manual review, preventing double-refund exploits.
+  - Allowed configuring ₹0 maximum redemption amount to cleanly disable redemptions; removed HTML5 `required` attribute from admin settings UI.
+  - Clamped initial redemption amount in customer mobile app to `Math.min(balance, 50000)`.
+- **Database & Data Retention Integrity (`PERF-DB-01`, `AUDIT-DEL-01`, `STAT-PURGE-01`, `SEC-ROLE-01`)**:
+  - Added lowercase trimmed functional unique index `Bill_lower_invoice_number_approved_idx` on `Bill (LOWER(TRIM("invoiceNumber"))) WHERE "status" = 'APPROVED'`.
+  - Enforced pre-flight `user.legalHold` check and database transaction lock before executing external Cloudflare R2 file deletions during account deletions.
+  - Purged invoice documents from Cloudflare R2 during 8-year statutory retention expiry and updated `fileKey: 'PURGED'` safely under transaction.
+  - Enforced strict separation of duties on `/bills/:id/reject` (`BILL_ADMIN` only) and `/bills/:id/cancel` (`OPERATIONS_ADMIN` only).
+- **Admin UI & Documentation Truth (`VULN-ADM-URL-01`)**:
+  - Added active production hostname `hsspl.algions.in` and `*.r2.dev` to `ALLOWED_DOMAINS` in `safeDocumentUrl`.
+  - Added `setLegalHold` button and client method in web admin portal.
+  - Synchronized all 7 living documentation files; verified 100% test pass rate across 903 workspace tests and 992 repository-wide verified tests (0 failures).
+
 ## [2.2.0] - 2026-10-22
 
 ### Build, CI & Type Safety (F-01, F-02, F-24)

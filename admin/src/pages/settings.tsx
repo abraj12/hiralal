@@ -958,7 +958,6 @@ export default function AdminSettingsPage() {
                       onChange={(e) => setMinimumRedemptionAmount(e.target.value)}
                       placeholder="e.g. 500"
                       className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800"
-                      required
                     />
                   </div>
                   <span className="text-[10px] text-slate-400 mt-1 block">

@@ -508,14 +508,51 @@ export default function AdminUsersPage() {
 
                 <div className="flex items-center space-x-2">
                   {detailsData?.user?.id && (
-                    <button
-                      onClick={() => router.push(`/notifications?userId=${detailsData.user.id}`)}
-                      className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl font-bold text-xs flex items-center space-x-1.5 transition"
-                      title="Send Targeted Notification to this user"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      <span>Send Alert</span>
-                    </button>
+                    <>
+                      <button
+                        onClick={async () => {
+                          const currentHold = Boolean(detailsData.user.legalHold);
+                          const actionText = currentHold ? 'release legal hold from' : 'place legal hold on';
+                          const reason = prompt(
+                            `Please enter justification reason to ${actionText} this user (minimum 10 characters):`
+                          );
+                          if (!reason || reason.trim().length < 10) {
+                            if (reason !== null) alert('Justification reason must be at least 10 characters.');
+                            return;
+                          }
+                          try {
+                            await AdminApiClient.setLegalHold(detailsData.user.id, {
+                              legalHold: !currentHold,
+                              reason: reason.trim(),
+                            });
+                            alert(`Statutory legal hold successfully ${!currentHold ? 'applied' : 'released'}.`);
+                            setDetailsData({
+                              ...detailsData,
+                              user: { ...detailsData.user, legalHold: !currentHold },
+                            });
+                          } catch (err: any) {
+                            alert(err.message || 'Failed to update statutory legal hold.');
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center space-x-1.5 transition ${
+                          detailsData?.user?.legalHold
+                            ? 'bg-amber-100 hover:bg-amber-200 text-amber-800'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                        }`}
+                        title="Toggle statutory legal hold on this user account"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        <span>{detailsData?.user?.legalHold ? 'Legal Hold: ACTIVE' : 'Apply Legal Hold'}</span>
+                      </button>
+                      <button
+                        onClick={() => router.push(`/notifications?userId=${detailsData.user.id}`)}
+                        className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl font-bold text-xs flex items-center space-x-1.5 transition"
+                        title="Send Targeted Notification to this user"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Send Alert</span>
+                      </button>
+                    </>
                   )}
                   <button
                     onClick={closeDetailsModal}

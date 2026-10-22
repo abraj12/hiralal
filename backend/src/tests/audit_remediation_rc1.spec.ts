@@ -217,7 +217,7 @@ describe('Audit Remediation RC1 Regression Suite', () => {
         data: { availableBalance: 75000, processingAmount: 0 },
       });
 
-      // Ensure redemption settings are enabled with ceiling
+      // Ensure redemption settings are enabled with ceiling and open window
       await prisma.redemptionSettings.upsert({
         where: { id: 'default' },
         create: {
@@ -225,11 +225,15 @@ describe('Audit Remediation RC1 Regression Suite', () => {
           isEnabled: true,
           minimumRedemptionAmount: 100,
           maximumRedemptionAmount: 50000,
+          startAt: new Date(Date.now() - 3600000),
+          endAt: new Date(Date.now() + 3600000),
         },
         update: {
           isEnabled: true,
           minimumRedemptionAmount: 100,
           maximumRedemptionAmount: 50000,
+          startAt: new Date(Date.now() - 3600000),
+          endAt: new Date(Date.now() + 3600000),
         },
       });
 
@@ -311,6 +315,26 @@ describe('Audit Remediation RC1 Regression Suite', () => {
     });
 
     test('Task 2.3 / F-13: checkUserEligibility rejects redemption when daily ₹50,000 limit is exhausted', async () => {
+      // Ensure redemption window is open so daily limit exhaustion check is evaluated
+      await prisma.redemptionSettings.upsert({
+        where: { id: 'default' },
+        create: {
+          id: 'default',
+          isEnabled: true,
+          minimumRedemptionAmount: 100,
+          maximumRedemptionAmount: 50000,
+          startAt: new Date(Date.now() - 3600000),
+          endAt: new Date(Date.now() + 3600000),
+        },
+        update: {
+          isEnabled: true,
+          minimumRedemptionAmount: 100,
+          maximumRedemptionAmount: 50000,
+          startAt: new Date(Date.now() - 3600000),
+          endAt: new Date(Date.now() + 3600000),
+        },
+      });
+
       // Create a dummy completed payout for today of ₹50,000
       const paymentAccount = await prisma.paymentAccount.create({
         data: {
@@ -353,11 +377,11 @@ describe('Audit Remediation RC1 Regression Suite', () => {
       expect(typeof NotificationService.dispatchPushForUser).toBe('function');
     });
 
-    test('Task 2.7: Unauthenticated logout clears cookies and returns 200 idempotently', async () => {
+    test('Task 2.7: Contract F: Unauthenticated logout rejects with 400 and clears cookies', async () => {
       const res = await request(app).post('/api/v1/auth/logout').send({});
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.message).toContain('Logged out successfully');
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error).toContain('No active session or refresh token provided');
     });
   });
 

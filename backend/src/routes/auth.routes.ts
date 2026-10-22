@@ -532,9 +532,9 @@ router.post('/logout', loginIpLimiter, async (req: Request, res: Response) => {
     res.clearCookie('csrf_token', { ...cookieOpts, httpOnly: false });
 
     if (!refreshToken && !userId) {
-      return res.json({
-        success: true,
-        message: 'Logged out successfully (session expired or already cleared).',
+      return res.status(400).json({
+        success: false,
+        error: 'No active session or refresh token provided',
       });
     }
 

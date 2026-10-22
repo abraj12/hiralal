@@ -840,9 +840,22 @@ export class PayoutService {
             );
           }
           gatewayCancellationConfirmed = true;
-        } else {
-          // Confirmed NOT dispatched to gateway; safe to reject and refund
+        } else if (payoutMeta.requiresManualReview) {
+          // Explicitly flagged for manual review and confirmed NOT dispatched to gateway; safe to reject
           gatewayCancellationConfirmed = true;
+        } else {
+          // AUDIT-FIN-01: In-flight payout cannot be safely rejected when gateway status is unverified (found: false)
+          // RazorpayX may be processing the transfer or indexing the reference asynchronously.
+          await prisma.payout.update({
+            where: { id: payoutMeta.id },
+            data: {
+              requiresManualReview: true,
+              manualReviewReason: `Rejection attempt blocked: Payout is in-flight (${payoutMeta.status}) but reference was not found on gateway. Funds remain reserved to prevent double-spending.`,
+            },
+          });
+          throw new Error(
+            `Cannot safely reject in-flight payout (${payoutMeta.status}): Gateway reference was not found, but transfer may be in transit. Funds must remain reserved to prevent double-spending.`
+          );
         }
       }
     }

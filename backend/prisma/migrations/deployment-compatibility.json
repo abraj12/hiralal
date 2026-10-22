@@ -227,6 +227,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Additive deficitLiability column on Wallet to model delayed gateway reconciliation liabilities, and restores check constraint chk_wallet_available_balance_non_negative."
+    },
+    {
+      "id": "20261023120000_add_lower_invoice_index",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Functional partial unique index on LOWER(TRIM(invoice_number)) for approved bills to accelerate lookups and prevent case-insensitive duplicates."
     }
   ]
 }

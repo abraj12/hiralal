@@ -699,6 +699,25 @@ export class AccountDeletionService {
 
         const { operationId, currentLeaseVersion, attemptCount, bills } = claimResult as any;
 
+        // AUDIT-DEL-01: Re-verify legalHold immediately prior to external R2 file deletions
+        const userHoldCheck = await prismaClient.user.findUnique({
+          where: { id: u.id },
+          select: { legalHold: true },
+        });
+        if (userHoldCheck?.legalHold === true) {
+          console.warn(`[ACCOUNT-DELETION] Legal hold placed on user ${u.id} prior to file deletion. Aborting destructive storage cleanup.`);
+          await prismaClient.accountDeletionOperation.update({
+            where: { id: operationId },
+            data: {
+              status: 'CANCELLED',
+              failureReason: 'Deletion cancelled: Active statutory legal hold placed on user account prior to storage file deletion.',
+              leaseOwner: null,
+              leaseExpiresAt: null,
+            },
+          });
+          continue;
+        }
+
         // Step 2: Delete private invoice files from Cloudflare R2 storage
         // Protected by distributed worker lease + DB CAS lease renewal before each file deletion
         const failedFileKeys: string[] = [];
@@ -1217,6 +1236,28 @@ export class AccountDeletionService {
           isVerified: false,
           isDefault: false,
         },
+      });
+
+      // AUDIT-RET-01: Purge retained invoice storage objects from Cloudflare R2
+      const allUserBills = await tx.bill.findMany({
+        where: { userId: { in: userIds } },
+        select: { id: true, fileKey: true },
+      });
+      const expiredBills = allUserBills.filter((b: any) => Boolean(b.fileKey));
+
+      for (const bill of expiredBills) {
+        if (bill.fileKey) {
+          try {
+            await StorageService.getProvider().delete(bill.fileKey);
+          } catch (storageErr: any) {
+            console.warn(`[STATUTORY-PURGE] Failed to purge storage object ${bill.fileKey}:`, storageErr.message);
+          }
+        }
+      }
+
+      await tx.bill.updateMany({
+        where: { userId: { in: userIds } },
+        data: { fileKey: 'PURGED' },
       });
 
       await tx.user.updateMany({

@@ -68,8 +68,8 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
   const [showPasswordFallback, setShowPasswordFallback] = useState(false);
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  // 100% full balance redemption rule
-  const amountToRedeem = Number(wallet.availableBalance || 0);
+  // 100% full balance redemption rule (clamped to immutable platform ceiling of ₹50,000)
+  const amountToRedeem = Math.min(Number(wallet.availableBalance || 0), 50000);
 
   // On open, fetch real eligibility & existing KYC/Account status
   useEffect(() => {
@@ -297,6 +297,7 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
       const res = await MobileApiClient.redeemRewards(
         {
           idempotencyKey: currentKey,
+          ...(confirmPassword ? { password: confirmPassword } : {}),
         },
         attestation
       );
