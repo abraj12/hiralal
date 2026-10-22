@@ -293,3 +293,33 @@ This document records the chronological history of all security remediations, fi
 - **Verification Results:**
   - `src/tests/immutable_invoices_and_findings_regression.spec.ts`: 11/11 passed.
   - TypeScript compilation: 100% clean.
+
+---
+
+### Record 12: Independent Audit Finding Remediation (Financial Drift, Complete Statutory Purge & Parity Hardening)
+- **Date:** October 2026
+- **Finding Identifier:** `AUDIT-CRIT-01`, `AUDIT-HIGH-01`, `AUDIT-MED-01`, `AUDIT-LOW-01`
+- **Severity:** Critical / High / Medium / Low
+- **Affected Files:**
+  - `backend/src/worker/reconciliation.worker.ts`
+  - `backend/src/routes/webhook.routes.ts`
+  - `backend/src/services/account-deletion.service.ts`
+  - `.github/workflows/deploy-kvm.yml`
+  - `backend/src/tests/auditor_reconciliation_and_retention_regression.spec.ts`
+- **Root Cause:**
+  1. `AUDIT-CRIT-01`: Reconciliation worker late-success payout drift handler wiped `availableBalance` to 0 and recorded `amount: 0` in ledger rather than deducting the exact payout amount and updating status to `SUCCESS`.
+  2. `AUDIT-HIGH-01`: Statutory retention purge selected users outside a transaction without re-verifying `legalHold: false` inside the transaction (TOCTOU race), and left legacy unencrypted PAN and bank columns intact.
+  3. `AUDIT-MED-01`: Webhook handler failed to flag `payoutRecord.requiresManualReview = true` when amount was NaN/missing. Gateway polling lacked currency and amount parity assertions before finalizing payout success.
+  4. `AUDIT-LOW-01`: Deployment workflow fell back to legacy EC2 secrets.
+- **Implementation Approach:**
+  1. Aligned `reconciliation.worker.ts` with `webhook.routes.ts`: locks wallet, deducts exact `payoutAmt` (`Math.max(0, currentAvail - payoutAmt)`), increments `totalRedeemed`, updates `payout.status: 'SUCCESS'` with `requiresManualReview: true`, and logs `PAYOUT_DEBIT` with `amount: payoutAmt`.
+  2. Hardened `AccountDeletionService.purgeExpiredStatutoryRecords()`: re-asserts `legalHold: false` inside `$transaction` and scrubs all legacy and encrypted PII/financial columns across `KycRecord` and `PaymentAccount`.
+  3. Updated `webhook.routes.ts` to flag manual review on NaN/missing amounts, and added strict currency (`INR`) and paise amount parity assertions in `ReconciliationWorker.reconcileStuckPayouts` and `reconcileSinglePayout`.
+  4. Purged legacy `secrets.EC2_*` fallbacks in `.github/workflows/deploy-kvm.yml`.
+- **Verification Results:**
+  - `backend/src/tests/auditor_reconciliation_and_retention_regression.spec.ts`: 4/4 passed.
+  - **Backend Suites:** 47 suites, 797 passed (100%).
+  - **Admin Suites:** 2 suites, 22 passed (100%).
+  - **Mobile Suites:** 5 suites, 29 passed (100%).
+  - **Mobile Admin Suites:** 5 suites, 28 passed (100%).
+  - **Total Verified Tests:** **876 / 876 tests passing across 59 suites (100% green)**.

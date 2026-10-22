@@ -197,6 +197,13 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
             processingStartedAt: null,
           },
         });
+        await prisma.payout.update({
+          where: { id: payoutRecord.id },
+          data: {
+            requiresManualReview: true,
+            manualReviewReason: 'FATAL_INVALID_AMOUNT',
+          },
+        });
         res.status(200).json({ status: 'rejected_unrecoverable', reason: 'invalid_amount' });
         return;
       }

@@ -294,6 +294,34 @@ export class ReconciliationWorker {
 
         // 3. Evaluate Razorpay status
         if (razorpayPayout) {
+          const expectedPaise = Number(toPaise(payout.amount));
+          const actualCurrency = razorpayPayout.currency;
+          const actualPaise = Number(razorpayPayout.amount);
+
+          if (actualCurrency && actualCurrency !== 'INR') {
+            console.error(`🚨 [RECONCILIATION] Currency mismatch in gateway poll for payout ${payout.id}: expected INR, got ${actualCurrency}`);
+            await prisma.payout.update({
+              where: { id: payout.id },
+              data: {
+                requiresManualReview: true,
+                manualReviewReason: `GATEWAY_POLL_CURRENCY_MISMATCH: expected INR, got ${actualCurrency}`,
+              },
+            });
+            continue;
+          }
+
+          if (Number.isFinite(actualPaise) && actualPaise !== expectedPaise) {
+            console.error(`🚨 [RECONCILIATION] Amount mismatch in gateway poll for payout ${payout.id}: expected ${expectedPaise}, got ${actualPaise}`);
+            await prisma.payout.update({
+              where: { id: payout.id },
+              data: {
+                requiresManualReview: true,
+                manualReviewReason: `GATEWAY_POLL_AMOUNT_MISMATCH: expected ${expectedPaise} paise, got ${actualPaise} paise`,
+              },
+            });
+            continue;
+          }
+
           const gatewayStatus = razorpayPayout.status;
 
           if (gatewayStatus === 'processed') {
@@ -432,6 +460,34 @@ export class ReconciliationWorker {
       return { success: false, status: payout.status, message: 'Gateway lookup inconclusive. No matching record returned by payment provider.' };
     }
 
+    const expectedPaise = Number(toPaise(payout.amount));
+    const actualCurrency = razorpayPayout.currency;
+    const actualPaise = Number(razorpayPayout.amount);
+
+    if (actualCurrency && actualCurrency !== 'INR') {
+      console.error(`🚨 [RECONCILIATION] Currency mismatch in single gateway poll for payout ${payout.id}: expected INR, got ${actualCurrency}`);
+      await prisma.payout.update({
+        where: { id: payout.id },
+        data: {
+          requiresManualReview: true,
+          manualReviewReason: `GATEWAY_POLL_CURRENCY_MISMATCH: expected INR, got ${actualCurrency}`,
+        },
+      });
+      return { success: false, status: payout.status, message: `Currency mismatch: expected INR, got ${actualCurrency}` };
+    }
+
+    if (Number.isFinite(actualPaise) && actualPaise !== expectedPaise) {
+      console.error(`🚨 [RECONCILIATION] Amount mismatch in single gateway poll for payout ${payout.id}: expected ${expectedPaise}, got ${actualPaise}`);
+      await prisma.payout.update({
+        where: { id: payout.id },
+        data: {
+          requiresManualReview: true,
+          manualReviewReason: `GATEWAY_POLL_AMOUNT_MISMATCH: expected ${expectedPaise} paise, got ${actualPaise} paise`,
+        },
+      });
+      return { success: false, status: payout.status, message: `Amount mismatch: expected ${expectedPaise} paise, got ${actualPaise} paise` };
+    }
+
     const gatewayStatus = razorpayPayout.status;
     if (gatewayStatus === 'processed') {
       await PayoutService.finalizeSuccess(payout.id, razorpayPayout.id);
@@ -533,25 +589,79 @@ export class ReconciliationWorker {
 
         // Validate payload invariants: currency and amount
         if (!payoutEntity.currency || typeof payoutEntity.currency !== 'string' || payoutEntity.currency !== 'INR') {
-          throw new Error(`[RECONCILIATION] Invalid currency: expected INR, got ${payoutEntity.currency}`);
+          await prisma.payout.update({
+            where: { id: payoutRecord.id },
+            data: {
+              requiresManualReview: true,
+              manualReviewReason: `FATAL_CURRENCY_MISMATCH: ${payoutEntity.currency}`,
+            },
+          });
+          await prisma.webhookEvent.update({
+            where: { id: event.id },
+            data: { isProcessed: true, lastError: `FATAL_CURRENCY_MISMATCH: ${payoutEntity.currency}`, processingStartedAt: null },
+          });
+          continue;
         }
         if (payoutEntity.amount === undefined || payoutEntity.amount === null || isNaN(Number(payoutEntity.amount))) {
-          throw new Error('[RECONCILIATION] Missing or invalid amount in payload');
+          await prisma.payout.update({
+            where: { id: payoutRecord.id },
+            data: {
+              requiresManualReview: true,
+              manualReviewReason: 'FATAL_INVALID_AMOUNT',
+            },
+          });
+          await prisma.webhookEvent.update({
+            where: { id: event.id },
+            data: { isProcessed: true, lastError: 'FATAL_INVALID_AMOUNT', processingStartedAt: null },
+          });
+          continue;
         }
         const expectedPaise = Number(toPaise(payoutRecord.amount));
         if (Number(payoutEntity.amount) !== expectedPaise) {
-          throw new Error(`[RECONCILIATION] Amount mismatch: expected ${expectedPaise} paise, got ${payoutEntity.amount} paise`);
+          await prisma.payout.update({
+            where: { id: payoutRecord.id },
+            data: {
+              requiresManualReview: true,
+              manualReviewReason: `FATAL_AMOUNT_MISMATCH: expected ${expectedPaise}, received ${payoutEntity.amount}`,
+            },
+          });
+          await prisma.webhookEvent.update({
+            where: { id: event.id },
+            data: { isProcessed: true, lastError: `FATAL_AMOUNT_MISMATCH: expected ${expectedPaise}, received ${payoutEntity.amount}`, processingStartedAt: null },
+          });
+          continue;
         }
 
         const eventType = event.eventType;
         if (eventType === 'payout.processed') {
           if (payoutRecord.status === 'FAILED' || payoutRecord.status === 'REVERSED') {
+            console.error(`🚨 [RECONCILIATION-CRITICAL] Financial drift detected! Payout ${payoutRecord.id} was ${payoutRecord.status} but gateway reported payout.processed!`);
             await prisma.$transaction(async (tx) => {
-              // 1. Lock wallet and freeze available balance to 0
-              await tx.$queryRaw`SELECT "id" FROM "Wallet" WHERE "id" = ${payoutRecord.walletId} FOR UPDATE`;
+              // 1. Lock wallet and get current balances
+              const walletRows = await tx.$queryRaw<Array<{
+                id: string;
+                availableBalance: any;
+                totalRedeemed: any;
+              }>>`
+                SELECT "id", "availableBalance", "totalRedeemed"
+                FROM "Wallet"
+                WHERE "id" = ${payoutRecord.walletId}
+                FOR UPDATE
+              `;
+              const currentWallet = walletRows[0];
+              const payoutAmt = Number(payoutRecord.amount);
+              const currentAvail = Number(currentWallet.availableBalance);
+              // Deduct payout amount from available balance (flooring at 0)
+              const newAvail = Math.max(0, currentAvail - payoutAmt);
+              const newTotalRedeemed = Number(currentWallet.totalRedeemed) + payoutAmt;
+
               await tx.wallet.update({
                 where: { id: payoutRecord.walletId },
-                data: { availableBalance: 0, version: { increment: 1 } },
+                data: {
+                  availableBalance: newAvail,
+                  totalRedeemed: newTotalRedeemed,
+                  version: { increment: 1 },
+                },
               });
               // 2. Suspend user account and invalidate active sessions
               await tx.user.update({
@@ -561,12 +671,13 @@ export class ReconciliationWorker {
               await tx.authSession.deleteMany({
                 where: { userId: payoutRecord.userId },
               });
-              // 3. Mark payout for urgent manual review
+              // 3. Mark payout for urgent manual review and update status to SUCCESS
               await tx.payout.update({
                 where: { id: payoutRecord.id },
                 data: {
+                  status: 'SUCCESS',
                   requiresManualReview: true,
-                  manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway processed payout after local status was marked ${payoutRecord.status}. Account suspended and wallet frozen.`,
+                  manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}. Total redeemed incremented by ₹${payoutAmt}, balance adjusted from ₹${currentAvail} to ₹${newAvail}. Account suspended for operator audit.`,
                 },
               });
               // 4. Double-entry ledger adjustment entry
@@ -574,12 +685,12 @@ export class ReconciliationWorker {
                 data: {
                   walletId: payoutRecord.walletId,
                   userId: payoutRecord.userId,
-                  amount: 0,
-                  type: 'MANUAL_ADJUSTMENT',
-                  balanceAfter: 0,
+                  amount: payoutAmt,
+                  type: 'PAYOUT_DEBIT',
+                  balanceAfter: newAvail,
                   referenceType: 'PAYOUT',
                   referenceId: payoutRecord.id,
-                  description: `Wallet balance frozen to 0 due to CRITICAL FINANCIAL DRIFT: Gateway processed payout after local status was ${payoutRecord.status}.`,
+                  description: `Clawback debit of ₹${payoutAmt} due to delayed gateway disbursement (${razorpayPayoutId}) after local status was ${payoutRecord.status}.`,
                 },
               });
               // 5. Audit log
@@ -593,7 +704,11 @@ export class ReconciliationWorker {
                     eventId: event.eventId,
                     razorpayPayoutId,
                     localStatus: payoutRecord.status,
-                    actionTaken: 'USER_SUSPENDED_WALLET_FROZEN',
+                    payoutAmount: payoutAmt,
+                    balanceBefore: currentAvail,
+                    balanceAfter: newAvail,
+                    totalRedeemedAfter: newTotalRedeemed,
+                    actionTaken: 'BALANCE_CLAWBACK_AND_USER_SUSPENSION',
                   }),
                 },
               });

@@ -1131,6 +1131,8 @@ export class AccountDeletionService {
   /**
    * Purges expired statutory retention records (older than 8 years)
    * where legalHold is false and user is SUSPENDED.
+   * Re-verifies legalHold under transaction to prevent TOCTOU race conditions
+   * and performs a complete cryptographic and PII scrub of all legacy and encrypted fields.
    */
   static async purgeExpiredStatutoryRecords(db: any = prisma): Promise<number> {
     const now = new Date();
@@ -1146,23 +1148,54 @@ export class AccountDeletionService {
 
     if (expiredUsers.length === 0) return 0;
 
-    const userIds = expiredUsers.map((u: any) => u.id);
+    const candidateUserIds = expiredUsers.map((u: any) => u.id);
 
-    await db.$transaction(async (tx: any) => {
-      // Cryptographically scrub encrypted PAN and payment accounts
+    return await db.$transaction(async (tx: any) => {
+      // Re-verify eligible users under transaction to prevent TOCTOU race conditions with legal holds
+      const eligibleUsers = await tx.user.findMany({
+        where: {
+          id: { in: candidateUserIds },
+          status: 'SUSPENDED',
+          legalHold: false,
+          statutoryRetentionExpiresAt: { lte: now },
+        },
+        select: { id: true },
+      });
+
+      if (eligibleUsers.length === 0) return 0;
+
+      const userIds = eligibleUsers.map((u: any) => u.id);
+
+      // Complete cryptographic and PII scrub of KycRecord (both encrypted and legacy plaintext fields)
       await tx.kycRecord.updateMany({
         where: { userId: { in: userIds } },
         data: {
+          panNumber: null,
           panNumberEncrypted: null,
-          maskedPan: 'ANONYMIZED_EXPIRED',
+          maskedPan: 'XXXXX0000X',
+          panName: 'ANONYMIZED',
+          verifiedName: 'ANONYMIZED',
+          panBlindIndex: null,
+          consentText: null,
         },
       });
 
+      // Complete cryptographic and financial scrub of PaymentAccount (both encrypted and legacy plaintext fields)
       await tx.paymentAccount.updateMany({
         where: { userId: { in: userIds } },
         data: {
+          accountNumber: null,
           accountNumberEncrypted: null,
-          maskedInfo: 'ANONYMIZED_EXPIRED',
+          upiId: null,
+          upiIdEncrypted: null,
+          accountHolderName: 'ANONYMIZED',
+          providerRegisteredName: 'ANONYMIZED',
+          ifscCode: null,
+          bankName: null,
+          beneficiaryBlindIndex: null,
+          maskedInfo: 'XXXX0000',
+          isVerified: false,
+          isDefault: false,
         },
       });
 
@@ -1172,8 +1205,8 @@ export class AccountDeletionService {
           statutoryRetentionExpiresAt: null,
         },
       });
-    });
 
-    return userIds.length;
+      return userIds.length;
+    });
   }
 }

@@ -84,9 +84,9 @@ jobs:
 
       - name: Configure SSH Key and Verify Host Key
         env:
-          KVM_HOST: ${{ secrets.KVM_HOST || secrets.EC2_HOST }}
-          KVM_SSH_KEY: ${{ secrets.KVM_SSH_KEY || secrets.EC2_SSH_KEY }}
-          KVM_SSH_KNOWN_HOSTS: ${{ secrets.KVM_SSH_KNOWN_HOSTS || secrets.EC2_SSH_KNOWN_HOSTS }}
+          KVM_HOST: ${{ secrets.KVM_HOST }}
+          KVM_SSH_KEY: ${{ secrets.KVM_SSH_KEY }}
+          KVM_SSH_KNOWN_HOSTS: ${{ secrets.KVM_SSH_KNOWN_HOSTS }}
         run: |
           if [ -z "${KVM_HOST}" ] || [ -z "${KVM_SSH_KEY}" ] || [ -z "${KVM_SSH_KNOWN_HOSTS}" ]; then
             echo "[FATAL ERROR] Mandatory KVM deployment secrets (KVM_HOST, KVM_SSH_KEY, or KVM_SSH_KNOWN_HOSTS) are missing. Halting deployment." >&2
@@ -100,8 +100,8 @@ jobs:
 
       - name: Execute Remote Deployment on Hostinger KVM 2 VPS
         env:
-          KVM_HOST: ${{ secrets.KVM_HOST || secrets.EC2_HOST }}
-          KVM_USER: ${{ secrets.KVM_USER || secrets.EC2_USER || 'ubuntu' }}
+          KVM_HOST: ${{ secrets.KVM_HOST }}
+          KVM_USER: ${{ secrets.KVM_USER || 'ubuntu' }}
           TARGET_SHA: ${{ github.event.inputs.release_sha }}
         run: |
           echo "Target deployment commit: ${TARGET_SHA}"

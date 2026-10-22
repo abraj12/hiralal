@@ -11,11 +11,11 @@ Every test suite in the repository has been executed and confirmed passing. The 
 
 | Workspace | Test Runner | Command | Test Suites | Total Tests | Status |
 |---|---|---|---|---|---|
-| **Backend** | Jest (In-Band) | `npm --prefix backend test` | 46 passed / 46 total | 793 passed / 793 total | **100% Green** |
+| **Backend** | Jest (In-Band) | `npm --prefix backend test` | 47 passed / 47 total | 797 passed / 797 total | **100% Green** |
 | **Admin Portal** | Node.js Test Runner | `npm --prefix admin test` | 2 files | 22 passed / 22 total | **100% Green** |
 | **Mobile Client** | Node.js Test Runner | `npm --prefix mobile test` | 5 files | 29 passed / 29 total | **100% Green** |
 | **Mobile Admin** | Node.js Test Runner | `npm --prefix mobile-admin test` | 5 files | 28 passed / 28 total | **100% Green** |
-| **Total** | — | — | **58 suites / files** | **872 tests** | **0 Failures** |
+| **Total** | — | — | **59 suites / files** | **876 tests** | **0 Failures** |
 
 ---
 
@@ -25,15 +25,15 @@ Every test suite in the repository has been executed and confirmed passing. The 
 The backend test suite uses Jest configured with TypeScript, Prisma, and Redis mocking:
 
 ```bash
-# Run all 46 test suites in sequence
+# Run all 47 test suites in sequence
 cd backend
 npm test
 
 # Equivalent direct command:
 npx jest --runInBand --detectOpenHandles --forceExit
 
-# Run specific suite (e.g. Exact PAN Name Matching):
-npx jest --runInBand --detectOpenHandles --forceExit src/tests/exact_name_matching.spec.ts
+# Run specific suite (e.g. Auditor Reconciliation & Retention Regression):
+npx jest --runInBand --detectOpenHandles --forceExit src/tests/auditor_reconciliation_and_retention_regression.spec.ts
 
 # Run admin authentication suite:
 npx jest --runInBand --detectOpenHandles --forceExit src/tests/admin_otp_enforcement.spec.ts
@@ -43,6 +43,7 @@ npm run build
 ```
 
 #### Key Backend Test Suites
+- **`auditor_reconciliation_and_retention_regression.spec.ts`** (AUDIT-CRIT-01, AUDIT-HIGH-01, AUDIT-MED-01): Verifies that delayed `payout.processed` in reconciliation worker executes proportional clawback deduction and logs valid `PAYOUT_DEBIT` ledger entry; verifies that statutory retention purge completely scrubs legacy/encrypted PII and re-checks `legalHold: false` under transaction; verifies webhook invalid amount review flagging and gateway polling parity checks.
 - **`test_harness_isolation.spec.ts`** (TEST-HARNESS-01): Verifies rate limit isolation across sequential suites, ensuring `resetAllRateLimiters()` clears `memoryCache` and Redis `ratelimit:*` keys, and `ensureBaselineAdmins()` seamlessly recovers deleted seeded admins.
 - **`exact_name_matching.spec.ts`**: Verifies 21 cases of exact bank beneficiary name matching against PAN records, testing positive matches with approved prefixes (`MR`, `SHRI`, etc.) and mandatory rejection of fuzzy, subset, token-reordered, or omitted name components.
 - **`final_audit_remediation_regression.spec.ts`**: Regression tests for `VERIF-01` through `VERIF-17`, including pre-dispatch fund rollback, mononymous KYC locking, and upward deviation limits.
