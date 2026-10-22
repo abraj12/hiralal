@@ -651,9 +651,13 @@ export class ReconciliationWorker {
               const currentWallet = walletRows[0];
               const payoutAmt = Number(payoutRecord.amount);
               const currentAvail = Number(currentWallet.availableBalance);
-              // Deduct payout amount from available balance (flooring at 0)
-              const newAvail = Math.max(0, currentAvail - payoutAmt);
+              // Deduct payout amount from available balance without artificial clamping to maintain ledger parity
+              const newAvail = currentAvail - payoutAmt;
               const newTotalRedeemed = Number(currentWallet.totalRedeemed) + payoutAmt;
+
+              if (newAvail < 0) {
+                console.warn(`[FINANCIAL RISK] Delayed disbursement created deficit in wallet ${payoutRecord.walletId}: balance is now ₹${newAvail}`);
+              }
 
               await tx.wallet.update({
                 where: { id: payoutRecord.walletId },
@@ -677,7 +681,7 @@ export class ReconciliationWorker {
                 data: {
                   status: 'SUCCESS',
                   requiresManualReview: true,
-                  manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}. Total redeemed incremented by ₹${payoutAmt}, balance adjusted from ₹${currentAvail} to ₹${newAvail}. Account suspended for operator audit.`,
+                  manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}. Total redeemed incremented by ₹${payoutAmt}, balance adjusted from ₹${currentAvail} to ₹${newAvail}${newAvail < 0 ? ' (DEFICIT/LIABILITY CREATED)' : ''}. Account suspended for operator audit.`,
                 },
               });
               // 4. Double-entry ledger adjustment entry

@@ -17,7 +17,7 @@ import { PayoutService } from '../services/payout.service';
 import { ReconciliationWorker } from '../worker/reconciliation.worker';
 import { AuthService } from '../services/auth.service';
 import { NotificationService } from '../services/notification.service';
-import { BillStatus, Profession, UserStatus } from '@prisma/client';
+import { BillStatus, PayoutStatus, Profession, UserStatus } from '@prisma/client';
 import { getIstYearAndMonth, parseStrictIndiaTimestamp } from '../utils/timezone.utils';
 import { adminActionLimiter } from '../middleware/rateLimit.middleware';
 import { decryptSensitive, generateBlindIndex } from '../utils/crypto.utils';
@@ -255,7 +255,11 @@ router.get('/users', requireOperationsAdmin, async (req: AuthenticatedRequest, r
     // F-17: validate profession via shared helper to prevent enum injection
     const { profession: profFilter, invalid: profInvalid } = parseProfessionFilter(req.query.profession as string);
     if (profInvalid) return res.status(400).json({ success: false, message: 'Invalid profession filter.' });
-    const status = req.query.status as string;
+    const rawStatus = typeof req.query.status === 'string' ? req.query.status.trim().toUpperCase() : undefined;
+    const ALLOWED_USER_STATUSES = ['ACTIVE', 'SUSPENDED'];
+    const status = rawStatus && rawStatus !== 'ALL' && ALLOWED_USER_STATUSES.includes(rawStatus)
+      ? (rawStatus as any)
+      : undefined;
     const search = req.query.search as string;
 
     const where: any = { role: 'USER' };
@@ -616,7 +620,11 @@ router.post('/users/:id/verify-mononymous-kyc', requireOperationsAdmin, adminAct
  */
 router.get('/bills', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const status = req.query.status as string;
+    const rawStatus = typeof req.query.status === 'string' ? req.query.status.trim().toUpperCase() : undefined;
+    const ALLOWED_BILL_STATUSES: string[] = ['SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'CANCELLED'];
+    const status = rawStatus && rawStatus !== 'ALL' && ALLOWED_BILL_STATUSES.includes(rawStatus)
+      ? (rawStatus as BillStatus)
+      : 'ALL';
     // F-17: validate profession via shared helper to prevent enum injection
     const { profession: profFilter, invalid: profInvalid } = parseProfessionFilter(req.query.profession as string);
     if (profInvalid) return res.status(400).json({ success: false, message: 'Invalid profession filter.' });
@@ -881,13 +889,17 @@ router.post('/bills/:id/verify', requireAdmin, adminActionLimiter, async (req: A
  */
 router.get('/payouts', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const status = req.query.status as string;
+    const rawStatus = typeof req.query.status === 'string' ? req.query.status.trim().toUpperCase() : undefined;
+    const ALLOWED_PAYOUT_STATUSES = ['PENDING', 'APPROVED', 'PAYOUT_INITIATED', 'PROCESSING', 'SUCCESS', 'FAILED', 'REVERSED'];
+    const status = rawStatus && rawStatus !== 'ALL' && ALLOWED_PAYOUT_STATUSES.includes(rawStatus)
+      ? (rawStatus as PayoutStatus)
+      : undefined;
     // F-17: validate profession via shared helper to prevent enum injection
     const { profession: profFilter, invalid: profInvalid } = parseProfessionFilter(req.query.profession as string);
     if (profInvalid) return res.status(400).json({ success: false, message: 'Invalid profession filter.' });
 
     const where: any = {};
-    if (status && status !== 'ALL') {
+    if (status) {
       where.status = status;
     }
     if (profFilter) {
@@ -1038,7 +1050,7 @@ router.get('/settings/redemption', requireOperationsAdmin, async (req: Authentic
 router.put('/settings/redemption', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const admin = req.user!;
-    const { isEnabled, startAt, endAt, message, profession, minimumRedemptionAmount } = req.body;
+    const { isEnabled, startAt, endAt, message, profession, minimumRedemptionAmount, maximumRedemptionAmount } = req.body;
 
     let startDate: Date | null = null;
     let endDate: Date | null = null;
@@ -1080,6 +1092,42 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
         }
         minRedemption = Math.round(parsed * 100) / 100;
       }
+    }
+
+    let maxRedemption: number | null | undefined = undefined;
+    if (maximumRedemptionAmount !== undefined) {
+      if (maximumRedemptionAmount === null || maximumRedemptionAmount === '') {
+        maxRedemption = null;
+      } else {
+        const parsedMax =
+          typeof maximumRedemptionAmount === 'number'
+            ? maximumRedemptionAmount
+            : parseFloat(String(maximumRedemptionAmount));
+        if (!Number.isFinite(parsedMax) || parsedMax < 0 || parsedMax > 50000) {
+          return res.status(400).json({
+            success: false,
+            message: 'Maximum redemption amount must be between ₹0 and ₹50,000.',
+          });
+        }
+        maxRedemption = Math.round(parsedMax * 100) / 100;
+      }
+    }
+
+    if (minRedemption !== undefined && minRedemption !== null && maxRedemption !== undefined && maxRedemption !== null) {
+      if (minRedemption > maxRedemption) {
+        return res.status(400).json({
+          success: false,
+          message: 'Minimum redemption threshold cannot exceed maximum redemption amount.',
+        });
+      }
+    }
+
+    // Operating Rule 7/8: ₹0 maximum means redemptions are disabled, never unlimited
+    if (maxRedemption === 0 && Boolean(isEnabled)) {
+      return res.status(400).json({
+        success: false,
+        message: 'A maximum redemption of ₹0 explicitly disables redemptions; cannot enable window.',
+      });
     }
 
     // Server-side validation for enabling redemption:
@@ -1131,6 +1179,7 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
           startAt: startDate,
           endAt: endDate,
           ...(minRedemption !== undefined && { minimumRedemptionAmount: minRedemption }),
+          ...(maxRedemption !== undefined && { maximumRedemptionAmount: maxRedemption }),
           message: message || (Boolean(isEnabled) ? 'Rewards redemption window is open for verified craftsmen.' : 'Rewards redemption is currently unavailable.'),
           updatedByAdminId: admin.id,
         },
@@ -1141,6 +1190,7 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
           startAt: startDate,
           endAt: endDate,
           minimumRedemptionAmount: minRedemption !== undefined ? minRedemption : null,
+          maximumRedemptionAmount: maxRedemption !== undefined ? maxRedemption : null,
           message: message || (Boolean(isEnabled) ? 'Rewards redemption window is open for verified craftsmen.' : 'Rewards redemption is currently unavailable.'),
           updatedByAdminId: admin.id,
         },

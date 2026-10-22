@@ -57,7 +57,9 @@ To maintain commercial-grade accounting integrity:
    - `balanceAfter`
    - `referenceType` (`BILL`, `PAYOUT`, `ADMIN`)
    - `referenceId`
-2. **Pessimistic & Optimistic Concurrency**: Financial transactions lock the wallet row (`SELECT ... FOR UPDATE`) inside atomic database transactions and track an incrementing `version` field.
+2. **Double-Entry Ledger Parity**: Ledger consistency enforces `wallet.availableBalance = Σ WalletTransaction`. In the event of late settlement or deficit adjustments, balance subtraction is never artificially clamped to zero; negative balances explicitly model platform debt to guarantee mathematical ledger parity.
+3. **Pessimistic & Optimistic Concurrency**: Financial transactions lock the wallet row (`SELECT ... FOR UPDATE`) inside atomic database transactions and track an incrementing `version` field.
+4. **Append-Only Audit Log Immutability**: PostgreSQL trigger `trg_audit_log_immutable` strictly prohibits `UPDATE` and `DELETE` operations on `AuditLog`, ensuring permanent tamper-evident audit trails.
 
 ---
 
@@ -81,10 +83,13 @@ To maintain commercial-grade accounting integrity:
      `eligibleAmount = roundMoney(grossBillAmount - gstAmount)`
    - **Reward Credit**:
      `calculatedReward = roundMoney(eligibleAmount * rewardPercentage / 100)`
-4. **Pool-Free Model & Full-Balance Redemption**:
+4. **Pool-Free Model, Limits & Payment Rails**:
    - No monthly reward caps or global reward pools.
-   - Configurable minimum redemption threshold (`minimumRedemptionAmount`) enforced dynamically per window by Operations Admin (no arbitrary hardcoded caps).
-   - Redemption requests reserve **100% of the user's available balance** when the redemption window is open (subject to minimum threshold).
+   - Configurable minimum redemption threshold (`minimumRedemptionAmount`) enforced dynamically per window by Operations Admin.
+   - **Hard Per-Redemption Ceiling**: An independent platform ceiling of ₹50,000 (5,000,000 paise) is enforced unconditionally on all single redemptions on the backend.
+   - **Configurable Maximum Threshold**: Operations Admin can set `maximumRedemptionAmount` between ₹0 and ₹50,000. Setting the maximum to ₹0 explicitly disables redemptions.
+   - **Concurrency-Safe Daily Limit**: A strict daily limit of ₹50,000 per user per calendar day in IST is aggregated and verified atomically under transaction locks.
+   - **Permitted Payout Rails**: Disbursed strictly through verified `UPI` and `IMPS` rails. Initiation of payouts through NEFT or any unsupported rail is strictly prohibited and fails closed.
 
 ---
 

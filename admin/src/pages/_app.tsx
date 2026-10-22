@@ -22,7 +22,7 @@ export default function App({ Component, pageProps }: AppProps) {
           AdminApiClient.setUser(res.user);
           const role = res.user.role;
           const billAdminAllowed = ['/', '/bills'];
-          const opsAdminAllowed = ['/', '/users', '/rewards', '/payouts', '/audit-logs', '/notifications', '/settings'];
+          const opsAdminAllowed = ['/', '/bills', '/users', '/rewards', '/payouts', '/audit-logs', '/notifications', '/settings'];
 
           if (isLogin) {
             setAuthorized(true);

@@ -179,7 +179,7 @@ export default function BillsScreen() {
 
                 <View style={styles.billCardFooter}>
                   <Text style={styles.dateText}>
-                    Date: {new Date(b.invoiceDate).toLocaleDateString('en-IN')}
+                    Date: {new Date(b.invoiceDate).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}
                   </Text>
                   <Text style={styles.tapDetailsText}>Tap for details →</Text>
                 </View>
@@ -198,7 +198,7 @@ export default function BillsScreen() {
                 <View>
                   <Text style={styles.modalInvoice}>{selectedBill.invoiceNumber}</Text>
                   <Text style={styles.modalDate}>
-                    Submitted: {new Date(selectedBill.createdAt || selectedBill.invoiceDate).toLocaleDateString('en-IN')}
+                    Submitted: {new Date(selectedBill.createdAt || selectedBill.invoiceDate).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}
                   </Text>
                 </View>
                 <TouchableOpacity onPress={() => setSelectedBill(null)} style={styles.modalClose}>
@@ -255,7 +255,7 @@ export default function BillsScreen() {
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Invoice Date</Text>
                     <Text style={styles.detailValue}>
-                      {new Date(selectedBill.invoiceDate).toLocaleDateString('en-IN')}
+                      {new Date(selectedBill.invoiceDate).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}
                     </Text>
                   </View>
                 </View>

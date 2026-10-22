@@ -27,6 +27,12 @@ export default function AdminBillsPage() {
   const [selectedBill, setSelectedBill] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [totalPendingCount, setTotalPendingCount] = useState(0);
+  const [userRole, setUserRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    const user = AdminApiClient.getUser();
+    if (user?.role) setUserRole(user.role);
+  }, []);
 
   // Debounce search query by 300ms
   useEffect(() => {
@@ -107,9 +113,13 @@ export default function AdminBillsPage() {
               <h1 className="text-2xl font-black text-slate-900 tracking-tight">
                 Bills Verification Queue
               </h1>
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                userRole === 'OPERATIONS_ADMIN'
+                  ? 'bg-purple-50 text-purple-700 border-purple-200'
+                  : 'bg-blue-50 text-blue-700 border-blue-200'
+              }`}>
                 <ShieldCheck className="w-3.5 h-3.5 mr-1" />
-                Bill Admin Authorized
+                {userRole === 'OPERATIONS_ADMIN' ? 'Operations Admin (Secondary Review Enabled)' : 'Bill Admin Authorized'}
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-1">
@@ -194,7 +204,7 @@ export default function AdminBillsPage() {
               {[
                 { key: 'ALL', label: 'All Status' },
                 { key: 'PENDING', label: 'Pending' },
-                { key: 'UNDER_REVIEW', label: 'Under Review' },
+                { key: 'UNDER_REVIEW', label: 'Secondary Review (>25%)' },
                 { key: 'APPROVED', label: 'Approved' },
                 { key: 'REJECTED', label: 'Rejected' },
               ].map(({ key, label }) => (
@@ -315,7 +325,7 @@ export default function AdminBillsPage() {
                           </div>
                           {b.createdAt && (
                             <div className="text-[10px] text-slate-400">
-                              Sub: {new Date(b.createdAt).toLocaleDateString('en-IN')}
+                              Sub: {new Date(b.createdAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}
                             </div>
                           )}
                           {b.remarks && (
@@ -348,7 +358,7 @@ export default function AdminBillsPage() {
 
                         {/* Invoice Date */}
                         <td className="py-4 px-4 text-slate-600 font-medium whitespace-nowrap">
-                          {b.invoiceDate ? new Date(b.invoiceDate).toLocaleDateString('en-IN') : '—'}
+                          {b.invoiceDate ? new Date(b.invoiceDate).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : '—'}
                         </td>
 
                         {/* Gross Bill Amount */}

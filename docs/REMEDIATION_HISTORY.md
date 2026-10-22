@@ -323,3 +323,56 @@ This document records the chronological history of all security remediations, fi
   - **Mobile Suites:** 5 suites, 29 passed (100%).
   - **Mobile Admin Suites:** 5 suites, 28 passed (100%).
   - **Total Verified Tests:** **876 / 876 tests passing across 59 suites (100% green)**.
+
+---
+
+### Record 13: Comprehensive Autonomous Remediation (Wave 1 to Wave 4 RC1)
+- **Date:** October 2026
+- **Finding Identifiers:**
+  - `REG-HASH-01`: Android Registration Request Hash Missing Password & Verification Token
+  - `LEDGER-DRIFT-01`: Financial Drift Ledger Clamping Violation Eliminated
+  - `CONFIG-PREFLIGHT-01`: Pre-Flight Validation for Secrets and Admin Mobiles
+  - `BILL-DEADLOCK-01`: Secondary Bill Review Deadlock Resolution
+  - `ANDROID-PERMS-01`: Explicit Android Permissions in Expo Manifest
+  - `KYC-PROACTIVE-01`: Proactive KYC Submission and Account Linking Modal Flow
+  - `PAYOUT-CEILING-01`: Hard ₹50,000 Per-Redemption Ceiling & Configurable Maximum
+  - `MONONYMOUS-KYC-01`: Mononymous (Single Name) User Verification UI Support
+  - `PUSH-NOTIF-01`: Push Notifications Dispatch Restored on Bill & Payout Actions
+  - `AUTH-LOGOUT-01`: Admin Logout Cookie Clearing & Anti-Spoofing Fix
+  - `GRACEFUL-SHUTDOWN-01`: Graceful Process Termination with 10s Connection Drain
+  - `NO-NEFT-01`: Strict Payout Rail Enforcement (UPI & IMPS Only, Zero NEFT)
+  - `ROUND-FLOOR-01`: Frontend Reward Rounding Synchronized to Exact ROUND_DOWN Floor
+  - `MOBILE-REGEX-01`: Mobile Number Regex Harmonized to `/^[6-9]\d{9}$/`
+  - `QUERY-STATUS-01`: Sanitization of `req.query.status` Query Parameters
+  - `SCHEMA-MIGRATION-01`: Composite Database Indexes & PostgreSQL Append-Only Audit Immutability Trigger
+  - `LEGAL-HOLD-TOCTOU-01`: Atomic Row-Level Lock Check on Statutory Legal Holds
+  - `LOGOUT-DOS-01`: Prevention of Unauthenticated Session DoS on Logout
+  - `NGINX-CATCHALL-01`: Hardened Nginx Configuration with default_server Catch-All Block
+  - `DAILY-LIMIT-01`: Concurrency-Safe Per-User Daily Payout Limit (₹50,000 IST)
+  - `TIMEZONE-IST-01`: Explicit Timezone Offset Formatting Across Clients
+  - `ERROR-MIDDLEWARE-01`: Centralized Express Error Handling Middleware
+- **Affected Subsystems:** Backend API, Admin Web App, Mobile Customer App, Mobile Admin App, PostgreSQL Schema, Nginx Proxy
+- **Implementation Approach:**
+  1. Updated `mobile/src/services/api.ts` to include `data.password` and `data.verificationToken` in `createRegistrationRequestHash`.
+  2. In `webhook.routes.ts` and `reconciliation.worker.ts`, removed balance clamping (`Math.max(0, ...)`), allowing exact deficit debt modeling when payouts exceed available balance. Created DDL migration dropping `chk_wallet_available_balance_non_negative`.
+  3. Added pre-flight startup assertions in `config/index.ts` ensuring `BLIND_INDEX_SECRET` is at least 32 characters and admin mobiles are valid 10-digit Indian numbers.
+  4. Resolved secondary bill review deadlock by granting `OPERATIONS_ADMIN` read and verification access for escalated bills in `Sidebar.tsx`, `bills.tsx`, `App.tsx`, and `AdminBottomNav.tsx`.
+  5. Added `CAMERA`, `POST_NOTIFICATIONS`, and `READ_MEDIA_IMAGES` to `mobile/app.json`.
+  6. Added `setupOnly` and `initialStep` to `RedemptionModal.tsx` in `mobile/src/components/`, enabling proactive KYC and payment account setup.
+  7. Enforced immutable hard ceiling of ₹50,000 (5,000,000 paise) in `payout.service.ts`. Constrained configurable maximum to ₹0–₹50,000 where ₹0 disables redemptions. Removed all NEFT references and enforced strictly UPI and IMPS payout rails.
+  8. Implemented mononymous KYC manual review UI in `admin/src/pages/users.tsx` and `mobile-admin/src/screens/OpsAdminUsersScreen.tsx`.
+  9. Restored `NotificationService.dispatchPushForUser` on all bill and payout lifecycle state transitions.
+  10. Cleared cookies reliably on `/logout` in `auth.routes.ts` without vulnerable browser header spoof checks.
+  11. Implemented `SIGTERM`/`SIGINT` graceful shutdown in `server.ts` draining connections with 10s timeout.
+  12. Synchronized frontend reward calculation in `admin/src/lib/financial-utils.ts` to `ROUND_DOWN` floor parity.
+  13. Created migration `20261022190000_redemption_limits_composite_indexes_audit_immutability` adding composite indexes and PostgreSQL trigger `trg_audit_log_immutable`.
+  14. Enforced concurrency-safe per-user daily payout limit (₹50,000 per IST calendar day) in `payout.service.ts`.
+  15. Created centralized `errorHandler` in `backend/src/middleware/error.middleware.ts` with correlation request IDs and safe error messages.
+- **Verification Results:**
+  - Dedicated regression test suite: `backend/src/tests/audit_remediation_rc1.spec.ts` (10/10 passed).
+  - Admin unit tests: `npm --prefix admin test` (22/22 passed).
+  - Mobile tests: `npm --prefix mobile test` (29/29 passed).
+  - Mobile Admin tests: `npm --prefix mobile-admin test` (28/28 passed).
+  - Migration compatibility tests: `python scripts/test_migration_compatibility.py` (6/6 passed).
+  - Deployment health tests: `python scripts/test_verify_deployment_health.py` (61/61 passed).
+  - Security floor tests: `node scripts/test-next-security-floor.cjs` (22/22 passed).

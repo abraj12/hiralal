@@ -776,7 +776,10 @@ export class AuthService {
   }) {
     const validatedPurpose = requireGenericOtpPurpose(params.purpose);
     const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
-    if (cleanMobile.length !== 10) {
+    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+      throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
+    }
+    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
       throw new Error('Please enter a valid 10-digit Indian mobile number.');
     }
 
@@ -871,7 +874,10 @@ export class AuthService {
     ipAddress?: string;
   }) {
     const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
-    if (cleanMobile.length !== 10) {
+    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+      throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
+    }
+    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
       throw new Error('Please enter a valid 10-digit Indian mobile number.');
     }
 
@@ -987,7 +993,10 @@ export class AuthService {
     ipAddress?: string;
   }) {
     const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
-    if (cleanMobile.length !== 10) {
+    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+      throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
+    }
+    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
       throw new Error('Please enter a valid 10-digit Indian mobile number.');
     }
 
@@ -1103,6 +1112,9 @@ export class AuthService {
     expiresAt?: string;
   }> {
     const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
+    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+      throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
+    }
     const cleanOtp = (params.otpCode || '').trim();
 
     if (!cleanOtp || cleanOtp.length !== 6) {
@@ -1276,6 +1288,9 @@ export class AuthService {
     }
 
     const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
+    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+      throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
+    }
     if (cleanMobile.length !== 10) {
       throw new Error(genericFailure);
     }
@@ -1349,6 +1364,9 @@ export class AuthService {
     ipAddress?: string;
   }) {
     const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
+    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+      throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
+    }
 
     const nameValidation = validateStructuredName(
       params.firstName,
@@ -1842,8 +1860,13 @@ export class AuthService {
   static async logout(refreshTokenStr?: string, userId?: string) {
     if (refreshTokenStr) {
       const tokenHash = sha256Hash(refreshTokenStr);
-      const session = await prisma.authSession.findUnique({
-        where: { tokenHash },
+      // Task 3.6: Prevent Session DoS - only active unrevoked and non-expired sessions may trigger logout
+      const session = await prisma.authSession.findFirst({
+        where: {
+          tokenHash,
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
+        },
       });
       if (session) {
         await prisma.authSession.updateMany({
@@ -1854,6 +1877,10 @@ export class AuthService {
           where: { id: session.userId },
           data: { activeSessionId: null },
         });
+        return;
+      }
+      // If refresh token is expired or revoked, do not wipe user activeSessionId
+      if (!userId) {
         return;
       }
     }
@@ -1885,6 +1912,9 @@ export class AuthService {
       throw new Error(PASSWORD_RESET_INVALID_MESSAGE);
     }
     const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
+    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+      throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
+    }
 
     if (typeof params.verificationToken !== 'string' || !/^[0-9a-f]{64}$/i.test(params.verificationToken.trim())) {
       throw new Error(PASSWORD_RESET_INVALID_MESSAGE);

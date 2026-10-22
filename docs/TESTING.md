@@ -11,11 +11,15 @@ Every test suite in the repository has been executed and confirmed passing. The 
 
 | Workspace | Test Runner | Command | Test Suites | Total Tests | Status |
 |---|---|---|---|---|---|
-| **Backend** | Jest (In-Band) | `npm --prefix backend test` | 47 passed / 47 total | 797 passed / 797 total | **100% Green** |
+| **Backend** | Jest (In-Band) | `npm --prefix backend test` | 48 passed / 48 total | 817 passed / 817 total | **100% Green** |
 | **Admin Portal** | Node.js Test Runner | `npm --prefix admin test` | 2 files | 22 passed / 22 total | **100% Green** |
 | **Mobile Client** | Node.js Test Runner | `npm --prefix mobile test` | 5 files | 29 passed / 29 total | **100% Green** |
 | **Mobile Admin** | Node.js Test Runner | `npm --prefix mobile-admin test` | 5 files | 28 passed / 28 total | **100% Green** |
-| **Total** | — | — | **59 suites / files** | **876 tests** | **0 Failures** |
+| **Workspace Subtotal** | — | — | **60 suites / files** | **896 tests** | **0 Failures** |
+| **Migration Compatibility** | Python Unittest | `python scripts/test_migration_compatibility.py` | 1 suite | 6 passed / 6 total | **100% Green** |
+| **Deployment & Health Probes** | Python Unittest | `python scripts/test_verify_deployment_health.py` | 1 suite | 61 passed / 61 total | **100% Green** |
+| **Security Floor Guards** | Node CLI | `node scripts/test-next-security-floor.cjs` | 1 suite | 22 passed / 22 total | **100% Green** |
+| **Repository Total** | — | — | **63 suites / files** | **985 tests** | **0 Failures** |
 
 ---
 
@@ -25,12 +29,15 @@ Every test suite in the repository has been executed and confirmed passing. The 
 The backend test suite uses Jest configured with TypeScript, Prisma, and Redis mocking:
 
 ```bash
-# Run all 47 test suites in sequence
+# Run all 48 test suites in sequence
 cd backend
 npm test
 
 # Equivalent direct command:
 npx jest --runInBand --detectOpenHandles --forceExit
+
+# Run dedicated audit remediation RC1 regression suite:
+npx jest --runInBand --detectOpenHandles --forceExit src/tests/audit_remediation_rc1.spec.ts
 
 # Run specific suite (e.g. Auditor Reconciliation & Retention Regression):
 npx jest --runInBand --detectOpenHandles --forceExit src/tests/auditor_reconciliation_and_retention_regression.spec.ts
@@ -43,6 +50,7 @@ npm run build
 ```
 
 #### Key Backend Test Suites
+- **`audit_remediation_rc1.spec.ts`**: Verifies all Phase 1–4 audit remediations: Play Integrity registration request hash with password and verificationToken, removal of `Math.max(0, ...)` balance clamping, hard ₹50,000 per-redemption ceiling, configurable maximum ₹0–₹50,000 (where ₹0 disables redemptions), UPI and IMPS rail enforcement (strictly zero NEFT), admin logout session checks, statutory legal hold row-level lock verification, per-user daily payout limit of ₹50,000 IST, and centralized error handler sanitization.
 - **`auditor_reconciliation_and_retention_regression.spec.ts`** (AUDIT-CRIT-01, AUDIT-HIGH-01, AUDIT-MED-01): Verifies that delayed `payout.processed` in reconciliation worker executes proportional clawback deduction and logs valid `PAYOUT_DEBIT` ledger entry; verifies that statutory retention purge completely scrubs legacy/encrypted PII and re-checks `legalHold: false` under transaction; verifies webhook invalid amount review flagging and gateway polling parity checks.
 - **`test_harness_isolation.spec.ts`** (TEST-HARNESS-01): Verifies rate limit isolation across sequential suites, ensuring `resetAllRateLimiters()` clears `memoryCache` and Redis `ratelimit:*` keys, and `ensureBaselineAdmins()` seamlessly recovers deleted seeded admins.
 - **`exact_name_matching.spec.ts`**: Verifies 21 cases of exact bank beneficiary name matching against PAN records, testing positive matches with approved prefixes (`MR`, `SHRI`, etc.) and mandatory rejection of fuzzy, subset, token-reordered, or omitted name components.

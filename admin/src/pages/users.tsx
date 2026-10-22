@@ -45,6 +45,35 @@ export default function AdminUsersPage() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Mononymous KYC Approval State
+  const [mononymousReason, setMononymousReason] = useState('');
+  const [approvingMononymous, setApprovingMononymous] = useState(false);
+  const [showMononymousForm, setShowMononymousForm] = useState(false);
+  const [mononymousError, setMononymousError] = useState<string | null>(null);
+
+  const handleApproveMononymousKyc = async () => {
+    if (!mononymousReason.trim() || mononymousReason.trim().length < 10) {
+      setMononymousError('Please enter a detailed justification reason (minimum 10 characters).');
+      return;
+    }
+    const targetUserId = selectedUser?.id || detailsData?.user?.id;
+    if (!targetUserId) return;
+    try {
+      setApprovingMononymous(true);
+      setMononymousError(null);
+      await AdminApiClient.verifyMononymousKyc(targetUserId, { reason: mononymousReason.trim() });
+      setShowMononymousForm(false);
+      setMononymousReason('');
+      const refreshed = await AdminApiClient.getUserDetails(targetUserId);
+      setDetailsData(refreshed);
+      fetchUsers();
+    } catch (err: any) {
+      setMononymousError(err.message || 'Failed to approve mononymous KYC.');
+    } finally {
+      setApprovingMononymous(false);
+    }
+  };
+
   const fetchUsers = async () => {
     try {
       setLoading(true);
@@ -620,6 +649,56 @@ export default function AdminUsersPage() {
                                   <div className="col-span-2 p-2.5 bg-red-50 rounded-xl text-red-700 border border-red-200">
                                     <span className="font-bold">Rejection Reason: </span>
                                     <span>{detailsData.kyc.rejectionReason}</span>
+                                  </div>
+                                )}
+                                {detailsData.kyc.panStatus === 'PENDING' && (detailsData.kyc.rejectionReason?.includes('MONONYMOUS') || !detailsData.kyc.nameMatched) && (
+                                  <div className="col-span-2 p-3 bg-amber-50 rounded-xl border border-amber-200 space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-bold text-amber-900">Mononymous / Single-Name KYC Review</span>
+                                      {!showMononymousForm && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setShowMononymousForm(true)}
+                                          className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-lg transition"
+                                        >
+                                          Approve Mononymous KYC
+                                        </button>
+                                      )}
+                                    </div>
+                                    {showMononymousForm && (
+                                      <div className="space-y-2 pt-2 border-t border-amber-200">
+                                        <label className="block text-[11px] font-semibold text-amber-900">
+                                          Administrative Justification Reason (min 10 characters):
+                                        </label>
+                                        <input
+                                          type="text"
+                                          value={mononymousReason}
+                                          onChange={(e) => setMononymousReason(e.target.value)}
+                                          placeholder="e.g. Single legal name verified against government PAN database card."
+                                          className="w-full px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-xs text-slate-800"
+                                        />
+                                        {mononymousError && (
+                                          <p className="text-[11px] text-red-600 font-semibold">{mononymousError}</p>
+                                        )}
+                                        <div className="flex justify-end space-x-2 pt-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => { setShowMononymousForm(false); setMononymousError(null); }}
+                                            className="px-3 py-1 bg-white border border-slate-200 text-slate-700 font-semibold text-xs rounded-lg"
+                                          >
+                                            Cancel
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={handleApproveMononymousKyc}
+                                            disabled={approvingMononymous}
+                                            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow-sm"
+                                          >
+                                            {approvingMononymous ? 'Approving...' : 'Confirm Approval'}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                               </div>

@@ -483,6 +483,8 @@ Requests 100% full available balance redemption. Requires redemption window to b
   {
     "isEnabled": true,
     "profession": "PLUMBER", // Optional: "PLUMBER", "TILE_INSTALLER", or omit for ALL
+    "minimumRedemptionAmount": 500,
+    "maximumRedemptionAmount": 50000, // Range ₹0–₹50,000 (0 disables redemptions; cannot exceed platform ceiling of ₹50,000)
     "startAt": "2026-10-15T04:30:00.000Z",
     "endAt": "2026-10-31T18:29:59.000Z",
     "message": "Diwali Special Redemption Window is Open!"
@@ -497,6 +499,8 @@ Requests 100% full available balance redemption. Requires redemption window to b
       "id": "setting_PLUMBER",
       "isEnabled": true,
       "profession": "PLUMBER",
+      "minimumRedemptionAmount": "500.00",
+      "maximumRedemptionAmount": "50000.00",
       "startAt": "2026-10-15T04:30:00.000Z",
       "endAt": "2026-10-31T18:29:59.000Z",
       "message": "Diwali Special Redemption Window is Open!"

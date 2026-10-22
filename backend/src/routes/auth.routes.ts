@@ -523,15 +523,6 @@ router.post('/logout', loginIpLimiter, async (req: Request, res: Response) => {
       }
     }
 
-    if (!refreshToken && !userId) {
-      return res.status(400).json({
-        success: false,
-        message: 'A valid session token (Authorization header) or refresh token is required for logout.',
-      });
-    }
-
-    await AuthService.logout(refreshToken, userId);
-
     const cookieOpts = {
       path: '/',
       secure: config.isProduction,
@@ -539,8 +530,25 @@ router.post('/logout', loginIpLimiter, async (req: Request, res: Response) => {
     };
     res.clearCookie('admin_access_token', { ...cookieOpts, httpOnly: true });
     res.clearCookie('csrf_token', { ...cookieOpts, httpOnly: false });
+
+    if (!refreshToken && !userId) {
+      return res.json({
+        success: true,
+        message: 'Logged out successfully (session expired or already cleared).',
+      });
+    }
+
+    await AuthService.logout(refreshToken, userId);
+
     res.json({ success: true, message: 'Logged out successfully.' });
   } catch (err: any) {
+    const cookieOpts = {
+      path: '/',
+      secure: config.isProduction,
+      sameSite: (config.isProduction ? 'strict' : 'lax') as 'strict' | 'lax',
+    };
+    res.clearCookie('admin_access_token', { ...cookieOpts, httpOnly: true });
+    res.clearCookie('csrf_token', { ...cookieOpts, httpOnly: false });
     res.status(500).json({ success: false, message: err.message });
   }
 });
@@ -711,7 +719,7 @@ router.post('/admin/otp/verify', adminLoginLimiter, adminAccountLoginLimiter, ot
     const isExplicitMobileClient =
       req.headers['x-client-type'] === 'mobile-admin' || req.body?.clientType === 'mobile-admin';
 
-    if (isExplicitMobileClient) {
+    if (isExplicitMobileClient && !hasBrowserHeaders) {
       return res.json(result);
     }
 

@@ -152,6 +152,13 @@ export class AdminApiClient {
     });
   }
 
+  static verifyMononymousKyc(id: string, data: { reason: string }) {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/verify-mononymous-kyc`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   static getMe() {
     return this.request('/auth/me');
   }
@@ -274,6 +281,7 @@ export class AdminApiClient {
     endAt?: string | null;
     message?: string;
     minimumRedemptionAmount?: number | null;
+    maximumRedemptionAmount?: number | null;
   }) {
     return this.request('/admin/settings/redemption', {
       method: 'PUT',

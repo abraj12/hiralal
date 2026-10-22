@@ -92,7 +92,7 @@ export default function HomeScreen() {
                     <View>
                       <Text style={styles.billInvoiceNumber}>{item.invoiceNumber}</Text>
                       <Text style={styles.billDate}>
-                        ₹{Number(item.billAmount || 0).toLocaleString('en-IN')} • {new Date(item.invoiceDate).toLocaleDateString('en-IN')}
+                        ₹{Number(item.billAmount || 0).toLocaleString('en-IN')} • {new Date(item.invoiceDate).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}
                       </Text>
                     </View>
                   </View>

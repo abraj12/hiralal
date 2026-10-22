@@ -1,13 +1,17 @@
 import { prisma } from '../db';
 import { config } from '../config';
 import { PayoutStatus, Profession } from '@prisma/client';
-import { getIstDate, formatIstIso } from '../utils/timezone.utils';
+import { getIstDate, formatIstIso, getIndiaCalendarToday } from '../utils/timezone.utils';
 import { toPaise, fromPaise } from '../utils/money.utils';
 import { areNamesMatching } from '../utils/name.utils';
+import { NotificationService } from './notification.service';
+
+export const HARD_MAX_REDEMPTION_CEILING = 50000.0; // ₹50,000 immutable platform limit
 
 export interface RedemptionWindowInput {
   isEnabled: boolean;
   minimumRedemptionAmount: unknown;
+  maximumRedemptionAmount?: unknown;
   startAt: Date | null;
   endAt: Date | null;
 }
@@ -17,12 +21,25 @@ export function isRedemptionWindowOpen(
   now: Date = new Date()
 ): boolean {
   const minimum = Number(settings.minimumRedemptionAmount);
+  const configuredMax =
+    settings.maximumRedemptionAmount !== undefined && settings.maximumRedemptionAmount !== null
+      ? Number(settings.maximumRedemptionAmount)
+      : HARD_MAX_REDEMPTION_CEILING;
+
+  // Operating Rule 7/8: ₹0 maximum means redemptions are disabled, never unlimited
+  if (configuredMax <= 0) {
+    return false;
+  }
 
   const validMinimum =
     settings.minimumRedemptionAmount !== null &&
     settings.minimumRedemptionAmount !== undefined &&
     Number.isFinite(minimum) &&
     minimum > 0;
+
+  if (validMinimum && minimum > configuredMax) {
+    return false;
+  }
 
   const validTimestamps =
     settings.startAt instanceof Date &&
@@ -84,6 +101,7 @@ export class PayoutService {
       {
         isEnabled: settings.isEnabled,
         minimumRedemptionAmount: settings.minimumRedemptionAmount,
+        maximumRedemptionAmount: settings.maximumRedemptionAmount,
         startAt: settings.startAt,
         endAt: settings.endAt,
       },
@@ -185,12 +203,20 @@ export class PayoutService {
         ? Number(settings.minimumRedemptionAmount)
         : null;
 
+    const rawMax = settings.maximumRedemptionAmount !== null && settings.maximumRedemptionAmount !== undefined
+      ? Number(settings.maximumRedemptionAmount)
+      : HARD_MAX_REDEMPTION_CEILING;
+    const maxThreshold = Math.min(HARD_MAX_REDEMPTION_CEILING, Math.max(0, rawMax));
+
     const isThresholdConfigured = minThreshold !== null && minThreshold > 0;
     const isThresholdMet = isThresholdConfigured && availableBalance >= minThreshold;
     const hasActivePayout = Boolean(activePayout);
 
-    // Authoritative eligibility requires both configured minimum threshold and active time window, without pending payout
-    const isEligible = isWindowOpen && isThresholdConfigured && isThresholdMet && !hasActivePayout;
+    // If maxThreshold is 0, redemptions are explicitly disabled by administration
+    const isMaxConfigured = maxThreshold > 0;
+
+    // Authoritative eligibility requires configured minimum threshold, non-zero maximum, and active time window, without pending payout
+    const isEligible = isWindowOpen && isThresholdConfigured && isMaxConfigured && isThresholdMet && !hasActivePayout;
     const canRedeem = isEligible && beneficiaryCheck.isValid;
     const canInitiateKyc = isEligible && !beneficiaryCheck.isValid;
 
@@ -201,6 +227,8 @@ export class PayoutService {
       } else {
         reason = 'Rewards redemption window is currently closed by administration.';
       }
+    } else if (!isMaxConfigured) {
+      reason = 'Rewards redemption is currently disabled by administration.';
     } else if (!isThresholdConfigured) {
       reason = 'Rewards redemption minimum threshold is not configured by administration.';
     } else if (hasActivePayout) {
@@ -222,6 +250,8 @@ export class PayoutService {
       isThresholdConfigured,
       isThresholdMet,
       minimumRedemptionAmount: minThreshold,
+      maximumRedemptionAmount: maxThreshold,
+      hardCeiling: HARD_MAX_REDEMPTION_CEILING,
       reason,
       availableBalance,
       verifiedKyc: verifiedKycRecord,
@@ -229,6 +259,7 @@ export class PayoutService {
       windowSettings: {
         ...settings,
         minimumRedemptionAmount: minThreshold,
+        maximumRedemptionAmount: maxThreshold,
       },
     };
   }
@@ -343,8 +374,52 @@ export class PayoutService {
           throw new Error(beneficiaryCheck.reason || 'Beneficiary verification failed.');
         }
 
-        // 100% full balance redemption
-        const payoutAmount = fromPaise(toPaise(currentAvailable));
+        // Operating Rule 6: No NEFT. Supported rails are strictly UPI and verified BANK_ACCOUNT (IMPS).
+        if (verifiedAccount.accountType !== 'UPI' && verifiedAccount.accountType !== 'BANK_ACCOUNT') {
+          throw new Error('Unsupported disbursement rail. Only UPI VPAs and verified Bank Accounts are supported.');
+        }
+
+        // Operating Rule 7: Hard Per-Redemption Ceiling (₹50,000 / 5,000,000 paise)
+        const rawMax = settings.maximumRedemptionAmount !== null && settings.maximumRedemptionAmount !== undefined
+          ? Number(settings.maximumRedemptionAmount)
+          : HARD_MAX_REDEMPTION_CEILING;
+        const effectiveMax = Math.min(HARD_MAX_REDEMPTION_CEILING, Math.max(0, rawMax));
+
+        // ₹0 maximum means redemptions are disabled, never unlimited
+        if (effectiveMax <= 0) {
+          throw new Error('Rewards redemptions are currently disabled by administration.');
+        }
+
+        // 100% full balance redemption capped at effective ceiling
+        const rawAmount = Math.min(currentAvailable, effectiveMax);
+        const payoutAmount = fromPaise(toPaise(rawAmount));
+
+        if (payoutAmount <= 0) {
+          throw new Error('No balance available for redemption.');
+        }
+
+        if (payoutAmount > HARD_MAX_REDEMPTION_CEILING) {
+          throw new Error('Single redemption request cannot exceed the hard platform ceiling of ₹50,000.');
+        }
+
+        // Task 3.8: Concurrency-safe per-user daily payout limit
+        const todayIstString = getIndiaCalendarToday();
+        const startOfTodayIst = new Date(`${todayIstString}T00:00:00+05:30`);
+        const todayPayouts = await tx.payout.aggregate({
+          where: {
+            userId,
+            status: { notIn: ['FAILED', 'REVERSED'] },
+            createdAt: { gte: startOfTodayIst },
+          },
+          _sum: { amount: true },
+        });
+        const dailySum = Number(todayPayouts._sum?.amount || 0);
+        const maxDaily = config.payout?.maxDailyAmount || 50000;
+        if (dailySum + payoutAmount > maxDaily) {
+          throw new Error(
+            `Daily redemption limit of ₹${maxDaily.toLocaleString('en-IN')} exceeded. You have already redeemed ₹${dailySum.toLocaleString('en-IN')} today.`
+          );
+        }
 
         // Move funds from availableBalance to processingAmount atomically
         await tx.$executeRaw`
@@ -420,6 +495,15 @@ export class PayoutService {
         }
       }
       throw err;
+    }
+
+    if (payoutResult && debitedAmount > 0) {
+      NotificationService.dispatchPushForUser(
+        userId,
+        'Redemption Request Submitted',
+        `Your redemption request of ${Number(debitedAmount).toLocaleString('en-IN')} Points has been submitted and is pending admin approval.`,
+        { payoutId: payoutResult.id, amount: debitedAmount }
+      ).catch((err) => console.error('[PAYOUT-SERVICE] Push dispatch failed:', err.message));
     }
 
     return {
@@ -529,6 +613,13 @@ export class PayoutService {
 
       return updated;
     });
+
+    NotificationService.dispatchPushForUser(
+      updatedPayout.userId,
+      'Payout Approved',
+      `Your payout request of ${Number(updatedPayout.amount).toLocaleString('en-IN')} Points has been approved and is being dispatched.`,
+      { payoutId: updatedPayout.id, amount: Number(updatedPayout.amount) }
+    ).catch((err) => console.error('[PAYOUT-SERVICE] Push dispatch failed:', err.message));
 
     // Trigger dispatch worker asynchronously in non-test environment
     if (config.nodeEnv !== 'test') {
@@ -735,7 +826,7 @@ export class PayoutService {
       }
     }
 
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // 1. Lock Wallet FIRST (E-02: global lock ordering hierarchy prevents 40P01 deadlocks)
       const lockedWallet = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
@@ -870,6 +961,15 @@ export class PayoutService {
 
       return updatedPayout;
     });
+
+    NotificationService.dispatchPushForUser(
+      result.userId,
+      'Payout Request Rejected',
+      `Your payout request of ${Number(result.amount).toLocaleString('en-IN')} Points was rejected (${reason.trim()}). The funds have been refunded to your wallet.`,
+      { payoutId: result.id, amount: Number(result.amount), rejectionReason: reason.trim() }
+    ).catch((err) => console.error('[PAYOUT-SERVICE] Push dispatch failed:', err.message));
+
+    return result;
   }
 
   /**
@@ -899,7 +999,7 @@ export class PayoutService {
       throw new Error(`Payout ${payoutId} not found`);
     }
 
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // 1. Lock Wallet FIRST (E-02: lock hierarchy prevents deadlocks)
       const lockedWallet = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
@@ -1003,6 +1103,15 @@ export class PayoutService {
 
       return updatedPayout;
     });
+
+    NotificationService.dispatchPushForUser(
+      result.userId,
+      'Payout Failed & Refunded',
+      `Your payout request of ${Number(result.amount).toLocaleString('en-IN')} Points could not be processed (${reason}). The amount has been refunded back to your wallet.`,
+      { payoutId: result.id, amount: Number(result.amount), failureReason: reason }
+    ).catch((err) => console.error('[PAYOUT-SERVICE] Push dispatch failed:', err.message));
+
+    return result;
   }
 
   /**
@@ -1021,7 +1130,7 @@ export class PayoutService {
       throw new Error(`Payout ${payoutId} not found`);
     }
 
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // 1. Lock Wallet FIRST (E-02)
       const lockedWallet = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
@@ -1159,6 +1268,15 @@ export class PayoutService {
 
       return updatedPayout;
     });
+
+    NotificationService.dispatchPushForUser(
+      result.userId,
+      'Payout Reversed & Credited',
+      `Your payout of ${Number(result.amount).toLocaleString('en-IN')} Points was reversed by the banking network (${reason}). The funds have been restored to your available wallet balance.`,
+      { payoutId: result.id, amount: Number(result.amount), reversalReason: reason }
+    ).catch((err) => console.error('[PAYOUT-SERVICE] Push dispatch failed:', err.message));
+
+    return result;
   }
 
   /**
@@ -1178,7 +1296,7 @@ export class PayoutService {
       throw new Error(`Payout ${payoutId} not found`);
     }
 
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // 1. Lock Wallet FIRST (E-02: global lock ordering hierarchy)
       const lockedWallet = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
@@ -1272,6 +1390,15 @@ export class PayoutService {
 
       return updatedPayout;
     });
+
+    NotificationService.dispatchPushForUser(
+      result.userId,
+      'Reward Disbursement Successful!',
+      `${Number(result.amount).toLocaleString('en-IN')} Points has been credited to your verified payment account.`,
+      { payoutId: result.id, amount: Number(result.amount), razorpayPayoutId }
+    ).catch((err) => console.error('[PAYOUT-SERVICE] Push dispatch failed:', err.message));
+
+    return result;
   }
 
   /**

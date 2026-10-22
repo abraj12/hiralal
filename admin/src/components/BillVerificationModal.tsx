@@ -375,7 +375,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
               </div>
               <div className="text-xs text-slate-500 mt-1">
                 Invoice Date:{' '}
-                {bill.invoiceDate ? new Date(bill.invoiceDate).toLocaleDateString('en-IN') : '—'}
+                {bill.invoiceDate ? new Date(bill.invoiceDate).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : '—'}
               </div>
               {submissionTimestamp && (
                 <div className="text-[11px] text-blue-600 font-medium mt-0.5">

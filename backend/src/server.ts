@@ -6,6 +6,8 @@ import crypto from 'crypto';
 import { config } from './config';
 import { checkDatabaseConnection, checkAdminRoleIntegrity } from './db';
 import { checkRedisConnection } from './redis';
+import { errorHandler } from './middleware/error.middleware';
+import { prisma } from './db';
 
 // Route imports
 import authRoutes from './routes/auth.routes';
@@ -204,42 +206,7 @@ app.use((req: any, res: Response) => {
 });
 
 // Global Error Handler
-app.use((err: any, req: any, res: Response, _next: NextFunction) => {
-  console.error(`[UNHANDLED ERROR] [${req.requestId}]`, err);
-
-  const isMulterError = err.name === 'MulterError';
-  const status = isMulterError ? 400 : (err.status || 500);
-
-  let message = err.message || 'Internal Server Error';
-  if (isMulterError) {
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      message = 'Uploaded file exceeds the maximum allowed size limit of 10MB.';
-    } else if (err.code === 'LIMIT_FILE_COUNT') {
-      message = 'Too many files uploaded. Only 1 invoice document per bill submission is allowed.';
-    } else {
-      message = `File upload rejected: ${err.message}`;
-    }
-  } else if (config.isProduction && status >= 500) {
-    message = `Internal server error. Reference ID: ${req.requestId}`;
-  }
-
-  const code =
-    err.code ||
-    (status === 400
-      ? 'BAD_REQUEST'
-      : status === 401
-      ? 'UNAUTHORIZED'
-      : status === 403
-      ? 'FORBIDDEN'
-      : 'INTERNAL_SERVER_ERROR');
-
-  res.status(status).json({
-    success: false,
-    code,
-    message,
-    requestId: req.requestId,
-  });
-});
+app.use(errorHandler);
 
 /**
  * Boots the server after performing mandatory preflight integrity checks.
@@ -271,6 +238,37 @@ async function startServer(): Promise<any> {
       console.log(`====================================================`);
       resolve(server);
     });
+
+    let isShuttingDown = false;
+    const handleShutdown = async (signal: string) => {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+      console.log(`\n[SHUTDOWN] Received ${signal}. Initiating graceful shutdown...`);
+
+      // 1. Stop accepting new connections
+      server.close(async () => {
+        console.log('[SHUTDOWN] HTTP listener closed. Disconnecting persistent services...');
+        try {
+          await prisma.$disconnect();
+          const { closeRedis } = await import('./redis');
+          await closeRedis();
+          console.log('[SHUTDOWN] Graceful shutdown complete. Exiting cleanly.');
+          process.exit(0);
+        } catch (err: any) {
+          console.error('[SHUTDOWN] Error during graceful shutdown:', err.message);
+          process.exit(1);
+        }
+      });
+
+      // 2. Force close after 10s if in-flight connections fail to drain
+      setTimeout(() => {
+        console.error('[SHUTDOWN] In-flight request drain timed out after 10s. Forcing exit.');
+        process.exit(1);
+      }, 10000).unref();
+    };
+
+    process.once('SIGTERM', () => handleShutdown('SIGTERM'));
+    process.once('SIGINT', () => handleShutdown('SIGINT'));
   });
 }
 

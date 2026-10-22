@@ -211,6 +211,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Additive bill revisions and cancellation fields, partial unique indexes for invoice resubmission, RESTRICT on Wallet.userId foreign key, and totalRedeemed non-negative check."
+    },
+    {
+      "id": "20261022190000_redemption_limits_composite_indexes_audit_immutability",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive maximumRedemptionAmount on RedemptionSettings, composite query performance indexes on WalletTransaction, User, PaymentAccount, and Payout, and PostgreSQL trigger enforcing append-only immutability on AuditLog."
     }
   ]
 }

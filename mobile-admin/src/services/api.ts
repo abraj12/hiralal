@@ -886,6 +886,13 @@ export class MobileApiClient {
     });
   }
 
+  static verifyMononymousKyc(id: string, reason: string) {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/verify-mononymous-kyc`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
   static getGstRules() {
     return this.request('/admin/settings/gst-rules');
   }

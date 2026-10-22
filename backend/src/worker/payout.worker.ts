@@ -460,7 +460,21 @@ export class PayoutWorker {
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s network timeout
 
       const amountInPaise = Number(toPaise(payout.amount));
-      const mode = paymentAccount.accountType === 'UPI' ? 'UPI' : 'IMPS';
+
+      // Operating Rule 7: Hard platform ceiling enforcement (₹50,000 = 5,000,000 paise)
+      if (amountInPaise > 5000000) {
+        throw new Error(`Payout amount exceeds hard platform ceiling of ₹50,000 (${amountInPaise} paise).`);
+      }
+
+      // Operating Rule 6: No NEFT allowed. Strictly UPI or IMPS.
+      let mode: 'UPI' | 'IMPS';
+      if (paymentAccount.accountType === 'UPI') {
+        mode = 'UPI';
+      } else if (paymentAccount.accountType === 'BANK_ACCOUNT') {
+        mode = 'IMPS';
+      } else {
+        throw new Error(`Unsupported payment rail "${paymentAccount.accountType}". Only UPI and IMPS are permitted.`);
+      }
 
       let payoutRes: globalThis.Response;
       try {

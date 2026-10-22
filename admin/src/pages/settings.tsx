@@ -84,6 +84,7 @@ export default function AdminSettingsPage() {
   const [endTime, setEndTime] = useState('');
   const [userMessage, setUserMessage] = useState('Rewards redemption is currently open for verified craftsmen.');
   const [minimumRedemptionAmount, setMinimumRedemptionAmount] = useState('');
+  const [maximumRedemptionAmount, setMaximumRedemptionAmount] = useState('50000');
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -101,6 +102,11 @@ export default function AdminSettingsPage() {
           setMinimumRedemptionAmount(s.minimumRedemptionAmount.toString());
         } else {
           setMinimumRedemptionAmount('');
+        }
+        if (s.maximumRedemptionAmount !== undefined && s.maximumRedemptionAmount !== null) {
+          setMaximumRedemptionAmount(s.maximumRedemptionAmount.toString());
+        } else {
+          setMaximumRedemptionAmount('50000');
         }
 
         if (s.startAt) {
@@ -337,6 +343,17 @@ export default function AdminSettingsPage() {
           throw new Error('Minimum redemption threshold must be a valid positive number (e.g. 500).');
         }
 
+        const parsedMax = maximumRedemptionAmount.trim() ? parseFloat(maximumRedemptionAmount.trim()) : 50000;
+        if (!Number.isFinite(parsedMax) || parsedMax < 0 || parsedMax > 50000) {
+          throw new Error('Maximum redemption cap must be between ₹0 and ₹50,000 (hard platform ceiling).');
+        }
+        if (parsedMin > parsedMax) {
+          throw new Error('Minimum redemption threshold cannot exceed maximum redemption cap.');
+        }
+        if (parsedMax === 0) {
+          throw new Error('A maximum redemption of ₹0 explicitly disables redemptions; window cannot be enabled.');
+        }
+
         await AdminApiClient.updateRedemptionSettings({
           profession: targetProf,
           isEnabled: true,
@@ -344,6 +361,7 @@ export default function AdminSettingsPage() {
           endAt,
           message: userMessage,
           minimumRedemptionAmount: parsedMin,
+          maximumRedemptionAmount: parsedMax,
         });
       } else {
         if (startDate && startTime) {
@@ -353,6 +371,7 @@ export default function AdminSettingsPage() {
           endAt = parseIndiaIsoDateTime(endDate, endTime);
         }
         const parsedMin = minimumRedemptionAmount.trim() ? parseFloat(minimumRedemptionAmount.trim()) : null;
+        const parsedMax = maximumRedemptionAmount.trim() ? parseFloat(maximumRedemptionAmount.trim()) : null;
 
         await AdminApiClient.updateRedemptionSettings({
           profession: targetProf,
@@ -361,6 +380,7 @@ export default function AdminSettingsPage() {
           endAt,
           message: userMessage,
           minimumRedemptionAmount: parsedMin,
+          maximumRedemptionAmount: parsedMax,
         });
       }
 
@@ -943,6 +963,27 @@ export default function AdminSettingsPage() {
                   </div>
                   <span className="text-[10px] text-slate-400 mt-1 block">
                     Workers must have at least this available balance before redemption illuminates
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Maximum Redemption Cap (₹0–₹50,000)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="1"
+                      min="0"
+                      max="50000"
+                      value={maximumRedemptionAmount}
+                      onChange={(e) => setMaximumRedemptionAmount(e.target.value)}
+                      placeholder="e.g. 50000"
+                      className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800"
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Hard immutable ceiling is ₹50,000. Set ₹0 to disable redemptions. Single redemption requests never exceed ₹50,000.
                   </span>
                 </div>
 

@@ -424,6 +424,8 @@ export class MobileApiClient {
           middleName: data.middleName,
           lastName: data.lastName,
           fullName: data.fullName,
+          password: data.password,
+          verificationToken: data.verificationToken,
         });
 
         // Fetch pre-auth nonce (no authentication required)

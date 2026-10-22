@@ -4,6 +4,7 @@ import { RewardService } from './reward.service';
 import { RewardRuleService } from './reward-rule.service';
 import { GstService } from './gst.service';
 import { StorageService } from './storage';
+import { NotificationService } from './notification.service';
 import { BillStatus, Profession } from '@prisma/client';
 import { parseIndiaBusinessDate } from '../utils/timezone.utils';
 
@@ -358,7 +359,7 @@ export class BillService {
       options = optionsArg;
     }
 
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // 1. Fetch and lock bill row
       const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
@@ -600,6 +601,15 @@ export class BillService {
         walletBalance: newBalance,
       };
     });
+
+    NotificationService.dispatchPushForUser(
+      result.bill.userId,
+      'Bill Approved',
+      `Your bill (Invoice #${result.bill.invoiceNumber || result.bill.id.slice(0, 8)}) has been approved! ${Number(result.creditedReward).toLocaleString('en-IN')} Points reward has been credited to your rewards wallet.`,
+      { billId: result.bill.id, invoiceNumber: result.bill.invoiceNumber, rewardCredited: result.creditedReward, walletBalance: result.walletBalance }
+    ).catch((err) => console.error('[BILL-SERVICE] Push notification dispatch failed:', err.message));
+
+    return result;
   }
 
   /**
@@ -610,7 +620,7 @@ export class BillService {
       throw new Error('A valid rejection reason (minimum 3 characters) is required to reject a bill.');
     }
 
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
         FROM "Bill"
@@ -685,6 +695,15 @@ export class BillService {
 
       return updated;
     });
+
+    NotificationService.dispatchPushForUser(
+      result.userId,
+      'Bill Rejected',
+      `Your bill (Invoice #${result.invoiceNumber || result.id.slice(0, 8)}) could not be approved. Reason: ${rejectionReason.trim()}`,
+      { billId: result.id, invoiceNumber: result.invoiceNumber, rejectionReason: rejectionReason.trim() }
+    ).catch((err) => console.error('[BILL-SERVICE] Push notification dispatch failed:', err.message));
+
+    return result;
   }
 
   /**
@@ -695,7 +714,7 @@ export class BillService {
       throw new Error('A cancellation reason of at least 3 characters is required.');
     }
 
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
         FROM "Bill"
@@ -765,5 +784,14 @@ export class BillService {
 
       return updated;
     });
+
+    NotificationService.dispatchPushForUser(
+      result.userId,
+      'Bill Cancelled',
+      `Your bill (Invoice #${result.invoiceNumber || result.id.slice(0, 8)}) was cancelled by administrator. Reason: ${reason.trim()}`,
+      { billId: result.id, invoiceNumber: result.invoiceNumber, cancellationReason: reason.trim() }
+    ).catch((err) => console.error('[BILL-SERVICE] Push notification dispatch failed:', err.message));
+
+    return result;
   }
 }

@@ -100,6 +100,10 @@ export interface AppConfig {
     requireLicensing: boolean;
     enforceActions: boolean;
   };
+  payout: {
+    maxDailyAmount: number;
+    hardMaxCeiling: number;
+  };
   timezone: string;
 }
 
@@ -220,6 +224,7 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     'DATABASE_URL',
     'ENCRYPTION_KEY',
     'FIELD_ENCRYPTION_KEY',
+    'BLIND_INDEX_SECRET',
   ];
 
   const apiOnlyVars = [
@@ -303,6 +308,10 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
 
   if (env.FIELD_ENCRYPTION_KEY && env.FIELD_ENCRYPTION_KEY.length < 32) {
     throw new Error('[FATAL] FIELD_ENCRYPTION_KEY must be at least 32 characters for AES-256 encryption.');
+  }
+
+  if (env.BLIND_INDEX_SECRET && env.BLIND_INDEX_SECRET.length < 32) {
+    throw new Error('[FATAL] BLIND_INDEX_SECRET must be at least 32 characters for HMAC blind indexing.');
   }
 
   // Ensure Redis password in production is at least 24 characters
@@ -836,7 +845,7 @@ export const config: AppConfig = {
     ? process.env.RETAIN_APPROVED_BILLS_FOR_AUDIT !== 'false'
     : process.env.RETAIN_APPROVED_BILLS_FOR_AUDIT === 'true',
   storageHmacSecret: process.env.STORAGE_HMAC_SECRET || '',
-  otpHmacSecret: process.env.OTP_HMAC_SECRET || process.env.ENCRYPTION_KEY || 'hiralal_otp_hmac_secret_32bytes_dev!',
+  otpHmacSecret: process.env.OTP_HMAC_SECRET || (isProduction ? (() => { throw new Error('OTP_HMAC_SECRET must be explicitly configured in production.'); })() : 'hiralal_otp_hmac_secret_32bytes_dev!'),
 
   jwt: {
     accessSecret: process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'dev_access_secret_key_hiralal_2026',
@@ -949,6 +958,11 @@ export const config: AppConfig = {
       ? process.env.PLAY_INTEGRITY_REQUIRE_LICENSING !== 'false'
       : process.env.PLAY_INTEGRITY_REQUIRE_LICENSING === 'true',
     enforceActions: process.env.PLAY_INTEGRITY_ENFORCE_ACTIONS === 'true',
+  },
+
+  payout: {
+    maxDailyAmount: parseInt(process.env.MAX_DAILY_PAYOUT_AMOUNT || '50000', 10) || 50000,
+    hardMaxCeiling: 50000,
   },
 
   timezone: process.env.APP_TIMEZONE || process.env.TZ || 'Asia/Kolkata',

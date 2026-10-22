@@ -31,6 +31,7 @@ import {
   AlertTriangle,
 } from 'lucide-react-native';
 import Header from '../components/Header';
+import RedemptionModal from '../components/RedemptionModal';
 import { useApp } from '../context/AppContext';
 import { MobileApiClient } from '../services/api';
 import { MobileIntegrityService } from '../services/integrity.service';
@@ -50,6 +51,10 @@ export default function ProfileScreen() {
   const [infoModalVisible, setInfoModalVisible] = useState(false);
   const [infoModalTitle, setInfoModalTitle] = useState('');
   const [infoModalContent, setInfoModalContent] = useState('');
+
+  // Proactive Setup Modal State
+  const [setupModalVisible, setSetupModalVisible] = useState(false);
+  const [setupModalStep, setSetupModalStep] = useState<1 | 2>(1);
 
   // Edit Name State
   const [firstName, setFirstName] = useState('');
@@ -232,10 +237,8 @@ export default function ProfileScreen() {
                   `PAN: ${eligibility.verifiedKyc.maskedPan}\nStatus: Verified\nVerified Name: ${eligibility.verifiedKyc.verifiedName || eligibility.verifiedKyc.panName || user?.fullName}`
                 );
               } else {
-                Alert.alert(
-                  'PAN Verification Required',
-                  'To redeem rewards, please complete your PAN verification during payout redemption.'
-                );
+                setSetupModalStep(1);
+                setSetupModalVisible(true);
               }
             }}
           >
@@ -244,13 +247,13 @@ export default function ProfileScreen() {
               <View>
                 <Text style={styles.statusTitle}>PAN Identity KYC</Text>
                 <Text style={styles.statusSub}>
-                  {hasKyc ? eligibility.verifiedKyc.maskedPan : 'Not verified yet'}
+                  {hasKyc ? eligibility.verifiedKyc.maskedPan : 'Tap to verify PAN in advance'}
                 </Text>
               </View>
             </View>
             <View style={hasKyc ? styles.greenBadge : styles.pendingBadge}>
               <Text style={hasKyc ? styles.greenBadgeText : styles.pendingBadgeText}>
-                {hasKyc ? '✓ Verified' : 'Action Required'}
+                {hasKyc ? '✓ Verified' : 'Verify Now'}
               </Text>
             </View>
           </TouchableOpacity>
@@ -265,10 +268,8 @@ export default function ProfileScreen() {
                   `Type: ${eligibility.verifiedAccount.accountType}\nAccount: ${eligibility.verifiedAccount.maskedInfo}\nStatus: Verified`
                 );
               } else {
-                Alert.alert(
-                  'Payment Account Required',
-                  'Add and verify a bank account or UPI ID to receive direct bank payouts.'
-                );
+                setSetupModalStep(2);
+                setSetupModalVisible(true);
               }
             }}
           >
@@ -279,13 +280,13 @@ export default function ProfileScreen() {
                 <Text style={styles.statusSub}>
                   {hasAccount
                     ? eligibility.verifiedAccount.maskedInfo
-                    : 'Add bank account or UPI'}
+                    : 'Tap to link bank account or UPI'}
                 </Text>
               </View>
             </View>
             <View style={hasAccount ? styles.greenBadge : styles.pendingBadge}>
               <Text style={hasAccount ? styles.greenBadgeText : styles.pendingBadgeText}>
-                {hasAccount ? '✓ Verified' : 'Action Required'}
+                {hasAccount ? '✓ Verified' : 'Link Now'}
               </Text>
             </View>
           </TouchableOpacity>
@@ -316,13 +317,11 @@ export default function ProfileScreen() {
               if (hasAccount) {
                 Alert.alert(
                   'Active Disbursement Method',
-                  `Payment Type: ${eligibility.verifiedAccount.accountType}\nDetails: ${eligibility.verifiedAccount.maskedInfo}\nStatus: Active for 100% balance payouts.`
+                  `Payment Type: ${eligibility.verifiedAccount.accountType}\nDetails: ${eligibility.verifiedAccount.maskedInfo}\nStatus: Active for payouts.`
                 );
               } else {
-                Alert.alert(
-                  'Setup Disbursement Account',
-                  'You can add your Bank Account (IFSC) or UPI VPA directly on the Rewards Redemption tab when requesting a payout.'
-                );
+                setSetupModalStep(2);
+                setSetupModalVisible(true);
               }
             }}
           >
@@ -737,6 +736,17 @@ export default function ProfileScreen() {
           </View>
         </View>
       </Modal>
+      {/* MODAL 6: Proactive Verification / Setup */}
+      <RedemptionModal
+        visible={setupModalVisible}
+        onClose={() => setSetupModalVisible(false)}
+        setupOnly={true}
+        initialStep={setupModalStep}
+        onSuccess={() => {
+          fetchEligibility();
+          refreshData();
+        }}
+      />
     </View>
   );
 }

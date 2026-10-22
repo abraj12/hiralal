@@ -127,6 +127,7 @@ model User {
   @@index([profession])
   @@index([role])
   @@index([statutoryRetentionExpiresAt])
+  @@index([deletionScheduledAt, status, legalHold])
 }
 
 model AuthSession {
@@ -189,6 +190,8 @@ model WalletTransaction {
   @@index([userId])
   @@index([createdAt])
   @@index([referenceType, referenceId])
+  @@index([type, createdAt])
+  @@index([userId, type])
 }
 
 model Bill {
@@ -287,6 +290,7 @@ model RedemptionSettings {
   profession              Profession? @unique
   isEnabled               Boolean     @default(false)
   minimumRedemptionAmount Decimal?    @db.Decimal(12, 2)
+  maximumRedemptionAmount Decimal?    @db.Decimal(12, 2)
   startAt                 DateTime?
   endAt                   DateTime?
   message                 String      @default("Rewards redemption is currently unavailable.")
@@ -343,6 +347,7 @@ model PaymentAccount {
   payouts                Payout[]
 
   @@index([userId])
+  @@index([ifscCode])
 }
 
 model Payout {
@@ -379,6 +384,7 @@ model Payout {
   @@index([status])
   @@index([razorpayPayoutId])
   @@index([requiresManualReview])
+  @@index([status, requiresManualReview, updatedAt])
 }
 
 model OutboxEvent {

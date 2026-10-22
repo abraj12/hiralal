@@ -62,6 +62,8 @@ function AdminAppNavigator() {
               }}
             />
           );
+        case 'BILLS':
+          return <BillReviewScreen key={`ops-bills-${refreshKey}`} showStandaloneHeader={false} />;
         case 'USERS':
           return <OpsAdminUsersScreen key={`ops-users-${refreshKey}`} />;
         case 'PAYOUTS':

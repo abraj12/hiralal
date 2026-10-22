@@ -60,7 +60,7 @@ export default function Sidebar({ pendingBillsCount = 0, pendingPayoutsCount = 0
       href: '/bills',
       icon: FileCheck,
       badge: pendingBillsCount > 0 ? pendingBillsCount : null,
-      roles: ['BILL_ADMIN'],
+      roles: ['BILL_ADMIN', 'OPERATIONS_ADMIN'],
     },
     {
       label: 'Reward Analytics',

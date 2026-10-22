@@ -142,6 +142,7 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       PLAY_INTEGRITY_ENFORCE_ACTIONS: 'true',
       // F-05: Dedicated OTP HMAC secret required in production
       OTP_HMAC_SECRET: 'prod_otp_hmac_secret_minimum_32_characters_2026!',
+      BLIND_INDEX_SECRET: 'blind_index_secret_minimum_32_characters_2026_prod!',
     };
 
     it('passes when all production secrets are valid and high-entropy', () => {

@@ -15,7 +15,7 @@ export function calculateBillFinancials(
   const eligibleRewardAmount = Math.max(0, Math.round((grossAmount - gstAmount) * 100) / 100);
 
   const calculatedReward = rewardPercentage !== null
-    ? Math.round(eligibleRewardAmount * (rewardPercentage / 100) * 100) / 100
+    ? Math.floor((eligibleRewardAmount * (rewardPercentage / 100) * 100) + 1e-9) / 100
     : 0.0;
 
   return {

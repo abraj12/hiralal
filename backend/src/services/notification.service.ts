@@ -65,7 +65,7 @@ export class NotificationService {
   /**
    * Helper to dispatch push notifications to all active device tokens of a user.
    */
-  private static async dispatchPushForUser(userId: string, title: string, message: string, metadata?: any) {
+  public static async dispatchPushForUser(userId: string, title: string, message: string, metadata?: any) {
     const tokens = await prisma.pushDeviceToken.findMany({
       where: { userId, isActive: true },
       select: { token: true },

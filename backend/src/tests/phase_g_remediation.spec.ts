@@ -106,6 +106,7 @@ const validProductionEnv: Record<string, string> = {
   PLAY_INTEGRITY_ENFORCE_ACTIONS: 'true',
   // F-05: Dedicated OTP HMAC secret required in production
   OTP_HMAC_SECRET: 'prod_otp_hmac_secret_minimum_32_chars_2026!',
+  BLIND_INDEX_SECRET: 'blind_index_secret_minimum_32_chars_2026_prod!',
 };
 
 async function cleanTestData() {

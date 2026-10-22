@@ -159,7 +159,7 @@ export default function RewardsScreen() {
 
                     <View style={styles.cardFooterRow}>
                       <Text style={styles.cardBillAmount}>
-                        Bill: ₹{Number(item.billAmount || 0).toLocaleString('en-IN')} • {new Date(item.invoiceDate || item.createdAt).toLocaleDateString('en-IN')}
+                        Bill: ₹{Number(item.billAmount || 0).toLocaleString('en-IN')} • {new Date(item.invoiceDate || item.createdAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}
                       </Text>
                       <View style={styles.approvedPill}>
                         <Text style={styles.approvedPillText}>APPROVED</Text>

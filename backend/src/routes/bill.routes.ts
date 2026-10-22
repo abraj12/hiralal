@@ -321,8 +321,11 @@ router.post(
 router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
-    const statusQuery = req.query.status as string;
-    const status = statusQuery && statusQuery !== 'ALL' ? (statusQuery as BillStatus) : undefined;
+    const statusQuery = typeof req.query.status === 'string' ? req.query.status.trim() : undefined;
+    const ALLOWED_BILL_STATUSES: BillStatus[] = ['PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'DUPLICATE', 'CANCELLED'];
+    const status = statusQuery && statusQuery !== 'ALL' && ALLOWED_BILL_STATUSES.includes(statusQuery as BillStatus)
+      ? (statusQuery as BillStatus)
+      : undefined;
     const bills = await BillService.getUserBills(user.id, status);
     res.json({ success: true, bills });
   } catch (err: any) {

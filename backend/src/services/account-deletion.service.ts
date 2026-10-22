@@ -803,8 +803,9 @@ export class AccountDeletionService {
             mobile: string;
             status: string;
             deletionScheduledAt: Date | null;
+            legalHold: boolean;
           }>>`
-            SELECT "id", "mobile", "status", "deletionScheduledAt"
+            SELECT "id", "mobile", "status", "deletionScheduledAt", "legalHold"
             FROM "User"
             WHERE "id" = ${u.id}
             FOR UPDATE
@@ -815,6 +816,28 @@ export class AccountDeletionService {
           }
 
           const lockedUser = lockedUsers[0];
+
+          // Task 3.5: Close TOCTOU race condition on statutory legal holds
+          if (lockedUser.legalHold === true) {
+            console.warn(`[ACCOUNT-DELETION] User ${u.id} is under active statutory legal hold. Aborting scheduled deletion.`);
+            await tx.$executeRaw`
+              UPDATE "AccountDeletionOperation"
+              SET "status" = 'CANCELLED',
+                  "failureReason" = 'Deletion cancelled due to active statutory legal hold placed on user account.',
+                  "leaseOwner" = NULL,
+                  "completedAt" = clock_timestamp() AT TIME ZONE 'UTC',
+                  "updatedAt" = clock_timestamp() AT TIME ZONE 'UTC'
+              WHERE "id" = ${operationId};
+            `;
+            await tx.user.update({
+              where: { id: u.id },
+              data: {
+                deletionRequestedAt: null,
+                deletionScheduledAt: null,
+              },
+            });
+            return;
+          }
 
           // Check if user remains due for deletion according to database time
           const finalEligibility = await tx.$queryRaw<Array<{
@@ -1064,19 +1087,16 @@ export class AccountDeletionService {
             },
           });
 
-          // 6. VULN-DEL-01 & SEC-AUDIT-01: Scrub personal names, IP addresses, user agents, and serialized values in AuditLog for deleted accounts
-          await tx.auditLog.updateMany({
-            where: {
-              OR: [
-                { entityId: u.id },
-                { adminId: u.id },
-              ],
-            },
+          // 6. Task 4.3: Append-only immutable compensating event for deleted account PII redaction
+          await tx.auditLog.create({
             data: {
+              action: 'AUDIT_LOG_PII_REDACTED',
+              entityType: 'User',
+              entityId: u.id,
+              adminId: null,
+              newValue: 'User account anonymized and scheduled for statutory retention. Prior audit history marked redacted.',
               ipAddress: '0.0.0.0',
               userAgent: 'ANONYMIZED',
-              oldValue: null,
-              newValue: null,
             },
           });
 

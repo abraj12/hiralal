@@ -24,9 +24,12 @@ import * as LocalAuthentication from 'expo-local-authentication';
 interface RedemptionModalProps {
   visible: boolean;
   onClose: () => void;
+  setupOnly?: boolean;
+  initialStep?: 1 | 2;
+  onSuccess?: () => void;
 }
 
-export default function RedemptionModal({ visible, onClose }: RedemptionModalProps) {
+export default function RedemptionModal({ visible, onClose, setupOnly = false, initialStep, onSuccess }: RedemptionModalProps) {
   const { user, theme, wallet, refreshData } = useApp();
 
   // Wizard Step: 1 = KYC PAN, 2 = Payment Account, 3 = Review, 4 = Success
@@ -102,8 +105,10 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
           setAccountChoice('NEW');
         }
 
-        // Auto-navigate to first incomplete step
-        if (!hasKyc) {
+        // Auto-navigate to appropriate step
+        if (setupOnly && initialStep) {
+          setStep(initialStep);
+        } else if (!hasKyc) {
           setStep(1);
         } else if (!hasAccount) {
           setStep(2);
@@ -121,7 +126,7 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
     return () => {
       mounted = false;
     };
-  }, [visible, user]);
+  }, [visible, user, setupOnly, initialStep]);
 
   const handleVerifyPan = async () => {
     if (!panNumber || panNumber.trim().length !== 10) {
@@ -162,7 +167,13 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
       );
       setPanVerified(true);
       setMaskedPan(res.kyc?.maskedPan || 'ABCDE••••F');
-      if (paymentVerified) {
+      if (setupOnly) {
+        if (paymentVerified || initialStep === 1) {
+          setStep(4);
+        } else {
+          setStep(2);
+        }
+      } else if (paymentVerified) {
         setStep(3);
       } else {
         setStep(2);
@@ -220,7 +231,11 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
         setPaymentVerified(true);
         setMaskedPayment(res.paymentAccount?.maskedInfo || `${bankName || 'Bank'} ••••••${accountNumber.slice(-4)}`);
       }
-      setStep(3);
+      if (setupOnly) {
+        setStep(4);
+      } else {
+        setStep(3);
+      }
     } catch (e: any) {
       setErrorMsg(e.message || 'Payment account verification failed.');
     } finally {
@@ -290,6 +305,9 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
     setStep(1);
     setErrorMsg(null);
     onClose();
+    if (onSuccess) {
+      onSuccess();
+    }
   };
 
   return (
@@ -299,9 +317,23 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
           {/* Header */}
           <View style={styles.header}>
             <View>
-              <Text style={styles.headerTitle}>Redeem Rewards</Text>
+              <Text style={styles.headerTitle}>
+                {setupOnly
+                  ? step === 1
+                    ? 'Verify Identity (PAN)'
+                    : step === 2
+                    ? 'Disbursement Account'
+                    : 'Account Verification'
+                  : 'Redeem Rewards'}
+              </Text>
               <Text style={styles.headerSubtitle}>
-                {step === 4 ? 'Disbursement Confirmation' : `Step ${step} of 3 • Secure Payout`}
+                {setupOnly
+                  ? step === 4
+                    ? 'Setup Completed'
+                    : `Step ${step} • Secure Verification`
+                  : step === 4
+                  ? 'Disbursement Confirmation'
+                  : `Step ${step} of 3 • Secure Payout`}
               </Text>
             </View>
             <TouchableOpacity onPress={handleResetAndClose} style={styles.closeButton}>
@@ -670,26 +702,34 @@ export default function RedemptionModal({ visible, onClose }: RedemptionModalPro
                   />
 
                   <Text style={styles.successTitle}>
-                    {payoutResult?.status === 'SUCCESS' || payoutResult?.status === 'PROCESSED'
+                    {setupOnly
+                      ? 'Verification Successful!'
+                      : payoutResult?.status === 'SUCCESS' || payoutResult?.status === 'PROCESSED'
                       ? 'Transfer Completed Successfully!'
                       : 'Submitted! Awaiting Admin Approval'}
                   </Text>
-                  <Text style={styles.successAmount}>{amountToRedeem.toLocaleString('en-IN')} Points</Text>
+                  {!setupOnly && (
+                    <Text style={styles.successAmount}>{amountToRedeem.toLocaleString('en-IN')} Points</Text>
+                  )}
                   <Text style={styles.successDesc}>
-                    {payoutResult?.status === 'SUCCESS' || payoutResult?.status === 'PROCESSED'
+                    {setupOnly
+                      ? 'Your verification details have been securely recorded. You will be able to redeem reward payouts immediately upon earning points.'
+                      : payoutResult?.status === 'SUCCESS' || payoutResult?.status === 'PROCESSED'
                       ? `Your rewards payout has been successfully transferred to your verified payment account (${maskedPayment}).`
                       : `Your redemption request has been submitted and is awaiting administrator approval. Funds will be dispatched directly to your verified account (${maskedPayment}) upon approval.`}
                   </Text>
 
-                  <View style={styles.txnBox}>
-                    <Text style={styles.txnLabel}>Payout Reference ID</Text>
-                    <Text style={styles.txnValue}>{payoutResult?.id || transactionId}</Text>
-                    {payoutResult?.razorpayPayoutId && (
-                      <Text style={{ marginTop: 4, fontSize: 11, color: '#64748B', fontWeight: '500' }}>
-                        Gateway Ref: {payoutResult.razorpayPayoutId}
-                      </Text>
-                    )}
-                  </View>
+                  {!setupOnly && (
+                    <View style={styles.txnBox}>
+                      <Text style={styles.txnLabel}>Payout Reference ID</Text>
+                      <Text style={styles.txnValue}>{payoutResult?.id || transactionId}</Text>
+                      {payoutResult?.razorpayPayoutId && (
+                        <Text style={{ marginTop: 4, fontSize: 11, color: '#64748B', fontWeight: '500' }}>
+                          Gateway Ref: {payoutResult.razorpayPayoutId}
+                        </Text>
+                      )}
+                    </View>
+                  )}
 
                   <TouchableOpacity
                     style={[styles.primaryButton, { backgroundColor: theme.primaryColor }]}

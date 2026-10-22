@@ -44,6 +44,11 @@ export default function OpsAdminUsersScreen() {
   const [editReason, setEditReason] = useState('');
   const [savingName, setSavingName] = useState(false);
 
+  // Mononymous KYC Modal
+  const [mononymousModal, setMononymousModal] = useState(false);
+  const [mononymousReason, setMononymousReason] = useState('');
+  const [verifyingMononymous, setVerifyingMononymous] = useState(false);
+
   const fetchUsers = async () => {
     setLoading(true);
     try {
@@ -127,6 +132,34 @@ export default function OpsAdminUsersScreen() {
       Alert.alert('Update Failed', e?.message || 'Could not update name.');
     } finally {
       setSavingName(false);
+    }
+  };
+
+  const handleStartMononymousReview = () => {
+    if (!selectedUser) return;
+    setMononymousReason('');
+    setMononymousModal(true);
+  };
+
+  const handleVerifyMononymous = async () => {
+    if (!selectedUser) return;
+    if (!mononymousReason.trim() || mononymousReason.trim().length < 10) {
+      Alert.alert('Detailed Reason Required', 'A justification of at least 10 characters is required for regulatory compliance.');
+      return;
+    }
+
+    setVerifyingMononymous(true);
+    try {
+      await MobileApiClient.verifyMononymousKyc(selectedUser.id, mononymousReason.trim());
+      Alert.alert('KYC Approved', 'Mononymous KYC manually verified successfully.');
+      setMononymousModal(false);
+      setMononymousReason('');
+      await handleOpenDetails(selectedUser);
+      fetchUsers();
+    } catch (e: any) {
+      Alert.alert('Verification Failed', e?.message || 'Could not verify mononymous KYC.');
+    } finally {
+      setVerifyingMononymous(false);
     }
   };
 
@@ -307,9 +340,12 @@ export default function OpsAdminUsersScreen() {
                     {selectedUser?.kycRecords && selectedUser.kycRecords.length > 0 ? (
                       selectedUser.kycRecords.map((kyc: any) => (
                         <View key={kyc.id} style={styles.kycRow}>
-                          <View>
+                          <View style={{ flex: 1 }}>
                             <Text style={styles.kycPanNumber}>{kyc.maskedPan || kyc.panNumber || 'PAN Record'}</Text>
                             <Text style={styles.kycName}>{kyc.verifiedName || kyc.panName || kyc.panHolderName || selectedUser.fullName}</Text>
+                            {kyc.rejectionReason ? (
+                              <Text style={{ fontSize: 11, color: '#DC2626', marginTop: 2 }}>{kyc.rejectionReason}</Text>
+                            ) : null}
                           </View>
                           <View style={[styles.statusChip, { backgroundColor: kyc.panStatus === 'VERIFIED' ? '#F0FDF4' : '#FEF3C7' }]}>
                             <Text style={[styles.statusChipText, { color: kyc.panStatus === 'VERIFIED' ? '#16A34A' : '#D97706' }]}>
@@ -320,6 +356,17 @@ export default function OpsAdminUsersScreen() {
                       ))
                     ) : (
                       <Text style={styles.emptySectionText}>No PAN identity documents uploaded.</Text>
+                    )}
+
+                    {(selectedUser?.kycRecords?.some((k: any) => k.panStatus === 'PENDING') || selectedUser?.panStatus === 'PENDING') && (
+                      <TouchableOpacity
+                        style={styles.mononymousApproveBtn}
+                        onPress={handleStartMononymousReview}
+                        activeOpacity={0.8}
+                      >
+                        <ShieldCheck size={16} color="#16A34A" />
+                        <Text style={styles.mononymousApproveBtnText}>Approve Mononymous / Manual KYC</Text>
+                      </TouchableOpacity>
                     )}
                   </View>
 
@@ -406,6 +453,57 @@ export default function OpsAdminUsersScreen() {
                     <ActivityIndicator size="small" color="#FFFFFF" />
                   ) : (
                     <Text style={styles.saveBtnText}>Update Name</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 6. Mononymous KYC Modal */}
+      <Modal visible={mononymousModal} animationType="fade" transparent>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalContainer, { maxHeight: 420 }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Approve Mononymous KYC</Text>
+                <Text style={styles.modalSub}>Manual verification for single-token names</Text>
+              </View>
+              <TouchableOpacity onPress={() => setMononymousModal(false)}>
+                <X size={20} color="#475569" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ padding: 16 }}>
+              <Text style={styles.inputLabel}>Auditable Justification Reason *</Text>
+              <TextInput
+                style={[styles.modalTextInput, { height: 80, textAlignVertical: 'top', paddingTop: 8 }]}
+                value={mononymousReason}
+                onChangeText={setMononymousReason}
+                placeholder="Document verification evidence (min 10 chars, e.g. Single name verified against Aadhaar card & passbook)..."
+                placeholderTextColor="#94A3B8"
+                multiline
+                numberOfLines={3}
+              />
+
+              <View style={styles.modalActionsRow}>
+                <TouchableOpacity
+                  style={styles.cancelBtn}
+                  onPress={() => setMononymousModal(false)}
+                >
+                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.saveBtn, { backgroundColor: '#16A34A' }]}
+                  onPress={handleVerifyMononymous}
+                  disabled={verifyingMononymous}
+                >
+                  {verifyingMononymous ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.saveBtnText}>Approve KYC</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -715,6 +813,23 @@ const styles = StyleSheet.create({
   statusChipText: {
     fontSize: 10,
     fontWeight: '800',
+  },
+  mononymousApproveBtn: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 8,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 10,
+  },
+  mononymousApproveBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#15803D',
   },
   editNameBtn: {
     backgroundColor: '#EFF6FF',
