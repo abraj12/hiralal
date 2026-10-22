@@ -541,6 +541,77 @@ router.patch('/users/:id/status', requireOperationsAdmin, adminActionLimiter, as
 });
 
 /**
+ * 3b.2. Admin Privileged Legal Hold Management (Audited)
+ * PATCH /users/:id/legal-hold
+ * Restricted to OPERATIONS_ADMIN only.
+ */
+router.patch('/users/:id/legal-hold', requireOperationsAdmin, adminActionLimiter, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const admin = req.user!;
+    const { legalHold, reason } = req.body;
+
+    if (typeof legalHold !== 'boolean') {
+      return res.status(400).json({ success: false, message: 'legalHold must be a boolean (true or false).' });
+    }
+
+    if (!reason || typeof reason !== 'string' || reason.trim().length < 10) {
+      return res.status(400).json({ success: false, message: 'Detailed justification reason is required for legal hold management (minimum 10 characters).' });
+    }
+
+    const targetUser = await prisma.user.findUnique({
+      where: { id: req.params.id },
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    if (targetUser.role !== 'USER') {
+      return res.status(403).json({ success: false, message: 'Administrator accounts cannot be placed under user legal hold.' });
+    }
+
+    const updatedUser = await prisma.$transaction(async (tx) => {
+      const u = await tx.user.update({
+        where: { id: targetUser.id },
+        data: {
+          legalHold,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          adminId: admin.id,
+          action: legalHold ? 'LEGAL_HOLD_APPLIED' : 'LEGAL_HOLD_RELEASED',
+          entityType: 'User',
+          entityId: targetUser.id,
+          ipAddress: req.ip || req.socket.remoteAddress,
+          userAgent: req.headers['user-agent'],
+          newValue: JSON.stringify({
+            userId: targetUser.id,
+            previousLegalHold: targetUser.legalHold,
+            newLegalHold: legalHold,
+            reason: reason.trim(),
+          }),
+        },
+      });
+
+      return u;
+    });
+
+    res.json({
+      success: true,
+      message: `Legal hold successfully ${legalHold ? 'applied to' : 'released for'} user.`,
+      user: {
+        id: updatedUser.id,
+        legalHold: updatedUser.legalHold,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: 'Failed to update user legal hold status. Please retry.' });
+  }
+});
+
+/**
  * 3c. Admin Privileged Mononymous KYC Manual Verification (Unresolved Finding A)
  */
 router.post('/users/:id/verify-mononymous-kyc', requireOperationsAdmin, adminActionLimiter, async (req: AuthenticatedRequest, res: Response) => {
@@ -621,7 +692,7 @@ router.post('/users/:id/verify-mononymous-kyc', requireOperationsAdmin, adminAct
 router.get('/bills', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const rawStatus = typeof req.query.status === 'string' ? req.query.status.trim().toUpperCase() : undefined;
-    const ALLOWED_BILL_STATUSES: string[] = ['SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'CANCELLED'];
+    const ALLOWED_BILL_STATUSES: string[] = ['PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'CANCELLED', 'DUPLICATE'];
     const status = rawStatus && rawStatus !== 'ALL' && ALLOWED_BILL_STATUSES.includes(rawStatus)
       ? (rawStatus as BillStatus)
       : 'ALL';
@@ -814,6 +885,14 @@ router.post('/bills/:id/verify', requireAdmin, adminActionLimiter, async (req: A
         success: false,
         code: 'SECONDARY_APPROVAL_REQUIRED',
         message: 'This invoice revision exceeds upward deviation thresholds and requires secondary approval by an Operations Administrator.',
+      });
+    }
+
+    if (!targetBill.requiresSecondaryApproval && admin.role !== 'BILL_ADMIN' && action === 'APPROVE') {
+      return res.status(403).json({
+        success: false,
+        code: 'BILL_ADMIN_APPROVAL_REQUIRED',
+        message: 'Standard invoice approvals must be performed by a Bill Review Administrator.',
       });
     }
 
@@ -1113,17 +1192,36 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
       }
     }
 
-    if (minRedemption !== undefined && minRedemption !== null && maxRedemption !== undefined && maxRedemption !== null) {
-      if (minRedemption > maxRedemption) {
-        return res.status(400).json({
-          success: false,
-          message: 'Minimum redemption threshold cannot exceed maximum redemption amount.',
-        });
-      }
+    const prof: Profession | null = profession && profession !== 'ALL' ? (profession as Profession) : null;
+    const settingId = prof ? `setting_${prof}` : 'default';
+
+    const prevSettings = await prisma.redemptionSettings.findUnique({
+      where: prof ? { profession: prof } : { id: settingId },
+    });
+
+    const effectiveMin =
+      minRedemption !== undefined
+        ? minRedemption
+        : (prevSettings?.minimumRedemptionAmount ? Number(prevSettings.minimumRedemptionAmount) : null);
+
+    const effectiveMax =
+      maxRedemption !== undefined
+        ? maxRedemption
+        : (prevSettings?.maximumRedemptionAmount !== null && prevSettings?.maximumRedemptionAmount !== undefined
+            ? Number(prevSettings.maximumRedemptionAmount)
+            : 50000);
+
+    if (effectiveMin !== null && effectiveMax !== null && effectiveMin > effectiveMax) {
+      return res.status(400).json({
+        success: false,
+        message: `Minimum redemption threshold (₹${effectiveMin}) cannot exceed maximum redemption amount (₹${effectiveMax}).`,
+      });
     }
 
+    const effectiveEnabled = isEnabled !== undefined ? Boolean(isEnabled) : Boolean(prevSettings?.isEnabled);
+
     // Operating Rule 7/8: ₹0 maximum means redemptions are disabled, never unlimited
-    if (maxRedemption === 0 && Boolean(isEnabled)) {
+    if (effectiveMax === 0 && effectiveEnabled) {
       return res.status(400).json({
         success: false,
         message: 'A maximum redemption of ₹0 explicitly disables redemptions; cannot enable window.',
@@ -1132,26 +1230,29 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
 
     // Server-side validation for enabling redemption:
     // Requires positive finite minimum amount, valid start timestamp, valid end timestamp, and endAt > startAt
-    if (Boolean(isEnabled)) {
-      if (!startDate) {
+    if (effectiveEnabled) {
+      const effectiveStart = startDate !== undefined && startDate !== null ? startDate : prevSettings?.startAt;
+      const effectiveEnd = endDate !== undefined && endDate !== null ? endDate : prevSettings?.endAt;
+
+      if (!effectiveStart) {
         return res.status(400).json({
           success: false,
           message: 'An opening timestamp (startAt) is required to enable redemption.',
         });
       }
-      if (!endDate) {
+      if (!effectiveEnd) {
         return res.status(400).json({
           success: false,
           message: 'A closing timestamp (endAt) is required to enable redemption.',
         });
       }
-      if (endDate.getTime() <= startDate.getTime()) {
+      if (new Date(effectiveEnd).getTime() <= new Date(effectiveStart).getTime()) {
         return res.status(400).json({
           success: false,
           message: 'End date and time must be after the start date.',
         });
       }
-      if (minRedemption === null || minRedemption === undefined || minRedemption <= 0) {
+      if (effectiveMin === null || effectiveMin === undefined || effectiveMin <= 0) {
         return res.status(400).json({
           success: false,
           message: 'A positive minimum redemption threshold is required to enable redemption.',
@@ -1164,23 +1265,16 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
       });
     }
 
-    const prof: Profession | null = profession && profession !== 'ALL' ? (profession as Profession) : null;
-    const settingId = prof ? `setting_${prof}` : 'default';
-
     const updated = await prisma.$transaction(async (tx) => {
-      const prevSettings = await tx.redemptionSettings.findUnique({
-        where: prof ? { profession: prof } : { id: settingId },
-      });
-
       const saved = await tx.redemptionSettings.upsert({
         where: prof ? { profession: prof } : { id: settingId },
         update: {
-          isEnabled: Boolean(isEnabled),
-          startAt: startDate,
-          endAt: endDate,
+          ...(isEnabled !== undefined && { isEnabled: Boolean(isEnabled) }),
+          ...(startAt !== undefined && { startAt: startDate }),
+          ...(endAt !== undefined && { endAt: endDate }),
           ...(minRedemption !== undefined && { minimumRedemptionAmount: minRedemption }),
           ...(maxRedemption !== undefined && { maximumRedemptionAmount: maxRedemption }),
-          message: message || (Boolean(isEnabled) ? 'Rewards redemption window is open for verified craftsmen.' : 'Rewards redemption is currently unavailable.'),
+          message: message !== undefined ? message : (effectiveEnabled ? 'Rewards redemption window is open for verified craftsmen.' : 'Rewards redemption is currently unavailable.'),
           updatedByAdminId: admin.id,
         },
         create: {

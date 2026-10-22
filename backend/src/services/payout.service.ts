@@ -215,8 +215,24 @@ export class PayoutService {
     // If maxThreshold is 0, redemptions are explicitly disabled by administration
     const isMaxConfigured = maxThreshold > 0;
 
-    // Authoritative eligibility requires configured minimum threshold, non-zero maximum, and active time window, without pending payout
-    const isEligible = isWindowOpen && isThresholdConfigured && isMaxConfigured && isThresholdMet && !hasActivePayout;
+    // Daily Payout Limit Evaluation (Asia/Kolkata IST)
+    const todayIstString = getIndiaCalendarToday();
+    const startOfTodayIst = new Date(`${todayIstString}T00:00:00+05:30`);
+    const todayPayouts = await prisma.payout.aggregate({
+      where: {
+        userId,
+        status: { notIn: ['FAILED', 'REVERSED'] },
+        createdAt: { gte: startOfTodayIst },
+      },
+      _sum: { amount: true },
+    });
+    const dailyRedeemedToday = Number(todayPayouts._sum?.amount || 0);
+    const maxDailyLimit = config.payout?.maxDailyAmount || 50000;
+    const dailyRemaining = Math.max(0, maxDailyLimit - dailyRedeemedToday);
+    const isDailyLimitExhausted = dailyRemaining <= 0 || (minThreshold !== null && minThreshold > 0 && dailyRemaining < minThreshold);
+
+    // Authoritative eligibility requires configured minimum threshold, non-zero maximum, active time window, available daily quota, without pending payout
+    const isEligible = isWindowOpen && isThresholdConfigured && isMaxConfigured && isThresholdMet && !hasActivePayout && !isDailyLimitExhausted;
     const canRedeem = isEligible && beneficiaryCheck.isValid;
     const canInitiateKyc = isEligible && !beneficiaryCheck.isValid;
 
@@ -237,6 +253,8 @@ export class PayoutService {
       reason = 'No balance available for redemption.';
     } else if (!isThresholdMet) {
       reason = `Available balance (${Number(availableBalance).toLocaleString('en-IN')} Points) is below the minimum redemption threshold of ${Number(minThreshold).toLocaleString('en-IN')} Points.`;
+    } else if (isDailyLimitExhausted) {
+      reason = `Daily redemption limit of ₹${maxDailyLimit.toLocaleString('en-IN')} reached for today. You have already redeemed ₹${dailyRedeemedToday.toLocaleString('en-IN')} today. Redemptions reopen tomorrow at 00:00 IST.`;
     } else if (!beneficiaryCheck.isValid) {
       reason = beneficiaryCheck.reason || 'Please complete PAN and payment account verification to proceed.';
     }
@@ -252,6 +270,9 @@ export class PayoutService {
       minimumRedemptionAmount: minThreshold,
       maximumRedemptionAmount: maxThreshold,
       hardCeiling: HARD_MAX_REDEMPTION_CEILING,
+      dailyLimit: maxDailyLimit,
+      dailyRedeemedToday,
+      dailyRemaining,
       reason,
       availableBalance,
       verifiedKyc: verifiedKycRecord,
@@ -1407,5 +1428,115 @@ export class PayoutService {
   static async triggerPayoutDispatch(payoutId: string) {
     const { PayoutWorker } = await import('../worker/payout.worker');
     await PayoutWorker.processPayout(payoutId);
+  }
+
+  /**
+   * CRITICAL FINANCIAL DRIFT RECONCILIATION:
+   * Called when RazorpayX reports payout.processed on a payout that was locally marked FAILED or REVERSED.
+   * Funds were disbursed by the gateway after local points refund.
+   * Claws back funds from availableBalance (down to 0, satisfying chk_wallet_available_balance_non_negative)
+   * and records any unrecovered shortfall as deficitLiability on the Wallet.
+   * Suspends the user account and invalidates active sessions for operator audit.
+   */
+  static async handleFinancialDriftClawback(
+    payoutId: string,
+    razorpayPayoutId: string,
+    gatewayReason?: string
+  ) {
+    const payoutRecord = await prisma.payout.findUnique({
+      where: { id: payoutId },
+      include: { wallet: true },
+    });
+
+    if (!payoutRecord) {
+      throw new Error(`Payout ${payoutId} not found during financial drift clawback`);
+    }
+
+    return await prisma.$transaction(async (tx) => {
+      // 1. Lock wallet FIRST (E-02: lock ordering hierarchy)
+      const walletRows = await tx.$queryRaw<Array<{
+        id: string;
+        availableBalance: any;
+        totalRedeemed: any;
+        deficitLiability: any;
+      }>>`
+        SELECT "id", "availableBalance", "totalRedeemed", "deficitLiability"
+        FROM "Wallet"
+        WHERE "id" = ${payoutRecord.walletId}
+        FOR UPDATE
+      `;
+      const currentWallet = walletRows[0];
+      const payoutAmt = Number(payoutRecord.amount);
+      const currentAvail = Number(currentWallet.availableBalance);
+      const currentDeficit = Number(currentWallet.deficitLiability || 0);
+
+      let newAvail = 0;
+      let newDeficit = currentDeficit;
+      let recoveredAmt = 0;
+      let unrecoveredAmt = 0;
+
+      if (currentAvail >= payoutAmt) {
+        newAvail = currentAvail - payoutAmt;
+        recoveredAmt = payoutAmt;
+      } else {
+        newAvail = 0;
+        recoveredAmt = currentAvail;
+        unrecoveredAmt = payoutAmt - currentAvail;
+        newDeficit = currentDeficit + unrecoveredAmt;
+        console.warn(
+          `[FINANCIAL RISK] Delayed disbursement created deficit liability in wallet ${payoutRecord.walletId}: shortfall of ₹${unrecoveredAmt} added to deficitLiability (total deficit: ₹${newDeficit})`
+        );
+      }
+
+      const newTotalRedeemed = Number(currentWallet.totalRedeemed) + payoutAmt;
+
+      // 2. Update wallet
+      await tx.wallet.update({
+        where: { id: payoutRecord.walletId },
+        data: {
+          availableBalance: newAvail,
+          totalRedeemed: newTotalRedeemed,
+          deficitLiability: newDeficit,
+          version: { increment: 1 },
+        },
+      });
+
+      // 3. Suspend user account and invalidate active sessions
+      await tx.user.update({
+        where: { id: payoutRecord.userId },
+        data: { status: 'SUSPENDED' },
+      });
+      await tx.authSession.deleteMany({
+        where: { userId: payoutRecord.userId },
+      });
+
+      // 4. Mark payout as SUCCESS with manual review flag
+      const updatedPayout = await tx.payout.update({
+        where: { id: payoutRecord.id },
+        data: {
+          status: 'SUCCESS',
+          razorpayPayoutId: razorpayPayoutId || payoutRecord.razorpayPayoutId,
+          completedAt: new Date(),
+          requiresManualReview: true,
+          manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}. Total redeemed incremented by ₹${payoutAmt}, balance adjusted from ₹${currentAvail} to ₹${newAvail}${unrecoveredAmt > 0 ? ` (₹${unrecoveredAmt} recorded to deficitLiability, total deficit: ₹${newDeficit})` : ''}. Account suspended for operator audit.${gatewayReason ? ` Gateway info: ${gatewayReason}` : ''}`,
+        },
+      });
+
+      // 5. Double-entry ledger adjustment entry
+      await tx.walletTransaction.create({
+        data: {
+          walletId: payoutRecord.walletId,
+          userId: payoutRecord.userId,
+          amount: payoutAmt,
+          type: 'PAYOUT_DEBIT',
+          balanceAfter: newAvail,
+          referenceType: 'PAYOUT',
+          referenceId: payoutRecord.id,
+          description: `CRITICAL DRIFT CLAWBACK: Gateway confirmed payout ${razorpayPayoutId} after local status ${payoutRecord.status}. Recovered ₹${recoveredAmt} from balance, ₹${unrecoveredAmt} recorded to deficit liability.`,
+        },
+      });
+
+      return updatedPayout;
+    });
   }
 }

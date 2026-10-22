@@ -219,6 +219,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Additive maximumRedemptionAmount on RedemptionSettings, composite query performance indexes on WalletTransaction, User, PaymentAccount, and Payout, and PostgreSQL trigger enforcing append-only immutability on AuditLog."
+    },
+    {
+      "id": "20261022210000_wallet_deficit_liability_and_restore_check_constraint",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive deficitLiability column on Wallet to model delayed gateway reconciliation liabilities, and restores check constraint chk_wallet_available_balance_non_negative."
     }
   ]
 }

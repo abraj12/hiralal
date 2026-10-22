@@ -985,6 +985,7 @@ export class MobileApiClient {
     endAt?: string | null;
     message?: string;
     minimumRedemptionAmount?: number | null;
+    maximumRedemptionAmount?: number | null;
   }) {
     return this.request('/admin/settings/redemption', {
       method: 'PUT',

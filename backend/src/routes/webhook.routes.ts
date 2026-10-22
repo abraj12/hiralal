@@ -233,86 +233,26 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
         if (eventType === 'payout.processed') {
           if (payoutRecord.status === 'FAILED' || payoutRecord.status === 'REVERSED') {
             console.error(`🚨 [WEBHOOK-CRITICAL] Financial drift detected! Payout ${payoutRecord.id} was ${payoutRecord.status} but gateway reported payout.processed!`);
-            await prisma.$transaction(async (tx) => {
-              // 1. Lock wallet and get current balances
-              const walletRows = await tx.$queryRaw<Array<{
-                id: string;
-                availableBalance: any;
-                totalRedeemed: any;
-              }>>`
-                SELECT "id", "availableBalance", "totalRedeemed"
-                FROM "Wallet"
-                WHERE "id" = ${payoutRecord.walletId}
-                FOR UPDATE
-              `;
-              const currentWallet = walletRows[0];
-              const payoutAmt = Number(payoutRecord.amount);
-              const currentAvail = Number(currentWallet.availableBalance);
-              // Deduct payout amount from available balance without artificial clamping to maintain ledger parity
-              const newAvail = currentAvail - payoutAmt;
-              const newTotalRedeemed = Number(currentWallet.totalRedeemed) + payoutAmt;
-
-              if (newAvail < 0) {
-                console.warn(`[FINANCIAL RISK] Delayed disbursement created deficit in wallet ${payoutRecord.walletId}: balance is now ₹${newAvail}`);
-              }
-
-              await tx.wallet.update({
-                where: { id: payoutRecord.walletId },
-                data: {
-                  availableBalance: newAvail,
-                  totalRedeemed: newTotalRedeemed,
-                  version: { increment: 1 },
-                },
-              });
-              // 2. Suspend user account and invalidate active sessions
-              await tx.user.update({
-                where: { id: payoutRecord.userId },
-                data: { status: 'SUSPENDED' },
-              });
-              await tx.authSession.deleteMany({
-                where: { userId: payoutRecord.userId },
-              });
-              // 3. Mark payout for urgent manual review and update status to SUCCESS
-              await tx.payout.update({
-                where: { id: payoutRecord.id },
-                data: {
-                  status: 'SUCCESS',
-                  requiresManualReview: true,
-                  manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}. Total redeemed incremented by ₹${payoutAmt}, balance adjusted from ₹${currentAvail} to ₹${newAvail}${newAvail < 0 ? ' (DEFICIT/LIABILITY CREATED)' : ''}. Account suspended for operator audit.`,
-                },
-              });
-              // 4. Double-entry ledger adjustment entry
-              await tx.walletTransaction.create({
-                data: {
-                  walletId: payoutRecord.walletId,
-                  userId: payoutRecord.userId,
-                  amount: payoutAmt,
-                  type: 'PAYOUT_DEBIT',
-                  balanceAfter: newAvail,
-                  referenceType: 'PAYOUT',
-                  referenceId: payoutRecord.id,
-                  description: `Clawback debit of ₹${payoutAmt} due to delayed gateway disbursement (${razorpayPayoutId}) after local status was ${payoutRecord.status}.`,
-                },
-              });
-              // 5. Audit log
-              await tx.auditLog.create({
-                data: {
-                  action: 'CRITICAL_FINANCIAL_DRIFT',
-                  entityType: 'Payout',
-                  entityId: payoutRecord.id,
-                  newValue: JSON.stringify({
-                    payoutId: payoutRecord.id,
-                    eventId,
-                    razorpayPayoutId,
-                    localStatus: payoutRecord.status,
-                    payoutAmount: payoutAmt,
-                    balanceBefore: currentAvail,
-                    balanceAfter: newAvail,
-                    actionTaken: 'USER_SUSPENDED_WALLET_FROZEN',
-                    warning: 'Wallet balance was refunded and gateway disbursed funds concurrently. Account suspended and wallet frozen pending operator clawback.',
-                  }),
-                },
-              });
+            await PayoutService.handleFinancialDriftClawback(
+              payoutRecord.id,
+              razorpayPayoutId,
+              `Webhook event ${eventId}`
+            );
+            await prisma.auditLog.create({
+              data: {
+                action: 'CRITICAL_FINANCIAL_DRIFT',
+                entityType: 'Payout',
+                entityId: payoutRecord.id,
+                newValue: JSON.stringify({
+                  payoutId: payoutRecord.id,
+                  eventId,
+                  razorpayPayoutId,
+                  localStatus: payoutRecord.status,
+                  payoutAmount: Number(payoutRecord.amount),
+                  actionTaken: 'USER_SUSPENDED_WALLET_FROZEN_DEFICIT_LIABILITY_RECORDED',
+                  warning: 'Wallet balance was refunded and gateway disbursed funds concurrently. Account suspended and wallet deficit liability recorded pending operator audit.',
+                }),
+              },
             });
           } else {
             await PayoutService.finalizeSuccess(payoutRecord.id, razorpayPayoutId);
