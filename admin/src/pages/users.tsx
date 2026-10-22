@@ -64,7 +64,11 @@ export default function AdminUsersPage() {
   };
 
   useEffect(() => {
-    fetchUsers();
+    // ADV-13: Debounce keystroke search by 300ms to eliminate server query storms
+    const timer = setTimeout(() => {
+      fetchUsers();
+    }, 300);
+    return () => clearTimeout(timer);
   }, [professionFilter, statusFilter, search]);
 
   const handleOpenDetails = async (userId: string) => {

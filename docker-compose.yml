@@ -55,7 +55,7 @@ services:
     restart: unless-stopped
     user: "999:999"
     command: >-
-      sh -c 'printf "requirepass %s\n" "$$REDIS_PASSWORD" > /tmp/redis.conf && exec redis-server /tmp/redis.conf --appendonly yes --maxmemory 200mb --maxmemory-policy noeviction'
+      sh -c 'printf "requirepass %s\n" "$$REDIS_PASSWORD" > /tmp/redis.conf && exec redis-server /tmp/redis.conf --appendonly yes --maxmemory 200mb --maxmemory-policy volatile-lru'
     deploy:
       resources:
         limits:
@@ -113,7 +113,7 @@ services:
       PORT: 5000
       NODE_ENV: production
       NODE_OPTIONS: '--max-old-space-size=512'
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public&connection_limit=30&pool_timeout=10
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
@@ -203,7 +203,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public&connection_limit=30&pool_timeout=10
     networks:
       - hiralal_backend_net
     logging:
@@ -241,7 +241,7 @@ services:
       SERVICE_ROLE: worker
       NODE_ENV: production
       NODE_OPTIONS: '--max-old-space-size=384'
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hiralal_rewards}?schema=public&connection_limit=30&pool_timeout=10
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}

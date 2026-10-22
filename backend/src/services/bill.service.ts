@@ -22,6 +22,7 @@ export class BillService {
     fileName: string;
     mimeType: string;
     remarks?: string;
+    parentBillId?: string;
   }) {
     const user = await prisma.user.findUnique({
       where: { id: data.userId },
@@ -45,32 +46,73 @@ export class BillService {
 
     const cleanInvoiceNumber = data.invoiceNumber.trim().toUpperCase();
 
-    // 1. Check duplicate invoice number for this user
-    const existingInvoice = await prisma.bill.findUnique({
-      where: {
-        user_invoice_unique: {
+    // ADV-06: Advisory transaction locking and atomic revision resolution
+    const billResolution = await prisma.$transaction(async (tx) => {
+      // Serialize operations on this invoice number to eliminate TOCTOU race conditions
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:' + cleanInvoiceNumber}))`;
+
+      // 1. Check existing submissions by this user for this invoice number
+      const existingUserBills = await tx.bill.findMany({
+        where: {
           userId: data.userId,
           invoiceNumber: cleanInvoiceNumber,
         },
-      },
+        orderBy: { revisionNumber: 'desc' },
+      });
+
+      const approvedBill = existingUserBills.find((b) => b.status === 'APPROVED');
+      if (approvedBill) {
+        throw new Error(`Invoice #${cleanInvoiceNumber} has already been approved.`);
+      }
+
+      const activeBill = existingUserBills.find((b) => b.status === 'PENDING' || b.status === 'UNDER_REVIEW');
+      if (activeBill) {
+        throw new Error(`Invoice #${cleanInvoiceNumber} is currently undergoing review.`);
+      }
+
+      let revisionNumber = 1;
+      let parentBillId: string | null = null;
+      let requiresSecondaryApproval = false;
+      let initialStatus: BillStatus = 'PENDING';
+
+      if (existingUserBills.length > 0) {
+        // Must be a revision of a previously rejected bill
+        const latestRejected = existingUserBills[0];
+        if (latestRejected.status !== 'REJECTED') {
+          throw new Error(`Invoice #${cleanInvoiceNumber} cannot be resubmitted while in status ${latestRejected.status}.`);
+        }
+        parentBillId = data.parentBillId || latestRejected.id;
+        revisionNumber = latestRejected.revisionNumber + 1;
+
+        // Check upward deviation against the rejected parent bill (ADV-02: strict 25% threshold)
+        const parentGross = Number(latestRejected.grossBillAmount || latestRejected.billAmount);
+        const newGross = data.billAmount;
+        if (parentGross > 0 && newGross > parentGross * 1.25) {
+          requiresSecondaryApproval = true;
+          initialStatus = 'UNDER_REVIEW';
+        }
+      }
+
+      // 1b. Check cross-user duplicate invoice number across the platform (case-insensitive)
+      const existingGlobalApproved = await tx.bill.findFirst({
+        where: {
+          invoiceNumber: { equals: cleanInvoiceNumber, mode: 'insensitive' },
+          status: 'APPROVED',
+          userId: { not: data.userId },
+        },
+      });
+
+      if (existingGlobalApproved) {
+        throw new Error(`Invoice #${cleanInvoiceNumber} has already been submitted and approved on the platform.`);
+      }
+
+      return {
+        parentBillId,
+        revisionNumber,
+        requiresSecondaryApproval,
+        initialStatus,
+      };
     });
-
-    if (existingInvoice) {
-      throw new Error(`Invoice #${cleanInvoiceNumber} has already been submitted by your account.`);
-    }
-
-    // 1b. Check cross-user duplicate invoice number across the platform (SEC-MED-01 / SEC-LOW-01: case-insensitive)
-    const existingGlobalBill = await prisma.bill.findFirst({
-      where: {
-        invoiceNumber: { equals: cleanInvoiceNumber, mode: 'insensitive' },
-        status: { in: ['PENDING', 'UNDER_REVIEW', 'APPROVED'] },
-        userId: { not: data.userId },
-      },
-    });
-
-    if (existingGlobalBill) {
-      throw new Error(`Invoice #${cleanInvoiceNumber} has already been submitted to the platform.`);
-    }
 
     // 2. Validate file, magic-bytes, and calculate SHA-256 hash BEFORE storage write
     const { fileHash, normalizedMime } = StorageService.validateAndHashFile({
@@ -117,7 +159,10 @@ export class BillService {
           gstIncluded: false,
           calculatedReward: 0.0, // Pending verification
           rewardPercentage: null, // Hidden from unapproved bills
-          status: 'PENDING',
+          status: billResolution.initialStatus,
+          parentBillId: billResolution.parentBillId,
+          revisionNumber: billResolution.revisionNumber,
+          requiresSecondaryApproval: billResolution.requiresSecondaryApproval,
           fileUrl: uploadResult.fileUrl,
           fileKey: uploadResult.fileKey,
           fileHash,
@@ -287,7 +332,6 @@ export class BillService {
       gstRate?: number;
       gstRuleId?: string;
       gstOverrideReason?: string;
-      correctedGrossAmount?: number;
       isOperationsAdminApproved?: boolean;
     }
   ) {
@@ -298,7 +342,6 @@ export class BillService {
       gstRate?: number;
       gstRuleId?: string;
       gstOverrideReason?: string;
-      correctedGrossAmount?: number;
       isOperationsAdminApproved?: boolean;
     } | undefined;
 
@@ -390,23 +433,16 @@ export class BillService {
       const rulePercentage = Number(rule.rewardPercentage);
 
       // 3. Resolve GST calculation
-      let gross = Number(bill.grossBillAmount || bill.billAmount);
-      let grossWasCorrected = false;
-      if (options?.correctedGrossAmount && Number(options.correctedGrossAmount) > 0) {
-        const corrected = Number(options.correctedGrossAmount);
-        const original = Number(bill.grossBillAmount || bill.billAmount);
-        // VULN-MED-17: Tightened upward deviation cap: Math.max(original * 1.25, original + 2000)
-        // prevents arbitrary inflation on small invoices by individual bill reviewers without dual authorization.
-        const absoluteMaxCeiling = 500000;
-        const maxAllowedDeviation = original > 0 ? Math.max(original * 1.25, original + 2000) : 5000;
-        if (corrected > absoluteMaxCeiling) {
-          throw new Error(`Corrected gross amount ₹${corrected} exceeds the maximum allowable threshold of ₹${absoluteMaxCeiling}.`);
-        }
-        if (original > 0 && corrected > maxAllowedDeviation && !options?.isOperationsAdminApproved) {
-          throw new Error(`Corrected gross amount ₹${corrected} exceeds the maximum allowable single-reviewer deviation (submitted: ₹${original}, allowed max: ₹${maxAllowedDeviation}). Secondary operations approval required.`);
-        }
-        gross = corrected;
-        grossWasCorrected = true;
+      // HIGHEST-PRIORITY BUSINESS RULE: Bill Admin must NEVER edit a submitted invoice.
+      // Gross amount is strictly immutable and derived from the submitter's original submission.
+      const gross = Number(bill.grossBillAmount || bill.billAmount);
+
+      // ADV-02 / Secondary review rule: If bill requires secondary approval (>25% upward revision),
+      // only OPERATIONS_ADMIN can approve it.
+      if (bill.requiresSecondaryApproval && !options?.isOperationsAdminApproved) {
+        throw new Error(
+          'This invoice revision exceeds upward deviation thresholds and requires secondary approval by an Operations Administrator.'
+        );
       }
 
       const isGstIncluded = options?.gstIncluded === true;
@@ -505,10 +541,10 @@ export class BillService {
           gstRuleId: selectedGstRuleId,
           gstOverrideReason: options?.gstOverrideReason || null,
           verifiedByAdminId: adminId,
+          secondaryApprovedByAdminId: options?.isOperationsAdminApproved ? adminId : bill.secondaryApprovedByAdminId,
+          secondaryApprovedAt: options?.isOperationsAdminApproved ? new Date() : bill.secondaryApprovedAt,
           rejectionReason: null,
-          remarks: grossWasCorrected
-            ? `${bill.remarks || ''} [Verified Gross corrected by admin from ₹${Number(bill.grossBillAmount || bill.billAmount)} to ₹${gross}]`.trim()
-            : bill.remarks,
+          remarks: bill.remarks,
         },
       });
 
@@ -641,6 +677,86 @@ export class BillService {
             rejectionReason: rejectionReason.trim(),
           },
           dedupeKey: `bill_rejected_${bill.id}`,
+        },
+      });
+
+      return updated;
+    });
+  }
+
+  /**
+   * Cancels a submitted or under-review bill (invalid or fraudulent submission) with mandatory reason.
+   */
+  static async cancelBill(billId: string, adminId: string, reason: string) {
+    if (!reason || !reason.trim() || reason.trim().length < 3) {
+      throw new Error('A cancellation reason of at least 3 characters is required.');
+    }
+
+    return await prisma.$transaction(async (tx) => {
+      const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "Bill"
+        WHERE "id" = ${billId}
+        FOR UPDATE
+      `;
+
+      if (!lockedRows || lockedRows.length === 0) {
+        throw new Error('Bill not found.');
+      }
+
+      const bill = await tx.bill.findUnique({
+        where: { id: billId },
+        include: { user: true },
+      });
+
+      if (!bill) throw new Error('Bill not found.');
+      if (bill.status === 'APPROVED') {
+        throw new Error('Approved bills cannot be cancelled.');
+      }
+      if (bill.status === 'CANCELLED') {
+        throw new Error('This bill has already been cancelled.');
+      }
+      if (bill.status !== 'PENDING' && bill.status !== 'UNDER_REVIEW') {
+        throw new Error(`Bills with status ${bill.status} cannot be cancelled.`);
+      }
+
+      const updated = await tx.bill.update({
+        where: { id: billId },
+        data: {
+          status: 'CANCELLED',
+          cancellationReason: reason.trim(),
+          cancelledByAdminId: adminId,
+          cancelledAt: new Date(),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          adminId,
+          action: 'BILL_CANCELLED',
+          entityType: 'Bill',
+          entityId: bill.id,
+          newValue: JSON.stringify({
+            invoiceNumber: bill.invoiceNumber,
+            billAmount: Number(bill.billAmount),
+            reason: reason.trim(),
+          }),
+        },
+      });
+
+      // User In-App Notification
+      await tx.notification.create({
+        data: {
+          userId: bill.userId,
+          title: 'Bill Cancelled',
+          message: `Your bill (Invoice #${bill.invoiceNumber || bill.id.slice(0, 8)}) was cancelled by administrator. Reason: ${reason.trim()}`,
+          type: 'BILL_REJECTED',
+          metadata: {
+            billId: bill.id,
+            invoiceNumber: bill.invoiceNumber,
+            cancellationReason: reason.trim(),
+          },
+          dedupeKey: `bill_cancelled_${bill.id}`,
         },
       });
 

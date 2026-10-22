@@ -183,8 +183,8 @@ router.post(
 
     if (req.file) {
       if ((req.file as any).path) {
-        fileBuffer = fs.readFileSync((req.file as any).path);
-        try { fs.unlinkSync((req.file as any).path); } catch (_) {}
+        fileBuffer = await fs.promises.readFile((req.file as any).path);
+        try { await fs.promises.unlink((req.file as any).path); } catch (_) {}
       } else {
         fileBuffer = req.file.buffer;
       }
@@ -225,6 +225,7 @@ router.post(
       fileName,
       mimeType,
       remarks: remarks?.trim() || undefined,
+      parentBillId: req.body.parentBillId ? String(req.body.parentBillId).trim() : undefined,
     });
 
     res.status(201).json({
@@ -236,13 +237,23 @@ router.post(
         invoiceDate: bill.invoiceDate,
         billAmount: Number(bill.billAmount),
         status: bill.status,
+        revisionNumber: bill.revisionNumber,
+        parentBillId: bill.parentBillId,
+        requiresSecondaryApproval: bill.requiresSecondaryApproval,
         calculatedReward: null,
-        message: 'Awaiting administrator verification.',
+        message: bill.requiresSecondaryApproval
+          ? 'Awaiting Operations Administrator secondary verification.'
+          : 'Awaiting administrator verification.',
       },
     });
   } catch (err: any) {
     cleanupUploadedFile(req);
-    res.status(400).json({ success: false, message: err.message });
+    const sanitizedMsg = (err?.message || '').includes('Unique constraint failed')
+      ? 'This invoice record already exists.'
+      : (err?.message || '').includes('Foreign key constraint failed')
+      ? 'Invalid reference provided.'
+      : err?.message || 'Invoice submission failed.';
+    res.status(400).json({ success: false, message: sanitizedMsg });
   }
 });
 

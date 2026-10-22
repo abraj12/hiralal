@@ -169,16 +169,43 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
       }
 
       if (!payoutEntity.currency || typeof payoutEntity.currency !== 'string' || payoutEntity.currency !== 'INR') {
-        throw new Error(`[WEBHOOK] Invalid or missing currency in webhook payload: expected INR, received ${payoutEntity.currency}`);
+        await prisma.webhookEvent.update({
+          where: { provider_event_unique: { provider: 'RAZORPAYX', eventId } },
+          data: {
+            isProcessed: true,
+            lastError: `FATAL_CURRENCY_MISMATCH: ${payoutEntity.currency}`,
+            processingStartedAt: null,
+          },
+        });
+        res.status(200).json({ status: 'rejected_unrecoverable', reason: 'currency_mismatch' });
+        return;
       }
 
       if (payoutEntity.amount === undefined || payoutEntity.amount === null || isNaN(Number(payoutEntity.amount))) {
-        throw new Error('[WEBHOOK] Missing or invalid amount in webhook payload');
+        await prisma.webhookEvent.update({
+          where: { provider_event_unique: { provider: 'RAZORPAYX', eventId } },
+          data: {
+            isProcessed: true,
+            lastError: 'FATAL_INVALID_AMOUNT',
+            processingStartedAt: null,
+          },
+        });
+        res.status(200).json({ status: 'rejected_unrecoverable', reason: 'invalid_amount' });
+        return;
       }
 
       const expectedPaise = Number(toPaise(payoutRecord.amount));
       if (Number(payoutEntity.amount) !== expectedPaise) {
-        throw new Error(`[WEBHOOK] Amount mismatch in webhook payload: expected ${expectedPaise} paise, received ${payoutEntity.amount} paise`);
+        await prisma.webhookEvent.update({
+          where: { provider_event_unique: { provider: 'RAZORPAYX', eventId } },
+          data: {
+            isProcessed: true,
+            lastError: `FATAL_AMOUNT_MISMATCH: expected ${expectedPaise}, received ${payoutEntity.amount}`,
+            processingStartedAt: null,
+          },
+        });
+        res.status(200).json({ status: 'rejected_unrecoverable', reason: 'amount_mismatch' });
+        return;
       }
 
       try {
@@ -186,11 +213,31 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
           if (payoutRecord.status === 'FAILED' || payoutRecord.status === 'REVERSED') {
             console.error(`🚨 [WEBHOOK-CRITICAL] Financial drift detected! Payout ${payoutRecord.id} was ${payoutRecord.status} but gateway reported payout.processed!`);
             await prisma.$transaction(async (tx) => {
-              // 1. Lock wallet and freeze available balance to 0 to prevent double-spending
-              await tx.$queryRaw`SELECT "id" FROM "Wallet" WHERE "id" = ${payoutRecord.walletId} FOR UPDATE`;
+              // 1. Lock wallet and get current balances
+              const walletRows = await tx.$queryRaw<Array<{
+                id: string;
+                availableBalance: any;
+                totalRedeemed: any;
+              }>>`
+                SELECT "id", "availableBalance", "totalRedeemed"
+                FROM "Wallet"
+                WHERE "id" = ${payoutRecord.walletId}
+                FOR UPDATE
+              `;
+              const currentWallet = walletRows[0];
+              const payoutAmt = Number(payoutRecord.amount);
+              const currentAvail = Number(currentWallet.availableBalance);
+              // Deduct payout amount from available balance (flooring at 0)
+              const newAvail = Math.max(0, currentAvail - payoutAmt);
+              const newTotalRedeemed = Number(currentWallet.totalRedeemed) + payoutAmt;
+
               await tx.wallet.update({
                 where: { id: payoutRecord.walletId },
-                data: { availableBalance: 0, version: { increment: 1 } },
+                data: {
+                  availableBalance: newAvail,
+                  totalRedeemed: newTotalRedeemed,
+                  version: { increment: 1 },
+                },
               });
               // 2. Suspend user account and invalidate active sessions
               await tx.user.update({
@@ -200,12 +247,13 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
               await tx.authSession.deleteMany({
                 where: { userId: payoutRecord.userId },
               });
-              // 3. Mark payout for urgent manual review
+              // 3. Mark payout for urgent manual review and update status to SUCCESS
               await tx.payout.update({
                 where: { id: payoutRecord.id },
                 data: {
+                  status: 'SUCCESS',
                   requiresManualReview: true,
-                  manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}. Account suspended and wallet frozen. Immediate operator audit and balance clawback required.`,
+                  manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}. Total redeemed incremented by ₹${payoutAmt}, balance adjusted from ₹${currentAvail} to ₹${newAvail}. Account suspended for operator audit.`,
                 },
               });
               // 4. Double-entry ledger adjustment entry
@@ -213,12 +261,12 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
                 data: {
                   walletId: payoutRecord.walletId,
                   userId: payoutRecord.userId,
-                  amount: 0,
-                  type: 'MANUAL_ADJUSTMENT',
-                  balanceAfter: 0,
+                  amount: payoutAmt,
+                  type: 'PAYOUT_DEBIT',
+                  balanceAfter: newAvail,
                   referenceType: 'PAYOUT',
                   referenceId: payoutRecord.id,
-                  description: `Wallet balance frozen to 0 due to CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}.`,
+                  description: `Clawback debit of ₹${payoutAmt} due to delayed gateway disbursement (${razorpayPayoutId}) after local status was ${payoutRecord.status}.`,
                 },
               });
               // 5. Audit log
@@ -232,6 +280,9 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
                     eventId,
                     razorpayPayoutId,
                     localStatus: payoutRecord.status,
+                    payoutAmount: payoutAmt,
+                    balanceBefore: currentAvail,
+                    balanceAfter: newAvail,
                     actionTaken: 'USER_SUSPENDED_WALLET_FROZEN',
                     warning: 'Wallet balance was refunded and gateway disbursed funds concurrently. Account suspended and wallet frozen pending operator clawback.',
                   }),

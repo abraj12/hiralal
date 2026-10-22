@@ -165,14 +165,14 @@ export class AdminApiClient {
 
   static verifyBill(
     id: string,
-    actionOrOptions: 'APPROVE' | 'REJECT' | {
-      action: 'APPROVE' | 'REJECT';
+    actionOrOptions: 'APPROVE' | 'REJECT' | 'CANCEL' | {
+      action: 'APPROVE' | 'REJECT' | 'CANCEL';
       rejectionReason?: string;
+      cancellationReason?: string;
       gstIncluded?: boolean;
       gstRate?: number;
       gstRuleId?: string;
       gstOverrideReason?: string;
-      correctedGrossAmount?: number;
     },
     legacyRejectionReason?: string
   ) {

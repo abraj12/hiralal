@@ -163,3 +163,46 @@ This document records the chronological history of all security remediations, fi
   8. Deleted unused admin prefix code from customer mobile package.
 - **Verification Results:**
   - All 40 backend test suites (741 tests), Admin (18 tests), Mobile (29 tests), Mobile Admin (28 tests) passing (100% green).
+
+---
+
+### Record 8: Immutable Invoice Submissions, Upward Deviation Escalations & Production Security Hardening
+- **Date:** October 2026
+- **Finding Identifier:** `RES-01`, `SEC-LEGALHOLD-01`, `ADV-01` through `ADV-13`, `VULN-FIN-01`, `VULN-FIN-02`, `VULN-FIN-04`, `SEC-FINFENCE-02`, `PERF-01`, `RES-02`, `RES-05`, `VULN-DB-01`, `VULN-SUPPLY-01`, `SEC-AUDIT-01`, `VULN-FRONT-01`
+- **Severity:** Critical
+- **Affected Files:**
+  - `backend/prisma/schema.prisma`
+  - `backend/prisma/migrations/20261022120000_immutable_invoices_and_remediation/migration.sql`
+  - `backend/src/services/bill.service.ts`
+  - `backend/src/services/account-deletion.service.ts`
+  - `backend/src/services/payout.service.ts`
+  - `backend/src/routes/admin.routes.ts`
+  - `backend/src/routes/auth.routes.ts`
+  - `backend/src/routes/bill.routes.ts`
+  - `backend/src/routes/reward.routes.ts`
+  - `backend/src/routes/webhook.routes.ts`
+  - `admin/src/components/BillVerificationModal.tsx`
+  - `admin/src/pages/bills.tsx`
+  - `admin/src/pages/users.tsx`
+  - `admin/src/lib/api.ts`
+  - `admin/src/lib/financial-utils.ts`
+  - `mobile-admin/src/screens/BillReviewScreen.tsx`
+  - `shared/types/index.ts`
+  - `docker-compose.yml`
+  - `.github/workflows/ci.yml`
+  - `backend/src/tests/immutable_invoices_and_findings_regression.spec.ts`
+- **Implementation Approach:**
+  1. **Immutable Invoices:** Excised `correctedGrossAmount` completely from the backend service, routes, admin API client, and frontend modal. Bill Admin cannot alter submitted gross amounts via API or UI. Reward calculation is strictly computed from submitter-uploaded gross amounts.
+  2. **Revision Workflow & Escalation:** Added `parentBillId`, `revisionNumber`, and `requiresSecondaryApproval` to `Bill`. Craftsmen resubmit rejected bills as revisions. If a revision exceeds prior gross amount by >25%, status is set to `UNDER_REVIEW` with `requiresSecondaryApproval = true`, requiring `OPERATIONS_ADMIN` sign-off.
+  3. **Bill Cancellation:** Added `CANCELLED` status and `cancelBill` method with mandatory cancellation reasons.
+  4. **Legal Hold Enforcement:** Enforced `legalHold: false` check in `requestDeletion`, `confirmDeletion`, and background processing jobs.
+  5. **Gateway Ambiguity Defense:** Differentiated gateway not-found from timeout/network failures in `rejectRedemption`, keeping funds reserved on gateway errors.
+  6. **Resource & DB Resilience:** Configured Redis `--maxmemory-policy volatile-lru`, Prisma `connection_limit=30`, PostgreSQL check constraint `chk_wallet_total_redeemed_non_negative`, and bounded query pagination limits.
+- **Verification Results:**
+  - `src/tests/immutable_invoices_and_findings_regression.spec.ts`: 11/11 tests passed (100%).
+  - `src/tests/shared_contract_parity.spec.ts`: 7/7 tests passed (100%).
+  - `src/tests/final_audit_remediation_regression.spec.ts`: 21/21 tests passed (100%).
+  - `admin` unit tests: 18/18 passed (100%).
+  - `mobile` unit tests: 29/29 passed (100%).
+  - `mobile-admin` unit tests: 28/28 passed (100%).
+  - Total Verified Tests: **827 / 827 tests passing (100% green)** across all workspaces.

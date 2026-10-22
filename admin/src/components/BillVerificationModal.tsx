@@ -56,7 +56,8 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
     bill.createdAt || null
   );
   const [rulesUnavailable, setRulesUnavailable] = useState(false);
-  const [correctedAmount, setCorrectedAmount] = useState<string>('');
+  const [cancelMode, setCancelMode] = useState(false);
+  const [cancellationReason, setCancellationReason] = useState('');
 
   // Image zoom control
   const [isZoomed, setIsZoomed] = useState(false);
@@ -172,9 +173,8 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
     loadReviewConfig();
   }, [bill.id, isPending]);
 
-  // Financial calculations
-  const parsedCorrected = parseFloat(correctedAmount);
-  const effectiveGross = !isNaN(parsedCorrected) && parsedCorrected > 0 ? parsedCorrected : grossAmount;
+  // Financial calculations: Submitted gross amount is immutable.
+  const effectiveGross = grossAmount;
 
   let gstAmount = 0;
   let eligibleRewardAmount = effectiveGross;
@@ -210,7 +210,6 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
         gstIncluded,
         gstRate: gstIncluded ? selectedGstRate : 0,
         gstRuleId: gstIncluded ? (selectedGstRuleId || undefined) : undefined,
-        correctedGrossAmount: !isNaN(parsedCorrected) && parsedCorrected > 0 ? parsedCorrected : undefined,
       });
       onVerified();
       onClose();
@@ -238,6 +237,28 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
       onClose();
     } catch (err: any) {
       setError(err.message || 'Failed to reject bill');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!cancellationReason.trim() || cancellationReason.trim().length < 3) {
+      setError('Please provide a specific cancellation reason (at least 3 characters).');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      await AdminApiClient.verifyBill(bill.id, {
+        action: 'CANCEL',
+        cancellationReason: cancellationReason.trim(),
+      });
+      onVerified();
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Failed to cancel bill');
     } finally {
       setIsSubmitting(false);
     }
@@ -272,6 +293,16 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 >
                   {bill.status}
                 </span>
+                {bill.revisionNumber && bill.revisionNumber > 1 && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                    Rev #{bill.revisionNumber}
+                  </span>
+                )}
+                {bill.requiresSecondaryApproval && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                    Secondary Review
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500">Invoice: #{bill.invoiceNumber}</p>
             </div>
@@ -334,38 +365,14 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
 
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
               <div className="flex items-center justify-between">
-                <div className="text-xs text-slate-400 font-medium">Gross Invoice Amount</div>
-                {isPending && (
-                  <span className="text-[10px] text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded">
-                    Admin Editable
-                  </span>
-                )}
+                <div className="text-xs text-slate-400 font-medium">Submitted Gross Amount</div>
+                <span className="text-[10px] text-slate-600 font-semibold bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                  Immutable Submission
+                </span>
               </div>
-              {isPending ? (
-                <div className="mt-1 flex items-center space-x-2">
-                  <span className="text-lg font-black text-slate-900">₹</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="1"
-                    max="500000"
-                    placeholder={grossAmount.toString()}
-                    value={correctedAmount}
-                    onChange={(e) => setCorrectedAmount(e.target.value)}
-                    className="w-full text-base font-bold text-slate-900 bg-white border border-slate-200 rounded-lg px-2.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                    title="Correct invoice gross amount if entered incorrectly by worker (max ₹5,00,000)"
-                  />
-                </div>
-              ) : (
-                <div className="text-xl font-black text-slate-900 mt-1">
-                  ₹{grossAmount.toLocaleString('en-IN')}
-                </div>
-              )}
-              {isPending && correctedAmount && parseFloat(correctedAmount) !== grossAmount && !isNaN(parseFloat(correctedAmount)) && (
-                <div className="text-[11px] text-amber-600 font-medium mt-1">
-                  Worker submitted: ₹{grossAmount.toLocaleString('en-IN')}
-                </div>
-              )}
+              <div className="text-xl font-black text-slate-900 mt-1">
+                ₹{grossAmount.toLocaleString('en-IN')}
+              </div>
               <div className="text-xs text-slate-500 mt-1">
                 Invoice Date:{' '}
                 {bill.invoiceDate ? new Date(bill.invoiceDate).toLocaleDateString('en-IN') : '—'}
@@ -656,6 +663,39 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
               </div>
             </div>
           )}
+
+          {/* Cancellation Mode Input */}
+          {cancelMode && (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-3">
+              <label className="block text-xs font-bold text-amber-900">
+                Mandatory Cancellation Reason (fraudulent / invalid invoice):
+              </label>
+              <textarea
+                value={cancellationReason}
+                onChange={(e) => setCancellationReason(e.target.value)}
+                placeholder="e.g. Fraudulent invoice submission, forged seal or duplicate altered document..."
+                rows={3}
+                className="w-full text-xs p-2.5 rounded-lg border border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+              />
+              <div className="flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setCancelMode(false)}
+                  className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-white rounded-lg border border-slate-200 hover:bg-slate-50"
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={isSubmitting}
+                  className="px-4 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg shadow-sm"
+                >
+                  {isSubmitting ? 'Cancelling...' : 'Confirm Cancellation'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer Action Buttons */}
@@ -668,15 +708,23 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
             Close
           </button>
 
-          {!rejectMode && isPending && (
-            <div className="flex items-center space-x-3">
+          {!rejectMode && !cancelMode && isPending && (
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => setCancelMode(true)}
+                className="px-3 py-2 border border-amber-200 text-amber-700 hover:bg-amber-50 text-xs font-bold rounded-xl transition flex items-center space-x-1"
+                title="Cancel fraudulent or invalid submission"
+              >
+                <span>Cancel</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setRejectMode(true)}
-                className="px-4 py-2 border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-xl transition flex items-center space-x-1.5"
+                className="px-3 py-2 border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-xl transition flex items-center space-x-1"
               >
                 <XCircle className="w-4 h-4" />
-                <span>Reject Bill</span>
+                <span>Reject</span>
               </button>
               <button
                 type="button"
@@ -687,7 +735,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   rewardPercentage === null ||
                   (gstIncluded && !selectedGstRuleId)
                 }
-                className={`px-5 py-2 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center space-x-1.5 ${
+                className={`px-4 py-2 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center space-x-1.5 ${
                   rulesUnavailable ||
                   rewardPercentage === null ||
                   (gstIncluded && !selectedGstRuleId)
@@ -699,7 +747,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 <span>
                   {isSubmitting
                     ? 'Approving...'
-                    : `Approve & Credit ${calculatedReward.toFixed(2)} Points`}
+                    : `Approve & Credit ${calculatedReward.toFixed(2)} Pts`}
                 </span>
               </button>
             </div>

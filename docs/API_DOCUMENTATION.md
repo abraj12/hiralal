@@ -175,7 +175,8 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
   - `invoiceNumber`: `"INV-2026-9901"`
   - `invoiceDate`: `"2026-10-10"` (YYYY-MM-DD)
   - `billAmount`: `10000.00`
-  - `invoiceFile`: `[Binary PDF / JPEG / PNG up to 10MB]`
+  - `invoiceFile`: `[Binary PDF / JPEG / PNG up to 15MB]`
+  - `parentBillId`: `"parent-bill-uuid"` (Optional: when resubmitting a rejected invoice as a linked revision)
   - `remarks`: `"CPVC fittings and pipes"` (Optional)
 - **Response (201)**:
   ```json
@@ -187,10 +188,15 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
       "invoiceNumber": "INV-2026-9901",
       "invoiceDate": "2026-10-10T00:00:00.000Z",
       "billAmount": 10000,
+      "grossBillAmount": 10000,
+      "revisionNumber": 1,
+      "parentBillId": null,
+      "requiresSecondaryApproval": false,
       "status": "PENDING"
     }
   }
   ```
+  *(Note: If a revision exceeds the prior submitted amount by >25%, `requiresSecondaryApproval` is flagged `true` and `status` is set to `UNDER_REVIEW`, requiring Operations Admin review).*
 
 #### 2.2 List User Bills
 - **Method**: `GET`
@@ -211,10 +217,13 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
   }
   ```
 
-#### 2.4 Verify Bill (Bill Admin Only)
+#### 2.4 Verify, Reject, or Cancel Bill (Bill Admin & Operations Admin)
 - **Method**: `POST`
 - **Path**: `/admin/bills/:id/verify`
 - **Headers**: `Authorization: Bearer <ADMIN_TOKEN>`
+- **Immutable Invoice Invariant**: Submitted gross invoice amounts are strictly immutable across all administrators. Supplying `correctedGrossAmount` or any amount-overwriting parameter is strictly rejected with HTTP 400 `IMMUTABLE_INVOICE_VIOLATION`.
+- **Secondary Approval Invariant**: Invoices with `requiresSecondaryApproval: true` (>25% upward revision deviation) strictly require `OPERATIONS_ADMIN` authentication to approve. Attempts by `BILL_ADMIN` return HTTP 403 `SECONDARY_APPROVAL_REQUIRED`.
+
 - **Approve with Configured GST Rule**:
   ```json
   {
@@ -232,11 +241,18 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
     "gstIncluded": false
   }
   ```
-- **Reject Bill**:
+- **Reject Bill (Return for Correction)**:
   ```json
   {
     "action": "REJECT",
     "rejectionReason": "Invoice image blurred; invoice number unreadable"
+  }
+  ```
+- **Cancel Bill (Administrative Void)**:
+  ```json
+  {
+    "action": "CANCEL",
+    "cancellationReason": "Customer duplicate order cancelled by distributor"
   }
   ```
 - **Response (200)**:
@@ -250,7 +266,8 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
       "calculatedReward": 42.37,
       "eligibleRewardAmount": 8474.58,
       "gstAmount": 1525.42,
-      "rewardRateSnapshot": 0.5
+      "rewardRateSnapshot": 0.5,
+      "revisionNumber": 1
     }
   }
   ```

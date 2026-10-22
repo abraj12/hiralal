@@ -236,6 +236,9 @@ export class AuthService {
 
     // 2. Reject arbitrary words or unrecognized prefixes without role enumeration
     if (/[a-zA-Z]/.test(rawIdentifier)) {
+      // ADV-04: Execute constant-time dummy hash comparison to eliminate prefix timing oracle
+      const DUMMY_HASH = '$2a$12$jHE.gfGaFakB2NGhVAW/sOFtME3Z60H5Npbm8HoygCnjfg35SS4Zi';
+      await bcrypt.compare(password, DUMMY_HASH);
       throw new Error('Invalid login credentials. Please check your details and try again.');
     }
 

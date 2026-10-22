@@ -12,13 +12,17 @@ router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res
       where: { userId: user.id },
     });
 
-    const userBills = await prisma.bill.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: 'desc' },
-    });
+    const [billsApprovedCount, billsPendingCount, totalBillsCount] = await Promise.all([
+      prisma.bill.count({ where: { userId: user.id, status: 'APPROVED' } }),
+      prisma.bill.count({ where: { userId: user.id, status: { in: ['PENDING', 'UNDER_REVIEW'] } } }),
+      prisma.bill.count({ where: { userId: user.id } }),
+    ]);
 
-    const approvedBills = userBills.filter((b) => b.status === 'APPROVED');
-    const pendingBills = userBills.filter((b) => b.status === 'PENDING' || b.status === 'UNDER_REVIEW');
+    const approvedBills = await prisma.bill.findMany({
+      where: { userId: user.id, status: 'APPROVED' },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
 
     const totalRewardCredits = await prisma.walletTransaction.aggregate({
       where: {
@@ -48,9 +52,9 @@ router.get('/', authenticate, requireUser, async (req: AuthenticatedRequest, res
         pendingRedemptionAmount: Math.round(processingAmount * 100) / 100,
         availableBalance: wallet ? Number(wallet.availableBalance) : 0,
         totalRedeemed: wallet ? Number(wallet.totalRedeemed) : 0,
-        billsApprovedCount: approvedBills.length,
-        billsPendingCount: pendingBills.length,
-        totalBillsCount: userBills.length,
+        billsApprovedCount,
+        billsPendingCount,
+        totalBillsCount,
       },
       recentRewards: approvedBills.slice(0, 10).map((b) => ({
         id: b.id,

@@ -397,22 +397,41 @@ export default function AdminBillsPage() {
 
                         {/* Status Badge */}
                         <td className="py-4 px-4 whitespace-nowrap">
-                          <span
-                            className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-bold ${
-                              b.status === 'APPROVED'
-                                ? 'bg-emerald-100 text-emerald-700'
-                                : b.status === 'REJECTED'
-                                ? 'bg-red-100 text-red-700'
-                                : b.status === 'UNDER_REVIEW'
-                                ? 'bg-blue-100 text-blue-700'
-                                : 'bg-amber-100 text-amber-800'
-                            }`}
-                          >
-                            {b.status}
-                          </span>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span
+                              className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                                b.status === 'APPROVED'
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : b.status === 'REJECTED'
+                                  ? 'bg-red-100 text-red-700'
+                                  : b.status === 'CANCELLED'
+                                  ? 'bg-slate-200 text-slate-800'
+                                  : b.status === 'UNDER_REVIEW'
+                                  ? 'bg-blue-100 text-blue-700'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {b.status}
+                            </span>
+                            {b.revisionNumber && b.revisionNumber > 1 && (
+                              <span className="text-[10px] bg-indigo-100 text-indigo-700 font-bold px-1.5 py-0.5 rounded">
+                                Rev #{b.revisionNumber}
+                              </span>
+                            )}
+                            {b.requiresSecondaryApproval && (
+                              <span className="text-[10px] bg-purple-100 text-purple-700 font-bold px-1.5 py-0.5 rounded">
+                                Sec Review
+                              </span>
+                            )}
+                          </div>
                           {b.rejectionReason && (
                             <div className="text-[10px] text-red-600 mt-1 max-w-[180px] truncate" title={b.rejectionReason}>
                               {b.rejectionReason}
+                            </div>
+                          )}
+                          {b.cancellationReason && (
+                            <div className="text-[10px] text-slate-600 mt-1 max-w-[180px] truncate" title={b.cancellationReason}>
+                              Cancel: {b.cancellationReason}
                             </div>
                           )}
                         </td>

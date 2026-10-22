@@ -349,19 +349,13 @@ router.post('/login', loginIpLimiter, loginLimiter, async (req: Request, res: Re
   const isEnforcing = PlayIntegrityService.isEnforcingActions();
   const isAdminCandidate = AuthService.isConfiguredAdminPrefix(rawIdentifier);
 
-  // VULN-API-01 & VULN-B03: If admin candidate, strictly rate limit using admin rate limiters.
-  // Administrative candidates are never issued sessions directly; they must pass password verification and 2FA OTP.
+  // ADV-01: Administrative accounts MUST NOT authenticate via the craftsman login endpoint
   if (isAdminCandidate) {
-    let allowed = false;
-    await new Promise<void>((resolve) => {
-      adminLoginLimiter(req, res, () => {
-        adminAccountLoginLimiter(req, res, () => {
-          allowed = true;
-          resolve();
-        });
-      });
+    return res.status(403).json({
+      success: false,
+      code: 'ADMIN_TIER_REQUIRED',
+      message: 'Administrative accounts must authenticate via the designated admin portal.',
     });
-    if (!allowed || res.headersSent) return;
   }
 
   const integrityToken = (req.headers['x-integrity-token'] as string) || (req.body?.integrityToken as string);
@@ -715,8 +709,7 @@ router.post('/admin/otp/verify', adminLoginLimiter, adminAccountLoginLimiter, ot
     );
 
     const isExplicitMobileClient =
-      !hasBrowserHeaders &&
-      (req.headers['x-client-type'] === 'mobile-admin' || req.body?.clientType === 'mobile-admin');
+      req.headers['x-client-type'] === 'mobile-admin' || req.body?.clientType === 'mobile-admin';
 
     if (isExplicitMobileClient) {
       return res.json(result);

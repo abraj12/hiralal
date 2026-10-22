@@ -203,6 +203,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Additive column upiIdEncrypted on PaymentAccount for AES-256-GCM encrypted UPI address storage."
+    },
+    {
+      "id": "20261022120000_immutable_invoices_and_remediation",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive bill revisions and cancellation fields, partial unique indexes for invoice resubmission, RESTRICT on Wallet.userId foreign key, and totalRedeemed non-negative check."
     }
   ]
 }

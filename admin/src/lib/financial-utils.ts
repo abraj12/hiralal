@@ -45,6 +45,10 @@ export function safeDocumentUrl(url: string | undefined | null): string {
   if (decoded.includes('\\') || trimmed.includes('\\')) {
     return '#';
   }
+  // VULN-FRONT-01: Reject directory traversal sequences
+  if (trimmed.includes('..') || decoded.includes('..')) {
+    return '#';
+  }
   // Reject protocol-relative URLs (e.g. //attacker.com)
   if (/^[/\\]{2,}/.test(trimmed) || /^[/\\]{2,}/.test(decoded)) {
     return '#';

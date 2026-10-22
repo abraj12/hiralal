@@ -42,6 +42,11 @@ export class AccountDeletionService {
       throw new Error('Account is suspended. Please contact customer support.');
     }
 
+    // SEC-LEGALHOLD-01: Accounts under statutory legal hold must not initiate deletion
+    if (user.legalHold) {
+      throw new Error('Account is subject to a statutory legal hold and cannot be deleted.');
+    }
+
     // Verify password first
     const isPasswordCorrect = await bcrypt.compare(password, user.passwordHash);
     if (!isPasswordCorrect) {
@@ -58,6 +63,7 @@ export class AccountDeletionService {
         passwordHash: string;
         deletionScheduledAt: Date | null;
         lastDeletionRequestAt: Date | null;
+        legalHold: boolean;
         cooldownActive: boolean;
         remainingDays: number;
         hasActiveOp: boolean;
@@ -70,6 +76,7 @@ export class AccountDeletionService {
           u."mobile",
           u."role",
           u."status",
+          u."legalHold",
           u."passwordHash",
           u."deletionScheduledAt",
           u."lastDeletionRequestAt",
@@ -104,6 +111,10 @@ export class AccountDeletionService {
 
       if (locked.status === 'SUSPENDED') {
         throw new Error('Account is suspended. Please contact customer support.');
+      }
+
+      if (locked.legalHold) {
+        throw new Error('Account is subject to a statutory legal hold and cannot be deleted.');
       }
 
       // Locked-hash verification principle: reject if password changed concurrently
@@ -185,6 +196,7 @@ export class AccountDeletionService {
         mobile: string;
         role: string;
         status: string;
+        legalHold: boolean;
         lastDeletionRequestAt: Date | null;
         deletionScheduledAt: Date | null;
         now: Date;
@@ -200,6 +212,7 @@ export class AccountDeletionService {
           u."mobile",
           u."role",
           u."status",
+          u."legalHold",
           u."lastDeletionRequestAt",
           u."deletionScheduledAt",
           clock.now,
@@ -230,6 +243,10 @@ export class AccountDeletionService {
 
       if (lockedUser.status === 'SUSPENDED') {
         throw new Error('Account is suspended. Please contact customer support.');
+      }
+
+      if (lockedUser.legalHold) {
+        throw new Error('Account is subject to a statutory legal hold and cannot be deleted.');
       }
 
       // 2. Lock active AccountDeletionOperation row with SELECT ... FOR UPDATE
@@ -480,6 +497,7 @@ export class AccountDeletionService {
         OR
         (u."status" = 'SUSPENDED' AND u."mobile" LIKE 'DEL_%' AND op."id" IS NOT NULL)
       )
+      AND u."legalHold" = false
       ORDER BY u."id" ASC
     `;
 
@@ -495,10 +513,11 @@ export class AccountDeletionService {
             id: string;
             mobile: string;
             status: string;
+            legalHold: boolean;
             deletionScheduledAt: Date | null;
             deletionRequestedAt: Date | null;
           }>>`
-            SELECT "id", "mobile", "status", "deletionScheduledAt", "deletionRequestedAt"
+            SELECT "id", "mobile", "status", "legalHold", "deletionScheduledAt", "deletionRequestedAt"
             FROM "User"
             WHERE "id" = ${u.id}
             FOR UPDATE
@@ -509,6 +528,9 @@ export class AccountDeletionService {
           }
 
           const lockedUser = lockedUsers[0];
+          if (lockedUser.legalHold) {
+            return { claimed: false, reason: 'LEGAL_HOLD_ACTIVE' };
+          }
           const isAlreadyAnonymized = lockedUser.status === 'SUSPENDED' && lockedUser.mobile.startsWith('DEL_');
 
           // Re-evaluate eligibility against database clock under row lock
@@ -899,6 +921,28 @@ export class AccountDeletionService {
             );
           }
 
+          // SEC-FINFENCE-02: Strict in-flight payout fencing check under row lock
+          const inFlightPayout = await tx.payout.findFirst({
+            where: {
+              userId: u.id,
+              status: { in: ['PENDING', 'APPROVED', 'PAYOUT_INITIATED', 'PROCESSING'] },
+            },
+          });
+          if (inFlightPayout) {
+            await tx.$queryRaw`
+              UPDATE "AccountDeletionOperation"
+              SET "scheduledFor" = (clock_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 hour',
+                  "status" = 'PENDING',
+                  "leaseOwner" = NULL,
+                  "leaseExpiresAt" = NULL,
+                  "lastError" = 'IN_FLIGHT_PAYOUT_ACTIVE'
+              WHERE "id" = ${operationId}
+            `;
+            throw new Error(
+              `[ACCOUNT-DELETION] Deletion deferred: user has active in-flight payout (${inFlightPayout.id}, status: ${inFlightPayout.status}).`
+            );
+          }
+
           // 3. Purge active push tokens, notifications, redact AppInstallation, sessions, and OTP requests
           // E-04: Notifications containing PII must be purged upon account deletion
           await tx.notification.deleteMany({ where: { userId: u.id } });
@@ -910,6 +954,19 @@ export class AccountDeletionService {
           await tx.authSession.deleteMany({ where: { userId: u.id } });
           await tx.otpRequest.deleteMany({ where: { mobile: lockedUser.mobile } });
           await tx.verificationToken.deleteMany({ where: { mobile: lockedUser.mobile } });
+
+          // ADV-12: Nullify fileHash, fileKey, fileUrl on unapproved bills to free up unique hash constraints
+          await tx.bill.updateMany({
+            where: {
+              userId: u.id,
+              status: { not: 'APPROVED' },
+            },
+            data: {
+              fileHash: null,
+              fileKey: 'ANONYMIZED',
+              fileUrl: 'ANONYMIZED',
+            },
+          });
 
           // 4. Statutory Financial Record Retention Check (Finding E-01: PMLA & Companies Act 8-year requirement)
           const hasFinancialPayouts = await tx.payout.findFirst({
@@ -1007,7 +1064,7 @@ export class AccountDeletionService {
             },
           });
 
-          // 6. VULN-DEL-01: Scrub personal names, IP addresses, and user agents in AuditLog for deleted accounts
+          // 6. VULN-DEL-01 & SEC-AUDIT-01: Scrub personal names, IP addresses, user agents, and serialized values in AuditLog for deleted accounts
           await tx.auditLog.updateMany({
             where: {
               OR: [
@@ -1018,6 +1075,8 @@ export class AccountDeletionService {
             data: {
               ipAddress: '0.0.0.0',
               userAgent: 'ANONYMIZED',
+              oldValue: null,
+              newValue: null,
             },
           });
 

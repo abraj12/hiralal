@@ -269,7 +269,19 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <View>
-            <Text style={styles.invoiceNo}>Invoice #{item.invoiceNumber || item.id?.slice(0, 8)}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.invoiceNo}>Invoice #{item.invoiceNumber || item.id?.slice(0, 8)}</Text>
+              {item.revisionNumber && item.revisionNumber > 1 && (
+                <View style={{ backgroundColor: '#EEF2FF', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#4F46E5' }}>R{item.revisionNumber}</Text>
+                </View>
+              )}
+              {item.requiresSecondaryApproval && (
+                <View style={{ backgroundColor: '#FAF5FF', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: '#7E22CE' }}>Sec Review</Text>
+                </View>
+              )}
+            </View>
             <Text style={styles.dateText}>{item.invoiceDate || new Date(item.createdAt).toLocaleDateString('en-IN')}</Text>
           </View>
           <View style={[styles.statusBadge, isPending ? styles.badgePending : item.status === 'APPROVED' ? styles.badgeApproved : styles.badgeRejected]}>

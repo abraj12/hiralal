@@ -83,3 +83,23 @@ Both craftsmen and administrators are restricted to a single active session:
 1. **Google Play Integrity API:** Mobile apps integrate Google Play Integrity hardware attestation, ensuring requests originate from genuine, untampered Android devices.
 2. **Hardware Keystore:** Authentication tokens and cryptographic salts are stored in Android `SecureStore` backed by hardware Keymaster / StrongBox keystores.
 3. **No Administrative Assets:** All administrative screens, credentials, and prefix validation utilities have been purged from the customer mobile package.
+
+---
+
+## 6. Immutable Invoice Submissions & Deviation Escalation Policy
+
+1. **Strict Submission Immutability:**
+   - Under no circumstances can a Bill Admin or Operations Admin edit, overwrite, or adjust a submitted invoice amount, invoice number, invoice date, or uploaded receipt file.
+   - Any client request attempting to supply `correctedGrossAmount` or alter financial parameters is rejected with HTTP 400 `IMMUTABLE_INVOICE_VIOLATION`.
+   - Rewards are calculated strictly from the submitter's gross uploaded invoice amount after reverse-GST extraction.
+
+2. **Revision Workflow & Escalation:**
+   - If an invoice submission contains errors, the reviewer must `REJECT` or return it for correction with a mandatory explanation.
+   - The craftsman resubmits corrected invoices as linked child revisions (`parentBillId`, auto-incremented `revisionNumber`).
+   - If a revised submission exceeds the parent bill's gross amount by more than 25%, the system automatically flags `requiresSecondaryApproval = true` and initializes status to `UNDER_REVIEW`.
+   - High-deviation revisions strictly require secondary approval by an `OPERATIONS_ADMIN`. Attempts by `BILL_ADMIN` return HTTP 403 `SECONDARY_APPROVAL_REQUIRED`.
+
+3. **Legal Hold & Statutory Data Protection:**
+   - Accounts under active legal investigation (`legalHold = true`) cannot be scheduled, requested, or processed for deletion.
+   - In-flight financial disbursements block account deletion until banking rail status reaches a terminal verified state.
+   - Statutory tax invoices and ledger entries are retained for a minimum of 72 months per CGST Act Sec 36 requirements.

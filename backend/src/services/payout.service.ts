@@ -612,9 +612,15 @@ export class PayoutService {
   /**
    * Queries RazorpayX payouts endpoint by reference_id to check if a disbursement was created.
    */
-  static async queryGatewayByReference(referenceId: string): Promise<{ found: boolean; payout?: any; message?: string }> {
+  static async queryGatewayByReference(referenceId: string): Promise<{
+    found: boolean;
+    payout?: any;
+    error?: boolean;
+    timeout?: boolean;
+    message?: string;
+  }> {
     if (!config.razorpayx.keyId || !config.razorpayx.keySecret || !config.razorpayx.accountNumber) {
-      return { found: false, message: 'Payment gateway credentials unconfigured' };
+      return { found: false, error: true, message: 'Payment gateway credentials unconfigured' };
     }
     const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
     const controller = new AbortController();
@@ -628,7 +634,7 @@ export class PayoutService {
         }
       );
       if (!res.ok) {
-        return { found: false, message: `Gateway query returned status ${res.status}` };
+        return { found: false, error: true, message: `Gateway query returned status ${res.status}` };
       }
       const data: any = await res.json();
       if (data?.items && Array.isArray(data.items) && data.items.length > 0) {
@@ -636,7 +642,7 @@ export class PayoutService {
       }
       return { found: false };
     } catch (err: any) {
-      return { found: false, message: err.message };
+      return { found: false, error: true, timeout: err.name === 'AbortError', message: err.message };
     } finally {
       clearTimeout(timer);
     }
@@ -699,8 +705,13 @@ export class PayoutService {
           );
         }
         gatewayCancellationConfirmed = true;
-      } else if (config.nodeEnv !== 'test') {
+      } else {
         const lookup = await this.queryGatewayByReference(payoutMeta.id);
+        if (lookup.error || lookup.timeout) {
+          throw new Error(
+            `Cannot safely reject in-flight payout: payment gateway query failed (${lookup.message || 'network timeout'}). Funds must remain reserved to prevent double-spending.`
+          );
+        }
         if (lookup.found && lookup.payout?.id) {
           const cancelRes = await this.cancelGatewayPayout(lookup.payout.id);
           if (!cancelRes.success) {
@@ -721,8 +732,6 @@ export class PayoutService {
           // Confirmed NOT dispatched to gateway; safe to reject and refund
           gatewayCancellationConfirmed = true;
         }
-      } else {
-        gatewayCancellationConfirmed = true;
       }
     }
 

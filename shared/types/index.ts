@@ -19,14 +19,16 @@ export enum BillStatus {
   UNDER_REVIEW = 'UNDER_REVIEW',
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
-  DUPLICATE = 'DUPLICATE'
+  DUPLICATE = 'DUPLICATE',
+  CANCELLED = 'CANCELLED'
 }
 
 export enum TransactionType {
   REWARD_CREDIT = 'REWARD_CREDIT',
   PAYOUT_DEBIT = 'PAYOUT_DEBIT',
   PAYOUT_REVERSAL = 'PAYOUT_REVERSAL',
-  MANUAL_ADJUSTMENT = 'MANUAL_ADJUSTMENT'
+  MANUAL_ADJUSTMENT = 'MANUAL_ADJUSTMENT',
+  REFUND = 'REFUND'
 }
 
 export enum KycStatus {
@@ -111,6 +113,12 @@ export interface BillDto {
   verifiedByAdminId?: string | null;
   remarks?: string | null;
   createdAt: string;
+  parentBillId?: string | null;
+  revisionNumber?: number;
+  cancellationReason?: string | null;
+  requiresSecondaryApproval?: boolean;
+  secondaryApprovedByAdminId?: string | null;
+  secondaryApprovedAt?: string | null;
 }
 
 export interface RewardSummaryDto {

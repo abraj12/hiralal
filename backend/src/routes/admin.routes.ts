@@ -350,10 +350,10 @@ router.get('/users/:id', requireOperationsAdmin, async (req: AuthenticatedReques
       where: { id: req.params.id },
       include: {
         wallet: true,
-        kycRecords: { orderBy: { createdAt: 'desc' } },
-        paymentAccounts: { orderBy: { createdAt: 'desc' } },
-        bills: { orderBy: { createdAt: 'desc' } },
-        payouts: { orderBy: { createdAt: 'desc' } },
+        kycRecords: { orderBy: { createdAt: 'desc' }, take: 10 },
+        paymentAccounts: { orderBy: { createdAt: 'desc' }, take: 10 },
+        bills: { orderBy: { createdAt: 'desc' }, take: 100 },
+        payouts: { orderBy: { createdAt: 'desc' }, take: 100 },
       },
     });
 
@@ -775,15 +775,17 @@ router.get(
 router.post('/bills/:id/verify', requireAdmin, adminActionLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const admin = req.user!;
-    const { action, rejectionReason, gstIncluded, gstRate, gstRuleId, gstOverrideReason } = req.body;
+    const { action, rejectionReason, cancellationReason, reason, gstIncluded, gstRate, gstRuleId, gstOverrideReason } = req.body;
 
-    // DEADLOCK-01-GAP: Standard bill approval without upward deviation is reserved for BILL_ADMIN.
-    // OPERATIONS_ADMIN is permitted when approving upward deviations (correctedGrossAmount) or rejecting invalid bills.
-    if (admin.role === 'OPERATIONS_ADMIN' && action === 'APPROVE' && !req.body.correctedGrossAmount) {
-      return res.status(403).json({
+    // IMMUTABLE INVOICE SUBMISSION: Disallow any client attempting to supply replacement gross/bill amounts
+    if (
+      Object.prototype.hasOwnProperty.call(req.body ?? {}, 'correctedGrossAmount') ||
+      Object.prototype.hasOwnProperty.call(req.body ?? {}, 'grossAmount')
+    ) {
+      return res.status(400).json({
         success: false,
-        code: 'BILL_ADMIN_ROLE_REQUIRED',
-        message: 'Standard bill verification is restricted to Bill Review Administrators. Operations Administrators may only verify secondary approval upward deviations.',
+        code: 'IMMUTABLE_INVOICE_VIOLATION',
+        message: 'Administrators cannot alter submitted invoice amounts. Submitted invoice details are strictly immutable. To request corrections, reject the invoice with a reason so the submitter can resubmit a revision.',
       });
     }
 
@@ -794,8 +796,26 @@ router.post('/bills/:id/verify', requireAdmin, adminActionLimiter, async (req: A
       });
     }
 
-    if (!action || !['APPROVE', 'REJECT'].includes(action)) {
-      return res.status(400).json({ success: false, message: 'Action must be APPROVE or REJECT.' });
+    if (!action || !['APPROVE', 'REJECT', 'CANCEL'].includes(action)) {
+      return res.status(400).json({ success: false, message: 'Action must be APPROVE, REJECT, or CANCEL.' });
+    }
+
+    // Role enforcement and secondary deviation review check
+    const targetBill = await prisma.bill.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, requiresSecondaryApproval: true, status: true },
+    });
+
+    if (!targetBill) {
+      return res.status(404).json({ success: false, message: 'Bill not found.' });
+    }
+
+    if (targetBill.requiresSecondaryApproval && admin.role !== 'OPERATIONS_ADMIN' && action === 'APPROVE') {
+      return res.status(403).json({
+        success: false,
+        code: 'SECONDARY_APPROVAL_REQUIRED',
+        message: 'This invoice revision exceeds upward deviation thresholds and requires secondary approval by an Operations Administrator.',
+      });
     }
 
     if (action === 'APPROVE') {
@@ -822,16 +842,29 @@ router.post('/bills/:id/verify', requireAdmin, adminActionLimiter, async (req: A
         gstRate: gstIncluded ? (typeof gstRate === 'number' ? gstRate : undefined) : 0,
         gstRuleId: gstIncluded ? (typeof gstRuleId === 'string' && gstRuleId.trim() ? gstRuleId.trim() : undefined) : undefined,
         gstOverrideReason: gstIncluded && typeof gstOverrideReason === 'string' ? gstOverrideReason.trim() : undefined,
-        correctedGrossAmount: typeof req.body.correctedGrossAmount === 'number' && req.body.correctedGrossAmount > 0 ? req.body.correctedGrossAmount : undefined,
         isOperationsAdminApproved: admin.role === 'OPERATIONS_ADMIN',
       });
 
-      res.json({
+      return res.json({
         success: true,
         message: 'Bill approved and reward credited to wallet.',
         bill: result.bill,
         rewardCredited: result.creditedReward,
         walletBalance: result.walletBalance,
+      });
+    } else if (action === 'CANCEL') {
+      const effectiveCancelReason = (cancellationReason || reason || rejectionReason || '').toString().trim();
+      if (!effectiveCancelReason || effectiveCancelReason.length < 3) {
+        return res.status(400).json({
+          success: false,
+          message: 'A valid cancellation reason (minimum 3 characters) is required to cancel a bill.',
+        });
+      }
+      const updatedBill = await BillService.cancelBill(req.params.id, admin.id, effectiveCancelReason);
+      return res.json({
+        success: true,
+        message: 'Bill cancelled.',
+        bill: updatedBill,
       });
     } else {
       if (!rejectionReason || typeof rejectionReason !== 'string' || !rejectionReason.trim()) {
@@ -841,7 +874,7 @@ router.post('/bills/:id/verify', requireAdmin, adminActionLimiter, async (req: A
         });
       }
       const updatedBill = await BillService.rejectBill(req.params.id, admin.id, rejectionReason.trim());
-      res.json({
+      return res.json({
         success: true,
         message: 'Bill rejected.',
         bill: updatedBill,

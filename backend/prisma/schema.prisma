@@ -223,7 +223,19 @@ model Bill {
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
 
-  @@unique([userId, invoiceNumber], name: "user_invoice_unique")
+  parentBillId               String?
+  parentBill                 Bill?       @relation("BillRevisions", fields: [parentBillId], references: [id], onDelete: Restrict)
+  childRevisions             Bill[]      @relation("BillRevisions")
+  revisionNumber             Int         @default(1)
+  cancellationReason         String?
+  cancelledByAdminId         String?
+  cancelledAt                DateTime?
+  requiresSecondaryApproval  Boolean     @default(false)
+  secondaryApprovedByAdminId String?
+  secondaryApprovedAt        DateTime?
+
+  @@unique([userId, invoiceNumber, revisionNumber], name: "user_invoice_revision_unique")
+  @@index([parentBillId])
   @@index([userId])
   @@index([status])
   @@index([invoiceNumber])

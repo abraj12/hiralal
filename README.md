@@ -21,6 +21,7 @@ This platform is strictly **single-company** (no multi-tenancy, no `tenant_id`, 
 - **Tile Installers** (`TILE_INSTALLER`): Ceramic tiles, floorings, adhesive and grout.
 
 Rewards are strictly **cash incentives** credited to user wallets upon verified GST invoice uploads and disbursed via RazorpayX (UPI / Bank Accounts).
+Invoice submissions are **immutable**; administrators cannot alter invoice amounts or replace receipts. Corrections require linked child revisions with secondary review escalation for significant upward deviations (>25%).
 
 ### System Data Flow
 ```
