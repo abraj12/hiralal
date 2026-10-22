@@ -93,7 +93,12 @@ export function safeDocumentUrl(url: string | undefined | null): string {
         hostname.endsWith('.s3.amazonaws.com') ||
         hostname.endsWith('.amazonaws.com') ||
         hostname.endsWith('.r2.cloudflarestorage.com') ||
+        hostname.endsWith('.r2.dev') ||
         hostname.endsWith('.cloudfront.net') ||
+        hostname === 'hsspl.algions.in' ||
+        hostname.endsWith('.hsspl.algions.in') ||
+        hostname === 'hiralalandsons.com' ||
+        hostname.endsWith('.hiralalandsons.com') ||
         hostname === 'hiralalandsonspvtltd.com' ||
         hostname.endsWith('.hiralalandsonspvtltd.com');
 

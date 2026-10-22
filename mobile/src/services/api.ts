@@ -689,6 +689,7 @@ export class MobileApiClient {
       idempotencyKey: string;
       paymentAccountId?: string;
       amount?: number;
+      password?: string;
     },
     attestation: RequiredActionAttestation
   ) {

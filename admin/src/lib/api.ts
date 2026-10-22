@@ -152,6 +152,13 @@ export class AdminApiClient {
     });
   }
 
+  static setLegalHold(id: string, data: { legalHold: boolean; reason: string }) {
+    return this.request(`/admin/users/${encodeURIComponent(id)}/legal-hold`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
   static verifyMononymousKyc(id: string, data: { reason: string }) {
     return this.request(`/admin/users/${encodeURIComponent(id)}/verify-mononymous-kyc`, {
       method: 'POST',

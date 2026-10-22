@@ -132,6 +132,14 @@ OPERATIONS_ADMIN_MOBILE=REPLACE_WITH_PRODUCTION_OPERATIONS_ADMIN_10DIGIT_MOBILE
 BILL_ADMIN_INITIAL_PASSWORD=GENERATE_STRONG_TEMPORARY_BILL_ADMIN_PASSWORD
 OPERATIONS_ADMIN_INITIAL_PASSWORD=GENERATE_STRONG_TEMPORARY_OPERATIONS_ADMIN_PASSWORD
 CORS_ALLOWED_ORIGINS=https://hsspl.algions.in
+
+# Firebase Cloud Messaging (FCM v1 Push Notifications)
+FCM_PROJECT_ID=hiralal-rewards-prod
+FCM_SERVICE_ACCOUNT_KEY='{"type":"service_account","project_id":"hiralal-rewards-prod",...}'
+
+# Google Play Integrity API (Android App Attestation)
+PLAY_INTEGRITY_PACKAGE_NAME=com.hiralal.rewards
+PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER=123456789012
 ```
 
 ---
@@ -160,7 +168,7 @@ npm run seed
 ```bash
 npm test -- --runInBand --forceExit
 ```
-All unit, integration, and security test suites run in-band and maintain a **100% pass rate** (900/900 tests passing across all workspaces: 817 backend, 22 admin, 29 mobile, 32 mobile-admin; 989 total verified tests repository-wide):
+All unit, integration, and security test suites run in-band and maintain a **100% pass rate** (903/903 tests passing across all workspaces: 820 backend, 22 admin, 29 mobile, 32 mobile-admin; 992 total verified tests repository-wide):
 - `audit_remediation_rc1.spec.ts` (Phase 1–4 audit remediations: Play Integrity registration request hash, un-clamped deficit debt balance modeling, hard ₹50,000 per-redemption ceiling, strictly UPI/IMPS rails with zero NEFT, and centralized error middleware)
 - `exact_name_matching.spec.ts` (**Mandatory exact PAN card to bank account holder name matching policy**; approved prefix stripping only, complete rejection of fuzzy, subset, swapped, or omitted names)
 - `final_audit_remediation_regression.spec.ts` (Comprehensive regression suite covering findings `VERIF-01` through `VERIF-17`)

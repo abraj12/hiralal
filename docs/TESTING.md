@@ -11,15 +11,15 @@ Every test suite in the repository has been executed and confirmed passing. The 
 
 | Workspace | Test Runner | Command | Test Suites | Total Tests | Status |
 |---|---|---|---|---|---|
-| **Backend** | Jest (In-Band) | `npm --prefix backend test` | 48 passed / 48 total | 817 passed / 817 total | **100% Green** |
+| **Backend** | Jest (In-Band) | `npm --prefix backend test` | 48 passed / 48 total | 820 passed / 820 total | **100% Green** |
 | **Admin Portal** | Node.js Test Runner | `npm --prefix admin test` | 2 files | 22 passed / 22 total | **100% Green** |
 | **Mobile Client** | Node.js Test Runner | `npm --prefix mobile test` | 5 files | 29 passed / 29 total | **100% Green** |
-| **Mobile Admin** | Node.js Test Runner | `npm --prefix mobile-admin test` | 5 files | 28 passed / 28 total | **100% Green** |
-| **Workspace Subtotal** | — | — | **60 suites / files** | **896 tests** | **0 Failures** |
+| **Mobile Admin** | Node.js Test Runner | `npm --prefix mobile-admin test` | 6 files | 32 passed / 32 total | **100% Green** |
+| **Workspace Subtotal** | — | — | **61 suites / files** | **903 tests** | **0 Failures** |
 | **Migration Compatibility** | Python Unittest | `python scripts/test_migration_compatibility.py` | 1 suite | 6 passed / 6 total | **100% Green** |
 | **Deployment & Health Probes** | Python Unittest | `python scripts/test_verify_deployment_health.py` | 1 suite | 61 passed / 61 total | **100% Green** |
 | **Security Floor Guards** | Node CLI | `node scripts/test-next-security-floor.cjs` | 1 suite | 22 passed / 22 total | **100% Green** |
-| **Repository Total** | — | — | **63 suites / files** | **985 tests** | **0 Failures** |
+| **Repository Total** | — | — | **64 suites / files** | **992 tests** | **0 Failures** |
 
 ---
 
@@ -58,7 +58,7 @@ npm run build
 - **`global_reward_cap.spec.ts`**: Validates pool-free reward calculations, volume scaling, and concurrent approval locks.
 - **`payout_safety_worker.spec.ts`**: Simulates RazorpayX gateway timeouts, 4xx errors, refund credits, and webhook deduplication.
 - **`concurrency_financial.spec.ts`**: Tests double-redemption prevention and `SELECT ... FOR UPDATE` row locking.
-- **`account_deletion_statutory.spec.ts`**: Verifies GDPR/DPDP right-to-erasure anonymization while strictly retaining financial audit trails under Section 138 NI Act and GST laws.
+- **`account_deletion_and_threshold.spec.ts`**: Verifies GDPR/DPDP right-to-erasure anonymization while strictly retaining financial audit trails under Section 138 NI Act and GST laws.
 
 ### B. Admin Web Portal (`admin/`)
 The admin portal uses the native Node.js test runner (`node:test`):
@@ -119,6 +119,6 @@ node --test plugins/withPlayIntegrity.test.js plugins/withReleaseSigning.test.js
 Before submitting changes, ensure:
 1. `npm --prefix backend run build` exits with code 0 (zero TypeScript errors).
 2. `npm --prefix admin run build` exits with code 0 (clean static page generation).
-3. `npm --prefix backend test` passes all 40 test suites (741 tests).
+3. `npm --prefix backend test` passes all 48 test suites (820 tests).
 4. `npm --prefix admin test`, `npm --prefix mobile test`, and `npm --prefix mobile-admin test` all exit with code 0.
 5. All exact name matching regression assertions in `src/tests/exact_name_matching.spec.ts` pass without alteration of the strict equality rule.

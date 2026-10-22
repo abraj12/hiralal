@@ -376,3 +376,45 @@ This document records the chronological history of all security remediations, fi
   - Migration compatibility tests: `python scripts/test_migration_compatibility.py` (6/6 passed).
   - Deployment health tests: `python scripts/test_verify_deployment_health.py` (61/61 passed).
   - Security floor tests: `node scripts/test-next-security-floor.cjs` (22/22 passed).
+
+---
+
+### Record 14: Comprehensive Deep Audit & Autonomous Remediation (Wave 6)
+- **Date:** October 2026
+- **Finding Identifiers:**
+  - `DEFECT-VERIF-01` / `SEC-AUTH-01`: Logout Contract F Compliance on Missing Credentials (HTTP 400)
+  - `DEFECT-VERIF-02` / `SEC-AUTH-02`: Admin Lockout Status & Error Message Preservation (HTTP 423)
+  - `DEFECT-VERIF-03` / `FIN-01`: Redemption Scheduling Fail-Closed Timestamp Validation
+  - `AUDIT-FIN-01`: Safe In-Flight Payout Rejection Prevention on Gateway Inquiry Ambiguity
+  - `VULN-MOB-BIO-01`: Server-Side Password Verification on Mobile Redemption Biometric Fallback
+  - `FEAT-MOB-RED-01`: Mobile UI ₹50,000 Hard Redemption Ceiling Clamp
+  - `VULN-ADM-URL-01`: Admin Document URL Sanitizer Hostname Whitelist Parity
+  - `AUDIT-DEL-01`: Legal Hold Pre-Check Ordering in Account Deletion Before Cloudflare R2 Purge
+  - `FIN-02`: Admin Maximum Redemption Setting Support for ₹0 Disablement
+  - `SEC-ROLE-01`: Strict Separation of Duties on Bill Rejection and Cancellation Actions
+  - `PERF-DB-01`: Case-Insensitive Functional Unique Index for Approved Invoices
+  - `STAT-PURGE-01`: Cloudflare R2 Document Purge & Safe `fileKey` Handling in Statutory Purge
+- **Affected Subsystems:** Backend API, Authentication Services, Payout & Ledger Services, Account Deletion Engine, Admin Web Portal, Customer Mobile App, PostgreSQL Migrations
+- **Implementation Approach:**
+  1. Updated `backend/src/routes/auth.routes.ts` to inspect incoming credentials on `POST /api/auth/logout`. Rejects unauthenticated requests lacking refresh tokens with HTTP 400 (`No active session or refresh token provided`).
+  2. In `backend/src/services/auth.service.ts`, ensured `requestAdminOtp` re-checks `admin.lockedUntil` and throws HTTP 423 `Account is temporarily locked. Try again later.`.
+  3. In `backend/src/routes/admin.routes.ts`, added fail-closed validation when `isEnabled: true` is sent on redemption settings without valid `startAt` and `endAt` timestamps.
+  4. In `backend/src/services/payout.service.ts`, prevented rejection of in-flight `PAYOUT_INITIATED` disbursements when gateway returns `found: false`, unless flagged for manual review (`requiresManualReview: true`), preventing double-refund exploits.
+  5. In `backend/src/routes/payout.routes.ts` and `mobile/src/components/RedemptionModal.tsx`, implemented server-side password verification when mobile clients fall back from biometric authentication.
+  6. In `mobile/src/components/RedemptionModal.tsx`, clamped initial redemption amount to `Math.min(balance, 50000)`.
+  7. In `admin/src/lib/financial-utils.ts`, added active production hostname `hsspl.algions.in` and `*.r2.dev` to `ALLOWED_DOMAINS` in `safeDocumentUrl`.
+  8. In `backend/src/services/account-deletion.service.ts`, placed `user.legalHold` assertion prior to executing external R2 file deletions.
+  9. In `backend/src/routes/admin.routes.ts` and `admin/src/pages/settings.tsx`, allowed ₹0 maximum redemption setting to cleanly disable redemptions and removed HTML5 `required` attribute.
+  10. In `backend/src/routes/admin.routes.ts`, strictly enforced `requireRole(['BILL_ADMIN'])` on `/bills/:id/reject` and `requireRole(['OPERATIONS_ADMIN'])` on `/bills/:id/cancel`.
+  11. Created migration `20261023120000_add_lower_invoice_index` adding functional unique index `CREATE UNIQUE INDEX IF NOT EXISTS "Bill_lower_invoice_number_approved_idx" ON "Bill" (LOWER(TRIM("invoiceNumber"))) WHERE "status" = 'APPROVED'`. Registered in `deployment-compatibility.json`.
+  12. In `backend/src/services/account-deletion.service.ts`, purged files from R2 during 8-year statutory expiry and updated `fileKey: 'PURGED'` safely.
+- **Verification Results:**
+  - **Backend Suites:** 48 suites, 820 passed / 820 total (100% green, 0 failures).
+  - **Admin Suites:** 2 suites, 22 passed / 22 total (100% green).
+  - **Mobile Suites:** 5 suites, 29 passed / 29 total (100% green).
+  - **Mobile Admin Suites:** 6 suites, 32 passed / 32 total (100% green).
+  - **Migration Compatibility Tests:** 1 suite, 6 passed / 6 total (100% green).
+  - **Deployment Health Tests:** 1 suite, 61 passed / 61 total (100% green).
+  - **Security Floor Tests:** 1 suite, 22 passed / 22 total (100% green).
+  - **Workspace Subtotal:** **903 / 903 passed across 61 test files**.
+  - **Repository Total:** **992 / 992 tests passing across 64 suites (100% green, 0 failures)**.

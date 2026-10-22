@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import bcrypt from 'bcryptjs';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { PayoutService } from '../services/payout.service';
 import { payoutRedeemLimiter } from '../middleware/rateLimit.middleware';
@@ -41,6 +42,21 @@ const handleRedeemRequest = async (req: AuthenticatedRequest, res: Response) => 
         success: false,
         message: 'A valid payout request reference is required.',
       });
+    }
+
+    // VULN-MOB-BIO-01: Verify account password if supplied via biometric fallback
+    if (req.body?.password) {
+      if (typeof req.body.password !== 'string' || req.body.password.length < 6) {
+        return res.status(400).json({ success: false, message: 'Invalid password format.' });
+      }
+      const userRecord = await prisma.user.findUnique({ where: { id: user.id } });
+      if (!userRecord || !userRecord.passwordHash) {
+        return res.status(400).json({ success: false, message: 'User account not found.' });
+      }
+      const isMatch = await bcrypt.compare(req.body.password, userRecord.passwordHash);
+      if (!isMatch) {
+        return res.status(400).json({ success: false, message: 'Incorrect account password. Verification failed.' });
+      }
     }
 
     // 100% full available balance redemption (server-controlled)

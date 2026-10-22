@@ -880,19 +880,19 @@ router.post('/bills/:id/verify', requireAdmin, adminActionLimiter, async (req: A
       return res.status(404).json({ success: false, message: 'Bill not found.' });
     }
 
-    if (targetBill.requiresSecondaryApproval && admin.role !== 'OPERATIONS_ADMIN' && action === 'APPROVE') {
+    if (targetBill.requiresSecondaryApproval && admin.role !== 'OPERATIONS_ADMIN') {
       return res.status(403).json({
         success: false,
         code: 'SECONDARY_APPROVAL_REQUIRED',
-        message: 'This invoice revision exceeds upward deviation thresholds and requires secondary approval by an Operations Administrator.',
+        message: 'This invoice revision exceeds upward deviation thresholds and requires review by an Operations Administrator.',
       });
     }
 
-    if (!targetBill.requiresSecondaryApproval && admin.role !== 'BILL_ADMIN' && action === 'APPROVE') {
+    if (!targetBill.requiresSecondaryApproval && admin.role !== 'BILL_ADMIN') {
       return res.status(403).json({
         success: false,
         code: 'BILL_ADMIN_APPROVAL_REQUIRED',
-        message: 'Standard invoice approvals must be performed by a Bill Review Administrator.',
+        message: 'Standard invoice approvals and reviews must be performed by a Bill Review Administrator.',
       });
     }
 
@@ -1211,7 +1211,7 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
             ? Number(prevSettings.maximumRedemptionAmount)
             : 50000);
 
-    if (effectiveMin !== null && effectiveMax !== null && effectiveMin > effectiveMax) {
+    if (effectiveMax !== 0 && effectiveMin !== null && effectiveMax !== null && effectiveMin > effectiveMax) {
       return res.status(400).json({
         success: false,
         message: `Minimum redemption threshold (₹${effectiveMin}) cannot exceed maximum redemption amount (₹${effectiveMax}).`,
@@ -1231,6 +1231,21 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
     // Server-side validation for enabling redemption:
     // Requires positive finite minimum amount, valid start timestamp, valid end timestamp, and endAt > startAt
     if (effectiveEnabled) {
+      if (isEnabled !== undefined && Boolean(isEnabled) === true) {
+        if (startAt === undefined || startAt === null || startAt === '') {
+          return res.status(400).json({
+            success: false,
+            message: 'An opening timestamp (startAt) is required to enable redemption.',
+          });
+        }
+        if (endAt === undefined || endAt === null || endAt === '') {
+          return res.status(400).json({
+            success: false,
+            message: 'A closing timestamp (endAt) is required to enable redemption.',
+          });
+        }
+      }
+
       const effectiveStart = startDate !== undefined && startDate !== null ? startDate : prevSettings?.startAt;
       const effectiveEnd = endDate !== undefined && endDate !== null ? endDate : prevSettings?.endAt;
 
