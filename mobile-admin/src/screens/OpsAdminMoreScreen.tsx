@@ -93,6 +93,7 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
   const [redemptionSettings, setRedemptionSettings] = useState<any>(null);
   const [isRedemptionOpen, setIsRedemptionOpen] = useState(false);
   const [minRedemptionAmt, setMinRedemptionAmt] = useState('');
+  const [maxRedemptionAmt, setMaxRedemptionAmt] = useState('50000');
   const [startDate, setStartDate] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -145,6 +146,11 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
             redempRes.settings.minimumRedemptionAmount !== null && redempRes.settings.minimumRedemptionAmount !== undefined
               ? String(redempRes.settings.minimumRedemptionAmount)
               : ''
+          );
+          setMaxRedemptionAmt(
+            redempRes.settings.maximumRedemptionAmount !== null && redempRes.settings.maximumRedemptionAmount !== undefined
+              ? String(redempRes.settings.maximumRedemptionAmount)
+              : '50000'
           );
           setRedemptionMsg(redempRes.settings.message || '');
           if (redempRes.settings.startAt) {
@@ -295,12 +301,32 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
       }
 
       const minAmt = minRedemptionAmt.trim() ? Number(minRedemptionAmt) : null;
+      const maxAmt = maxRedemptionAmt.trim() ? Number(maxRedemptionAmt) : 50000;
+
+      if (isNaN(maxAmt) || maxAmt < 0 || maxAmt > 50000) {
+        Alert.alert('Invalid Maximum', 'Maximum redemption cap must be between ₹0 and ₹50,000.');
+        setSavingSettings(false);
+        return;
+      }
+
+      if (minAmt !== null && maxAmt !== null && minAmt > maxAmt) {
+        Alert.alert('Inconsistent Limits', `Minimum threshold (₹${minAmt}) cannot exceed maximum cap (₹${maxAmt}).`);
+        setSavingSettings(false);
+        return;
+      }
+
+      if (maxAmt === 0 && isRedemptionOpen) {
+        Alert.alert('Disabled State', 'A maximum redemption of ₹0 explicitly disables redemptions; window cannot be opened.');
+        setSavingSettings(false);
+        return;
+      }
 
       await MobileApiClient.updateAdminRedemptionSettings({
         isEnabled: isRedemptionOpen,
         startAt,
         endAt,
         minimumRedemptionAmount: minAmt,
+        maximumRedemptionAmount: maxAmt,
         message: redemptionMsg.trim() || (isRedemptionOpen ? 'Open for verified craftsmen.' : 'Redemption window currently closed.'),
       });
       Alert.alert('Settings Saved', 'Cashback redemption window rules updated.');
@@ -655,6 +681,20 @@ export default function OpsAdminMoreScreen({ initialSubTab = 'REWARDS' }: OpsAdm
                     placeholder="e.g. 500"
                     keyboardType="numeric"
                   />
+                </View>
+
+                <View style={[styles.settingInputWrap, { marginTop: 12 }]}>
+                  <Text style={styles.inputLabel}>Maximum Claim Cap (Points) * (₹0 to ₹50,000)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={maxRedemptionAmt}
+                    onChangeText={setMaxRedemptionAmt}
+                    placeholder="e.g. 50000"
+                    keyboardType="numeric"
+                  />
+                  <Text style={{ fontSize: 11, color: '#64748B', marginTop: 4 }}>
+                    Set to 0 to disable redemptions. Hard platform ceiling is 50,000 Points.
+                  </Text>
                 </View>
 
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>

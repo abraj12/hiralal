@@ -337,7 +337,7 @@ Requests 100% full available balance redemption. Requires redemption window to b
 
 #### 3.4 RazorpayX Gateway Webhook
 - **Method**: `POST`
-- **Path**: `/webhooks/razorpayx` (alias: `/payouts/webhook`)
+- **Path**: `/webhooks/razorpayx`
 - **Headers**: `x-razorpay-signature: <HMAC_SHA256_HEX>`
 - **Body**: RazorpayX event payload (`payout.processed`, `payout.reversed`, `payout.failed`).
 

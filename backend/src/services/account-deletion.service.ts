@@ -1171,20 +1171,20 @@ export class AccountDeletionService {
     const candidateUserIds = expiredUsers.map((u: any) => u.id);
 
     return await db.$transaction(async (tx: any) => {
-      // Re-verify eligible users under transaction to prevent TOCTOU race conditions with legal holds
-      const eligibleUsers = await tx.user.findMany({
-        where: {
-          id: { in: candidateUserIds },
-          status: 'SUSPENDED',
-          legalHold: false,
-          statutoryRetentionExpiresAt: { lte: now },
-        },
-        select: { id: true },
-      });
+      // Row-level lock candidate users under transaction with FOR UPDATE to prevent TOCTOU race conditions with legal holds
+      const lockedUsers = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "User"
+        WHERE "id" = ANY(${candidateUserIds}::text[])
+          AND "status" = 'SUSPENDED'
+          AND "legalHold" = false
+          AND "statutoryRetentionExpiresAt" <= ${now}
+        FOR UPDATE
+      `;
 
-      if (eligibleUsers.length === 0) return 0;
+      if (!lockedUsers || lockedUsers.length === 0) return 0;
 
-      const userIds = eligibleUsers.map((u: any) => u.id);
+      const userIds = lockedUsers.map((u: any) => u.id);
 
       // Complete cryptographic and PII scrub of KycRecord (both encrypted and legacy plaintext fields)
       await tx.kycRecord.updateMany({

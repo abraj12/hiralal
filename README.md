@@ -160,7 +160,7 @@ npm run seed
 ```bash
 npm test -- --runInBand --forceExit
 ```
-All unit, integration, and security test suites run in-band and maintain a **100% pass rate** (896/896 tests passing across all workspaces: 817 backend, 22 admin, 29 mobile, 28 mobile-admin; 985 total verified tests repository-wide):
+All unit, integration, and security test suites run in-band and maintain a **100% pass rate** (900/900 tests passing across all workspaces: 817 backend, 22 admin, 29 mobile, 32 mobile-admin; 989 total verified tests repository-wide):
 - `audit_remediation_rc1.spec.ts` (Phase 1–4 audit remediations: Play Integrity registration request hash, un-clamped deficit debt balance modeling, hard ₹50,000 per-redemption ceiling, strictly UPI/IMPS rails with zero NEFT, and centralized error middleware)
 - `exact_name_matching.spec.ts` (**Mandatory exact PAN card to bank account holder name matching policy**; approved prefix stripping only, complete rejection of fuzzy, subset, swapped, or omitted names)
 - `final_audit_remediation_regression.spec.ts` (Comprehensive regression suite covering findings `VERIF-01` through `VERIF-17`)

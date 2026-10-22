@@ -201,7 +201,7 @@ export default function AdminRewardsPage() {
                     <div>
                       <div className="font-bold text-slate-900 text-xs">Plumbers Incentive Rate</div>
                       <div className="text-[11px] text-slate-500">
-                        {plumberRule ? `Rule v${plumberRule.version} • Effective ${new Date(plumberRule.effectiveFrom).toLocaleDateString('en-IN')}` : 'Rule not yet deployed'}
+                        {plumberRule ? `Rule v${plumberRule.version} • Effective ${new Date(plumberRule.effectiveFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}` : 'Rule not yet deployed'}
                       </div>
                     </div>
                   </div>
@@ -218,7 +218,7 @@ export default function AdminRewardsPage() {
                     <div>
                       <div className="font-bold text-slate-900 text-xs">Tile Installers Incentive Rate</div>
                       <div className="text-[11px] text-slate-500">
-                        {tileRule ? `Rule v${tileRule.version} • Effective ${new Date(tileRule.effectiveFrom).toLocaleDateString('en-IN')}` : 'Rule not yet deployed'}
+                        {tileRule ? `Rule v${tileRule.version} • Effective ${new Date(tileRule.effectiveFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}` : 'Rule not yet deployed'}
                       </div>
                     </div>
                   </div>

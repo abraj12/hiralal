@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, StyleSheet, SafeAreaView, StatusBar, Platform } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, StyleSheet, SafeAreaView, StatusBar, Platform, Linking } from 'react-native';
 import { AppProvider, useApp } from './src/context/AppContext';
 import BottomNav from './src/components/BottomNav';
 import HomeScreen from './src/screens/HomeScreen';
@@ -14,7 +14,35 @@ import RegisterScreen from './src/screens/RegisterScreen';
 import NotificationScreen from './src/screens/NotificationScreen';
 
 function MainAppNavigator() {
-  const { currentScreen, activeTab } = useApp();
+  const { currentScreen, activeTab, setCurrentScreen, setActiveTab } = useApp();
+
+  useEffect(() => {
+    const handleUrl = (event: { url: string }) => {
+      if (!event.url) return;
+      const url = event.url.toLowerCase();
+      if (url.includes('notifications')) {
+        setCurrentScreen('NOTIFICATIONS');
+      } else if (url.includes('upload')) {
+        setCurrentScreen('UPLOAD_BILL');
+      } else if (url.includes('bills')) {
+        setCurrentScreen('MAIN');
+        setActiveTab('BILLS');
+      } else if (url.includes('wallet')) {
+        setCurrentScreen('MAIN');
+        setActiveTab('WALLET');
+      } else if (url.includes('rewards')) {
+        setCurrentScreen('MAIN');
+        setActiveTab('REWARDS');
+      }
+    };
+
+    Linking.getInitialURL().then((url) => {
+      if (url) handleUrl({ url });
+    });
+
+    const sub = Linking.addEventListener('url', handleUrl);
+    return () => sub.remove();
+  }, [setCurrentScreen, setActiveTab]);
 
   const renderActiveScreen = () => {
     if (currentScreen === 'WELCOME') return <WelcomeScreen />;

@@ -490,8 +490,18 @@ export class ReconciliationWorker {
 
     const gatewayStatus = razorpayPayout.status;
     if (gatewayStatus === 'processed') {
-      await PayoutService.finalizeSuccess(payout.id, razorpayPayout.id);
-      return { success: true, status: 'SUCCESS', message: 'Payout finalized as SUCCESS via gateway status.' };
+      if (payout.status === 'FAILED' || payout.status === 'REVERSED') {
+        console.error(`🚨 [RECONCILIATION-CRITICAL] Financial drift detected in single reconciliation! Payout ${payout.id} was ${payout.status} but gateway reported processed!`);
+        await PayoutService.handleFinancialDriftClawback(
+          payout.id,
+          razorpayPayout.id,
+          'Single payout gateway polling reconciliation'
+        );
+        return { success: true, status: 'SUCCESS', message: 'Payout finalized as SUCCESS with financial drift clawback executed.' };
+      } else {
+        await PayoutService.finalizeSuccess(payout.id, razorpayPayout.id);
+        return { success: true, status: 'SUCCESS', message: 'Payout finalized as SUCCESS via gateway status.' };
+      }
     } else if (gatewayStatus === 'reversed') {
       const reason = razorpayPayout.failure_reason || 'Disbursement reversed on banking network';
       await PayoutService.handleReversedPayout(payout.id, reason);
@@ -636,86 +646,26 @@ export class ReconciliationWorker {
         if (eventType === 'payout.processed') {
           if (payoutRecord.status === 'FAILED' || payoutRecord.status === 'REVERSED') {
             console.error(`🚨 [RECONCILIATION-CRITICAL] Financial drift detected! Payout ${payoutRecord.id} was ${payoutRecord.status} but gateway reported payout.processed!`);
-            await prisma.$transaction(async (tx) => {
-              // 1. Lock wallet and get current balances
-              const walletRows = await tx.$queryRaw<Array<{
-                id: string;
-                availableBalance: any;
-                totalRedeemed: any;
-              }>>`
-                SELECT "id", "availableBalance", "totalRedeemed"
-                FROM "Wallet"
-                WHERE "id" = ${payoutRecord.walletId}
-                FOR UPDATE
-              `;
-              const currentWallet = walletRows[0];
-              const payoutAmt = Number(payoutRecord.amount);
-              const currentAvail = Number(currentWallet.availableBalance);
-              // Deduct payout amount from available balance without artificial clamping to maintain ledger parity
-              const newAvail = currentAvail - payoutAmt;
-              const newTotalRedeemed = Number(currentWallet.totalRedeemed) + payoutAmt;
-
-              if (newAvail < 0) {
-                console.warn(`[FINANCIAL RISK] Delayed disbursement created deficit in wallet ${payoutRecord.walletId}: balance is now ₹${newAvail}`);
-              }
-
-              await tx.wallet.update({
-                where: { id: payoutRecord.walletId },
-                data: {
-                  availableBalance: newAvail,
-                  totalRedeemed: newTotalRedeemed,
-                  version: { increment: 1 },
-                },
-              });
-              // 2. Suspend user account and invalidate active sessions
-              await tx.user.update({
-                where: { id: payoutRecord.userId },
-                data: { status: 'SUSPENDED' },
-              });
-              await tx.authSession.deleteMany({
-                where: { userId: payoutRecord.userId },
-              });
-              // 3. Mark payout for urgent manual review and update status to SUCCESS
-              await tx.payout.update({
-                where: { id: payoutRecord.id },
-                data: {
-                  status: 'SUCCESS',
-                  requiresManualReview: true,
-                  manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}. Total redeemed incremented by ₹${payoutAmt}, balance adjusted from ₹${currentAvail} to ₹${newAvail}${newAvail < 0 ? ' (DEFICIT/LIABILITY CREATED)' : ''}. Account suspended for operator audit.`,
-                },
-              });
-              // 4. Double-entry ledger adjustment entry
-              await tx.walletTransaction.create({
-                data: {
-                  walletId: payoutRecord.walletId,
-                  userId: payoutRecord.userId,
-                  amount: payoutAmt,
-                  type: 'PAYOUT_DEBIT',
-                  balanceAfter: newAvail,
-                  referenceType: 'PAYOUT',
-                  referenceId: payoutRecord.id,
-                  description: `Clawback debit of ₹${payoutAmt} due to delayed gateway disbursement (${razorpayPayoutId}) after local status was ${payoutRecord.status}.`,
-                },
-              });
-              // 5. Audit log
-              await tx.auditLog.create({
-                data: {
-                  action: 'CRITICAL_FINANCIAL_DRIFT',
-                  entityType: 'Payout',
-                  entityId: payoutRecord.id,
-                  newValue: JSON.stringify({
-                    payoutId: payoutRecord.id,
-                    eventId: event.eventId,
-                    razorpayPayoutId,
-                    localStatus: payoutRecord.status,
-                    payoutAmount: payoutAmt,
-                    balanceBefore: currentAvail,
-                    balanceAfter: newAvail,
-                    totalRedeemedAfter: newTotalRedeemed,
-                    actionTaken: 'BALANCE_CLAWBACK_AND_USER_SUSPENSION',
-                  }),
-                },
-              });
+            await PayoutService.handleFinancialDriftClawback(
+              payoutRecord.id,
+              razorpayPayoutId,
+              `Reconciliation worker retrying event ${event.eventId}`
+            );
+            await prisma.auditLog.create({
+              data: {
+                action: 'CRITICAL_FINANCIAL_DRIFT',
+                entityType: 'Payout',
+                entityId: payoutRecord.id,
+                newValue: JSON.stringify({
+                  payoutId: payoutRecord.id,
+                  eventId: event.eventId,
+                  razorpayPayoutId,
+                  localStatus: payoutRecord.status,
+                  payoutAmount: Number(payoutRecord.amount),
+                  actionTaken: 'BALANCE_CLAWBACK_AND_USER_SUSPENSION_DEFICIT_LIABILITY_RECORDED',
+                  warning: 'Wallet balance was refunded and gateway disbursed funds concurrently. Account suspended and wallet deficit liability recorded pending operator audit.',
+                }),
+              },
             });
           } else {
             await PayoutService.finalizeSuccess(payoutRecord.id, razorpayPayoutId);

@@ -286,15 +286,13 @@ export class AuthService {
     }
 
     if (admin.lockedUntil && new Date(admin.lockedUntil).getTime() > Date.now()) {
-      throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
+      await bcrypt.compare(params.password, DUMMY_HASH);
+      throw new Error('Invalid login credentials. Please check your details and try again.');
     }
 
     const isMatch = await bcrypt.compare(params.password, admin.passwordHash);
     if (!isMatch) {
-      const lockResult = await AuthService.recordFailedPasswordAttempt(admin.id);
-      if (lockResult.isLocked || lockResult.failedPasswordAttempts >= (config.auth?.maxFailedAttempts || 10)) {
-        throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
-      }
+      await AuthService.recordFailedPasswordAttempt(admin.id);
       throw new Error('Invalid login credentials. Please check your details and try again.');
     }
 

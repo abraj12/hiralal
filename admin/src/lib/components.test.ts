@@ -148,6 +148,12 @@ test('safeDocumentUrl: validates external URLs strictly allowing https and local
   // Safe external HTTPS URLs
   assert.strictEqual(safeDocumentUrl('https://s3.amazonaws.com/bills/invoice.pdf'), 'https://s3.amazonaws.com/bills/invoice.pdf');
   assert.strictEqual(safeDocumentUrl('https://s3.amazonaws.com/bills/invoice.pdf?token=xyz#page1'), 'https://s3.amazonaws.com/bills/invoice.pdf?token=xyz#page1');
+  assert.strictEqual(safeDocumentUrl('https://my-bucket.r2.cloudflarestorage.com/bills/invoice.pdf'), 'https://my-bucket.r2.cloudflarestorage.com/bills/invoice.pdf');
+  assert.strictEqual(safeDocumentUrl('https://hiralalandsonspvtltd.com/bills/invoice.pdf'), 'https://hiralalandsonspvtltd.com/bills/invoice.pdf');
+
+  // Reject untrusted external HTTPS domains (F-21)
+  assert.strictEqual(safeDocumentUrl('https://attacker.com/bills/invoice.pdf'), '#');
+  assert.strictEqual(safeDocumentUrl('https://phishing-site.org/malware.exe'), '#');
 
   // Local development HTTP URLs
   assert.strictEqual(safeDocumentUrl('http://localhost:3000/uploads/bill.pdf'), 'http://localhost:3000/uploads/bill.pdf');

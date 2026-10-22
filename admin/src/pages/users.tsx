@@ -293,7 +293,7 @@ export default function AdminUsersPage() {
                       </span>
                     </td>
                     <td className="py-4 px-4 text-slate-500 font-medium">
-                      {new Date(u.createdAt).toLocaleDateString('en-IN')}
+                      {new Date(u.createdAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}
                     </td>
                     <td className="py-4 px-4">
                       <span
@@ -642,7 +642,7 @@ export default function AdminUsersPage() {
                                 <div>
                                   <span className="text-slate-400 block font-semibold">Verified Timestamp:</span>
                                   <span className="text-slate-700 font-mono">
-                                    {detailsData.kyc.verifiedAt ? new Date(detailsData.kyc.verifiedAt).toLocaleString('en-IN') : '—'}
+                                    {detailsData.kyc.verifiedAt ? new Date(detailsData.kyc.verifiedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : '—'}
                                   </span>
                                 </div>
                                 {detailsData.kyc.rejectionReason && (
@@ -788,7 +788,7 @@ export default function AdminUsersPage() {
                                   <tr key={b.id} className="hover:bg-slate-50/70">
                                     <td className="py-3 px-4 font-bold text-slate-900">{b.invoiceNumber}</td>
                                     <td className="py-3 px-4 text-slate-500">
-                                      {new Date(b.invoiceDate).toLocaleDateString('en-IN')}
+                                      {new Date(b.invoiceDate).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}
                                     </td>
                                     <td className="py-3 px-4 font-bold text-slate-800">
                                       ₹{Number(b.billAmount || 0).toLocaleString('en-IN')}
@@ -881,7 +881,7 @@ export default function AdminUsersPage() {
                                       </span>
                                     </td>
                                     <td className="py-3 px-4 text-slate-500">
-                                      {new Date(p.createdAt).toLocaleDateString('en-IN')}
+                                      {new Date(p.createdAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}
                                     </td>
                                     <td className="py-3 px-4 text-red-600 font-medium">
                                       {p.failureReason || '—'}
@@ -921,7 +921,7 @@ export default function AdminUsersPage() {
                                 {detailsData.ledger.map((l: any) => (
                                   <tr key={l.id} className="hover:bg-slate-50/70">
                                     <td className="py-3 px-4 text-slate-500 font-mono text-[11px]">
-                                      {new Date(l.createdAt).toLocaleString('en-IN')}
+                                      {new Date(l.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
                                     </td>
                                     <td className="py-3 px-4 font-mono font-bold text-slate-800">
                                       <span className={`px-2 py-0.5 rounded text-[10px] ${

@@ -166,6 +166,7 @@ model Wallet {
   availableBalance Decimal  @default(0.0) @db.Decimal(12, 2)
   processingAmount Decimal  @default(0.0) @db.Decimal(12, 2)
   totalRedeemed    Decimal  @default(0.0) @db.Decimal(12, 2)
+  deficitLiability Decimal  @default(0.0) @db.Decimal(12, 2)
   version          Int      @default(1)
   updatedAt        DateTime @updatedAt
 

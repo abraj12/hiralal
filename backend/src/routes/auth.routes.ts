@@ -673,7 +673,8 @@ router.post('/admin/otp/request', adminLoginLimiter, adminAccountLoginLimiter, o
       err.message.includes('prefix') ||
       err.message.includes('format') ||
       err.message.includes('not found') ||
-      err.message.includes('suspended');
+      err.message.includes('suspended') ||
+      err.message.includes('locked');
     res.status(isCredentials ? 401 : 400).json({
       success: false,
       message: isCredentials ? 'Invalid login credentials. Please check your details and try again.' : err.message,

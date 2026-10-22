@@ -74,14 +74,30 @@ export function safeDocumentUrl(url: string | undefined | null): string {
     return trimmed;
   }
 
-  // External URLs strictly restricted to https:// or http://localhost / http://127.0.0.1
+  // External URLs strictly restricted to designated Cloudflare R2 / S3 storage hosts, authorized app domains, or localhost
   if (trimmed.startsWith('https://') || trimmed.startsWith('http://localhost') || trimmed.startsWith('http://127.0.0.1')) {
     try {
       const parsed = new URL(trimmed);
-      if (
-        parsed.protocol === 'https:' ||
-        (parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'))
-      ) {
+      const isHttps = parsed.protocol === 'https:';
+      const isLocal = parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+
+      if (!isHttps && !isLocal) {
+        return '#';
+      }
+
+      const hostname = parsed.hostname.toLowerCase();
+      const isAllowedHost =
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === 's3.amazonaws.com' ||
+        hostname.endsWith('.s3.amazonaws.com') ||
+        hostname.endsWith('.amazonaws.com') ||
+        hostname.endsWith('.r2.cloudflarestorage.com') ||
+        hostname.endsWith('.cloudfront.net') ||
+        hostname === 'hiralalandsonspvtltd.com' ||
+        hostname.endsWith('.hiralalandsonspvtltd.com');
+
+      if (isAllowedHost) {
         return trimmed;
       }
     } catch {

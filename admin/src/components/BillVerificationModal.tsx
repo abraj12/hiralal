@@ -379,7 +379,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
               </div>
               {submissionTimestamp && (
                 <div className="text-[11px] text-blue-600 font-medium mt-0.5">
-                  Submitted: {new Date(submissionTimestamp).toLocaleString('en-IN')}
+                  Submitted: {new Date(submissionTimestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
                 </div>
               )}
             </div>

@@ -34,9 +34,15 @@ export default function App({ Component, pageProps }: AppProps) {
             (role === 'BILL_ADMIN' && billAdminAllowed.includes(pathname)) ||
             (role === 'OPERATIONS_ADMIN' && opsAdminAllowed.includes(pathname));
 
-          if (!isAllowed && pathname !== '/') {
+          if (!isAllowed) {
             setAuthorized(false);
-            router.replace('/');
+            if (role === 'BILL_ADMIN' || role === 'OPERATIONS_ADMIN') {
+              router.replace('/');
+            } else {
+              AdminApiClient.clearToken();
+              router.replace('/login');
+            }
+            return;
           } else {
             setAuthorized(true);
           }

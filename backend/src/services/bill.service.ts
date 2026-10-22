@@ -41,84 +41,17 @@ export class BillService {
       throw new Error('User account is suspended or inactive.');
     }
 
+    if (user.deletionScheduledAt) {
+      throw new Error('Account is scheduled for deletion; new invoice submissions are disabled.');
+    }
+
     if (data.billAmount <= 0) {
       throw new Error('Bill amount must be greater than zero.');
     }
 
     const cleanInvoiceNumber = data.invoiceNumber.trim().toUpperCase();
 
-    // ADV-06: Advisory transaction locking and atomic revision resolution
-    const billResolution = await prisma.$transaction(async (tx) => {
-      // Serialize operations on this invoice number to eliminate TOCTOU race conditions
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:' + cleanInvoiceNumber}))`;
-
-      // 1. Check existing submissions by this user for this invoice number
-      const existingUserBills = await tx.bill.findMany({
-        where: {
-          userId: data.userId,
-          invoiceNumber: cleanInvoiceNumber,
-        },
-        orderBy: { revisionNumber: 'desc' },
-      });
-
-      const approvedBill = existingUserBills.find((b) => b.status === 'APPROVED');
-      if (approvedBill) {
-        throw new Error(`Invoice #${cleanInvoiceNumber} has already been approved.`);
-      }
-
-      const activeBill = existingUserBills.find((b) => b.status === 'PENDING' || b.status === 'UNDER_REVIEW');
-      if (activeBill) {
-        throw new Error(`Invoice #${cleanInvoiceNumber} is currently undergoing review.`);
-      }
-
-      let revisionNumber = 1;
-      let parentBillId: string | null = null;
-      let requiresSecondaryApproval = false;
-      let initialStatus: BillStatus = 'PENDING';
-
-      if (existingUserBills.length > 0) {
-        // Must be a revision of a previously rejected bill
-        const latestRejected = existingUserBills[0];
-        if (latestRejected.status !== 'REJECTED') {
-          throw new Error(`Invoice #${cleanInvoiceNumber} cannot be resubmitted while in status ${latestRejected.status}.`);
-        }
-        // ADV-PARENT-01: Hardcode parentBillId to the immediately preceding rejected bill
-        parentBillId = latestRejected.id;
-        revisionNumber = latestRejected.revisionNumber + 1;
-
-        // Check upward deviation against both the rejected parent bill and the root revision (ADV-02 & ADV-CHAIN-01: strict 25% threshold)
-        const rootBill = existingUserBills[existingUserBills.length - 1];
-        const rootGross = Number(rootBill.grossBillAmount || rootBill.billAmount);
-        const parentGross = Number(latestRejected.grossBillAmount || latestRejected.billAmount);
-        const newGross = data.billAmount;
-        if ((parentGross > 0 && newGross > parentGross * 1.25) || (rootGross > 0 && newGross > rootGross * 1.25)) {
-          requiresSecondaryApproval = true;
-          initialStatus = 'UNDER_REVIEW';
-        }
-      }
-
-      // 1b. Check cross-user duplicate invoice number across the platform (case-insensitive)
-      const existingGlobalApproved = await tx.bill.findFirst({
-        where: {
-          invoiceNumber: { equals: cleanInvoiceNumber, mode: 'insensitive' },
-          status: 'APPROVED',
-          userId: { not: data.userId },
-        },
-      });
-
-      if (existingGlobalApproved) {
-        throw new Error(`Invoice #${cleanInvoiceNumber} has already been submitted and approved on the platform.`);
-      }
-
-      return {
-        parentBillId,
-        revisionNumber,
-        requiresSecondaryApproval,
-        initialStatus,
-      };
-    });
-
-    // 2. Validate file, magic-bytes, and calculate SHA-256 hash BEFORE storage write
+    // 1. Validate file, magic-bytes, and calculate SHA-256 hash BEFORE storage write
     const { fileHash, normalizedMime } = StorageService.validateAndHashFile({
       buffer: data.fileBuffer,
       originalFilename: data.fileName,
@@ -129,59 +62,123 @@ export class BillService {
       })(),
     });
 
-    // 3. Check duplicate document file hash across all users
-    const duplicateDoc = await prisma.bill.findFirst({
-      where: { fileHash },
-    });
-
-    if (duplicateDoc) {
-      throw new Error('This invoice document has already been uploaded to the system. Duplicate documents are rejected.');
-    }
-
     const billId = crypto.randomUUID();
+    let uploadedFileKey: string | null = null;
 
-    // 4. Upload file privately to Cloudflare R2 / S3
-    const uploadResult = await StorageService.uploadInvoice({
-      userId: data.userId,
-      billId,
-      buffer: data.fileBuffer,
-      originalFilename: data.fileName,
-      mimeType: normalizedMime,
-    });
-
-    // 5. Persist bill record in PostgreSQL
-    // Notice: reward is NOT committed until Admin verifies and approves the invoice.
     try {
-      return await prisma.bill.create({
-        data: {
-          id: billId,
+      return await prisma.$transaction(async (tx) => {
+        // Serialize operations on this invoice number and document hash to eliminate TOCTOU races
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:' + cleanInvoiceNumber}))`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:doc:' + fileHash}))`;
+
+        // Check duplicate document file hash across all users
+        const duplicateDoc = await tx.bill.findFirst({
+          where: { fileHash },
+        });
+
+        if (duplicateDoc) {
+          throw new Error('This invoice document has already been uploaded to the system. Duplicate documents are rejected.');
+        }
+
+        // Check existing submissions by this user for this invoice number
+        const existingUserBills = await tx.bill.findMany({
+          where: {
+            userId: data.userId,
+            invoiceNumber: cleanInvoiceNumber,
+          },
+          orderBy: { revisionNumber: 'desc' },
+        });
+
+        const approvedBill = existingUserBills.find((b) => b.status === 'APPROVED');
+        if (approvedBill) {
+          throw new Error(`Invoice #${cleanInvoiceNumber} has already been approved.`);
+        }
+
+        const activeBill = existingUserBills.find((b) => b.status === 'PENDING' || b.status === 'UNDER_REVIEW');
+        if (activeBill) {
+          throw new Error(`Invoice #${cleanInvoiceNumber} is currently undergoing review.`);
+        }
+
+        let revisionNumber = 1;
+        let parentBillId: string | null = null;
+        let requiresSecondaryApproval = false;
+        let initialStatus: BillStatus = 'PENDING';
+
+        if (existingUserBills.length > 0) {
+          // Must be a revision of a previously rejected bill
+          const latestRejected = existingUserBills[0];
+          if (latestRejected.status !== 'REJECTED') {
+            throw new Error(`Invoice #${cleanInvoiceNumber} cannot be resubmitted while in status ${latestRejected.status}.`);
+          }
+          parentBillId = latestRejected.id;
+          revisionNumber = latestRejected.revisionNumber + 1;
+
+          const rootBill = existingUserBills[existingUserBills.length - 1];
+          const rootGross = Number(rootBill.grossBillAmount || rootBill.billAmount);
+          const parentGross = Number(latestRejected.grossBillAmount || latestRejected.billAmount);
+          const newGross = data.billAmount;
+          if ((parentGross > 0 && newGross > parentGross * 1.25) || (rootGross > 0 && newGross > rootGross * 1.25)) {
+            requiresSecondaryApproval = true;
+            initialStatus = 'UNDER_REVIEW';
+          }
+        }
+
+        // Check cross-user duplicate invoice number across the platform (case-insensitive)
+        const existingGlobalApproved = await tx.bill.findFirst({
+          where: {
+            invoiceNumber: { equals: cleanInvoiceNumber, mode: 'insensitive' },
+            status: 'APPROVED',
+            userId: { not: data.userId },
+          },
+        });
+
+        if (existingGlobalApproved) {
+          throw new Error(`Invoice #${cleanInvoiceNumber} has already been submitted and approved on the platform.`);
+        }
+
+        // Upload file privately to Cloudflare R2 / S3
+        const uploadResult = await StorageService.uploadInvoice({
           userId: data.userId,
-          invoiceNumber: cleanInvoiceNumber,
-          invoiceDate: parseIndiaBusinessDate(data.invoiceDate),
-          billAmount: data.billAmount,
-          grossBillAmount: data.billAmount,
-          gstIncluded: false,
-          calculatedReward: 0.0, // Pending verification
-          rewardPercentage: null, // Hidden from unapproved bills
-          status: billResolution.initialStatus,
-          parentBillId: billResolution.parentBillId,
-          revisionNumber: billResolution.revisionNumber,
-          requiresSecondaryApproval: billResolution.requiresSecondaryApproval,
-          fileUrl: uploadResult.fileUrl,
-          fileKey: uploadResult.fileKey,
-          fileHash,
-          fileSize: uploadResult.fileSize,
+          billId,
+          buffer: data.fileBuffer,
+          originalFilename: data.fileName,
           mimeType: normalizedMime,
-          remarks: data.remarks || null,
-        },
+        });
+        uploadedFileKey = uploadResult.fileKey;
+
+        return await tx.bill.create({
+          data: {
+            id: billId,
+            userId: data.userId,
+            invoiceNumber: cleanInvoiceNumber,
+            invoiceDate: parseIndiaBusinessDate(data.invoiceDate),
+            billAmount: data.billAmount,
+            grossBillAmount: data.billAmount,
+            gstIncluded: false,
+            calculatedReward: 0.0, // Pending verification
+            rewardPercentage: null, // Hidden from unapproved bills
+            status: initialStatus,
+            parentBillId,
+            revisionNumber,
+            requiresSecondaryApproval,
+            fileUrl: uploadResult.fileUrl,
+            fileKey: uploadResult.fileKey,
+            fileHash,
+            fileSize: uploadResult.fileSize,
+            mimeType: normalizedMime,
+            remarks: data.remarks || null,
+          },
+        });
       });
-    } catch (dbErr: any) {
-      try {
-        await StorageService.getProvider().delete(uploadResult.fileKey);
-      } catch (cleanupErr: any) {
-        console.error(`[STORAGE-CLEANUP-FAILED] Failed to delete orphaned file ${uploadResult.fileKey}:`, cleanupErr.message);
+    } catch (err: any) {
+      if (uploadedFileKey) {
+        try {
+          await StorageService.getProvider().delete(uploadedFileKey);
+        } catch (cleanupErr: any) {
+          console.error(`[STORAGE-CLEANUP-FAILED] Failed to delete file ${uploadedFileKey}:`, cleanupErr.message);
+        }
       }
-      throw dbErr;
+      throw err;
     }
   }
 
@@ -527,6 +524,10 @@ export class BillService {
         },
       });
 
+      if (options?.isOperationsAdminApproved && bill.requiresSecondaryApproval && bill.verifiedByAdminId && bill.verifiedByAdminId === adminId) {
+        throw new Error('Secondary approver cannot be the same administrator who performed primary verification.');
+      }
+
       // 8. Update bill status and store complete financial calculation snapshot
       const updatedBill = await tx.bill.update({
         where: { id: bill.id },
@@ -544,7 +545,7 @@ export class BillService {
           rewardRuleId: rule.id,
           gstRuleId: selectedGstRuleId,
           gstOverrideReason: options?.gstOverrideReason || null,
-          verifiedByAdminId: adminId,
+          verifiedByAdminId: bill.verifiedByAdminId || adminId,
           secondaryApprovedByAdminId: options?.isOperationsAdminApproved ? adminId : bill.secondaryApprovedByAdminId,
           secondaryApprovedAt: options?.isOperationsAdminApproved ? new Date() : bill.secondaryApprovedAt,
           rejectionReason: null,

@@ -528,6 +528,10 @@ jobs:
         working-directory: mobile
         run: npx tsc --noEmit
 
+      - name: Mobile Admin TypeScript Typecheck
+        working-directory: mobile-admin
+        run: npx tsc --noEmit
+
       - name: Mobile Supply Chain Security Audit
         working-directory: mobile
         run: npm audit --omit=dev --audit-level=critical

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, StyleSheet, SafeAreaView, StatusBar, Platform, Text, TouchableOpacity } from 'react-native';
 import { AdminAppProvider, useAdminApp } from './src/context/AdminAppContext';
 import AdminHeader from './src/components/AdminHeader';
-import AdminBottomNav from './src/components/AdminBottomNav';
+import AdminBottomNav, { OpsAdminTab, BillAdminTab } from './src/components/AdminBottomNav';
 import AdminLoginScreen from './src/screens/AdminLoginScreen';
 
 // 2 Authoritative Admin Mobile Workflows
@@ -17,8 +17,8 @@ function AdminAppNavigator() {
   const { currentScreen, user, role, logout } = useAdminApp();
 
   // Navigation state for the 2 supported administrative roles
-  const [billAdminTab, setBillAdminTab] = useState<'DASHBOARD' | 'BILLS'>('DASHBOARD');
-  const [opsAdminTab, setOpsAdminTab] = useState<'DASHBOARD' | 'USERS' | 'PAYOUTS' | 'MORE'>('DASHBOARD');
+  const [billAdminTab, setBillAdminTab] = useState<BillAdminTab>('DASHBOARD');
+  const [opsAdminTab, setOpsAdminTab] = useState<OpsAdminTab>('DASHBOARD');
   const [opsAdminMoreSubtab, setOpsAdminMoreSubtab] = useState<'REWARDS' | 'BROADCAST' | 'AUDIT' | 'SETTINGS'>('REWARDS');
   const [refreshKey, setRefreshKey] = useState(0);
 
