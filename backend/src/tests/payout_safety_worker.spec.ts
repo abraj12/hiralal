@@ -82,7 +82,8 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
       await prisma.wallet.deleteMany({ where: { userId: user.id } });
       await prisma.user.deleteMany({ where: { id: user.id } });
     }
-    if (adminUser) {
+    if (adminUser && adminUser.mobile === '9888888889') {
+      await prisma.notificationCampaign.deleteMany({ where: { createdByAdminId: adminUser.id } });
       await prisma.user.deleteMany({ where: { id: adminUser.id } });
     }
   });
