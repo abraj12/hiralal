@@ -1598,6 +1598,30 @@ export class PayoutService {
         },
       });
 
+      // Keep the compliance audit event in the same transaction as the ledger clawback.
+      // If this record cannot be written, the financial adjustment must roll back too.
+      await tx.auditLog.create({
+        data: {
+          action: 'CRITICAL_FINANCIAL_DRIFT',
+          entityType: 'Payout',
+          entityId: payoutId,
+          newValue: JSON.stringify({
+            payoutId,
+            razorpayPayoutId,
+            originalLocalStatus: currentPayout.status,
+            payoutAmount: payoutAmt,
+            availableBalanceBefore: currentAvail,
+            availableBalanceAfter: newAvail,
+            totalRedeemedBefore: Number(currentWallet.totalRedeemed),
+            totalRedeemedAfter: Number(currentWallet.totalRedeemed) + payoutAmt,
+            deficitLiabilityBefore: currentDeficit,
+            deficitLiabilityAfter: newDeficit,
+            gatewayReason: gatewayReason || null,
+            actionTaken: 'BALANCE_CLAWBACK_AND_USER_SUSPENSION_DEFICIT_LIABILITY_RECORDED',
+          }),
+        },
+      });
+
       return updatedPayout;
     });
   }
