@@ -55,6 +55,12 @@ function setAdminCookie(res: Response, token?: string) {
 // 0. ADMIN PREFIXES VERIFICATION & DISCOVERY
 // ==========================================
 
+function constantTimeSecretEquals(candidate: string, expected: string): boolean {
+  const candidateDigest = crypto.createHash('sha256').update(candidate).digest();
+  const expectedDigest = crypto.createHash('sha256').update(expected).digest();
+  return crypto.timingSafeEqual(candidateDigest, expectedDigest);
+}
+
 router.post(['/admin/verify-prefix', '/verify-admin-prefix'], adminPrefixesLimiter, (req: Request, res: Response) => {
   const rawPrefix = String(req.body?.prefix || '').trim().toUpperCase();
   if (!rawPrefix) {
@@ -64,13 +70,13 @@ router.post(['/admin/verify-prefix', '/verify-admin-prefix'], adminPrefixesLimit
   const billPrefix = normalizeAdminPrefix(config.admin.billAdminPrefix);
   const opsPrefix = normalizeAdminPrefix(config.admin.operationsAdminPrefix);
 
-  const isBill = Boolean(billPrefix && rawPrefix === billPrefix);
-  const isOps = Boolean(opsPrefix && rawPrefix === opsPrefix);
+  const isBill = Boolean(billPrefix && constantTimeSecretEquals(rawPrefix, billPrefix));
+  const isOps = Boolean(opsPrefix && constantTimeSecretEquals(rawPrefix, opsPrefix));
 
   if (isBill || isOps) {
     // VULN-MED-08 & SEC-AUDIT-01: Issue a signed, short-lived (10-minute) Tier-1 challenge token
     // Binding the verified prefix SHA-256 hash to prevent direct Tier-2 bypass
-    // Uses config.admin.accessSecret with fallback to config.jwt.accessSecret for domain key isolation
+    // Uses the configured admin signing key; JWT fallback is only for non-sensitive environments without a dedicated admin key.
     const tier1Secret = config.admin.accessSecret || config.jwt.accessSecret;
     const tier1Token = jwt.sign(
       {
