@@ -398,6 +398,12 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     }
     const p1 = env.BILL_ADMIN_PREFIX.trim().toUpperCase();
     const p2 = env.OPERATIONS_ADMIN_PREFIX.trim().toUpperCase();
+    if (p1.length < 16 || p2.length < 16) {
+      throw new Error('[FATAL] BILL_ADMIN_PREFIX and OPERATIONS_ADMIN_PREFIX must each be at least 16 characters and generated as high-entropy random values.');
+    }
+    if (new Set(p1).size < 8 || new Set(p2).size < 8 || calculateShannonEntropy(p1) < 3 || calculateShannonEntropy(p2) < 3) {
+      throw new Error('[FATAL] BILL_ADMIN_PREFIX and OPERATIONS_ADMIN_PREFIX must contain at least 8 distinct characters with sufficient entropy.');
+    }
     if (p1 === p2 || p1.startsWith(p2) || p2.startsWith(p1)) {
       throw new Error(
         '[FATAL] BILL_ADMIN_PREFIX and OPERATIONS_ADMIN_PREFIX must be distinct non-overlapping prefixes where neither is a prefix of the other.'
