@@ -902,13 +902,31 @@ export class AuthService {
         otpCode,
       });
 
-      if (!smsResult.success && config.isProduction) {
-        throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
+      if (!smsResult.success) {
+        console.error(`[AuthService] SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
+        // Reset cooldown on delivery failure so user is not locked out, but suppress client-facing error
+        // to prevent account-enumeration oracles during provider degradation (AUTH-03)
+        try {
+          await prisma.otpRequest.updateMany({
+            where: {
+              mobile: cleanMobile,
+              purpose: validatedPurpose as OtpPurpose,
+              cooldownUntil: { gt: new Date() },
+              isUsed: false,
+            },
+            data: {
+              cooldownUntil: null,
+              isUsed: true,
+            },
+          });
+        } catch (cleanupErr) {
+          console.error('[AuthService] Failed to reset cooldown after SMS delivery failure:', cleanupErr);
+        }
       }
-    } else {
-      // Synthetic defensive delay to equalize timing with real SMS gateway network latency (AUTH-03)
-      await this.equalizeSmsLatency(startTimeMs);
     }
+
+    // Synthetic defensive delay to equalize timing with real SMS gateway network latency across BOTH paths (AUTH-03)
+    await this.equalizeSmsLatency(startTimeMs);
 
     return {
       message: 'Verification code dispatched successfully to your mobile number.',
@@ -1035,10 +1053,10 @@ export class AuthService {
           }
         }
       }
-    } else {
-      // Synthetic defensive delay to equalize timing with real SMS gateway network latency (AUTH-03)
-      await this.equalizeSmsLatency(startTimeMs);
     }
+
+    // Synthetic defensive delay to equalize timing with real SMS gateway network latency across BOTH paths (AUTH-03)
+    await this.equalizeSmsLatency(startTimeMs);
 
     return antiEnumerationResponse;
   }

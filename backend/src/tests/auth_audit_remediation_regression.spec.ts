@@ -2,6 +2,7 @@ import request from 'supertest';
 import { app } from '../server';
 import { prisma } from '../db';
 import { AuthService } from '../services/auth.service';
+import { SmsService } from '../services/sms';
 import { config } from '../config';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
@@ -273,6 +274,86 @@ describe('AUTH-01, AUTH-02, AUTH-03 Remediation Regression Suite', () => {
       });
       // Suppressed OTP record contains SUPPRESSED marker in hash
       expect(otpRecord).toBeDefined();
+    });
+
+    it('returns uniform success message when SMS gateway delivery fails for existing users without leaking provider error', async () => {
+      await prisma.otpRequest.deleteMany({ where: { mobile: userMobile } });
+      const smsSpy = jest.spyOn(SmsService, 'sendOtp').mockResolvedValueOnce({
+        success: false,
+        error: 'Gateway timeout 504: Carrier network failure',
+      });
+
+      // Calling route directly via Supertest
+      const res = await request(app)
+        .post('/api/auth/otp/request')
+        .send({
+          mobile: userMobile,
+          purpose: 'LOGIN',
+        });
+
+      smsSpy.mockRestore();
+
+      // Must NOT leak HTTP 400 with gateway error to prevent error-oracle enumeration
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain('Verification code dispatched successfully');
+
+      // Cooldown must be cleared so user is not penalized for gateway failure
+      const otp = await prisma.otpRequest.findFirst({
+        where: { mobile: userMobile, purpose: 'LOGIN' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(otp?.cooldownUntil).toBeNull();
+    });
+
+    it('returns uniform message when SMS gateway delivery fails during password recovery without leaking provider error', async () => {
+      await prisma.otpRequest.deleteMany({ where: { mobile: userMobile } });
+      const smsSpy = jest.spyOn(SmsService, 'sendOtp').mockResolvedValueOnce({
+        success: false,
+        error: 'Provider down: Out of SMS credits',
+      });
+
+      const res = await request(app)
+        .post('/api/auth/password-reset/request')
+        .send({
+          mobile: userMobile,
+        });
+
+      smsSpy.mockRestore();
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toBe('If an eligible account exists, a verification code will be sent.');
+
+      const otp = await prisma.otpRequest.findFirst({
+        where: { mobile: userMobile, purpose: 'FORGOT_PASSWORD' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(otp?.cooldownUntil).toBeNull();
+    });
+
+    it('enforces latency floor equalization across both real dispatch and suppressed dispatch paths', async () => {
+      // 1. Real dispatch path (existing user)
+      await prisma.otpRequest.deleteMany({ where: { mobile: userMobile } });
+      const startReal = Date.now();
+      await AuthService.requestOtp({
+        mobile: userMobile,
+        purpose: 'LOGIN',
+      });
+      const realElapsed = Date.now() - startReal;
+
+      // 2. Suppressed dispatch path (non-existent user)
+      const nonExistentMobile = `93${Date.now().toString().slice(-8)}`;
+      const startSuppressed = Date.now();
+      await AuthService.requestOtp({
+        mobile: nonExistentMobile,
+        purpose: 'LOGIN',
+      });
+      const suppressedElapsed = Date.now() - startSuppressed;
+
+      // Both paths must satisfy the minimum floor (15ms in test environment)
+      expect(realElapsed).toBeGreaterThanOrEqual(14);
+      expect(suppressedElapsed).toBeGreaterThanOrEqual(14);
     });
   });
 });
