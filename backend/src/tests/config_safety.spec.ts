@@ -147,12 +147,12 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
 
     it('passes when all production secrets are valid and high-entropy', () => {
       expect(() => validateProductionConfig('api', validBaseEnv)).not.toThrow();
-
-      it('rejects short or low-entropy administrative prefixes', () => {
-        expect(() => validateProductionConfig('api', { ...validBaseEnv, BILL_ADMIN_PREFIX: 'BADM' })).toThrow(/at least 16 characters/);
-        expect(() => validateProductionConfig('api', { ...validBaseEnv, OPERATIONS_ADMIN_PREFIX: 'AAAAAAAAAAAAAAAA' })).toThrow(/at least 8 distinct characters/);
-      });
       expect(() => validateProductionConfig('worker', validBaseEnv)).not.toThrow();
+    });
+
+    it('rejects short or low-entropy administrative prefixes', () => {
+      expect(() => validateProductionConfig('api', { ...validBaseEnv, BILL_ADMIN_PREFIX: 'BADM' })).toThrow(/at least 16 characters/);
+      expect(() => validateProductionConfig('api', { ...validBaseEnv, OPERATIONS_ADMIN_PREFIX: 'AAAAAAAAAAAAAAAA' })).toThrow(/at least 8 distinct characters/);
     });
 
     it('rejects ADMIN_INITIAL_PASSWORD in production', () => {
