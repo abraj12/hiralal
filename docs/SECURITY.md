@@ -44,7 +44,7 @@ The platform separates administrative privileges into two non-overlapping roles:
 
 ### B. 3-Tier Admin Authentication Flow
 Admin authentication requires three sequential factors:
-1. **Tier 1 (Prefix Verification):** Client submits an admin identifier prefix. Backend verifies existence in constant-time format and returns a short-lived `X-Tier1-Token`.
+1. **Tier 1 (Prefix Verification):** Client submits the administrator prefix manually. The prefix is a server-side high-entropy credential (minimum 16 characters), is compared in constant time, and must never be placed in `NEXT_PUBLIC_*` variables or bundled into the frontend. Production/staging/UAT startup rejects short or low-entropy prefixes. A successful check returns a short-lived `X-Tier1-Token`.
 2. **Tier 2 (Password Verification):** Client submits username/mobile, password, and `X-Tier1-Token`. Password attempts are throttled by a 15-minute sliding window (max 5 failed attempts).
 3. **Tier 3 (Transactional 2FA OTP):** Backend issues an encrypted challenge and dispatches a 6-digit OTP via SMS/WhatsApp. The admin must verify this challenge within 5 minutes to receive access and refresh tokens.
 
