@@ -899,10 +899,18 @@ export class AuthService {
 
     // 5. Secure SMS dispatch outside transaction via configured provider (MSG91 in production)
     if (txResult.shouldSendSms) {
-      const smsResult = await SmsService.sendOtp({
-        mobile: cleanMobile,
-        otpCode,
-      });
+      let smsResult: any;
+      try {
+        smsResult = await SmsService.sendOtp({
+          mobile: cleanMobile,
+          otpCode,
+        });
+      } catch (smsErr: any) {
+        smsResult = {
+          success: false,
+          error: smsErr?.message || 'Gateway dispatch exception',
+        };
+      }
 
       if (!smsResult.success) {
         console.error(`[AuthService] SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
@@ -1030,10 +1038,18 @@ export class AuthService {
 
     // 4. Secure SMS dispatch outside transaction
     if (txResult.shouldSendSms) {
-      const smsResult = await SmsService.sendOtp({
-        mobile: cleanMobile,
-        otpCode,
-      });
+      let smsResult: any;
+      try {
+        smsResult = await SmsService.sendOtp({
+          mobile: cleanMobile,
+          otpCode,
+        });
+      } catch (smsErr: any) {
+        smsResult = {
+          success: false,
+          error: smsErr?.message || 'Gateway dispatch exception',
+        };
+      }
 
       if (!smsResult.success) {
         console.error('[AuthService] Password recovery SMS delivery failed:', smsResult.error || 'Gateway rejected dispatch');
@@ -1135,10 +1151,18 @@ export class AuthService {
     });
 
     // 4. Secure SMS dispatch outside transaction
-    const smsResult = await SmsService.sendOtp({
-      mobile: cleanMobile,
-      otpCode,
-    });
+    let smsResult: any;
+    try {
+      smsResult = await SmsService.sendOtp({
+        mobile: cleanMobile,
+        otpCode,
+      });
+    } catch (smsErr: any) {
+      smsResult = {
+        success: false,
+        error: smsErr?.message || 'Gateway dispatch exception',
+      };
+    }
 
     if (!smsResult.success) {
       console.error('[AuthService] Account deletion OTP SMS delivery failed:', smsResult.error || 'Gateway rejected dispatch');

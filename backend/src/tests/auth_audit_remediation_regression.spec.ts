@@ -443,6 +443,63 @@ describe('AUTH-01, AUTH-02, AUTH-03 Remediation Regression Suite', () => {
       smsSpy.mockRestore();
     });
 
+    it('catches unhandled provider exceptions during login OTP dispatch without leaking 400 error (mockRejectedValueOnce)', async () => {
+      await prisma.otpRequest.deleteMany({ where: { mobile: userMobile } });
+      const smsSpy = jest.spyOn(SmsService, 'sendOtp').mockRejectedValueOnce(
+        new Error('Gateway timeout')
+      );
+
+      const res = await request(app)
+        .post('/api/auth/otp/request')
+        .send({
+          mobile: userMobile,
+          purpose: 'LOGIN',
+        });
+
+      smsSpy.mockRestore();
+
+      // Must return uniform HTTP 200 without leaking exception details
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain('Verification code dispatched successfully');
+
+      // Failed OTP is invalidated (isUsed = true) while 60s cooldown is preserved
+      const otp = await prisma.otpRequest.findFirst({
+        where: { mobile: userMobile, purpose: 'LOGIN' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(otp?.isUsed).toBe(true);
+      expect(otp?.cooldownUntil).toBeInstanceOf(Date);
+      expect(otp!.cooldownUntil!.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('catches unhandled provider exceptions during password reset without leaking 400 error (mockRejectedValueOnce)', async () => {
+      await prisma.otpRequest.deleteMany({ where: { mobile: userMobile } });
+      const smsSpy = jest.spyOn(SmsService, 'sendOtp').mockRejectedValueOnce(
+        new Error('Gateway timeout')
+      );
+
+      const res = await request(app)
+        .post('/api/auth/password-reset/request')
+        .send({
+          mobile: userMobile,
+        });
+
+      smsSpy.mockRestore();
+
+      // Must return uniform HTTP 200 without leaking exception details
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toBe('If an eligible account exists, a verification code will be sent.');
+
+      const otp = await prisma.otpRequest.findFirst({
+        where: { mobile: userMobile, purpose: 'FORGOT_PASSWORD' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(otp?.isUsed).toBe(true);
+      expect(otp?.cooldownUntil).toBeNull();
+    });
+
     it('enforces latency floor equalization across both real dispatch and suppressed dispatch paths', async () => {
       // 1. Real dispatch path (existing user)
       await prisma.otpRequest.deleteMany({ where: { mobile: userMobile } });
