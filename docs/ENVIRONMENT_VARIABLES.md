@@ -45,10 +45,8 @@ This document provides a comprehensive inventory of all environment variables us
 
 | Variable | Required | Expected Format | Purpose & Implementation |
 |---|---|---|---|
-| `BILL_ADMIN_PREFIX` | Yes | String (e.g. `BADM`) | Unique identifier prefix for Bill Administrators (Tier 1 authentication). |
-| `OPERATIONS_ADMIN_PREFIX` | Yes | String (e.g. `OADM`) | Unique identifier prefix for Operations Administrators (Tier 1 authentication). |
-| `NEXT_PUBLIC_BILL_ADMIN_PREFIX` | Yes (Admin) | String (`BADM`) | Public prefix configuration exposed to the Next.js admin frontend. |
-| `NEXT_PUBLIC_OPERATIONS_ADMIN_PREFIX` | Yes (Admin) | String (`OADM`) | Public prefix configuration exposed to the Next.js admin frontend. |
+| `BILL_ADMIN_PREFIX` | Yes | High-entropy random string, 16+ characters | Server-side Tier-1 credential for `BILL_ADMIN`; never expose it through `NEXT_PUBLIC_*` or client bundles. |
+| `OPERATIONS_ADMIN_PREFIX` | Yes | High-entropy random string, 16+ characters | Server-side Tier-1 credential for `OPERATIONS_ADMIN`; never expose it through `NEXT_PUBLIC_*` or client bundles. |
 | `BILL_ADMIN_MOBILE` | Yes | 10-digit Indian Mobile | Mobile number used for bootstrapping the initial `BILL_ADMIN` account. |
 | `OPERATIONS_ADMIN_MOBILE` | Yes | 10-digit Indian Mobile | Mobile number used for bootstrapping the initial `OPERATIONS_ADMIN` account. |
 | `BILL_ADMIN_INITIAL_PASSWORD` | Yes | Strong Password | Temporary seed password for `BILL_ADMIN`. Must be changed on first login. |
