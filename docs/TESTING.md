@@ -13,13 +13,13 @@ Every test suite in the repository has been executed and confirmed passing. The 
 |---|---|---|---|---|---|
 | **Backend** | Jest (In-Band) | `npm --prefix backend test` | 50 passed / 50 total | 848 passed / 848 total | **100% Green** |
 | **Admin Portal** | Node.js Test Runner | `npm --prefix admin test` | 2 files | 22 passed / 22 total | **100% Green** |
-| **Mobile Client** | Node.js Test Runner | `npm --prefix mobile test` | 5 files | 29 passed / 29 total | **100% Green** |
+| **Mobile Client** | Node.js Test Runner | `npm --prefix mobile test` | 7 files | 47 passed / 47 total | **100% Green** |
 | **Mobile Admin** | Node.js Test Runner | `npm --prefix mobile-admin test` | 6 files | 32 passed / 32 total | **100% Green** |
-| **Workspace Subtotal** | — | — | **63 suites / files** | **931 tests** | **0 Failures** |
+| **Workspace Subtotal** | — | — | **65 suites / files** | **949 tests** | **0 Failures** |
 | **Migration Compatibility** | Python Unittest | `python scripts/test_migration_compatibility.py` | 1 suite | 6 passed / 6 total | **100% Green** |
 | **Deployment & Health Probes** | Python Unittest | `python scripts/test_verify_deployment_health.py` | 1 suite | 61 passed / 61 total | **100% Green** |
 | **Security Floor Guards** | Node CLI | `node scripts/test-next-security-floor.cjs` | 1 suite | 22 passed / 22 total | **100% Green** |
-| **Repository Total** | — | — | **66 suites / files** | **1,020 tests** | **0 Failures** |
+| **Repository Total** | — | — | **68 suites / files** | **1,038 tests** | **0 Failures** |
 
 ---
 
@@ -86,8 +86,10 @@ cd mobile
 npm test
 
 # Direct execution:
-node --test plugins/withPlayIntegrity.test.js plugins/withReleaseSigning.test.js plugins/apiUrlValidation.test.js plugins/adminPrefixValidation.test.js plugins/dateUtils.test.js
+node --test plugins/withPlayIntegrity.test.js plugins/withReleaseSigning.test.js plugins/withDeveloperModeSecurity.test.js plugins/apiUrlValidation.test.js plugins/adminPrefixValidation.test.js plugins/dateUtils.test.js plugins/securityService.test.js
 ```
+- **`withDeveloperModeSecurity.test.js`**: Validates Expo config plugin injection for Android Developer Options and USB debugging security module and package.
+- **`securityService.test.js`**: Verifies development bypass (`__DEV__`), non-Android platform isolation, fail-safe error handling, and intent triggers.
 - **`withPlayIntegrity.test.js`**: Validates Android Gradle config injection for Google Play Integrity token generation.
 - **`withReleaseSigning.test.js`**: Checks idempotent injection of release signing configuration.
 - **`apiUrlValidation.test.js`**: Enforces strict HTTPS canonical `/api/v1` API endpoint validation.

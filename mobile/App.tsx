@@ -1,7 +1,9 @@
-import React, { useEffect } from 'react';
-import { View, StyleSheet, SafeAreaView, StatusBar, Platform, Linking } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, StyleSheet, SafeAreaView, StatusBar, Platform, Linking, AppState, AppStateStatus } from 'react-native';
 import { AppProvider, useApp } from './src/context/AppContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
+import { DeveloperModeBlocker } from './src/components/DeveloperModeBlocker';
+import { checkDeveloperMode } from './src/services/security.service';
 import BottomNav from './src/components/BottomNav';
 import HomeScreen from './src/screens/HomeScreen';
 import BillsScreen from './src/screens/BillsScreen';
@@ -85,11 +87,40 @@ function MainAppNavigator() {
 }
 
 export default function App() {
+  const [isDevModeBlocked, setIsDevModeBlocked] = useState<boolean>(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const verifySecurity = async () => {
+      const isBlocked = await checkDeveloperMode();
+      if (isMounted) {
+        setIsDevModeBlocked(isBlocked);
+      }
+    };
+
+    // Initial check on launch
+    verifySecurity();
+
+    // Lifecycle-aware check: re-verify when returning from Android Settings
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        verifySecurity();
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.remove();
+    };
+  }, []);
+
   return (
     <ErrorBoundary>
       <AppProvider>
         <MainAppNavigator />
       </AppProvider>
+      <DeveloperModeBlocker visible={isDevModeBlocked} />
     </ErrorBoundary>
   );
 }

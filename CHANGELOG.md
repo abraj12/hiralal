@@ -25,7 +25,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Made role authorization fail-closed in `BillVerificationModal.tsx` and gated Reject/Cancel triggers.
   - Enforced password length >= 8, PAN/IFSC/Account regex, and mobile admin review button authorization.
   - Added domain allowlist to mobile `resolveDocumentUrl` and re-emitted `Permissions-Policy` in Nginx.
-  - Synchronized living documentation; verified 100% test pass rate across 922 workspace tests and 1,011 repository-wide verified tests (66 suites, 0 failures).
+  - Synchronized living documentation; verified 100% test pass rate across 949 workspace tests and 1,038 repository-wide verified tests (68 suites, 0 failures).
+- **Client Security & Device Hardening (Developer Options & USB Debugging Lockout)**:
+  - Implemented native `SecurityModule.java` and `SecurityPackage.java` detecting active `DEVELOPMENT_SETTINGS_ENABLED` or `ADB_ENABLED` on Android devices.
+  - Added full-screen, non-dismissible `DeveloperModeBlocker.tsx` with direct deep linking to Android Settings (`Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS`).
+  - Added lifecycle-aware `AppState` re-verification dynamically unblocking the app when the user returns from Settings with developer options disabled.
+  - Built Expo config plugin `withDeveloperModeSecurity.js` preserving native bridge across `npx expo prebuild`.
+  - Added `__DEV__` bypass ensuring local development and USB debugging with Metro / Expo Go remain frictionless.
 
 ## [2.3.0] - 2026-10-23
 
