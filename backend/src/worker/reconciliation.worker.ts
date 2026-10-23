@@ -509,6 +509,21 @@ export class ReconciliationWorker {
           razorpayPayout.id,
           'Single payout gateway polling reconciliation'
         );
+        await prisma.auditLog.create({
+          data: {
+            action: 'CRITICAL_FINANCIAL_DRIFT',
+            entityType: 'Payout',
+            entityId: payout.id,
+            newValue: JSON.stringify({
+              payoutId: payout.id,
+              razorpayPayoutId: razorpayPayout.id,
+              localStatus: payout.status,
+              payoutAmount: Number(payout.amount),
+              actionTaken: 'BALANCE_CLAWBACK_AND_USER_SUSPENSION_DEFICIT_LIABILITY_RECORDED',
+              source: 'SINGLE_PAYOUT_RECONCILIATION',
+            }),
+          },
+        });
         return { success: true, status: 'SUCCESS', message: 'Payout finalized as SUCCESS with financial drift clawback executed.' };
       } else {
         await PayoutService.finalizeSuccess(payout.id, razorpayPayout.id);
