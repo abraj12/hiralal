@@ -123,7 +123,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
           tier1Token: tokenSignedWithUserKey,
         });
 
-      expect(response.status).toBe(401);
+      expect(response.status).toBe(403);
       expect(response.body.challengeToken).toBeUndefined();
     } finally {
       config.admin.accessSecret = originalAdminSecret;
