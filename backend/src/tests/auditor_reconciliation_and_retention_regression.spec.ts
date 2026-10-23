@@ -401,6 +401,44 @@ describe('Auditor Remediation Regression Suite: Financial Drift, Statutory Purge
     expect(flaggedPayout?.manualReviewReason).toBe('FATAL_INVALID_AMOUNT');
   });
 
+  test('High: Single-payout reconciliation writes an audit record for financial drift', async () => {
+    const providerId = `pout_single_reconcile_drift_${Date.now()}`;
+    const payout = await prisma.payout.create({
+      data: {
+        userId: user1.id,
+        walletId: user1.wallet.id,
+        paymentAccountId: paymentAccount1.id,
+        paymentType: 'UPI',
+        amount: 100.0,
+        status: 'FAILED',
+        razorpayPayoutId: providerId,
+        idempotencyKey: `idem-single-reconcile-drift-${Date.now()}`,
+      },
+    });
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: providerId,
+        status: 'processed',
+        currency: 'INR',
+        amount: 10000,
+      }),
+    } as any);
+
+    try {
+      const result = await ReconciliationWorker.reconcileSinglePayout(payout.id);
+      expect(result.success).toBe(true);
+      const audit = await prisma.auditLog.findFirst({
+        where: { action: 'CRITICAL_FINANCIAL_DRIFT', entityType: 'Payout', entityId: payout.id },
+      });
+      expect(audit).not.toBeNull();
+      expect(audit?.newValue).toContain('SINGLE_PAYOUT_RECONCILIATION');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   test('Needs Correction 2: Gateway polling rejects currency and amount mismatches and flags manual review', async () => {
     const mismatchPayout = await prisma.payout.create({
       data: {
