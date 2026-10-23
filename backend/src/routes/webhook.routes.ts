@@ -324,22 +324,6 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
               razorpayPayoutId,
               `Webhook event ${eventId}`
             );
-            await prisma.auditLog.create({
-              data: {
-                action: 'CRITICAL_FINANCIAL_DRIFT',
-                entityType: 'Payout',
-                entityId: payoutRecord.id,
-                newValue: JSON.stringify({
-                  payoutId: payoutRecord.id,
-                  eventId,
-                  razorpayPayoutId,
-                  localStatus: payoutRecord.status,
-                  payoutAmount: Number(payoutRecord.amount),
-                  actionTaken: 'USER_SUSPENDED_WALLET_FROZEN_DEFICIT_LIABILITY_RECORDED',
-                  warning: 'Wallet balance was refunded and gateway disbursed funds concurrently. Account suspended and wallet deficit liability recorded pending operator audit.',
-                }),
-              },
-            });
           } else {
             await PayoutService.finalizeSuccess(payoutRecord.id, razorpayPayoutId);
             console.log(`[WEBHOOK] Payout ${payoutRecord.id} successfully finalized via webhook.`);
