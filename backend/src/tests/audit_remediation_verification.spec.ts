@@ -257,6 +257,66 @@ describe('Audit Remediation & Security Defect Verification Suite', () => {
     });
   });
 
+  describe('2c. [CRITICAL] Gateway cancellation response must confirm terminal status', () => {
+    it('does not refund when the cancellation endpoint returns HTTP success but payout remains processing', async () => {
+      const originalFetch = global.fetch;
+      const walletBefore = await prisma.wallet.findUniqueOrThrow({ where: { userId: userAId } });
+      const amount = 125;
+      await prisma.wallet.update({
+        where: { id: walletBefore.id },
+        data: {
+          availableBalance: { decrement: amount },
+          processingAmount: { increment: amount },
+        },
+      });
+      const paymentAccount = await prisma.paymentAccount.create({
+        data: {
+          userId: userAId,
+          accountType: 'UPI',
+          upiId: `cancel_processing_${uniqueSuffix}@upi`,
+          maskedInfo: 'cancel***@upi',
+          isVerified: true,
+          isDefault: true,
+        },
+      });
+      const providerId = `pout_cancel_processing_${uniqueSuffix}`;
+      const payout = await prisma.payout.create({
+        data: {
+          userId: userAId,
+          walletId: walletBefore.id,
+          paymentAccountId: paymentAccount.id,
+          amount,
+          status: 'PAYOUT_INITIATED',
+          razorpayPayoutId: providerId,
+          paymentType: 'UPI',
+          idempotencyKey: `cancel_processing_hold_${uniqueSuffix}`,
+        },
+      });
+      config.razorpayx.keyId = 'rzp_test_key';
+      config.razorpayx.keySecret = 'rzp_test_secret';
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: providerId, status: 'processing' }),
+      }) as any;
+
+      try {
+        await expect(
+          PayoutService.rejectRedemption(payout.id, opsAdminId, 'Cancellation request accepted but not settled')
+        ).rejects.toThrow(/did not confirm a terminal cancelled state|Funds must remain reserved/i);
+        const after = await prisma.payout.findUniqueOrThrow({ where: { id: payout.id } });
+        expect(after.status).toBe('PAYOUT_INITIATED');
+        expect(after.requiresManualReview).toBe(true);
+        const walletAfter = await prisma.wallet.findUniqueOrThrow({ where: { id: walletBefore.id } });
+        expect(Number(walletAfter.availableBalance)).toBe(Number(walletBefore.availableBalance) - amount);
+        expect(Number(walletAfter.processingAmount)).toBe(Number(walletBefore.processingAmount) + amount);
+      } finally {
+        global.fetch = originalFetch;
+        jest.restoreAllMocks();
+      }
+    });
+  });
+
   describe('3. [HIGH-03] Refresh Token Strict Replay Attack Fencing', () => {
     it('strictly revokes all active user sessions when an already-rotated refresh token is replayed', async () => {
       const initialRefreshToken = crypto.randomBytes(40).toString('hex');
