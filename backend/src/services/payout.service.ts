@@ -1021,12 +1021,14 @@ export class PayoutService {
       return updatedPayout;
     });
 
-    NotificationService.dispatchPushForUser(
+    if (transitionedToSuccess) {
+      NotificationService.dispatchPushForUser(
       result.userId,
       'Payout Request Rejected',
       `Your payout request of ${Number(result.amount).toLocaleString('en-IN')} Points was rejected (${reason.trim()}). The funds have been refunded to your wallet.`,
       { payoutId: result.id, amount: Number(result.amount), rejectionReason: reason.trim() }
-    ).catch((err) => console.error('[PAYOUT-SERVICE] Push dispatch failed:', err.message));
+      ).catch((err) => console.error('[PAYOUT-SERVICE] Push dispatch failed:', err.message));
+    }
 
     return result;
   }
@@ -1355,6 +1357,7 @@ export class PayoutService {
       throw new Error(`Payout ${payoutId} not found`);
     }
 
+    let transitionedToSuccess = false;
     const result = await prisma.$transaction(async (tx) => {
       // 1. Lock Wallet FIRST (E-02: global lock ordering hierarchy)
       const lockedWallet = await tx.$queryRaw<Array<{ id: string }>>`
@@ -1459,6 +1462,7 @@ export class PayoutService {
         },
       });
 
+      transitionedToSuccess = true;
       return updatedPayout;
     });
 
