@@ -298,12 +298,14 @@ describe('AUTH-01, AUTH-02, AUTH-03 Remediation Regression Suite', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.message).toContain('Verification code dispatched successfully');
 
-      // Cooldown must be cleared so user is not penalized for gateway failure
+      // Failed OTP is invalidated (isUsed = true) while 60s cooldown is preserved for throttling & anti-enumeration parity
       const otp = await prisma.otpRequest.findFirst({
         where: { mobile: userMobile, purpose: 'LOGIN' },
         orderBy: { createdAt: 'desc' },
       });
-      expect(otp?.cooldownUntil).toBeNull();
+      expect(otp?.isUsed).toBe(true);
+      expect(otp?.cooldownUntil).toBeInstanceOf(Date);
+      expect(otp!.cooldownUntil!.getTime()).toBeGreaterThan(Date.now());
     });
 
     it('returns uniform message when SMS gateway delivery fails during password recovery without leaking provider error', async () => {
@@ -329,7 +331,116 @@ describe('AUTH-01, AUTH-02, AUTH-03 Remediation Regression Suite', () => {
         where: { mobile: userMobile, purpose: 'FORGOT_PASSWORD' },
         orderBy: { createdAt: 'desc' },
       });
+      expect(otp?.isUsed).toBe(true);
       expect(otp?.cooldownUntil).toBeNull();
+    });
+
+    it('maintains 100% cooldown parity across consecutive requests during SMS gateway failure (Anti-Enumeration)', async () => {
+      const smsSpy = jest.spyOn(SmsService, 'sendOtp').mockResolvedValue({
+        success: false,
+        error: 'Gateway 503 Service Unavailable',
+      });
+
+      // 1. Existing user
+      await prisma.otpRequest.deleteMany({ where: { mobile: userMobile } });
+      const resExisting1 = await request(app)
+        .post('/api/auth/otp/request')
+        .send({ mobile: userMobile, purpose: 'LOGIN' });
+      expect(resExisting1.status).toBe(200);
+
+      const resExisting2 = await request(app)
+        .post('/api/auth/otp/request')
+        .send({ mobile: userMobile, purpose: 'LOGIN' });
+      expect(resExisting2.status).toBe(400);
+      expect(resExisting2.body.message).toMatch(/Please wait \d+ seconds/i);
+
+      // 2. Non-existent user
+      const nonExistentMobile = `94${Date.now().toString().slice(-8)}`;
+      await prisma.otpRequest.deleteMany({ where: { mobile: nonExistentMobile } });
+      const resNonExistent1 = await request(app)
+        .post('/api/auth/otp/request')
+        .send({ mobile: nonExistentMobile, purpose: 'LOGIN' });
+      expect(resNonExistent1.status).toBe(200);
+
+      const resNonExistent2 = await request(app)
+        .post('/api/auth/otp/request')
+        .send({ mobile: nonExistentMobile, purpose: 'LOGIN' });
+      expect(resNonExistent2.status).toBe(400);
+      expect(resNonExistent2.body.message).toMatch(/Please wait \d+ seconds/i);
+
+      smsSpy.mockRestore();
+    });
+
+    it('delayed SMS failure for older OTP does NOT invalidate a newer OTP record (ID-targeted cleanup)', async () => {
+      await prisma.otpRequest.deleteMany({ where: { mobile: userMobile } });
+
+      let resolveOldSms: (val: any) => void;
+      const oldSmsPromise = new Promise((resolve) => {
+        resolveOldSms = resolve;
+      });
+
+      // Spy: first call hangs on promise, second call succeeds
+      let callCount = 0;
+      const smsSpy = jest.spyOn(SmsService, 'sendOtp').mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return oldSmsPromise as Promise<any>;
+        }
+        return { success: true };
+      });
+
+      // 1. Fire Request 1 (hangs in SMS dispatch)
+      const req1Promise = AuthService.requestOtp({
+        mobile: userMobile,
+        purpose: 'LOGIN',
+      });
+
+      // Wait a moment for OTP 1 record to be created in DB
+      await new Promise((r) => setTimeout(r, 60));
+
+      const otp1Record = await prisma.otpRequest.findFirst({
+        where: { mobile: userMobile, purpose: 'LOGIN' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(otp1Record).toBeDefined();
+
+      // Simulate cooldown expiry on OTP 1 so Request 2 can be made
+      await prisma.otpRequest.update({
+        where: { id: otp1Record!.id },
+        data: { cooldownUntil: new Date(Date.now() - 1000) },
+      });
+
+      // 2. Fire Request 2 (creates OTP 2)
+      const req2Result = await AuthService.requestOtp({
+        mobile: userMobile,
+        purpose: 'LOGIN',
+      });
+      expect(req2Result.message).toContain('Verification code dispatched successfully');
+
+      const otp2Record = await prisma.otpRequest.findFirst({
+        where: { mobile: userMobile, purpose: 'LOGIN', id: { not: otp1Record!.id } },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(otp2Record).toBeDefined();
+      expect(otp2Record?.isUsed).toBe(false);
+
+      // 3. Now let Request 1's SMS call finally complete with FAILURE
+      resolveOldSms!({ success: false, error: 'Delayed network timeout' });
+      await req1Promise;
+
+      // 4. Invariant: OTP 1 must be marked isUsed = true
+      const updatedOtp1 = await prisma.otpRequest.findUnique({
+        where: { id: otp1Record!.id },
+      });
+      expect(updatedOtp1?.isUsed).toBe(true);
+
+      // 5. Invariant: OTP 2 must NOT be invalidated by Request 1's cleanup!
+      const updatedOtp2 = await prisma.otpRequest.findUnique({
+        where: { id: otp2Record!.id },
+      });
+      expect(updatedOtp2?.isUsed).toBe(false);
+
+      smsSpy.mockRestore();
     });
 
     it('enforces latency floor equalization across both real dispatch and suppressed dispatch paths', async () => {

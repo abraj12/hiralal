@@ -831,7 +831,7 @@ export class AuthService {
 
     let shouldSendSms = true;
 
-    await prisma.$transaction(async (tx) => {
+    const txResult = await prisma.$transaction(async (tx) => {
       // Advisory xact lock per mobile number: (7212027, hashtext(cleanMobile))
       await tx.$executeRaw`SELECT 1::int AS lock_acquired FROM (SELECT pg_advisory_xact_lock(7212027, hashtext(${cleanMobile})::integer)) AS lock_result`;
 
@@ -884,7 +884,7 @@ export class AuthService {
 
       // 4. Record OTP Request (Uniformly created to enforce 60s cooldown and 10-min rate limits, preventing enumeration)
       const recordedOtpHash = shouldSendSms ? otpHash : hmacHashOtp(`SUPPRESSED_${Date.now()}_${cleanMobile}`);
-      await tx.otpRequest.create({
+      const createdRecord = await tx.otpRequest.create({
         data: {
           mobile: cleanMobile,
           otpHash: recordedOtpHash,
@@ -893,10 +893,12 @@ export class AuthService {
           cooldownUntil,
         },
       });
+
+      return { shouldSendSms, otpRequestId: createdRecord.id };
     });
 
     // 5. Secure SMS dispatch outside transaction via configured provider (MSG91 in production)
-    if (shouldSendSms) {
+    if (txResult.shouldSendSms) {
       const smsResult = await SmsService.sendOtp({
         mobile: cleanMobile,
         otpCode,
@@ -904,23 +906,24 @@ export class AuthService {
 
       if (!smsResult.success) {
         console.error(`[AuthService] SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
-        // Reset cooldown on delivery failure so user is not locked out, but suppress client-facing error
-        // to prevent account-enumeration oracles during provider degradation (AUTH-03)
-        try {
-          await prisma.otpRequest.updateMany({
-            where: {
-              mobile: cleanMobile,
-              purpose: validatedPurpose as OtpPurpose,
-              cooldownUntil: { gt: new Date() },
-              isUsed: false,
-            },
-            data: {
-              cooldownUntil: null,
-              isUsed: true,
-            },
-          });
-        } catch (cleanupErr) {
-          console.error('[AuthService] Failed to reset cooldown after SMS delivery failure:', cleanupErr);
+        // Invalidate ONLY this exact OTP record so it cannot be used if delivery failed.
+        // Retain cooldownUntil so both existing and non-existent accounts maintain identical
+        // 60-second cooldown behavior, eliminating account-enumeration oracles (AUTH-03).
+        // Targeting exact id prevents delayed SMS failure from invalidating newer OTPs.
+        if (txResult.otpRequestId) {
+          try {
+            await prisma.otpRequest.updateMany({
+              where: {
+                id: txResult.otpRequestId,
+                isUsed: false,
+              },
+              data: {
+                isUsed: true,
+              },
+            });
+          } catch (cleanupErr) {
+            console.error('[AuthService] Failed to invalidate OTP after SMS delivery failure:', cleanupErr);
+          }
         }
       }
     }
