@@ -558,11 +558,27 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       const userAfter = await prisma.user.findUnique({ where: { id: regularUserId } });
       expect(userAfter?.activeSessionId).toBeNull();
 
+      const targetSessionId = crypto.randomUUID();
       await prisma.user.update({
         where: { id: regularUserId },
-        data: { activeSessionId: crypto.randomUUID() },
+        data: { activeSessionId: targetSessionId },
       });
+      await prisma.authSession.create({
+        data: {
+          userId: regularUserId,
+          sessionId: targetSessionId,
+          tokenHash: sha256Hash(crypto.randomUUID()),
+          expiresAt: new Date(Date.now() + 86400000),
+        },
+      });
+
+      // Sessionless logout should NOT clear activeSessionId (AUTH-01: prevents unconstrained revocation)
       await AuthService.logout(undefined, regularUserId);
+      const userAfterSessionless = await prisma.user.findUnique({ where: { id: regularUserId } });
+      expect(userAfterSessionless?.activeSessionId).toBe(targetSessionId);
+
+      // Session-bound logout should clear activeSessionId
+      await AuthService.logout(undefined, regularUserId, targetSessionId);
       const userAfter2 = await prisma.user.findUnique({ where: { id: regularUserId } });
       expect(userAfter2?.activeSessionId).toBeNull();
     });

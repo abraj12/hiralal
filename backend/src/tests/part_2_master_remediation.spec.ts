@@ -571,17 +571,8 @@ describe('Hiralal Rewards Platform — Part 2 Master Remediation Suite', () => {
       const secret = config.razorpayx.webhookSecret || 'webhook_secret_hiralal_rzpx_2026';
       config.razorpayx.webhookSecret = secret;
 
-      const paymentAccount = await prisma.paymentAccount.create({
-        data: {
-          userId: workerUser.id,
-          accountType: 'BANK_ACCOUNT',
-          accountHolderName: 'Master Test Worker',
-          accountNumber: '1234567890',
-          ifscCode: 'HDFC0001234',
-          maskedInfo: '••••••••7890',
-          isVerified: true,
-          isDefault: true,
-        },
+      const paymentAccount = await prisma.paymentAccount.findFirstOrThrow({
+        where: { userId: workerUser.id },
       });
 
       const testPayout = await prisma.payout.create({
@@ -628,17 +619,8 @@ describe('Hiralal Rewards Platform — Part 2 Master Remediation Suite', () => {
       const secret = config.razorpayx.webhookSecret || 'webhook_secret_hiralal_rzpx_2026';
       config.razorpayx.webhookSecret = secret;
 
-      const paymentAccount = await prisma.paymentAccount.create({
-        data: {
-          userId: workerUser.id,
-          accountType: 'BANK_ACCOUNT',
-          accountHolderName: 'Master Test Worker',
-          accountNumber: '1234567890',
-          ifscCode: 'HDFC0001234',
-          maskedInfo: '••••••••7890',
-          isVerified: true,
-          isDefault: true,
-        },
+      const paymentAccount = await prisma.paymentAccount.findFirstOrThrow({
+        where: { userId: workerUser.id },
       });
 
       const testPayout = await prisma.payout.create({

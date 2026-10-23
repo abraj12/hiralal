@@ -780,6 +780,29 @@ export class AuthService {
 
 
   /**
+   * Defensive synthetic delay to equalize timing with real SMS gateway network latency (AUTH-03).
+   * In test environment, uses minimal simulated delay to maintain parity without slowing test execution.
+   * In production/staging, targets expected external gateway latency with randomized jitter.
+   */
+  private static async equalizeSmsLatency(startTimeMs: number): Promise<void> {
+    const elapsed = Date.now() - startTimeMs;
+    if (config.nodeEnv === 'test') {
+      const targetMs = 15;
+      const remaining = targetMs - elapsed;
+      if (remaining > 0) {
+        await new Promise((r) => setTimeout(r, remaining));
+      }
+      return;
+    }
+
+    const targetMs = 450 + Math.floor(Math.random() * 150);
+    const remaining = targetMs - elapsed;
+    if (remaining > 0) {
+      await new Promise((r) => setTimeout(r, remaining));
+    }
+  }
+
+  /**
    * Generates and dispatches cryptographically secure 6-digit OTP.
    * Enforces 60-second cooldown, 10-minute rate limiting, and OTP TTL <= 300s.
    * Serializes concurrent requests per mobile number using PostgreSQL transaction advisory locks.
@@ -789,6 +812,7 @@ export class AuthService {
     purpose?: unknown;
     ipAddress?: string;
   }) {
+    const startTimeMs = Date.now();
     const validatedPurpose = requireGenericOtpPurpose(params.purpose);
     const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
     if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
@@ -882,8 +906,8 @@ export class AuthService {
         throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
       }
     } else {
-      // Synthetic defensive delay to equalize timing with real SMS gateway network latency
-      await new Promise((r) => setTimeout(r, 250));
+      // Synthetic defensive delay to equalize timing with real SMS gateway network latency (AUTH-03)
+      await this.equalizeSmsLatency(startTimeMs);
     }
 
     return {
@@ -905,6 +929,7 @@ export class AuthService {
     mobile: string;
     ipAddress?: string;
   }) {
+    const startTimeMs = Date.now();
     const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
     if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
       throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
@@ -1011,8 +1036,8 @@ export class AuthService {
         }
       }
     } else {
-      // Synthetic defensive delay to equalize timing with real SMS gateway network latency
-      await new Promise((r) => setTimeout(r, 250));
+      // Synthetic defensive delay to equalize timing with real SMS gateway network latency (AUTH-03)
+      await this.equalizeSmsLatency(startTimeMs);
     }
 
     return antiEnumerationResponse;
@@ -1572,10 +1597,12 @@ export class AuthService {
     }
 
     if (user.status === 'SUSPENDED') {
+      await bcrypt.compare(pass, DUMMY_HASH);
       throw new Error('Your account has been suspended. Please contact customer support.');
     }
 
     if (user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now()) {
+      await bcrypt.compare(pass, DUMMY_HASH);
       throw new Error('Account is temporarily locked due to too many failed login attempts. Please try again later.');
     }
 
@@ -1959,17 +1986,9 @@ export class AuthService {
           where: { id: userId, activeSessionId: sessionId },
           data: { activeSessionId: null },
         });
-      } else {
-        // Fallback for legacy tokens without sessionId (e.g. older tests)
-        await prisma.authSession.updateMany({
-          where: { userId, revokedAt: null },
-          data: { revokedAt: new Date() },
-        });
-        await prisma.user.update({
-          where: { id: userId },
-          data: { activeSessionId: null },
-        });
       }
+      // AUTH-01: Sessionless access tokens cannot identify a specific session and are strictly
+      // rejected from revoking arbitrary or newer user sessions.
     }
   }
 

@@ -212,15 +212,8 @@ describe('Audit Remediation & Security Defect Verification Suite', () => {
         },
       });
 
-      const paymentAccount = await prisma.paymentAccount.create({
-        data: {
-          userId: userAId,
-          accountType: 'UPI',
-          upiId: `userA_idempotency_${uniqueSuffix}@upi`,
-          maskedInfo: 'userA***@upi',
-          isVerified: true,
-          isDefault: true,
-        },
+      const paymentAccount = await prisma.paymentAccount.findFirstOrThrow({
+        where: { userId: userAId },
       });
       const payout = await prisma.payout.create({
         data: {
@@ -269,15 +262,8 @@ describe('Audit Remediation & Security Defect Verification Suite', () => {
           processingAmount: { increment: amount },
         },
       });
-      const paymentAccount = await prisma.paymentAccount.create({
-        data: {
-          userId: userAId,
-          accountType: 'UPI',
-          upiId: `cancel_processing_${uniqueSuffix}@upi`,
-          maskedInfo: 'cancel***@upi',
-          isVerified: true,
-          isDefault: true,
-        },
+      const paymentAccount = await prisma.paymentAccount.findFirstOrThrow({
+        where: { userId: userAId },
       });
       const providerId = `pout_cancel_processing_${uniqueSuffix}`;
       const payout = await prisma.payout.create({

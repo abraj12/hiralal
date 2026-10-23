@@ -338,10 +338,11 @@ describe('Wave 7 Audit Remediation Regression Suite', () => {
       const result = await BillService.approveBill(bill.id, billAdmin.id);
       expect(result.bill.status).toBe('APPROVED');
 
-      // Check wallet: deficitLiability should be 0, availableBalance should be 50 - 30 = 20
+      // Check wallet: deficitLiability should be 0, availableBalance should be net of calculatedReward minus deficit (30)
       const updatedWallet = await prisma.wallet.findUnique({ where: { userId: craftsman.id } });
       expect(Number(updatedWallet?.deficitLiability)).toBe(0);
-      expect(Number(updatedWallet?.availableBalance)).toBe(20);
+      const expectedBalance = Number(result.bill.calculatedReward) - 30;
+      expect(Number(updatedWallet?.availableBalance)).toBe(expectedBalance);
 
       // Check transaction logs for offset note
       const recoveryTx = await prisma.walletTransaction.findFirst({

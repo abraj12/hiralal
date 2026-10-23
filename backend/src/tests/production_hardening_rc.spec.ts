@@ -1,4 +1,5 @@
 import request from 'supertest';
+import crypto from 'crypto';
 import { app } from '../server';
 import { prisma } from '../db';
 import { PayoutService } from '../services/payout.service';
@@ -83,20 +84,59 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
       include: { wallet: true },
     });
 
+    const adminSessionId = crypto.randomUUID();
+    await prisma.user.update({
+      where: { id: adminUser.id },
+      data: { activeSessionId: adminSessionId },
+    });
+    await prisma.authSession.create({
+      data: {
+        userId: adminUser.id,
+        sessionId: adminSessionId,
+        tokenHash: 'mock-admin-token-hash',
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+    });
     adminToken = jwt.sign(
-      { userId: adminUser.id, role: adminUser.role },
+      { userId: adminUser.id, role: adminUser.role, sessionId: adminSessionId },
       config.admin.accessSecret || config.jwt.accessSecret,
       { expiresIn: '1h' }
     );
 
+    const billAdminSessionId = crypto.randomUUID();
+    await prisma.user.update({
+      where: { id: billAdminUser.id },
+      data: { activeSessionId: billAdminSessionId },
+    });
+    await prisma.authSession.create({
+      data: {
+        userId: billAdminUser.id,
+        sessionId: billAdminSessionId,
+        tokenHash: 'mock-bill-admin-token-hash',
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+    });
     billAdminToken = jwt.sign(
-      { userId: billAdminUser.id, role: billAdminUser.role },
+      { userId: billAdminUser.id, role: billAdminUser.role, sessionId: billAdminSessionId },
       config.admin.accessSecret || config.jwt.accessSecret,
       { expiresIn: '1h' }
     );
 
+    const plumberSessionId = crypto.randomUUID();
+    await prisma.user.update({
+      where: { id: plumberUser.id },
+      data: { activeSessionId: plumberSessionId },
+    });
+    await prisma.authSession.create({
+      data: {
+        userId: plumberUser.id,
+        sessionId: plumberSessionId,
+        tokenHash: 'mock-plumber-token-hash',
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+    });
     plumberToken = jwt.sign(
-      { userId: plumberUser.id, role: plumberUser.role },
+      { userId: plumberUser.id, role: plumberUser.role, sessionId: plumberSessionId },
       config.jwt.accessSecret,
       { expiresIn: '1h' }
     );

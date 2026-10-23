@@ -553,6 +553,15 @@ router.post('/logout', loginIpLimiter, async (req: Request, res: Response) => {
       });
     }
 
+    // AUTH-01: Sessionless access tokens cannot identify a specific session and must not trigger global revocation
+    if (!refreshToken && !tokenSessionId) {
+      return res.status(400).json({
+        success: false,
+        code: 'SESSION_ID_REQUIRED',
+        message: 'Access token must be bound to a valid session ID to perform logout.',
+      });
+    }
+
     // Stale session validation (Finding 1): If logout is authenticated via an access token,
     // verify the token is bound to the currently active session.
     // A stale access token from a superseded session MUST NOT invalidate a newer session.
