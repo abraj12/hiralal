@@ -139,11 +139,16 @@ describe('Storage Magic-Byte Security & KYC Provider Validation Tests', () => {
       expect(decrypted).toBe(pan);
     });
 
-    test('3. Rejects duplicate PAN across different users', async () => {
-      // User 2 attempts to claim User 1's already verified PAN
-      await expect(
-        KycService.submitPan(user2.id, 'BNZPA1234K', 'Craftsman Beta')
-      ).rejects.toThrow(/already verified with another user/i);
+    test('3. Rejects duplicate PAN across different users, including suspended accounts', async () => {
+      // Suspension must not release a retained legal identity for reuse by another account.
+      await prisma.user.update({ where: { id: user1.id }, data: { status: 'SUSPENDED' } });
+      try {
+        await expect(
+          KycService.submitPan(user2.id, 'BNZPA1234K', 'Craftsman Beta')
+        ).rejects.toThrow(/already verified with another user/i);
+      } finally {
+        await prisma.user.update({ where: { id: user1.id }, data: { status: 'ACTIVE' } });
+      }
     });
   });
 

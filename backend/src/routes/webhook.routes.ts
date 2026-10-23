@@ -68,8 +68,8 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
     const eventId =
       event.id ||
       event.event_id ||
-      (payoutEntity ? `${eventType}_${payoutEntity.id}` : null) ||
-      (req.headers['x-razorpay-event-id'] as string);
+      (req.headers['x-razorpay-event-id'] as string) ||
+      (payoutEntity ? `${eventType}_${payoutEntity.id}` : null);
 
     console.log(`📥 [WEBHOOK] Received RazorpayX Event: ${eventType} (Event ID: ${eventId}, Payout ID: ${payoutEntity?.id})`);
 
@@ -144,15 +144,66 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
         return;
       }
 
-      const razorpayPayoutId = payoutEntity.id;
-      const payoutRecord = await prisma.payout.findFirst({
-        where: {
-          OR: [
-            { razorpayPayoutId },
-            { id: payoutEntity.reference_id },
-          ],
-        },
-      });
+      const razorpayPayoutId = typeof payoutEntity.id === 'string' ? payoutEntity.id.trim() : '';
+      const referenceId = typeof payoutEntity.reference_id === 'string' ? payoutEntity.reference_id.trim() : '';
+      if (!razorpayPayoutId) {
+        await prisma.webhookEvent.update({
+          where: { provider_event_unique: { provider: 'RAZORPAYX', eventId } },
+          data: {
+            isProcessed: true,
+            processedAt: new Date(),
+            processingStartedAt: null,
+            lastError: 'Malformed payout webhook: provider payout ID is missing.',
+          },
+        });
+        res.status(200).json({ status: 'ignored', reason: 'missing_provider_payout_id' });
+        return;
+      }
+
+      const payoutByProviderId = await prisma.payout.findUnique({ where: { razorpayPayoutId } });
+      const payoutByReference = referenceId
+        ? await prisma.payout.findUnique({ where: { id: referenceId } })
+        : null;
+
+      // Never let an OR query pick an arbitrary payout when the provider ID and our
+      // reference ID point to different local financial records.
+      if (payoutByProviderId && payoutByReference && payoutByProviderId.id !== payoutByReference.id) {
+        const affectedPayoutIds = [payoutByProviderId.id, payoutByReference.id];
+        const reason = `FATAL_PROVIDER_REFERENCE_MISMATCH: provider payout ${razorpayPayoutId} maps to ${payoutByProviderId.id}, while reference_id maps to ${payoutByReference.id}`;
+        await prisma.$transaction(async (tx) => {
+          await tx.payout.updateMany({
+            where: { id: { in: affectedPayoutIds } },
+            data: { requiresManualReview: true, manualReviewReason: reason },
+          });
+          await tx.auditLog.create({
+            data: {
+              action: 'PAYOUT_PROVIDER_REFERENCE_MISMATCH',
+              entityType: 'Payout',
+              entityId: payoutByReference.id,
+              newValue: JSON.stringify({
+                eventId,
+                providerPayoutId: razorpayPayoutId,
+                providerIdMatchedPayoutId: payoutByProviderId.id,
+                referenceMatchedPayoutId: payoutByReference.id,
+                actionTaken: 'BOTH_PAYOUTS_HELD_FOR_MANUAL_REVIEW',
+              }),
+            },
+          });
+          await tx.webhookEvent.update({
+            where: { provider_event_unique: { provider: 'RAZORPAYX', eventId } },
+            data: {
+              isProcessed: true,
+              processedAt: new Date(),
+              processingStartedAt: null,
+              lastError: reason,
+            },
+          });
+        });
+        res.status(200).json({ status: 'manual_review_required', reason: 'provider_reference_mismatch' });
+        return;
+      }
+
+      const payoutRecord = payoutByProviderId || payoutByReference;
 
       if (!payoutRecord) {
         console.warn(`[WEBHOOK] No local payout matched Razorpay payout ${razorpayPayoutId} or ref ${payoutEntity.reference_id}`);
@@ -165,6 +216,41 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
           },
         });
         res.status(200).json({ status: 'unmatched_held_for_retry' });
+        return;
+      }
+
+      if (payoutRecord.razorpayPayoutId && payoutRecord.razorpayPayoutId !== razorpayPayoutId) {
+        const reason = `FATAL_PROVIDER_PAYOUT_ID_MISMATCH: stored ${payoutRecord.razorpayPayoutId}, received ${razorpayPayoutId}`;
+        await prisma.$transaction(async (tx) => {
+          await tx.payout.update({
+            where: { id: payoutRecord.id },
+            data: { requiresManualReview: true, manualReviewReason: reason },
+          });
+          await tx.auditLog.create({
+            data: {
+              action: 'PAYOUT_PROVIDER_ID_MISMATCH',
+              entityType: 'Payout',
+              entityId: payoutRecord.id,
+              newValue: JSON.stringify({
+                payoutId: payoutRecord.id,
+                eventId,
+                storedProviderPayoutId: payoutRecord.razorpayPayoutId,
+                receivedProviderPayoutId: razorpayPayoutId,
+                actionTaken: 'HELD_FOR_MANUAL_REVIEW',
+              }),
+            },
+          });
+          await tx.webhookEvent.update({
+            where: { provider_event_unique: { provider: 'RAZORPAYX', eventId } },
+            data: {
+              isProcessed: true,
+              processedAt: new Date(),
+              processingStartedAt: null,
+              lastError: reason,
+            },
+          });
+        });
+        res.status(200).json({ status: 'manual_review_required', reason: 'provider_payout_id_mismatch' });
         return;
       }
 

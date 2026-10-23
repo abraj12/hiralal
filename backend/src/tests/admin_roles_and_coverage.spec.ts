@@ -619,7 +619,10 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
       await prisma.kycRecord.create({
         data: {
           userId: regularUserId,
-          panName: 'Old Name',
+          // Applicant-entered panName matches the corrected profile, but the provider-verified
+          // name does not. Admin correction must not trust the applicant-entered value.
+          panName: 'Anil Kumar',
+          verifiedName: 'Authoritative Provider Name',
           maskedPan: 'ABCDE****F',
           panStatus: 'VERIFIED',
           nameMatched: true,

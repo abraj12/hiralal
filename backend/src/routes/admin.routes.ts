@@ -20,7 +20,7 @@ import { NotificationService } from '../services/notification.service';
 import { BillStatus, PayoutStatus, Profession, UserStatus } from '@prisma/client';
 import { getIstYearAndMonth, parseStrictIndiaTimestamp } from '../utils/timezone.utils';
 import { adminActionLimiter } from '../middleware/rateLimit.middleware';
-import { decryptSensitive, generateBlindIndex } from '../utils/crypto.utils';
+import { decryptSensitive, encryptSensitive, generateBlindIndex } from '../utils/crypto.utils';
 
 const router = Router();
 
@@ -635,17 +635,47 @@ router.post('/users/:id/verify-mononymous-kyc', requireOperationsAdmin, adminAct
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
+    if (user.role !== 'USER' || user.status !== 'ACTIVE' || user.deletionScheduledAt) {
+      return res.status(400).json({ success: false, message: 'Only active user accounts may receive manual mononymous KYC approval.' });
+    }
+
     const pendingKyc = user.kycRecords[0];
     if (!pendingKyc || pendingKyc.panStatus !== 'PENDING') {
       return res.status(400).json({ success: false, message: 'No pending KYC verification found for this user.' });
     }
 
+    // This endpoint is an exception path, not a general name-mismatch override.
+    // Only records explicitly created by the mononymous review flow are eligible.
+    if (!pendingKyc.rejectionReason?.startsWith('MONONYMOUS_APPLICANT_MANUAL_REVIEW_REQUIRED:')) {
+      return res.status(403).json({ success: false, message: 'This KYC record is not eligible for mononymous manual approval.' });
+    }
+
+    let canonicalPan: string | null = pendingKyc.panNumber?.trim().toUpperCase() || null;
     let backfilledBlindIndex = pendingKyc.panBlindIndex;
-    if (!backfilledBlindIndex && pendingKyc.panNumberEncrypted) {
+    if (!canonicalPan && pendingKyc.panNumberEncrypted) {
       const decryptedPan = decryptSensitive(pendingKyc.panNumberEncrypted);
-      if (decryptedPan) {
-        backfilledBlindIndex = generateBlindIndex(decryptedPan.trim().toUpperCase());
-      }
+      if (decryptedPan) canonicalPan = decryptedPan.trim().toUpperCase();
+    }
+    if (!backfilledBlindIndex && canonicalPan) {
+      backfilledBlindIndex = generateBlindIndex(canonicalPan);
+    }
+    if (!backfilledBlindIndex) {
+      return res.status(409).json({ success: false, message: 'PAN uniqueness cannot be verified safely. Re-submit KYC before manual approval.' });
+    }
+
+    // Check legacy plaintext rows as well as current blind-indexed records.
+    const duplicatePan = await prisma.kycRecord.findFirst({
+      where: {
+        userId: { not: userId },
+        OR: [
+          { panBlindIndex: backfilledBlindIndex },
+          ...(canonicalPan ? [{ panNumber: canonicalPan }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+    if (duplicatePan) {
+      return res.status(409).json({ success: false, message: 'This PAN is already registered with another account.' });
     }
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -654,9 +684,12 @@ router.post('/users/:id/verify-mononymous-kyc', requireOperationsAdmin, adminAct
         data: {
           panStatus: 'VERIFIED',
           nameMatched: true,
+          mononymousApproved: true,
+          panNumber: null,
+          ...(!pendingKyc.panNumberEncrypted && canonicalPan ? { panNumberEncrypted: encryptSensitive(canonicalPan) } : {}),
           rejectionReason: null,
           verifiedAt: new Date(),
-          ...(backfilledBlindIndex ? { panBlindIndex: backfilledBlindIndex } : {}),
+          panBlindIndex: backfilledBlindIndex,
         },
       });
 

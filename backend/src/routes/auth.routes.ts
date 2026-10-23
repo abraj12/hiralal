@@ -36,16 +36,16 @@ function setAdminCookie(res: Response, token?: string) {
   if (!token) return;
   res.cookie('admin_access_token', token, {
     httpOnly: true,
-    secure: config.isProduction,
-    sameSite: config.isProduction ? 'strict' : 'lax',
+    secure: config.isSensitiveEnv,
+    sameSite: config.isSensitiveEnv ? 'strict' : 'lax',
     maxAge: 24 * 3600 * 1000,
     path: '/',
   });
   const csrfToken = generateSecureToken(32);
   res.cookie('csrf_token', csrfToken, {
     httpOnly: false,
-    secure: config.isProduction,
-    sameSite: config.isProduction ? 'strict' : 'lax',
+    secure: config.isSensitiveEnv,
+    sameSite: config.isSensitiveEnv ? 'strict' : 'lax',
     maxAge: 24 * 3600 * 1000,
     path: '/',
   });
@@ -240,17 +240,10 @@ export function verifyTier1Token(
   }
 
   try {
+    // Tier-1 challenges must be verified only with the configured admin key.
+    // Falling back to the user JWT key when the admin key is distinct defeats key-role isolation.
     const tier1Secret = config.admin.accessSecret || config.jwt.accessSecret;
-    let decoded: any;
-    try {
-      decoded = jwt.verify(tier1Token, tier1Secret);
-    } catch (verifyErr) {
-      if (config.admin.accessSecret && config.jwt.accessSecret) {
-        decoded = jwt.verify(tier1Token, config.jwt.accessSecret);
-      } else {
-        throw verifyErr;
-      }
-    }
+    const decoded: any = jwt.verify(tier1Token, tier1Secret);
     if (decoded?.purpose !== 'ADMIN_TIER_1_VERIFIED') {
       return { valid: false, code: 'INVALID_TIER_1_TOKEN', error: 'Invalid Tier-1 token purpose.' };
     }

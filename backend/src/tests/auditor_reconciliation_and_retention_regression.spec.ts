@@ -3,6 +3,7 @@ import { app } from '../server';
 import { prisma } from '../db';
 import { config } from '../config';
 import { ReconciliationWorker } from '../worker/reconciliation.worker';
+import { PayoutService } from '../services/payout.service';
 import { AccountDeletionService } from '../services/account-deletion.service';
 
 describe('Auditor Remediation Regression Suite: Financial Drift, Statutory Purge & Parity Defenses', () => {
@@ -178,6 +179,36 @@ describe('Auditor Remediation Regression Suite: Financial Drift, Statutory Purge
       where: { id: user1.id },
     });
     expect(updatedUser?.status).toBe('SUSPENDED');
+  });
+
+  test('Critical: concurrent distinct webhook events apply a financial drift clawback only once', async () => {
+    const payout = await prisma.payout.create({
+      data: {
+        userId: user1.id,
+        walletId: user1.wallet.id,
+        paymentAccountId: paymentAccount1.id,
+        paymentType: 'UPI',
+        amount: 100.0,
+        status: 'FAILED',
+        idempotencyKey: `idem-concurrent-drift-${Date.now()}`,
+      },
+    });
+    const beforeWallet = await prisma.wallet.findUniqueOrThrow({ where: { id: user1.wallet.id } });
+    const beforeLedgerCount = await prisma.walletTransaction.count({ where: { referenceId: payout.id, type: 'PAYOUT_DEBIT' } });
+
+    const results = await Promise.all([
+      PayoutService.handleFinancialDriftClawback(payout.id, 'pout_concurrent_event', 'event A'),
+      PayoutService.handleFinancialDriftClawback(payout.id, 'pout_concurrent_event', 'event B'),
+    ]);
+
+    expect(results).toHaveLength(2);
+    const afterWallet = await prisma.wallet.findUniqueOrThrow({ where: { id: user1.wallet.id } });
+    expect(Number(afterWallet.availableBalance)).toBe(Number(beforeWallet.availableBalance) - 100.0);
+    expect(Number(afterWallet.totalRedeemed)).toBe(Number(beforeWallet.totalRedeemed) + 100.0);
+    expect(await prisma.walletTransaction.count({ where: { referenceId: payout.id, type: 'PAYOUT_DEBIT' } })).toBe(beforeLedgerCount + 1);
+    const afterPayout = await prisma.payout.findUniqueOrThrow({ where: { id: payout.id } });
+    expect(afterPayout.status).toBe('SUCCESS');
+    expect(afterPayout.requiresManualReview).toBe(true);
   });
 
   test('High: Statutory retention purge completely scrubs legacy/encrypted PII and strictly respects legal holds under transaction', async () => {

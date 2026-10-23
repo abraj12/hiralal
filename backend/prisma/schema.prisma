@@ -318,6 +318,7 @@ model KycRecord {
   nameMatched        Boolean   @default(false)
   verifiedAt         DateTime?
   rejectionReason    String?
+  mononymousApproved Boolean   @default(false)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
@@ -366,7 +367,7 @@ model Payout {
   approvedByAdminId      String?
   approvedAt             DateTime?
   adminRejectionReason   String?
-  razorpayPayoutId       String?
+  razorpayPayoutId       String?        @unique
   razorpayFundAccountId  String?
   failureReason          String?
   initiatedAt            DateTime?
@@ -383,7 +384,6 @@ model Payout {
   @@index([walletId])
   @@index([paymentAccountId])
   @@index([status])
-  @@index([razorpayPayoutId])
   @@index([requiresManualReview])
   @@index([status, requiresManualReview, updatedAt])
 }

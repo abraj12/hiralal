@@ -2099,13 +2099,17 @@ export class AuthService {
       });
       for (const kyc of userKycRecords) {
         let isMatched = false;
-        if (kyc.panName) {
-          isMatched = compareNames(val.fullName, kyc.panName);
+        // The provider-returned verified name is authoritative. panName may be the
+        // applicant-entered value and must not override the provider's identity result.
+        const authoritativePanName = kyc.verifiedName || kyc.panName;
+        if (authoritativePanName) {
+          isMatched = compareNames(val.fullName, authoritativePanName);
         }
         await tx.kycRecord.update({
           where: { id: kyc.id },
           data: {
             nameMatched: isMatched,
+            mononymousApproved: false,
             panStatus: isMatched ? kyc.panStatus : 'PENDING',
           },
         });

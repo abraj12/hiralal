@@ -134,12 +134,13 @@ export class PlayIntegrityService {
 
   /**
    * Controls whether action integrity attestation is strictly enforced.
-   * In production or staging, enforcement is permanently active and cannot be disabled.
+   * In production, staging, and UAT, enforcement is permanently active and cannot be disabled.
    */
   static setEnforceActions(enforce: boolean | null): void {
-    const isProdOrStaging =
-      (config.isProduction || process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') &&
-      process.env.NODE_ENV !== 'test';
+    const isSensitiveRuntime =
+      config.isSensitiveEnv ||
+      ['production', 'staging', 'uat'].includes(process.env.NODE_ENV || '');
+    const isProdOrStaging = isSensitiveRuntime && process.env.NODE_ENV !== 'test';
 
     if (isProdOrStaging && enforce === false) {
       throw new Error('Integrity action enforcement cannot be disabled in production or staging.');

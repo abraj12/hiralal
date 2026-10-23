@@ -243,6 +243,22 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Non-negative check constraints on Wallet processingAmount and deficitLiability to enforce double-entry ledger invariants, and Restrict foreign key on NotificationCampaign."
+    },
+    {
+      "id": "20261023200000_add_mononymous_kyc_approval_flag",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive mononymousApproved flag on KycRecord; existing rows default to false, and only the explicit Operations Admin mononymous approval route sets true."
+    },
+    {
+      "id": "20261023220000_unique_provider_payout_id",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Add a unique non-null provider payout ID index after a duplicate-data preflight, ensuring one external payout ID cannot map to multiple local financial records."
     }
   ]
 }

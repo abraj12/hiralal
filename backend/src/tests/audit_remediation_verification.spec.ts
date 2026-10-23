@@ -174,23 +174,86 @@ describe('Audit Remediation & Security Defect Verification Suite', () => {
         },
       });
 
-      // Admin manual rejection should succeed and refund balance
+      // A "not found" gateway lookup is inconclusive, even when a manual-review flag exists.
+      // The wallet hold must remain intact until gateway cancellation is positively confirmed.
       jest.spyOn(PayoutService, 'queryGatewayByReference').mockResolvedValueOnce({ found: false });
-      const rejectResult = await PayoutService.rejectRedemption(
-        payout.id,
-        opsAdminId,
-        'Refund stuck payout to worker wallet'
-      );
+      try {
+        await expect(
+          PayoutService.rejectRedemption(
+            payout.id,
+            opsAdminId,
+            'Refund stuck payout to worker wallet'
+          )
+        ).rejects.toThrow(/gateway lookup did not confirm cancellation/i);
 
-      expect(rejectResult.status).toBe('FAILED');
-      expect(rejectResult.failureReason).toBe('Refund stuck payout to worker wallet');
+        const afterPayout = await prisma.payout.findUniqueOrThrow({ where: { id: payout.id } });
+        expect(afterPayout.status).toBe('PAYOUT_INITIATED');
+        expect(afterPayout.requiresManualReview).toBe(true);
 
-      // Verify wallet funds were refunded from processingAmount back to availableBalance
-      const refreshedWallet = await prisma.wallet.findUnique({ where: { id: userAWallet!.id } });
-      expect(Number(refreshedWallet!.processingAmount)).toBe(0);
-      expect(Number(refreshedWallet!.availableBalance)).toBe(Number(userAWallet!.availableBalance));
+        // Funds remain reserved: no refund is permitted without confirmed cancellation.
+        const refreshedWallet = await prisma.wallet.findUnique({ where: { id: userAWallet!.id } });
+        expect(Number(refreshedWallet!.processingAmount)).toBe(Number(userAWallet!.processingAmount) + payoutAmount);
+        expect(Number(refreshedWallet!.availableBalance)).toBe(Number(userAWallet!.availableBalance) - payoutAmount);
+      } finally {
+        jest.restoreAllMocks();
+      }
+    });
+  });
 
-      jest.restoreAllMocks();
+  describe('2b. [CRITICAL] Provider ID means payout may already be in flight', () => {
+    it('does not refund an APPROVED payout with a provider ID when cancellation is not confirmed', async () => {
+      const walletBefore = await prisma.wallet.findUniqueOrThrow({ where: { userId: userAId } });
+      const amount = 200;
+      await prisma.wallet.update({
+        where: { id: walletBefore.id },
+        data: {
+          availableBalance: { decrement: amount },
+          processingAmount: { increment: amount },
+        },
+      });
+
+      const paymentAccount = await prisma.paymentAccount.create({
+        data: {
+          userId: userAId,
+          accountType: 'UPI',
+          upiId: `userA_idempotency_${uniqueSuffix}@upi`,
+          maskedInfo: 'userA***@upi',
+          isVerified: true,
+          isDefault: true,
+        },
+      });
+      const payout = await prisma.payout.create({
+        data: {
+          userId: userAId,
+          walletId: walletBefore.id,
+          paymentAccountId: paymentAccount.id,
+          amount,
+          status: 'APPROVED',
+          razorpayPayoutId: `pout_ambiguous_${uniqueSuffix}`,
+          paymentType: 'UPI',
+          idempotencyKey: `payout_provider_id_hold_${uniqueSuffix}`,
+        },
+      });
+
+      const cancelSpy = jest.spyOn(PayoutService, 'cancelGatewayPayout').mockResolvedValueOnce({
+        success: false,
+        message: 'Gateway cancellation not confirmed',
+      } as any);
+      try {
+        await expect(
+          PayoutService.rejectRedemption(payout.id, opsAdminId, 'Hold because gateway cancellation is unconfirmed')
+        ).rejects.toThrow(/Funds must remain reserved/i);
+
+        expect(cancelSpy).toHaveBeenCalledWith(payout.razorpayPayoutId);
+        const afterPayout = await prisma.payout.findUniqueOrThrow({ where: { id: payout.id } });
+        expect(afterPayout.status).toBe('APPROVED');
+        expect(afterPayout.requiresManualReview).toBe(true);
+        const afterWallet = await prisma.wallet.findUniqueOrThrow({ where: { id: walletBefore.id } });
+        expect(Number(afterWallet.availableBalance)).toBe(Number(walletBefore.availableBalance) - amount);
+        expect(Number(afterWallet.processingAmount)).toBe(Number(walletBefore.processingAmount) + amount);
+      } finally {
+        jest.restoreAllMocks();
+      }
     });
   });
 

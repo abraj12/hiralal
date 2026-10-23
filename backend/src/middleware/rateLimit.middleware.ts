@@ -107,7 +107,7 @@ export function createRateLimiter(options: {
         }
 
         passedRedis = true;
-      } else if (config.isProduction) {
+      } else if (config.isSensitiveEnv) {
         // In production, security-sensitive auth routes fail closed if Redis is down
         res.status(503).json({
           success: false,
@@ -117,7 +117,7 @@ export function createRateLimiter(options: {
         return;
       }
     } catch (redisErr) {
-      if (config.isProduction) {
+      if (config.isSensitiveEnv) {
         res.status(503).json({
           success: false,
           code: 'RATE_LIMIT_UNAVAILABLE',
@@ -168,7 +168,7 @@ export function createRateLimiter(options: {
 // 1. OTP Request Limiters (both IP and Identifier)
 export const otpRequestLimiter = createRateLimiter({
   keyPrefix: 'otp:request:id',
-  limit: config.isProduction ? 5 : 25,
+  limit: config.isSensitiveEnv ? 5 : 25,
   windowSeconds: 300,
   getIdentifier: (req) => requestIdentifier(req),
   message: 'Too many OTP requests for this mobile. Please wait 5 minutes before trying again.',
@@ -176,7 +176,7 @@ export const otpRequestLimiter = createRateLimiter({
 
 export const otpRequestIpLimiter = createRateLimiter({
   keyPrefix: 'otp:request:ip',
-  limit: config.isProduction ? 15 : 60,
+  limit: config.isSensitiveEnv ? 15 : 60,
   windowSeconds: 300,
   getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
   message: 'Too many OTP requests from this network. Please wait 5 minutes before trying again.',
@@ -185,7 +185,7 @@ export const otpRequestIpLimiter = createRateLimiter({
 // 2. OTP Verify Limiters (both IP and Identifier)
 export const otpVerifyLimiter = createRateLimiter({
   keyPrefix: 'otp:verify:id',
-  limit: config.isProduction ? 10 : 50,
+  limit: config.isSensitiveEnv ? 10 : 50,
   windowSeconds: 300,
   getIdentifier: (req) => requestIdentifier(req),
   message: 'Too many verification attempts for this mobile. Please wait 5 minutes before trying again.',
@@ -193,7 +193,7 @@ export const otpVerifyLimiter = createRateLimiter({
 
 export const otpVerifyIpLimiter = createRateLimiter({
   keyPrefix: 'otp:verify:ip',
-  limit: config.isProduction ? 30 : 100,
+  limit: config.isSensitiveEnv ? 30 : 100,
   windowSeconds: 300,
   getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
   message: 'Too many verification attempts from this network. Please wait 5 minutes before trying again.',
@@ -202,16 +202,16 @@ export const otpVerifyIpLimiter = createRateLimiter({
 // 3. Login Limiters (both IP and Identifier)
 export const loginLimiter = createRateLimiter({
   keyPrefix: 'auth:login:id',
-  limit: config.isProduction ? 15 : 60,
-  windowSeconds: config.isProduction ? 900 : 180,
+  limit: config.isSensitiveEnv ? 15 : 60,
+  windowSeconds: config.isSensitiveEnv ? 900 : 180,
   getIdentifier: (req) => requestIdentifier(req),
   message: 'Too many failed login attempts for this account. Please wait a moment before trying again.',
 });
 
 export const loginIpLimiter = createRateLimiter({
   keyPrefix: 'auth:login:ip',
-  limit: config.isProduction ? 30 : 120,
-  windowSeconds: config.isProduction ? 900 : 180,
+  limit: config.isSensitiveEnv ? 30 : 120,
+  windowSeconds: config.isSensitiveEnv ? 900 : 180,
   getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
   message: 'Too many login attempts from this network. Please wait a moment before trying again.',
 });
@@ -249,7 +249,7 @@ export const passwordResetLimiter = createRateLimiter({
 
 export const passwordResetCompleteLimiter = createRateLimiter({
   keyPrefix: 'auth:password_reset_complete:id',
-  limit: config.isProduction ? 5 : 20,
+  limit: config.isSensitiveEnv ? 5 : 20,
   windowSeconds: 900, // 5 attempts per 15 minutes per mobile/identifier
   getIdentifier: (req) => requestIdentifier(req),
   message: 'Too many password reset completion attempts for this mobile. Please wait 15 minutes.',
@@ -257,7 +257,7 @@ export const passwordResetCompleteLimiter = createRateLimiter({
 
 export const passwordResetCompleteIpLimiter = createRateLimiter({
   keyPrefix: 'auth:password_reset_complete:ip',
-  limit: config.isProduction ? 15 : 60,
+  limit: config.isSensitiveEnv ? 15 : 60,
   windowSeconds: 900, // 15 attempts per 15 minutes per IP
   getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
   message: 'Too many password reset completion attempts from this network. Please wait 15 minutes.',
@@ -311,7 +311,7 @@ export const adminAccountLoginLimiter = createRateLimiter({
 
 export const integrityNonceLimiter = createRateLimiter({
   keyPrefix: 'integrity:nonce',
-  limit: config.isProduction ? 30 : 120,
+  limit: config.isSensitiveEnv ? 30 : 120,
   windowSeconds: 300, // 30 requests per 5 minutes
   getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
   message: 'Too many integrity nonce requests. Please wait before retrying.',
@@ -319,7 +319,7 @@ export const integrityNonceLimiter = createRateLimiter({
 
 export const integrityVerifyLimiter = createRateLimiter({
   keyPrefix: 'integrity:verify',
-  limit: config.isProduction ? 15 : 60,
+  limit: config.isSensitiveEnv ? 15 : 60,
   windowSeconds: 300, // 15 verification attempts per 5 minutes
   getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
   message: 'Too many integrity verification attempts. Please wait before retrying.',
@@ -327,7 +327,7 @@ export const integrityVerifyLimiter = createRateLimiter({
 
 export const billUploadLimiter = createRateLimiter({
   keyPrefix: 'bill:upload',
-  limit: config.isProduction ? 10 : 30,
+  limit: config.isSensitiveEnv ? 10 : 30,
   windowSeconds: 900, // 10 uploads per 15 minutes
   getIdentifier: (req: any) => (req.user?.id ? `user:${req.user.id}` : `ip:${req.ip || 'unknown'}`),
   message: 'Bill upload rate limit reached. Please wait 15 minutes before uploading more invoices.',
@@ -335,7 +335,7 @@ export const billUploadLimiter = createRateLimiter({
 
 export const pushTokenLimiter = createRateLimiter({
   keyPrefix: 'push:register',
-  limit: config.isProduction ? 10 : 60,
+  limit: config.isSensitiveEnv ? 10 : 60,
   windowSeconds: 600, // 10 requests per 10 minutes
   getIdentifier: (req: any) => (req.user?.id ? `user:${req.user.id}` : `ip:${req.ip || 'unknown'}`),
   message: 'Push token registration rate limit reached. Please wait before retrying.',
@@ -343,7 +343,7 @@ export const pushTokenLimiter = createRateLimiter({
 
 export const registerIpLimiter = createRateLimiter({
   keyPrefix: 'auth:register:ip',
-  limit: config.isProduction ? 5 : 30,
+  limit: config.isSensitiveEnv ? 5 : 30,
   windowSeconds: 900, // 5 registrations per 15 minutes per IP
   getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
   message: 'Too many registration attempts from this network. Please wait 15 minutes before trying again.',
@@ -351,7 +351,7 @@ export const registerIpLimiter = createRateLimiter({
 
 export const adminPrefixesLimiter = createRateLimiter({
   keyPrefix: 'auth:admin_prefixes:ip',
-  limit: config.isProduction ? 10 : 60,
+  limit: config.isSensitiveEnv ? 10 : 60,
   windowSeconds: 3600, // 10 requests per hour (tightened from 60/15min — F-04)
   getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
   message: 'Too many admin prefix discovery requests. Please wait before retrying.',
@@ -359,7 +359,7 @@ export const adminPrefixesLimiter = createRateLimiter({
 
 export const authRefreshLimiter = createRateLimiter({
   keyPrefix: 'auth:refresh',
-  limit: config.isProduction ? 30 : 120,
+  limit: config.isSensitiveEnv ? 30 : 120,
   windowSeconds: 300, // 30 refresh requests per 5 minutes
   getIdentifier: (req) => `ip:${req.ip || 'unknown'}`,
   message: 'Too many token refresh requests. Please wait before retrying.',
@@ -376,7 +376,7 @@ export const webhookLimiter = createRateLimiter({
 // VULN-MED-04: Admin mutative action limiter to prevent administrative API flooding / brute-force operations
 export const adminActionLimiter = createRateLimiter({
   keyPrefix: 'admin:action',
-  limit: config.isProduction ? 60 : 300,
+  limit: config.isSensitiveEnv ? 60 : 300,
   windowSeconds: 60, // 60 mutative actions per minute
   getIdentifier: (req: any) => (req.user?.id ? `admin:${req.user.id}` : `ip:${req.ip || 'unknown'}`),
   message: 'Administrator action rate limit reached. Please slow down and try again shortly.',

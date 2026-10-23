@@ -107,7 +107,8 @@ describe('Phase 0 Verification & Regression Suite', () => {
         panStatus: 'VERIFIED',
         nameMatched: true,
         verifiedName: 'RAMESH',
-        rejectionReason: 'MONONYMOUS_APPLICANT_MANUAL_REVIEW_REQUIRED: Approved by admin',
+        rejectionReason: null,
+        mononymousApproved: true,
       };
 
       const bankAccountDuplicate = {
@@ -116,7 +117,17 @@ describe('Phase 0 Verification & Regression Suite', () => {
         providerRegisteredName: 'RAMESH RAMESH',
       };
 
-      const resultDup = PayoutService.validateBeneficiaryMatch(mononymousKyc as any, bankAccountDuplicate as any);
+      // Explicit administrative approval is represented by the persisted user name-lock flag.
+      const unapproved = PayoutService.validateBeneficiaryMatch(
+        { ...mononymousKyc, rejectionReason: null, mononymousApproved: false } as any,
+        bankAccountDuplicate as any
+      );
+      expect(unapproved.isValid).toBe(false);
+
+      const resultDup = PayoutService.validateBeneficiaryMatch(
+        mononymousKyc as any,
+        bankAccountDuplicate as any
+      );
       expect(resultDup.isValid).toBe(true);
 
       const bankAccountInitial = {
@@ -125,7 +136,10 @@ describe('Phase 0 Verification & Regression Suite', () => {
         providerRegisteredName: 'RAMESH K',
       };
 
-      const resultInit = PayoutService.validateBeneficiaryMatch(mononymousKyc as any, bankAccountInitial as any);
+      const resultInit = PayoutService.validateBeneficiaryMatch(
+        mononymousKyc as any,
+        bankAccountInitial as any
+      );
       expect(resultInit.isValid).toBe(true);
     });
   });

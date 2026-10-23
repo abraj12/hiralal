@@ -143,7 +143,6 @@ export class KycService {
       where: {
         OR: [{ panBlindIndex }, { panNumber: cleanPan }],
         userId: { not: userId },
-        user: { status: 'ACTIVE' },
       },
     });
 
@@ -256,6 +255,7 @@ export class KycService {
             panName: cleanName,
             verifiedName: verifiedPanName,
             nameMatched: true,
+            mononymousApproved: false,
             panStatus: 'VERIFIED',
             maskedPan,
             panNumberEncrypted: encryptedPan,
@@ -277,6 +277,7 @@ export class KycService {
             panName: cleanName,
             verifiedName: verifiedPanName,
             nameMatched: true,
+            mononymousApproved: false,
             panStatus: 'VERIFIED',
             maskedPan,
             panNumberEncrypted: encryptedPan,

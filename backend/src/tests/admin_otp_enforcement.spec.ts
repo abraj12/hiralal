@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 import request from 'supertest';
 import { app } from '../server';
 import { prisma } from '../db';
@@ -99,7 +100,37 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
   describe('HIR-V4-01: Runtime Allowlist & Administrator OTP Bypass Closure', () => {
     // 1. Generic OTP request with purpose: ADMIN_LOGIN is rejected
-    test('1. Generic OTP request with purpose: ADMIN_LOGIN is rejected', async () => {
+    test('Tier-1 token signed with the user JWT key is rejected when the admin key is distinct', async () => {
+    const originalAdminSecret = config.admin.accessSecret;
+    try {
+      config.admin.accessSecret = 'distinct_admin_tier1_secret_for_regression_test_2026';
+      const prefix = config.admin.billAdminPrefix;
+      const tokenSignedWithUserKey = jwt.sign(
+        {
+          purpose: 'ADMIN_TIER_1_VERIFIED',
+          prefixHash: crypto.createHash('sha256').update(prefix).digest('hex'),
+        },
+        config.jwt.accessSecret,
+        { expiresIn: '10m' }
+      );
+
+      const response = await request(app)
+        .post('/api/v1/auth/admin/otp/request')
+        .set('X-Tier1-Token', tokenSignedWithUserKey)
+        .send({
+          identifier: `${prefix}${billAdminMobile}`,
+          password: testPassword,
+          tier1Token: tokenSignedWithUserKey,
+        });
+
+      expect(response.status).toBe(401);
+      expect(response.body.challengeToken).toBeUndefined();
+    } finally {
+      config.admin.accessSecret = originalAdminSecret;
+    }
+  });
+
+  test('1. Generic OTP request with purpose: ADMIN_LOGIN is rejected', async () => {
       const res = await request(app)
         .post('/api/v1/auth/otp/request')
         .send({ mobile: billAdminMobile, purpose: 'ADMIN_LOGIN' });

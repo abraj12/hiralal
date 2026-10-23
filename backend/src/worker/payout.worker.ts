@@ -252,12 +252,17 @@ export class PayoutWorker {
       console.warn(`[PAYOUT-WORKER] Payout ${payoutId} not found.`);
       return;
     }
+    if (payout.requiresManualReview) {
+      console.warn(`[PAYOUT-WORKER] Payout ${payoutId} is held for manual review; refusing dispatch.`);
+      return;
+    }
 
     // Only process payouts that can be claimed from APPROVED status atomically
     const claim = await prisma.payout.updateMany({
       where: {
         id: payoutId,
         status: 'APPROVED',
+        requiresManualReview: false,
       },
       data: {
         status: 'PAYOUT_INITIATED',
@@ -285,6 +290,16 @@ export class PayoutWorker {
       return;
     }
     payout = freshPayout;
+    if (payout.requiresManualReview) {
+      // A review flag may be raised after the initial read/claim. Release the claim back
+      // to APPROVED but retain the review flag; the pre-claim guard will hold it on retries.
+      await prisma.payout.updateMany({
+        where: { id: payout.id, status: 'PAYOUT_INITIATED', requiresManualReview: true },
+        data: { status: 'APPROVED', initiatedAt: null },
+      });
+      console.warn(`[PAYOUT-WORKER] Payout ${payout.id} was flagged for review after claim; dispatch was blocked.`);
+      return;
+    }
 
     // Strict Authoritative Beneficiary Verification Gate before dispatch
     const kycRecord = await prisma.kycRecord.findFirst({

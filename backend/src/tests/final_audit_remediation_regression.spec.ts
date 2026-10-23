@@ -524,6 +524,123 @@ describe('Final Audit Remediation Verification — Security, Financial, and Reli
       await prisma.webhookEvent.deleteMany({ where: { eventId } });
     });
 
+    test('DEF-EXT-02: Webhook provider payout ID mismatch is held for manual review', async () => {
+      const secret = config.razorpayx.webhookSecret || 'test_webhook_secret_key_1234567890';
+      config.razorpayx.webhookSecret = secret;
+
+      const storedRzpId = `pout_stored_${Date.now()}`;
+      const payout = await prisma.payout.create({
+        data: {
+          userId,
+          walletId,
+          amount: 500.0,
+          status: 'PROCESSING',
+          razorpayPayoutId: storedRzpId,
+          paymentAccountId,
+          paymentType: 'UPI',
+          idempotencyKey: `idemp_${Date.now()}_id_mismatch`,
+        },
+      });
+
+      const eventId = `evt_id_mismatch_${Date.now()}`;
+      const payload = {
+        event: 'payout.processed',
+        id: eventId,
+        payload: {
+          payout: {
+            entity: {
+              id: `pout_unexpected_${Date.now()}`,
+              reference_id: payout.id,
+              currency: 'INR',
+              amount: 50000,
+            },
+          },
+        },
+      };
+      const signature = crypto.createHmac('sha256', secret).update(Buffer.from(JSON.stringify(payload))).digest('hex');
+      const res = await request(app)
+        .post('/api/v1/webhooks/razorpayx')
+        .set('Content-Type', 'application/json')
+        .set('x-razorpay-signature', signature)
+        .send(payload);
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('manual_review_required');
+      expect(res.body.reason).toBe('provider_payout_id_mismatch');
+      const updated = await prisma.payout.findUnique({ where: { id: payout.id } });
+      expect(updated?.status).toBe('PROCESSING');
+      expect(updated?.requiresManualReview).toBe(true);
+      expect(updated?.manualReviewReason).toContain('FATAL_PROVIDER_PAYOUT_ID_MISMATCH');
+
+      await prisma.payout.delete({ where: { id: payout.id } });
+      await prisma.webhookEvent.deleteMany({ where: { eventId } });
+    });
+
+    test('DEF-EXT-03: Webhook provider ID and reference ID pointing to different payouts holds both records', async () => {
+      const secret = config.razorpayx.webhookSecret || 'test_webhook_secret_key_1234567890';
+      config.razorpayx.webhookSecret = secret;
+      const suffix = Date.now();
+      const providerPayout = await prisma.payout.create({
+        data: {
+          userId,
+          walletId,
+          amount: 100.0,
+          status: 'PROCESSING',
+          paymentAccountId,
+          paymentType: 'UPI',
+          razorpayPayoutId: `pout_provider_match_${suffix}`,
+          idempotencyKey: `idem_provider_match_${suffix}`,
+        },
+      });
+      const referencePayout = await prisma.payout.create({
+        data: {
+          userId,
+          walletId,
+          amount: 200.0,
+          status: 'PROCESSING',
+          paymentAccountId,
+          paymentType: 'UPI',
+          razorpayPayoutId: `pout_reference_match_${suffix}`,
+          idempotencyKey: `idem_reference_match_${suffix}`,
+        },
+      });
+
+      const eventId = `evt_provider_reference_mismatch_${suffix}`;
+      const payload = {
+        event: 'payout.processed',
+        id: eventId,
+        payload: {
+          payout: {
+            entity: {
+              id: providerPayout.razorpayPayoutId,
+              reference_id: referencePayout.id,
+              currency: 'INR',
+              amount: 10000,
+            },
+          },
+        },
+      };
+      const signature = crypto.createHmac('sha256', secret).update(Buffer.from(JSON.stringify(payload))).digest('hex');
+      const response = await request(app)
+        .post('/api/v1/webhooks/razorpayx')
+        .set('Content-Type', 'application/json')
+        .set('x-razorpay-signature', signature)
+        .send(payload);
+
+      expect(response.status).toBe(200);
+      expect(response.body.status).toBe('manual_review_required');
+      expect(response.body.reason).toBe('provider_reference_mismatch');
+      const [providerAfter, referenceAfter] = await Promise.all([
+        prisma.payout.findUniqueOrThrow({ where: { id: providerPayout.id } }),
+        prisma.payout.findUniqueOrThrow({ where: { id: referencePayout.id } }),
+      ]);
+      expect(providerAfter.requiresManualReview).toBe(true);
+      expect(referenceAfter.requiresManualReview).toBe(true);
+
+      await prisma.payout.deleteMany({ where: { id: { in: [providerPayout.id, referencePayout.id] } } });
+      await prisma.webhookEvent.deleteMany({ where: { eventId } });
+    });
+
     test('DEF-EXT-01: Webhook amount mismatch updates local Payout to requiresManualReview', async () => {
       const secret = config.razorpayx.webhookSecret || 'test_webhook_secret_key_1234567890';
       config.razorpayx.webhookSecret = secret;

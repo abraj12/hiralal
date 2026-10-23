@@ -107,8 +107,8 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     const referer = (req.headers.referer as string) || '';
 
     const validOrigin =
-      isExactAllowedOrigin(origin, config.cors.allowedOrigins, config.isProduction) ||
-      (!origin && isExactAllowedOrigin(referer, config.cors.allowedOrigins, config.isProduction));
+      isExactAllowedOrigin(origin, config.cors.allowedOrigins, config.isSensitiveEnv) ||
+      (!origin && isExactAllowedOrigin(referer, config.cors.allowedOrigins, config.isSensitiveEnv));
 
     if (!validOrigin) {
       res.status(403).json({

@@ -121,7 +121,7 @@ export class PayoutService {
    * the provider-confirmed payment account beneficiary name.
    */
   static validateBeneficiaryMatch(
-    verifiedKycRecord: { panStatus?: string; nameMatched?: boolean; verifiedName?: string | null; panName?: string | null } | null,
+    verifiedKycRecord: { panStatus?: string; nameMatched?: boolean; verifiedName?: string | null; panName?: string | null; mononymousApproved?: boolean } | null,
     verifiedAccount: { isVerified?: boolean; providerNameVerified?: boolean; providerRegisteredName?: string | null } | null
   ): { isValid: boolean; reason?: string; panHolderName?: string; beneficiaryName?: string } {
     if (!verifiedKycRecord || verifiedKycRecord.panStatus !== 'VERIFIED') {
@@ -150,10 +150,10 @@ export class PayoutService {
       return { isValid: false, reason: 'Authoritative beneficiary name is missing from payment provider verification.' };
     }
 
-    const isMononymousApproved =
-      Boolean((verifiedKycRecord as any)?.rejectionReason?.includes('MONONYMOUS')) ||
-      panHolderName.split(/\s+/).filter(Boolean).length === 1;
-
+    // Relaxed matching is permitted only when the KYC record carries the explicit
+    // Operations Admin approval flag. Generic name-locking is also used for ordinary
+    // verified KYC and therefore is not proof of mononymous approval.
+    const isMononymousApproved = verifiedKycRecord.mononymousApproved === true;
     const match = areNamesMatching(beneficiaryName, panHolderName, { isMononymousApproved });
     if (!match) {
       return { isValid: false, reason: 'Registered payment account beneficiary name does not match verified PAN name.' };
@@ -567,6 +567,10 @@ export class PayoutService {
 
       if (!payout) throw new Error(`Payout ${payoutId} not found`);
 
+      if (payout.requiresManualReview) {
+        throw new Error('Payout is flagged for manual review and must be reconciled by Operations Admin before approval or dispatch.');
+      }
+
       if (payout.status === 'APPROVED') {
         return payout;
       }
@@ -795,20 +799,27 @@ export class PayoutService {
 
     const isPending = payoutMeta.status === 'PENDING';
     const isApproved = payoutMeta.status === 'APPROVED';
-    const isInFlight = payoutMeta.status === 'PROCESSING' || payoutMeta.status === 'PAYOUT_INITIATED';
+    const isInFlightStatus = payoutMeta.status === 'PROCESSING' || payoutMeta.status === 'PAYOUT_INITIATED';
+    // A stored provider payout ID is evidence that dispatch may have occurred, even if
+    // the local status is unexpectedly PENDING/APPROVED. Never refund without cancellation proof.
+    const isPotentiallyDispatched = isInFlightStatus || Boolean(payoutMeta.razorpayPayoutId);
 
-    if (!isPending && !isApproved && !isInFlight) {
-      if (payoutMeta.status === 'SUCCESS') {
-        throw new Error(`Cannot reject payout ${payoutId} because it has already successfully completed.`);
-      }
+    if (payoutMeta.status === 'SUCCESS') {
+      throw new Error(`Cannot reject payout ${payoutId} because it has already successfully completed.`);
+    }
+    if (payoutMeta.status === 'FAILED' || payoutMeta.status === 'REVERSED') {
+      throw new Error(`Cannot manually reject payout in ${payoutMeta.status} state.`);
+    }
+    if (!isPending && !isApproved && !isPotentiallyDispatched) {
       throw new Error(
         `Cannot manually reject payout in ${payoutMeta.status} state. Manual rejection is permitted only before payout dispatch or for confirmed cancelled payouts.`
       );
     }
 
     let gatewayCancellationConfirmed = false;
+    let gatewayCancelledPayoutId: string | null = null;
     // FIN-04: Cannot reject an in-flight payout without verified gateway cancellation
-    if (isInFlight) {
+    if (isPotentiallyDispatched) {
       if (payoutMeta.razorpayPayoutId) {
         const cancelRes = await this.cancelGatewayPayout(payoutMeta.razorpayPayoutId);
         if (!cancelRes.success) {
@@ -825,6 +836,7 @@ export class PayoutService {
           );
         }
         gatewayCancellationConfirmed = true;
+        gatewayCancelledPayoutId = payoutMeta.razorpayPayoutId;
       } else {
         const lookup = await this.queryGatewayByReference(payoutMeta.id);
         if (lookup.error || lookup.timeout) {
@@ -848,21 +860,21 @@ export class PayoutService {
             );
           }
           gatewayCancellationConfirmed = true;
-        } else if (payoutMeta.requiresManualReview) {
-          // Explicitly flagged for manual review and confirmed NOT dispatched to gateway; safe to reject
-          gatewayCancellationConfirmed = true;
+          gatewayCancelledPayoutId = lookup.payout.id;
         } else {
-          // AUDIT-FIN-01: In-flight payout cannot be safely rejected when gateway status is unverified (found: false)
-          // RazorpayX may be processing the transfer or indexing the reference asynchronously.
+          // A missing gateway lookup result is NOT proof that no transfer was dispatched.
+          // The manual-review flag can represent amount/currency/ID mismatches or other
+          // ambiguous gateway states, so it must never authorize a wallet refund by itself.
+          const reviewReason = `Rejection attempt blocked: Payout is in-flight (${payoutMeta.status}) but gateway lookup did not confirm a terminal cancellation. Funds remain reserved.`;
           await prisma.payout.update({
             where: { id: payoutMeta.id },
             data: {
               requiresManualReview: true,
-              manualReviewReason: `Rejection attempt blocked: Payout is in-flight (${payoutMeta.status}) but reference was not found on gateway. Funds remain reserved to prevent double-spending.`,
+              manualReviewReason: reviewReason,
             },
           });
           throw new Error(
-            `Cannot safely reject in-flight payout (${payoutMeta.status}): Gateway reference was not found, but transfer may be in transit. Funds must remain reserved to prevent double-spending.`
+            `Cannot safely reject in-flight payout (${payoutMeta.status}): gateway lookup did not confirm cancellation. Funds must remain reserved to prevent double-spending.`
           );
         }
       }
@@ -911,12 +923,16 @@ export class PayoutService {
       // VULN-CRIT-01: Revalidate payout state inside the transaction under row locks.
       // If payout transitioned to in-flight (PAYOUT_INITIATED or PROCESSING) concurrently before lock acquisition,
       // or if cancellation was not positively confirmed, abort rejection immediately to prevent double spending.
-      if (payout.status === 'PAYOUT_INITIATED' || payout.status === 'PROCESSING') {
-        if (!gatewayCancellationConfirmed) {
-          throw new Error(
-            `Cannot reject payout ${payoutId}: Payout transitioned to ${payout.status} concurrently before lock acquisition. Rejection aborted to prevent double-spending.`
-          );
-        }
+      const payoutMayHaveBeenDispatched =
+        payout.status === 'PAYOUT_INITIATED' ||
+        payout.status === 'PROCESSING' ||
+        Boolean(payout.razorpayPayoutId);
+      const providerIdChangedAfterCancellation =
+        Boolean(payout.razorpayPayoutId) && payout.razorpayPayoutId !== gatewayCancelledPayoutId;
+      if (payoutMayHaveBeenDispatched && (!gatewayCancellationConfirmed || providerIdChangedAfterCancellation)) {
+        throw new Error(
+          `Cannot reject payout ${payoutId}: dispatch state or provider payout ID changed before lock acquisition. Rejection aborted to prevent double-spending.`
+        );
       }
 
       if (
@@ -968,6 +984,7 @@ export class PayoutService {
         where: { id: payout.id },
         data: {
           status: 'FAILED',
+          razorpayPayoutId: payout.razorpayPayoutId || gatewayCancelledPayoutId || undefined,
           adminRejectionReason: reason.trim(),
           failureReason: reason.trim(),
           requiresManualReview: false,
@@ -1369,7 +1386,19 @@ export class PayoutService {
       });
 
       if (!payout) throw new Error(`Payout ${payoutId} not found`);
-      if (payout.status === 'SUCCESS') return payout;
+      if (razorpayPayoutId && payout.razorpayPayoutId && payout.razorpayPayoutId !== razorpayPayoutId) {
+        throw new Error(
+          `Provider payout ID mismatch for local payout ${payoutId}; expected ${payout.razorpayPayoutId}, received ${razorpayPayoutId}. Manual reconciliation is required.`
+        );
+      }
+      if (payout.status === 'SUCCESS') {
+        // An idempotent retry may supply the provider ID after a prior manual settlement,
+        // but it must never overwrite a different already-recorded provider ID.
+        if (razorpayPayoutId && !payout.razorpayPayoutId) {
+          return tx.payout.update({ where: { id: payoutId }, data: { razorpayPayoutId } });
+        }
+        return payout;
+      }
 
       // DEFECT-J01: Forbidden transition: Cannot finalize a payout that was already FAILED or REVERSED
       if (payout.status === 'FAILED' || payout.status === 'REVERSED') {
@@ -1487,7 +1516,15 @@ export class PayoutService {
         FOR UPDATE
       `;
       const currentWallet = walletRows[0];
-      const payoutAmt = Number(payoutRecord.amount);
+      if (!currentWallet) throw new Error(`Wallet ${payoutRecord.walletId} not found during financial drift clawback`);
+      await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "Payout" WHERE "id" = ${payoutId} FOR UPDATE`;
+      const currentPayout = await tx.payout.findUnique({ where: { id: payoutId } });
+      if (!currentPayout) throw new Error(`Payout ${payoutId} not found during financial drift clawback`);
+      if (currentPayout.status === 'SUCCESS' && currentPayout.razorpayPayoutId === razorpayPayoutId) return currentPayout;
+      if (currentPayout.status !== 'FAILED' && currentPayout.status !== 'REVERSED') {
+        throw new Error(`Cannot claw back payout ${payoutId} from current state ${currentPayout.status}; expected FAILED or REVERSED.`);
+      }
+      const payoutAmt = Number(currentPayout.amount);
       const currentAvail = Number(currentWallet.availableBalance);
       const currentDeficit = Number(currentWallet.deficitLiability || 0);
 
@@ -1539,7 +1576,7 @@ export class PayoutService {
           razorpayPayoutId: razorpayPayoutId || payoutRecord.razorpayPayoutId,
           completedAt: new Date(),
           requiresManualReview: true,
-          manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${payoutRecord.status}. Total redeemed incremented by ₹${payoutAmt}, balance adjusted from ₹${currentAvail} to ₹${newAvail}${unrecoveredAmt > 0 ? ` (₹${unrecoveredAmt} recorded to deficitLiability, total deficit: ₹${newDeficit})` : ''}. Account suspended for operator audit.${gatewayReason ? ` Gateway info: ${gatewayReason}` : ''}`,
+          manualReviewReason: `CRITICAL FINANCIAL DRIFT: Gateway disbursed funds (${razorpayPayoutId}) after local status was marked ${currentPayout.status}. Total redeemed incremented by ₹${payoutAmt}, balance adjusted from ₹${currentAvail} to ₹${newAvail}${unrecoveredAmt > 0 ? ` (₹${unrecoveredAmt} recorded to deficitLiability, total deficit: ₹${newDeficit})` : ''}. Account suspended for operator audit.${gatewayReason ? ` Gateway info: ${gatewayReason}` : ''}`,
         },
       });
 
@@ -1553,7 +1590,7 @@ export class PayoutService {
           balanceAfter: newAvail,
           referenceType: 'PAYOUT',
           referenceId: payoutRecord.id,
-          description: `CRITICAL DRIFT CLAWBACK: Gateway confirmed payout ${razorpayPayoutId} after local status ${payoutRecord.status}. Recovered ₹${recoveredAmt} from balance, ₹${unrecoveredAmt} recorded to deficit liability.`,
+          description: `CRITICAL DRIFT CLAWBACK: Gateway confirmed payout ${razorpayPayoutId} after local status ${currentPayout.status}. Recovered ₹${recoveredAmt} from balance, ₹${unrecoveredAmt} recorded to deficit liability.`,
         },
       });
 

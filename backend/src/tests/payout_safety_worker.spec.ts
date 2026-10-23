@@ -388,6 +388,31 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
     expect([claim1.count, claim2.count].sort()).toEqual([0, 1]);
   });
 
+  test('6b. Payout Worker never dispatches a payout held for manual review', async () => {
+    const payout = await prisma.payout.create({
+      data: {
+        userId: user.id,
+        walletId: user.wallet.id,
+        paymentAccountId: paymentAccount.id,
+        paymentType: paymentAccount.accountType,
+        amount: 100.0,
+        status: 'APPROVED',
+        requiresManualReview: true,
+        manualReviewReason: 'Test manual review hold',
+        idempotencyKey: `manual-review-hold-${Date.now()}`,
+      },
+    });
+
+    await PayoutWorker.processPayout(payout.id);
+
+    const after = await prisma.payout.findUniqueOrThrow({ where: { id: payout.id } });
+    expect(after.status).toBe('APPROVED');
+    expect(after.razorpayPayoutId).toBeNull();
+    expect(after.requiresManualReview).toBe(true);
+
+    await prisma.payout.delete({ where: { id: payout.id } });
+  });
+
   test('7. PayoutService.queryGatewayByReference: gateway query handling', async () => {
     // Unconfigured credentials case
     const origKey = config.razorpayx.keyId;

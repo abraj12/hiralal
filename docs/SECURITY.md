@@ -30,7 +30,7 @@ To prevent impersonation fraud, identity swapping, and unauthorized cash redempt
    - **No Initials Expansion:** Abbreviated initials (e.g., `R K SHARMA` vs `RAJESH KUMAR SHARMA`) are rejected.
 
 ### C. Name Locking on Mononymous KYC Approval
-When an administrator manually approves a mononymous customer (single name on PAN), the system atomically locks the user's name record (`isNameLocked = true`, `nameLockedAt = new Date()`). Any subsequent attempt by the user to modify their profile name via `updateUserName` is blocked.
+When an Operations Administrator manually approves a pending record explicitly marked `MONONYMOUS_APPLICANT_MANUAL_REVIEW_REQUIRED`, the system sets `KycRecord.mononymousApproved = true` and locks the user's name (`isNameLocked = true`, `nameLockedAt = new Date()`) in the same transaction. The approval route fails closed if PAN uniqueness cannot be verified, rejects non-mononymous pending records, and prevents duplicate PAN reuse. Ordinary successful KYC also locks the user's name but does **not** grant the mononymous matching exception. Payout eligibility and dispatch may use relaxed mononymous matching only when the persisted KYC flag is true. Any subsequent attempt by the user to modify their profile name via `updateUserName` is blocked.
 
 ---
 

@@ -294,6 +294,12 @@ export class ReconciliationWorker {
 
         // 3. Evaluate Razorpay status
         if (razorpayPayout) {
+          if (payout.razorpayPayoutId && payout.razorpayPayoutId !== razorpayPayout.id) {
+            const reason = `GATEWAY_POLL_PROVIDER_ID_MISMATCH: expected ${payout.razorpayPayoutId}, got ${razorpayPayout.id || 'missing'}`;
+            await prisma.payout.update({ where: { id: payout.id }, data: { requiresManualReview: true, manualReviewReason: reason } });
+            console.error(`[RECONCILIATION] ${reason} for payout ${payout.id}; held for manual review.`);
+            continue;
+          }
           const expectedPaise = Number(toPaise(payout.amount));
           const actualCurrency = razorpayPayout.currency;
           const actualPaise = Number(razorpayPayout.amount);
@@ -458,6 +464,12 @@ export class ReconciliationWorker {
 
     if (!razorpayPayout) {
       return { success: false, status: payout.status, message: 'Gateway lookup inconclusive. No matching record returned by payment provider.' };
+    }
+
+    if (payout.razorpayPayoutId && payout.razorpayPayoutId !== razorpayPayout.id) {
+      const reason = `GATEWAY_POLL_PROVIDER_ID_MISMATCH: expected ${payout.razorpayPayoutId}, got ${razorpayPayout.id || 'missing'}`;
+      await prisma.payout.update({ where: { id: payout.id }, data: { requiresManualReview: true, manualReviewReason: reason } });
+      return { success: false, status: payout.status, message: reason };
     }
 
     const expectedPaise = Number(toPaise(payout.amount));

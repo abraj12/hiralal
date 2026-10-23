@@ -466,3 +466,32 @@ This document records the chronological history of all security remediations, fi
   - **Security Floor Tests:** 1 suite, 22 passed / 22 total (100% green).
   - **Workspace Subtotal:** **903 / 903 passed across 61 test files**.
   - **Repository Total:** **992 / 992 tests passing across 64 suites (100% green, 0 failures)**.
+
+
+## 2026-10-23 — Independent Production-Readiness Audit Follow-up (Pending CI)
+
+- **Scope:** Re-reviewed the current `main`/Wave 7 code paths for mononymous KYC approval, payout reconciliation, webhook deduplication, admin name correction, and sensitive-environment authentication.
+- **Finding A — Mononymous approval was inferred, not explicitly authorized:** payout matching treated any single-token PAN name as eligible for relaxed matching. Added `KycRecord.mononymousApproved` with a default of `false`, a forward-only additive migration, and manifest registration. Only the Operations Admin manual mononymous-approval route sets the flag. Standard KYC verification and admin name correction clear it. Payout eligibility and worker dispatch use this persisted flag.
+- **Finding B — Manual mononymous approval accepted unrelated pending KYC records:** the route now requires the exact mononymous-review marker, an active ordinary user account, a recoverable PAN blind index, and no matching PAN on another account. Legacy plaintext PAN values are encrypted and nulled during approval.
+- **Finding C — Concurrent financial-drift events could apply duplicate wallet adjustments:** `handleFinancialDriftClawback` now locks and re-reads the payout after locking the wallet, rejects invalid state transitions, and treats a completed transition for the same provider payout ID as idempotent. Added a concurrent regression test.
+- **Finding D — Admin name correction compared against applicant-entered PAN name:** it now compares against provider-verified `verifiedName` first, falling back to `panName` only for legacy records. Added a regression fixture where those names differ.
+- **Finding E — Sensitive-environment admin cookies/origin checks:** admin cookies now use Secure and SameSite=Strict settings in production, staging, and UAT; the cookie-authenticated origin check no longer treats localhost as trusted in sensitive environments. Play Integrity enforcement cannot be disabled in UAT.
+- **Finding F — Webhook deduplication preferred a synthetic key over Razorpay's event ID header:** the official `x-razorpay-event-id` header is now preferred before the synthetic fallback.
+- **Validation status:** changes are on `fix/audit-critical-payout-guards` and draft PR #2. GitHub Actions runs were queued at the time of this entry; do not classify these fixes as test-verified until CI completes successfully. Live provider behavior still requires staging credentials and provider test transactions.
+
+
+### Additional checks from the same audit pass
+
+- PAN uniqueness checks now include retained records owned by suspended users; suspension must not make an identity reusable. The same restriction applies to verified UPI and bank-account duplicate checks, including legacy unindexed account rows.
+- RazorpayX webhook processing now holds a payout for manual review if an event references a local payout but supplies a different provider payout ID than the one already recorded. A regression test covers this invariant.
+- Rate-limit thresholds and fail-closed behavior now use the shared sensitive-environment flag, so staging and UAT do not fall back to weaker per-process limits when Redis is unavailable.
+- **CI remains pending.** These are implementation findings from repository inspection, not yet verified test results.
+
+
+### Financial and admin-key isolation follow-up (CI pending)
+
+- In-flight payout rejection no longer treats `requiresManualReview` plus a missing gateway lookup as proof that no transfer was dispatched. Refunds require confirmed cancellation; the wallet hold remains in place otherwise.
+- A nonterminal payout with an existing provider payout ID is treated as potentially dispatched even if its local status is unexpectedly `PENDING` or `APPROVED`. Rejection rechecks the current provider ID under transaction locks so a cancellation for an old ID cannot authorize a refund after the ID changes.
+- Tier-1 admin tokens are now verified only with the admin signing key when configured. The previous fallback accepted tokens signed with the user JWT key, weakening role-key isolation. A regression test was added.
+- RazorpayX webhook mapping no longer uses a single ambiguous OR query. If provider payout ID and local reference ID resolve to different payouts, both records are held for manual review and an audit event is recorded. The schema/migration now enforce unique non-null provider payout IDs, with a duplicate-data preflight that fails safely.
+- **CI pending:** the test changes and migrations have not yet been executed successfully in GitHub Actions. Do not treat this follow-up as verified until the workflow completes.
