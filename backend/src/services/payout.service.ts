@@ -698,7 +698,20 @@ export class PayoutService {
 
       if (cancelRes.ok) {
         const data: any = await cancelRes.json();
-        return { success: true, status: data.status || 'cancelled' };
+        const confirmedStatus = String(data?.status || '').toLowerCase();
+
+        // HTTP 2xx only confirms the cancellation request was accepted. It does not
+        // prove the transfer is cancelled; queued/processing/processed must retain
+        // the wallet hold until an authoritative terminal status is observed.
+        if (['cancelled', 'rejected', 'reversed'].includes(confirmedStatus)) {
+          return { success: true, status: confirmedStatus };
+        }
+
+        return {
+          success: false,
+          status: confirmedStatus || 'unknown',
+          message: `Gateway accepted the cancellation request but did not confirm a terminal cancelled state (status: ${confirmedStatus || 'missing'}). Funds must remain reserved.`,
+        };
       }
 
       // If cancellation endpoint returns non-200, query authoritative current status from gateway
