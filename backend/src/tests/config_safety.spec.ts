@@ -127,8 +127,8 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       BILL_ADMIN_INITIAL_PASSWORD: 'BillAdmin2026!SecurePass',
       OPERATIONS_ADMIN_INITIAL_PASSWORD: 'OpsAdmin2026!SecurePass',
       JWT_ADMIN_ACCESS_SECRET: 'admin_access_secret_high_entropy_32_characters_long_prod_key_3',
-      BILL_ADMIN_PREFIX: 'BADM',
-      OPERATIONS_ADMIN_PREFIX: 'OADM',
+      BILL_ADMIN_PREFIX: 'BILL_ADMIN_7f9A2c6E4d8B1f3C',
+      OPERATIONS_ADMIN_PREFIX: 'OPS_ADMIN_8b4D6e2F9a1C7d3B',
       REDIS_PASSWORD: 'redis_prod_strong_secret_key_min_24_chars_2026',
       FIREBASE_PROJECT_ID: 'hiralal-rewards-prod',
       FIREBASE_CLIENT_EMAIL: 'firebase-adminsdk@hiralal-rewards-prod.iam.gserviceaccount.com',
@@ -147,6 +147,11 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
 
     it('passes when all production secrets are valid and high-entropy', () => {
       expect(() => validateProductionConfig('api', validBaseEnv)).not.toThrow();
+
+      it('rejects short or low-entropy administrative prefixes', () => {
+        expect(() => validateProductionConfig('api', { ...validBaseEnv, BILL_ADMIN_PREFIX: 'BADM' })).toThrow(/at least 16 characters/);
+        expect(() => validateProductionConfig('api', { ...validBaseEnv, OPERATIONS_ADMIN_PREFIX: 'AAAAAAAAAAAAAAAA' })).toThrow(/at least 8 distinct characters/);
+      });
       expect(() => validateProductionConfig('worker', validBaseEnv)).not.toThrow();
     });
 
