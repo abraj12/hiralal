@@ -25,6 +25,7 @@
       "expo-asset",
       "./plugins/withDeveloperModeSecurity",
       "./plugins/withReleaseSigning",
+      "./plugins/withNetworkSecurityConfig",
       [
         "expo-notifications",
         {

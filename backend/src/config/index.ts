@@ -379,16 +379,17 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     if (env.STORAGE_HMAC_SECRET && env.STORAGE_HMAC_SECRET.length < 16) {
       throw new Error('[FATAL] STORAGE_HMAC_SECRET must be at least 16 characters for HMAC signing.');
     }
-    if (env.JWT_ADMIN_ACCESS_SECRET) {
-      if (env.JWT_ADMIN_ACCESS_SECRET.length < 32) {
-        throw new Error('[FATAL] JWT_ADMIN_ACCESS_SECRET must be at least 32 characters for secure signing.');
-      }
-      if (env.JWT_ACCESS_SECRET && env.JWT_ADMIN_ACCESS_SECRET === env.JWT_ACCESS_SECRET) {
-        throw new Error('[FATAL] JWT_ADMIN_ACCESS_SECRET and JWT_ACCESS_SECRET must be distinct secrets.');
-      }
-      if (env.JWT_REFRESH_SECRET && env.JWT_ADMIN_ACCESS_SECRET === env.JWT_REFRESH_SECRET) {
-        throw new Error('[FATAL] JWT_ADMIN_ACCESS_SECRET and JWT_REFRESH_SECRET must be distinct secrets.');
-      }
+    if (!env.JWT_ADMIN_ACCESS_SECRET || env.JWT_ADMIN_ACCESS_SECRET === 'dev_admin_dedicated_access_secret_key_hiralal_2026') {
+      throw new Error('[FATAL] JWT_ADMIN_ACCESS_SECRET must be explicitly defined in production and cannot use development fallback.');
+    }
+    if (env.JWT_ADMIN_ACCESS_SECRET.length < 32) {
+      throw new Error('[FATAL] JWT_ADMIN_ACCESS_SECRET must be at least 32 characters for secure signing.');
+    }
+    if (env.JWT_ACCESS_SECRET && env.JWT_ADMIN_ACCESS_SECRET === env.JWT_ACCESS_SECRET) {
+      throw new Error('[FATAL] JWT_ADMIN_ACCESS_SECRET and JWT_ACCESS_SECRET must be distinct secrets.');
+    }
+    if (env.JWT_REFRESH_SECRET && env.JWT_ADMIN_ACCESS_SECRET === env.JWT_REFRESH_SECRET) {
+      throw new Error('[FATAL] JWT_ADMIN_ACCESS_SECRET and JWT_REFRESH_SECRET must be distinct secrets.');
     }
     if (env.OTP_TTL_SECONDS) {
       const ttl = parseInt(env.OTP_TTL_SECONDS, 10);

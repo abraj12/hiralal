@@ -44,19 +44,23 @@ const handleRedeemRequest = async (req: AuthenticatedRequest, res: Response) => 
       });
     }
 
-    // VULN-MOB-BIO-01: Verify account password if supplied via biometric fallback
-    if (req.body?.password) {
-      if (typeof req.body.password !== 'string' || req.body.password.length < 6) {
-        return res.status(400).json({ success: false, message: 'Invalid password format.' });
-      }
-      const userRecord = await prisma.user.findUnique({ where: { id: user.id } });
-      if (!userRecord || !userRecord.passwordHash) {
-        return res.status(400).json({ success: false, message: 'User account not found.' });
-      }
-      const isMatch = await bcrypt.compare(req.body.password, userRecord.passwordHash);
-      if (!isMatch) {
-        return res.status(400).json({ success: false, message: 'Incorrect account password. Verification failed.' });
-      }
+    // AUTH-001: Mandatory account password verification to confirm reward redemption
+    if (!req.body?.password || typeof req.body.password !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Account password verification is required to confirm reward redemption.',
+      });
+    }
+    if (req.body.password.length < 6) {
+      return res.status(400).json({ success: false, message: 'Invalid password format.' });
+    }
+    const userRecord = await prisma.user.findUnique({ where: { id: user.id } });
+    if (!userRecord || !userRecord.passwordHash) {
+      return res.status(400).json({ success: false, message: 'User account not found.' });
+    }
+    const isMatch = await bcrypt.compare(req.body.password, userRecord.passwordHash);
+    if (!isMatch) {
+      return res.status(400).json({ success: false, message: 'Incorrect account password. Verification failed.' });
     }
 
     // 100% full available balance redemption (server-controlled)

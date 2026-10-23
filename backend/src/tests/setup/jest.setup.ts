@@ -30,4 +30,9 @@ afterEach(async () => {
 
 afterAll(async () => {
   await resetAllRateLimiters();
+  try {
+    await prisma.$disconnect();
+  } catch {
+    // Non-fatal if already disconnected
+  }
 });

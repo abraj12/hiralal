@@ -274,6 +274,16 @@ describe('Phase 2 — Production Secrets Validation & Safety', () => {
       );
     });
 
+    it('rejects development fallback secret for JWT_ADMIN_ACCESS_SECRET in production', () => {
+      const devAdminSecretEnv = {
+        ...validBaseEnv,
+        JWT_ADMIN_ACCESS_SECRET: 'dev_admin_dedicated_access_secret_key_hiralal_2026',
+      };
+      expect(() => validateProductionConfig('api', devAdminSecretEnv)).toThrow(
+        /JWT_ADMIN_ACCESS_SECRET must be explicitly defined in production and cannot use development fallback/
+      );
+    });
+
     it('does not print secret values in exception error messages', () => {
       const secretValue = 'your_secret_confidential_token_xyz';
       const envWithSecret = {

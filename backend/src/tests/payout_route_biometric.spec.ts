@@ -183,10 +183,9 @@ describe('TEST-004: Payout Route Biometric Step-Up and Password Fallback Regress
         idempotencyKey: `idem-bio-none-${Date.now()}`,
       });
 
-    expect(res.status).toBe(201);
-    expect(res.body.success).toBe(true);
-    expect(res.body.payout).toBeDefined();
-    expect(Number(res.body.payout.amount)).toBe(2500.0);
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.message).toBe('Account password verification is required to confirm reward redemption.');
   });
 
   it('should support legacy alias POST /api/v1/payouts/request with password authentication fallback', async () => {

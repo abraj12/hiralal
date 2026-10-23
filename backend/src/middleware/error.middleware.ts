@@ -10,8 +10,13 @@ export function errorHandler(
   err: any,
   req: Request & { requestId?: string },
   res: Response,
-  _next: NextFunction
+  next: NextFunction
 ) {
+  // Prevent ERR_HTTP_HEADERS_SENT if response was already committed or timed out (INFRA-001)
+  if (res.headersSent) {
+    return next(err);
+  }
+
   const correlationId = req.requestId || 'req-unknown';
   console.error(`[UNHANDLED ERROR] [${correlationId}] ${req.method} ${req.originalUrl}:`, err);
 

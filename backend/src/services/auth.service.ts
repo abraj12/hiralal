@@ -858,18 +858,17 @@ export class AuthService {
         throw new Error('Too many verification requests. Please try again after 10 minutes.');
       }
 
-      // 4. Record OTP Request only if eligible
-      if (shouldSendSms) {
-        await tx.otpRequest.create({
-          data: {
-            mobile: cleanMobile,
-            otpHash,
-            purpose: validatedPurpose as OtpPurpose,
-            expiresAt,
-            cooldownUntil,
-          },
-        });
-      }
+      // 4. Record OTP Request (Uniformly created to enforce 60s cooldown and 10-min rate limits, preventing enumeration)
+      const recordedOtpHash = shouldSendSms ? otpHash : hmacHashOtp(`SUPPRESSED_${Date.now()}_${cleanMobile}`);
+      await tx.otpRequest.create({
+        data: {
+          mobile: cleanMobile,
+          otpHash: recordedOtpHash,
+          purpose: validatedPurpose as OtpPurpose,
+          expiresAt,
+          cooldownUntil,
+        },
+      });
     });
 
     // 5. Secure SMS dispatch outside transaction via configured provider (MSG91 in production)
@@ -882,6 +881,9 @@ export class AuthService {
       if (!smsResult.success && config.isProduction) {
         throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
       }
+    } else {
+      // Synthetic defensive delay to equalize timing with real SMS gateway network latency
+      await new Promise((r) => setTimeout(r, 250));
     }
 
     return {

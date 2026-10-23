@@ -348,6 +348,19 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
            transitionErr.message.includes('already failed'))
         ) {
           console.warn(`[WEBHOOK] Out-of-order delivery: event ${eventType} acknowledged for payout ${payoutRecord.id}: ${transitionErr.message}`);
+
+          const isAlreadySuccessful = 
+            payoutRecord.status === 'SUCCESS' || 
+            transitionErr.message?.includes('already successfully completed');
+          if (isAlreadySuccessful && eventType === 'payout.processed') {
+            await prisma.webhookEvent.update({
+              where: { provider_event_unique: { provider: 'RAZORPAYX', eventId } },
+              data: { isProcessed: true, processedAt: new Date(), processingStartedAt: null, lastError: null },
+            });
+            res.status(200).json({ status: 'ok', duplicate: true });
+            return;
+          }
+
           if (eventType === 'payout.processed') {
             try {
               await PayoutService.handleFinancialDriftClawback(
@@ -357,6 +370,12 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
               );
             } catch (clawbackErr: any) {
               console.error(`🚨 [WEBHOOK-CRITICAL] Automated clawback failed for payout ${payoutRecord.id}: ${clawbackErr.message}`);
+              await prisma.webhookEvent.update({
+                where: { provider_event_unique: { provider: 'RAZORPAYX', eventId } },
+                data: { isProcessed: false, processingStartedAt: null, lastError: clawbackErr.message },
+              });
+              res.status(500).json({ error: 'Drift clawback failed' });
+              return;
             }
           }
           if (eventType === 'payout.processed' || eventType === 'payout.failed' || eventType === 'payout.rejected') {

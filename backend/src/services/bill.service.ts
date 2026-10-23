@@ -78,11 +78,14 @@ export class BillService {
       uploadedFileKey = uploadResult.fileKey;
 
       return await prisma.$transaction(async (tx) => {
-        // Re-query and lock the User record to eliminate TOCTOU race with account deletion (DB-002)
-        const lockedUser = await tx.user.findUnique({
-          where: { id: data.userId },
-          select: { status: true, deletionScheduledAt: true },
-        });
+        // Re-query and lock the User record to eliminate TOCTOU race with account deletion (DB-001)
+        const lockedUserRows = await tx.$queryRaw<Array<{ id: string; status: string; deletionScheduledAt: Date | null }>>`
+          SELECT "id", "status", "deletionScheduledAt"
+          FROM "User"
+          WHERE "id" = ${data.userId}
+          FOR UPDATE
+        `;
+        const lockedUser = lockedUserRows[0];
         if (!lockedUser || lockedUser.status !== 'ACTIVE' || lockedUser.deletionScheduledAt) {
           throw new Error('Account is inactive or scheduled for deletion; invoice submission aborted.');
         }
@@ -498,69 +501,78 @@ export class BillService {
       // 4. Final reward calculation strictly rule-based
       const finalReward = RewardService.calculateReward(gstCalc.eligibleRewardAmount, rulePercentage);
 
-      if (finalReward <= 0) {
-        throw new Error('Calculated reward amount must be greater than ₹0.00 to credit rewards.');
+      if (finalReward < 0) {
+        throw new Error('Calculated reward amount cannot be negative.');
       }
 
-      // 5. Ensure wallet exists and credit atomically
-      let wallet = await tx.wallet.findUnique({
-        where: { userId: bill.userId },
-      });
+      // 5. Ensure wallet exists and credit atomically only if reward > 0 (FIN-002: Zero-reward bills approved without ledger failure)
+      let newBalance = 0;
+      if (finalReward > 0) {
+        let wallet = await tx.wallet.findUnique({
+          where: { userId: bill.userId },
+        });
 
-      if (!wallet) {
-        wallet = await tx.wallet.create({
+        if (!wallet) {
+          wallet = await tx.wallet.create({
+            data: {
+              userId: bill.userId,
+              availableBalance: 0.0,
+              processingAmount: 0.0,
+              totalRedeemed: 0.0,
+              deficitLiability: 0.0,
+            },
+          });
+        }
+
+        // Lock wallet FOR UPDATE to read fresh deficitLiability and prevent concurrent race conditions
+        const lockedWalletRows = await tx.$queryRaw<Array<{ id: string; deficitLiability: any }>>`
+          SELECT "id", "deficitLiability"
+          FROM "Wallet"
+          WHERE "id" = ${wallet.id}
+          FOR UPDATE
+        `;
+        const lockedWallet = lockedWalletRows[0] || wallet;
+
+        // FIN-FINDING-04: Offset deficit liability from previous financial drift clawbacks
+        const currentDeficit = Number(lockedWallet.deficitLiability || 0);
+        const deficitOffset = Math.min(currentDeficit, finalReward);
+        const netCreditToBalance = finalReward - deficitOffset;
+
+        const updatedWalletRows: any[] = await tx.$queryRaw`
+          UPDATE "Wallet"
+          SET "availableBalance" = "availableBalance" + ${netCreditToBalance}::decimal,
+              "deficitLiability" = "deficitLiability" - ${deficitOffset}::decimal,
+              "version" = "version" + 1,
+              "updatedAt" = CURRENT_TIMESTAMP
+          WHERE "id" = ${wallet.id}
+          RETURNING *;
+        `;
+
+        const updatedWallet = updatedWalletRows[0];
+        newBalance = Number(updatedWallet.availableBalance);
+
+        // 7. Create immutable ledger record
+        await tx.walletTransaction.create({
           data: {
+            walletId: wallet.id,
             userId: bill.userId,
-            availableBalance: 0.0,
-            processingAmount: 0.0,
-            totalRedeemed: 0.0,
-            deficitLiability: 0.0,
+            amount: finalReward,
+            type: 'REWARD_CREDIT',
+            balanceAfter: newBalance,
+            referenceType: 'BILL',
+            referenceId: bill.id,
+            description: deficitOffset > 0
+              ? `Reward of ${Number(finalReward).toLocaleString('en-IN')} Points credited (${Number(deficitOffset).toLocaleString('en-IN')} Points offset against deficit liability) for approved invoice #${bill.invoiceNumber} (${profession})`
+              : `Reward of ${Number(finalReward).toLocaleString('en-IN')} Points credited for approved invoice #${bill.invoiceNumber} (${profession})`,
           },
         });
+      } else {
+        const existingWallet = await tx.wallet.findUnique({
+          where: { userId: bill.userId },
+          select: { availableBalance: true },
+        });
+        newBalance = Number(existingWallet?.availableBalance || 0);
       }
-
-      // Lock wallet FOR UPDATE to read fresh deficitLiability and prevent concurrent race conditions
-      const lockedWalletRows = await tx.$queryRaw<Array<{ id: string; deficitLiability: any }>>`
-        SELECT "id", "deficitLiability"
-        FROM "Wallet"
-        WHERE "id" = ${wallet.id}
-        FOR UPDATE
-      `;
-      const lockedWallet = lockedWalletRows[0] || wallet;
-
-      // FIN-FINDING-04: Offset deficit liability from previous financial drift clawbacks
-      const currentDeficit = Number(lockedWallet.deficitLiability || 0);
-      const deficitOffset = Math.min(currentDeficit, finalReward);
-      const netCreditToBalance = finalReward - deficitOffset;
-
-      const updatedWalletRows: any[] = await tx.$queryRaw`
-        UPDATE "Wallet"
-        SET "availableBalance" = "availableBalance" + ${netCreditToBalance}::decimal,
-            "deficitLiability" = "deficitLiability" - ${deficitOffset}::decimal,
-            "version" = "version" + 1,
-            "updatedAt" = CURRENT_TIMESTAMP
-        WHERE "id" = ${wallet.id}
-        RETURNING *;
-      `;
-
-      const updatedWallet = updatedWalletRows[0];
-      const newBalance = Number(updatedWallet.availableBalance);
-
-      // 7. Create immutable ledger record
-      await tx.walletTransaction.create({
-        data: {
-          walletId: wallet.id,
-          userId: bill.userId,
-          amount: finalReward,
-          type: 'REWARD_CREDIT',
-          balanceAfter: newBalance,
-          referenceType: 'BILL',
-          referenceId: bill.id,
-          description: deficitOffset > 0
-            ? `Reward of ${Number(finalReward).toLocaleString('en-IN')} Points credited (${Number(deficitOffset).toLocaleString('en-IN')} Points offset against deficit liability) for approved invoice #${bill.invoiceNumber} (${profession})`
-            : `Reward of ${Number(finalReward).toLocaleString('en-IN')} Points credited for approved invoice #${bill.invoiceNumber} (${profession})`,
-        },
-      });
 
       if (options?.isOperationsAdminApproved && bill.requiresSecondaryApproval) {
         if (bill.verifiedByAdminId && bill.verifiedByAdminId === adminId) {
