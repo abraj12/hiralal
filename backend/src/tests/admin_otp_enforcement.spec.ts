@@ -1257,6 +1257,7 @@ describe('Admin OTP Enforcement & Security Closure Test Suite', () => {
 
     test('A4. Non-existent mobile returns anti-enumeration response without database rows', async () => {
       const nonExistentMobile = '9999988888';
+      await prisma.otpRequest.deleteMany({ where: { mobile: nonExistentMobile } });
       const res = await request(app)
         .post('/api/v1/auth/password-reset/request')
         .send({ mobile: nonExistentMobile });

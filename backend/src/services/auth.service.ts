@@ -935,11 +935,10 @@ export class AuthService {
         where: { mobile: cleanMobile },
       });
 
-      let shouldSendSms = true;
       // Anti-enumeration: If user does not exist, is not role 'USER', or is not ACTIVE,
-      // silently suppress SMS delivery while writing uniform cooldown & rate-limit records
+      // silently return synthetic response without generating OTP, writing DB records, or sending SMS.
       if (!existingUser || existingUser.role !== 'USER' || existingUser.status !== 'ACTIVE') {
-        shouldSendSms = false;
+        return { shouldSendSms: false };
       }
 
       // 1. Cooldown enforcement: prevent rapid resend within 60 seconds
@@ -969,19 +968,18 @@ export class AuthService {
         return { shouldSendSms: false };
       }
 
-      // 3. Record OTP Request uniformly for BOTH eligible and ineligible requests
-      const recordedOtpHash = shouldSendSms ? otpHash : hmacHashOtp(`SUPPRESSED_RESET_${Date.now()}_${cleanMobile}`);
+      // 3. Record OTP Request
       const createdRecord = await tx.otpRequest.create({
         data: {
           mobile: cleanMobile,
-          otpHash: recordedOtpHash,
+          otpHash,
           purpose: 'FORGOT_PASSWORD',
           expiresAt,
           cooldownUntil,
         },
       });
 
-      return { shouldSendSms, otpRequestId: createdRecord.id };
+      return { shouldSendSms: true, otpRequestId: createdRecord.id };
     });
 
     // 4. Secure SMS dispatch outside transaction
