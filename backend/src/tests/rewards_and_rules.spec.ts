@@ -273,6 +273,80 @@ describe('Hiralal & Sons Production Business Logic & Integrity Tests', () => {
     });
   });
 
+  describe('6. TEST-003: High-Concurrency Invoice and Hash Race Condition Safeguards', () => {
+    test('Parallel submissions of identical invoice number: exactly one succeeds and concurrent duplicate is rejected', async () => {
+      const invoiceNumber = `INV-RACE-${Date.now()}`;
+      const dummyPdfHeader = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n');
+      const buf1 = Buffer.concat([dummyPdfHeader, Buffer.from(`unique-seed-1-${Date.now()}`)]);
+      const buf2 = Buffer.concat([dummyPdfHeader, Buffer.from(`unique-seed-2-${Date.now()}`)]);
+
+      const [res1, res2] = await Promise.allSettled([
+        BillService.submitBill({
+          userId: testUserId,
+          invoiceNumber,
+          invoiceDate: '2026-10-23',
+          billAmount: 1500.0,
+          fileBuffer: buf1,
+          fileName: 'invoice1.pdf',
+          mimeType: 'application/pdf',
+        }),
+        BillService.submitBill({
+          userId: testUserId,
+          invoiceNumber,
+          invoiceDate: '2026-10-23',
+          billAmount: 1500.0,
+          fileBuffer: buf2,
+          fileName: 'invoice2.pdf',
+          mimeType: 'application/pdf',
+        }),
+      ]);
+
+      const fulfilled = [res1, res2].filter((r) => r.status === 'fulfilled');
+      const rejected = [res1, res2].filter((r) => r.status === 'rejected');
+
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(1);
+      expect((rejected[0] as PromiseRejectedResult).reason.message).toMatch(
+        /undergoing review|already been approved|duplicate/i
+      );
+    });
+
+    test('Parallel submissions with identical document file hash: concurrent duplicate document is rejected', async () => {
+      const dummyPdfHeader = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n');
+      const identicalBuf = Buffer.concat([dummyPdfHeader, Buffer.from(`identical-hash-${Date.now()}`)]);
+
+      const [res1, res2] = await Promise.allSettled([
+        BillService.submitBill({
+          userId: testUserId,
+          invoiceNumber: `INV-HASH1-${Date.now()}`,
+          invoiceDate: '2026-10-23',
+          billAmount: 2000.0,
+          fileBuffer: identicalBuf,
+          fileName: 'same1.pdf',
+          mimeType: 'application/pdf',
+        }),
+        BillService.submitBill({
+          userId: testUserId,
+          invoiceNumber: `INV-HASH2-${Date.now()}`,
+          invoiceDate: '2026-10-23',
+          billAmount: 2000.0,
+          fileBuffer: identicalBuf,
+          fileName: 'same2.pdf',
+          mimeType: 'application/pdf',
+        }),
+      ]);
+
+      const fulfilled = [res1, res2].filter((r) => r.status === 'fulfilled');
+      const rejected = [res1, res2].filter((r) => r.status === 'rejected');
+
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(1);
+      expect((rejected[0] as PromiseRejectedResult).reason.message).toContain(
+        'Duplicate documents are rejected'
+      );
+    });
+  });
+
   afterAll(async () => {
     await prisma.$disconnect();
   });

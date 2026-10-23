@@ -42,12 +42,12 @@ test('Admin Role Enforcement - strictly permits only 2 admin roles: BILL_ADMIN a
   assert.throws(() => validateAdminRole(undefined), /Unauthorized role/);
 });
 
-test('Admin App Security - Play Integrity, SecureStore, and Release Signing are configured', () => {
+test('Admin App Security - Developer Mode Security, SecureStore, and Release Signing are configured', () => {
   const appJsonPath = path.join(__dirname, '../app.json');
   const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
   const plugins = appJson.expo.plugins || [];
 
-  assert.ok(plugins.includes('./plugins/withPlayIntegrity'), 'withPlayIntegrity plugin must be configured');
+  assert.ok(plugins.includes('./plugins/withDeveloperModeSecurity'), 'withDeveloperModeSecurity plugin must be configured');
   assert.ok(plugins.includes('./plugins/withReleaseSigning'), 'withReleaseSigning plugin must be configured');
 
   const pkgJsonPath = path.join(__dirname, '../package.json');

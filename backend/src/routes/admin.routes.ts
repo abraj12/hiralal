@@ -889,7 +889,7 @@ router.get(
  * 5. Bill Verification (Approve / Reject with GST and Financial Snapshot)
  * DEADLOCK-01: Use requireAdmin so OPERATIONS_ADMIN can resolve bills requiring secondary approval (>25% upward deviation)
  */
-router.post('/bills/:id/verify', requireAdmin, adminActionLimiter, async (req: AuthenticatedRequest, res: Response) => {
+const handleBillVerification = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const admin = req.user!;
     const { action, rejectionReason, cancellationReason, reason, gstIncluded, gstRate, gstRuleId, gstOverrideReason } = req.body;
@@ -1008,7 +1008,10 @@ router.post('/bills/:id/verify', requireAdmin, adminActionLimiter, async (req: A
   } catch (err: any) {
     res.status(400).json({ success: false, message: err.message });
   }
-});
+};
+
+router.post('/bills/:id/verify', requireAdmin, adminActionLimiter, handleBillVerification);
+router.post('/bills/:id/secondary-approve', requireOperationsAdmin, adminActionLimiter, handleBillVerification);
 
 /**
  * 6. Payouts Management with Strict Server-Side Profession Filtering
@@ -1125,7 +1128,7 @@ router.post('/payouts/:id/action', requireOperationsAdmin, adminActionLimiter, a
           message: `Cannot manually finalize payout in ${existing.status} status. Payouts must be approved and dispatched before manual settlement.`,
         });
       }
-      const gatewayId = req.body.razorpayPayoutId || existing.razorpayPayoutId || 'MANUAL_ADMIN_SETTLEMENT';
+      const gatewayId = req.body.razorpayPayoutId || existing.razorpayPayoutId || `MANUAL_ADMIN_SETTLEMENT_${id}_${Date.now()}`;
       const payout = await PayoutService.finalizeSuccess(id, gatewayId, admin.id);
       await prisma.auditLog.create({
         data: {

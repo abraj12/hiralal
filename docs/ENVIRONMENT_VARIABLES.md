@@ -30,7 +30,7 @@ This document provides a comprehensive inventory of all environment variables us
 |---|---|---|---|
 | `JWT_ACCESS_SECRET` | Yes | 64-character hex (`openssl rand -hex 32`) | Secret key used to sign and verify craftsman JWT access tokens (HS256). |
 | `JWT_REFRESH_SECRET` | Yes | 64-character hex | Secret key used to sign long-lived refresh tokens. |
-| `JWT_ADMIN_ACCESS_SECRET` | Yes | 64-character hex | Distinct secret key used exclusively for administrative access tokens. |
+| `ADMIN_ACCESS_SECRET` / `JWT_ADMIN_ACCESS_SECRET` | Yes | 64-character hex | Distinct dedicated secret key used exclusively for administrative access tokens. |
 | `ENCRYPTION_KEY` | Yes | 64-character hex (32 bytes) | Primary symmetric key used for AES-256-GCM application-level payload encryption. |
 | `FIELD_ENCRYPTION_KEY` | Yes | 64-character hex (32 bytes) | Dedicated symmetric key for database field encryption (e.g., PAN, bank account numbers). |
 | `PREVIOUS_FIELD_ENCRYPTION_KEYS` | Optional | Comma-separated 64-char hex keys | Previous encryption keys used for seamless zero-downtime key rotation of encrypted database fields. |

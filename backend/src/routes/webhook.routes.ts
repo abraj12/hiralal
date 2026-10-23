@@ -348,6 +348,17 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
            transitionErr.message.includes('already failed'))
         ) {
           console.warn(`[WEBHOOK] Out-of-order delivery: event ${eventType} acknowledged for payout ${payoutRecord.id}: ${transitionErr.message}`);
+          if (eventType === 'payout.processed') {
+            try {
+              await PayoutService.handleFinancialDriftClawback(
+                payoutRecord.id,
+                razorpayPayoutId,
+                `Late-arriving payout.processed caught during concurrent terminal transition (${transitionErr.message})`
+              );
+            } catch (clawbackErr: any) {
+              console.error(`🚨 [WEBHOOK-CRITICAL] Automated clawback failed for payout ${payoutRecord.id}: ${clawbackErr.message}`);
+            }
+          }
           if (eventType === 'payout.processed' || eventType === 'payout.failed' || eventType === 'payout.rejected') {
             await prisma.payout.update({
               where: { id: payoutRecord.id },

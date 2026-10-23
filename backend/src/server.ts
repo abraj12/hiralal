@@ -41,6 +41,16 @@ app.use((req: any, res: Response, next: NextFunction) => {
   next();
 });
 
+// Global 25-second Express request timeout middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.setTimeout(25000, () => {
+    if (!res.headersSent) {
+      res.status(504).json({ success: false, message: 'Request timed out after 25 seconds.' });
+    }
+  });
+  next();
+});
+
 // Security headers
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
@@ -238,6 +248,7 @@ async function startServer(): Promise<any> {
       console.log(`====================================================`);
       resolve(server);
     });
+    server.setTimeout(28000);
 
     let isShuttingDown = false;
     const handleShutdown = async (signal: string) => {

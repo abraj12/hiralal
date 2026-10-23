@@ -54,6 +54,11 @@ Both craftsmen and administrators are restricted to a single active session:
 - Middleware verifies that incoming JWT bearer tokens match the active `sessionToken`.
 - Subsequent logins on other devices invalidate previous sessions immediately.
 
+### D. Anti-Enumeration & Toll-Fraud Defenses on OTP Endpoints
+- **Purpose-Specific Phone Validation**: On `POST /auth/send-otp` (and `POST /auth/request-otp`), requesting an OTP for `purpose = 'REGISTRATION'` for a phone number that already exists returns HTTP 200 with generic success message but suppresses actual SMS delivery (`shouldSendSms = false`), preventing account enumeration and toll-fraud.
+- **Login Purpose Safeguard**: Requesting OTP for `purpose = 'LOGIN'` for an unregistered mobile returns HTTP 200 with generic success message but suppresses SMS delivery.
+- **Strict Rate Limiting**: OTP requests are throttled per IP and per mobile number with sliding window limits and IP burst limits.
+
 ---
 
 ## 3. Cryptographic Controls & Data Privacy
@@ -71,18 +76,24 @@ Both craftsmen and administrators are restricted to a single active session:
 
 ## 4. Financial Integrity & Concurrency Safeguards
 
-1. **Pessimistic Row-Level Locking:** All wallet mutations execute inside database transactions holding `SELECT ... FOR UPDATE` row locks on the craftsman's `Wallet` record.
+1. **Pessimistic Row-Level Locking:** All wallet mutations execute inside database transactions holding `SELECT ... FOR UPDATE` row locks on the craftsman's `Wallet` record before any `Payout` locks.
 2. **Double-Entry Ledger Integrity:** Every balance change is paired with an immutable `WalletTransaction` entry recording the prior balance, change amount, resulting balance, reference entity, and version timestamp.
-3. **Worker CAS Leases:** Background workers (`payout.worker.ts`, `reconciliation.worker.ts`) claim jobs using 60-second atomic Compare-And-Swap (CAS) leases on `WebhookEvent.lockedUntil` to eliminate duplicate execution across cluster nodes.
-4. **Reversal Invariant Assertions:** Inbound webhooks must match expected currency (`INR`) and exact paise amounts before payout state transitions occur. Any drift triggers automated manual review flags.
+3. **Immutable ₹50,000 Redemption Ceiling:** Redemptions are capped by code (`HARD_MAX_REDEMPTION_CEILING = 50000.00`) and fortified at the database layer via `chk_payout_amount_valid_range` (`amount > 0 AND amount <= 50000.00`). Redemption settings ceilings are also constrained by `chk_redemption_settings_maximum_ceiling`.
+4. **Absolute NEFT Prohibition:** Payout rails are strictly limited to instant settlement methods (`UPI` and `IMPS`). The database enum `PaymentType` permits only `UPI` and `BANK_ACCOUNT`; worker dispatch enforces `mode: 'UPI' | 'IMPS'`. NEFT is blocked across routes, services, workers, and fallback routines.
+5. **Single Default Payment Account:** Database partial unique index `PaymentAccount_user_single_default_idx` (`userId WHERE "isDefault" = true`) prevents concurrent registration of multiple default disbursement destinations.
+6. **Duplicate Reward Credit Elimination:** Database partial unique index `idx_wallet_tx_bill_reward_credit_unique` (`referenceId WHERE "referenceType" = 'BILL' AND "type" = 'REWARD_CREDIT'`) rejects duplicate reward credits at the DB storage layer.
+7. **Worker CAS Leases:** Background workers (`payout.worker.ts`, `reconciliation.worker.ts`) claim jobs using 60-second atomic Compare-And-Swap (CAS) leases on `WebhookEvent.lockedUntil` to eliminate duplicate execution across cluster nodes.
+8. **Reversal Invariant Assertions:** Inbound webhooks must match expected currency (`INR`) and exact paise amounts before payout state transitions occur. Any drift triggers automated manual review flags.
 
 ---
 
 ## 5. Mobile Client Security
 
-1. **Google Play Integrity API:** Mobile apps integrate Google Play Integrity hardware attestation, ensuring requests originate from genuine, untampered Android devices.
+1. **Google Play Integrity API:** Mobile app integrates Google Play Integrity hardware attestation, ensuring requests originate from genuine, untampered Android devices.
 2. **Hardware Keystore:** Authentication tokens and cryptographic salts are stored in Android `SecureStore` backed by hardware Keymaster / StrongBox keystores.
-3. **No Administrative Assets:** All administrative screens, credentials, and prefix validation utilities have been purged from the customer mobile package.
+3. **Developer Mode & USB Debugging Lockout:** Both customer mobile and admin mobile apps enforce banking-grade runtime blocking via Expo config plugin `withDeveloperModeSecurity` and non-dismissible `<DeveloperModeBlocker />` overlay when developer options or ADB are active in production.
+4. **Network Security & Certificate Pinning:** `withNetworkSecurityConfig` installs `network_security_config.xml` into the Android APK manifest, enforcing TLS 1.3/1.2, disallowing cleartext HTTP, and pinning production certificates for `hsspl.algions.in`.
+5. **No Administrative Assets in Consumer App:** All administrative screens, credentials, and prefix validation utilities have been purged from the customer mobile package.
 
 ---
 

@@ -19,12 +19,12 @@ services:
     image: postgres:16-alpine
     container_name: hiralal_postgres
     restart: unless-stopped
-    command: postgres -c shared_buffers=512MB -c work_mem=16MB -c maintenance_work_mem=128MB -c effective_cache_size=1GB -c max_connections=100
+    command: postgres -c shared_buffers=384MB -c work_mem=4MB -c maintenance_work_mem=64MB -c effective_cache_size=1GB -c max_connections=60
     deploy:
       resources:
         limits:
           cpus: '1.0'
-          memory: 1280M
+          memory: 1536M
         reservations:
           cpus: '0.2'
           memory: 512M
@@ -298,7 +298,7 @@ services:
         condition: service_healthy
     environment:
       PORT: 3000
-      NEXT_PUBLIC_API_URL: /api
+      NEXT_PUBLIC_API_URL: /api/v1
     expose:
       - '3000'
     networks:

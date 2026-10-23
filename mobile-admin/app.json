@@ -23,7 +23,7 @@
     },
     "plugins": [
       "expo-asset",
-      "./plugins/withPlayIntegrity",
+      "./plugins/withDeveloperModeSecurity",
       "./plugins/withReleaseSigning",
       [
         "expo-notifications",

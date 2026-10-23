@@ -9,7 +9,7 @@ export type BillStatusType = z.infer<typeof BillStatusEnum>;
 export const PayoutStatusEnum = z.enum(['PENDING', 'APPROVED', 'PAYOUT_INITIATED', 'PROCESSING', 'SUCCESS', 'FAILED', 'REVERSED']);
 export type PayoutStatusType = z.infer<typeof PayoutStatusEnum>;
 
-export const PaymentTypeEnum = z.enum(['UPI', 'BANK_ACCOUNT', 'BANK']);
+export const PaymentTypeEnum = z.enum(['UPI', 'BANK_ACCOUNT']);
 export type PaymentTypeChoice = z.infer<typeof PaymentTypeEnum>;
 
 export const IndianMobileSchema = z.string().trim().regex(/^(?:\+91|91)?[6-9]\d{9}$/, {

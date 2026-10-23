@@ -1,6 +1,7 @@
 import request from 'supertest';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import { app } from '../server';
 import { prisma } from '../db';
 import { config } from '../config';
@@ -805,15 +806,46 @@ describe('Final Audit Remediation Verification — Security, Financial, and Reli
   // 7. G-02: Role Separation and Document URL Privacy
   // ==========================================
   describe('G-02 — Document URL Restrictions for Operations Admins', () => {
-    test('OPERATIONS_ADMIN dashboard recentBills omits invoice fileUrl', async () => {
-      // Mock session for OPERATIONS_ADMIN
-      const token = 'ops_admin_jwt_token';
+    test('OPERATIONS_ADMIN dashboard recentBills omits invoice fileUrl and returns valid aggregated metrics', async () => {
+      const opsAdmin = await prisma.user.findFirst({ where: { role: 'OPERATIONS_ADMIN' } });
+      expect(opsAdmin).toBeDefined();
 
-      // Direct check: In admin.routes.ts, mappedRecentBills sets fileUrl = '' when role is not BILL_ADMIN
-      const isBillAdmin = false;
-      const fileKey = 'invoices/2026/bill_test.pdf';
-      const fileUrl = isBillAdmin && fileKey ? 'https://r2.storage.com/signed' : '';
-      expect(fileUrl).toBe('');
+      const sessionId = crypto.randomUUID();
+      await prisma.user.update({
+        where: { id: opsAdmin!.id },
+        data: { activeSessionId: sessionId },
+      });
+
+      await prisma.authSession.create({
+        data: {
+          userId: opsAdmin!.id,
+          sessionId: sessionId,
+          tokenHash: crypto.randomBytes(32).toString('hex'),
+          ipAddress: '127.0.0.1',
+          userAgent: 'Jest Supertest',
+          expiresAt: new Date(Date.now() + 3600000),
+        },
+      });
+
+      const opsToken = jwt.sign(
+        { userId: opsAdmin!.id, role: 'OPERATIONS_ADMIN', sessionId },
+        config.admin.accessSecret || config.jwt.accessSecret,
+        { expiresIn: '1h' }
+      );
+
+      const res = await request(app)
+        .get('/api/v1/admin/dashboard')
+        .set('Authorization', `Bearer ${opsToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.stats).toBeDefined();
+      expect(res.body.recentBills).toBeDefined();
+      if (res.body.recentBills && res.body.recentBills.length > 0) {
+        for (const bill of res.body.recentBills) {
+          expect(bill.fileUrl === '' || bill.fileUrl === undefined).toBe(true);
+        }
+      }
     });
   });
 

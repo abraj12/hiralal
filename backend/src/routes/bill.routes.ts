@@ -160,11 +160,11 @@ router.post(
     }
 
     const parsedAmount = Number(amountText);
-    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    if (!Number.isFinite(parsedAmount) || parsedAmount < 1.00) {
       cleanupUploadedFile(req);
       return res.status(400).json({
         success: false,
-        message: 'Bill amount must be a finite positive number greater than zero.',
+        message: 'Minimum invoice amount is ₹1.00.',
       });
     }
 

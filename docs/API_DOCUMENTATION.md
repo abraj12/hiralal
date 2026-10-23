@@ -272,6 +272,33 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
   }
   ```
 
+#### 2.5 Dedicated Secondary Invoice Approval (Operations Admin Only)
+- **Method**: `POST`
+- **Path**: `/admin/bills/:id/secondary-approve`
+- **Headers**: `Authorization: Bearer <OPERATIONS_ADMIN_TOKEN>`
+- **Description**: Explicit endpoint restricted to `OPERATIONS_ADMIN` to approve bills flagged with `requiresSecondaryApproval: true` (such as revisions with >25% amount increases or high-value invoices).
+- **Body**:
+  ```json
+  {
+    "action": "APPROVE",
+    "gstIncluded": true,
+    "gstRuleId": "gst-rule-uuid",
+    "remarks": "Verified secondary approval with branch manager"
+  }
+  ```
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "message": "Bill secondary approval granted and reward credited.",
+    "bill": {
+      "id": "bill-uuid",
+      "status": "APPROVED",
+      "calculatedReward": 500.00
+    }
+  }
+  ```
+
 ---
 
 ### 3. Wallet & Payout Endpoints
@@ -294,20 +321,26 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
   ```
 
 #### 3.2 Request Reward Redemption (Craftsman)
-Requests 100% full available balance redemption. Requires redemption window to be open and available balance to satisfy the configured `minimumRedemptionAmount` threshold set by Operations Administration:
+Requests 100% full available balance redemption computed from database available balance (server-controlled, capped by the immutable platform ceiling of ₹50,000 and daily redemption limits). Requires an active redemption window, verified KYC, and default payment account (UPI or Bank Account; NEFT strictly prohibited). Supports native biometric attestation or fallback password authentication:
 - **Method**: `POST`
 - **Path**: `/payouts/redeem` (alias: `/payouts/request`)
-- **Headers**: `Authorization: Bearer <USER_TOKEN>`
+- **Headers**:
+  - `Authorization: Bearer <USER_TOKEN>`
+  - `X-Integrity-Token: <PLAY_INTEGRITY_TOKEN>` (Required in production)
+  - `X-Integrity-Nonce: <NONCE>` (Required in production)
 - **Body**:
   ```json
   {
-    "idempotencyKey": "redemption-user123-20261011-001"
+    "idempotencyKey": "redemption-user123-20261011-001",
+    "password": "AccountPassword123!"
   }
   ```
-- **Response (200)**:
+  *(Note: `password` is optional and utilized as secure step-up fallback when device hardware biometrics are unavailable or canceled).*
+- **Response (201)**:
   ```json
   {
     "success": true,
+    "message": "Redemption request submitted successfully. Awaiting admin approval before disbursement.",
     "amountDebited": 1250.75,
     "payout": {
       "id": "payout-uuid",

@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, SafeAreaView, StatusBar, Platform, Text, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, StyleSheet, SafeAreaView, StatusBar, Platform, Text, TouchableOpacity, AppState, AppStateStatus } from 'react-native';
 import { AdminAppProvider, useAdminApp } from './src/context/AdminAppContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
+import { DeveloperModeBlocker } from './src/components/DeveloperModeBlocker';
+import { checkDeveloperMode } from './src/services/security.service';
 import AdminHeader from './src/components/AdminHeader';
 import AdminBottomNav, { OpsAdminTab, BillAdminTab } from './src/components/AdminBottomNav';
 import AdminLoginScreen from './src/screens/AdminLoginScreen';
@@ -132,11 +134,38 @@ function AdminAppNavigator() {
 }
 
 export default function App() {
+  const [isDevModeBlocked, setIsDevModeBlocked] = useState<boolean>(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const verifySecurity = async () => {
+      const isBlocked = await checkDeveloperMode();
+      if (isMounted) {
+        setIsDevModeBlocked(isBlocked);
+      }
+    };
+
+    verifySecurity();
+
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        verifySecurity();
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.remove();
+    };
+  }, []);
+
   return (
     <ErrorBoundary>
       <AdminAppProvider>
         <AdminAppNavigator />
       </AdminAppProvider>
+      <DeveloperModeBlocker visible={isDevModeBlocked} />
     </ErrorBoundary>
   );
 }

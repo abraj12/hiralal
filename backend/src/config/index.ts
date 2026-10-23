@@ -922,7 +922,7 @@ export const config: AppConfig = {
     billAdminPrefix: rawBillPrefix,
     operationsAdminPrefix: rawOpsPrefix,
     accessTokenExpiresIn: process.env.ADMIN_ACCESS_TOKEN_EXPIRES_IN || '1d',
-    accessSecret: process.env.JWT_ADMIN_ACCESS_SECRET || process.env.JWT_ACCESS_SECRET || 'dev_admin_access_secret_key_hiralal_2026',
+    accessSecret: process.env.JWT_ADMIN_ACCESS_SECRET || 'dev_admin_dedicated_access_secret_key_hiralal_2026',
     billAdminMobile: process.env.BILL_ADMIN_MOBILE,
     operationsAdminMobile: process.env.OPERATIONS_ADMIN_MOBILE,
     billAdminInitialPassword: process.env.BILL_ADMIN_INITIAL_PASSWORD,

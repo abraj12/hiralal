@@ -267,6 +267,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Additive PostgreSQL check constraints on WalletTransaction amount (> 0) and Bill billAmount (> 0) and calculatedReward (>= 0) to prevent zero or negative financial records."
+    },
+    {
+      "id": "20261024000000_audit_remediation_constraints_and_indexes",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Database CHECK constraints on Payout valid amount (<= 50,000) and RedemptionSettings ceilings, plus partial unique indexes on default PaymentAccount and duplicate Bill reward credits."
     }
   ]
 }

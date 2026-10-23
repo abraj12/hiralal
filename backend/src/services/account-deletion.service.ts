@@ -985,6 +985,28 @@ export class AccountDeletionService {
             );
           }
 
+          // DB-003: Strict pending bill review fencing check under row lock
+          const pendingBill = await tx.bill.findFirst({
+            where: {
+              userId: u.id,
+              status: { in: ['PENDING', 'UNDER_REVIEW'] },
+            },
+          });
+          if (pendingBill) {
+            await tx.$queryRaw`
+              UPDATE "AccountDeletionOperation"
+              SET "scheduledFor" = (clock_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 hour',
+                  "status" = 'PENDING',
+                  "leaseOwner" = NULL,
+                  "leaseExpiresAt" = NULL,
+                  "lastError" = 'PENDING_BILL_REVIEW_ACTIVE'
+              WHERE "id" = ${operationId}
+            `;
+            throw new Error(
+              `[ACCOUNT-DELETION] Deletion deferred: user has pending bill #${pendingBill.invoiceNumber || pendingBill.id} awaiting review.`
+            );
+          }
+
           // 3. Purge active push tokens, notifications, redact AppInstallation, sessions, and OTP requests
           // E-04: Notifications containing PII must be purged upon account deletion
           await tx.notification.deleteMany({ where: { userId: u.id } });

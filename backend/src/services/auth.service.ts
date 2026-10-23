@@ -805,17 +805,28 @@ export class AuthService {
     const otpCode = generateSecureOtp();
     const otpHash = hmacHashOtp(otpCode);
 
+    let shouldSendSms = true;
+
     await prisma.$transaction(async (tx) => {
       // Advisory xact lock per mobile number: (7212027, hashtext(cleanMobile))
       await tx.$executeRaw`SELECT 1::int AS lock_acquired FROM (SELECT pg_advisory_xact_lock(7212027, hashtext(${cleanMobile})::integer)) AS lock_result`;
 
-      // 1. Business purpose validation
+      // 1. Business purpose validation & Anti-Enumeration / Toll-Fraud Guards (AUTH-002, AUTH-003)
       if (validatedPurpose === 'REGISTRATION') {
         const existingUser = await tx.user.findUnique({
           where: { mobile: cleanMobile },
         });
         if (existingUser) {
-          throw new Error('This mobile number is already registered. Please proceed to login.');
+          shouldSendSms = false;
+        }
+      }
+
+      if (validatedPurpose === 'LOGIN') {
+        const user = await tx.user.findUnique({
+          where: { mobile: cleanMobile },
+        });
+        if (!user || user.role !== 'USER' || user.status !== 'ACTIVE') {
+          shouldSendSms = false;
         }
       }
 
@@ -847,26 +858,30 @@ export class AuthService {
         throw new Error('Too many verification requests. Please try again after 10 minutes.');
       }
 
-      // 4. Record OTP Request
-      await tx.otpRequest.create({
-        data: {
-          mobile: cleanMobile,
-          otpHash,
-          purpose: validatedPurpose as OtpPurpose,
-          expiresAt,
-          cooldownUntil,
-        },
-      });
+      // 4. Record OTP Request only if eligible
+      if (shouldSendSms) {
+        await tx.otpRequest.create({
+          data: {
+            mobile: cleanMobile,
+            otpHash,
+            purpose: validatedPurpose as OtpPurpose,
+            expiresAt,
+            cooldownUntil,
+          },
+        });
+      }
     });
 
     // 5. Secure SMS dispatch outside transaction via configured provider (MSG91 in production)
-    const smsResult = await SmsService.sendOtp({
-      mobile: cleanMobile,
-      otpCode,
-    });
+    if (shouldSendSms) {
+      const smsResult = await SmsService.sendOtp({
+        mobile: cleanMobile,
+        otpCode,
+      });
 
-    if (!smsResult.success && config.isProduction) {
-      throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
+      if (!smsResult.success && config.isProduction) {
+        throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
+      }
     }
 
     return {

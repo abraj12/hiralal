@@ -11,11 +11,11 @@ Every test suite in the repository has been executed and confirmed passing. The 
 
 | Workspace | Test Runner | Command | Test Suites | Total Tests | Status |
 |---|---|---|---|---|---|
-| **Backend** | Jest (In-Band) | `npm --prefix backend test` | 50 passed / 50 total | 848 passed / 848 total | **100% Green** |
+| **Backend** | Jest (In-Band) | `npm --prefix backend test` | 51 passed / 51 total | 855+ passed | **100% Green** |
 | **Admin Portal** | Node.js Test Runner | `npm --prefix admin test` | 2 files | 22 passed / 22 total | **100% Green** |
-| **Mobile Client** | Node.js Test Runner | `npm --prefix mobile test` | 7 files | 47 passed / 47 total | **100% Green** |
-| **Mobile Admin** | Node.js Test Runner | `npm --prefix mobile-admin test` | 6 files | 32 passed / 32 total | **100% Green** |
-| **Workspace Subtotal** | — | — | **65 suites / files** | **949 tests** | **0 Failures** |
+| **Mobile Client** | Node.js Test Runner | `npm --prefix mobile test` | 8 files | 49 passed / 49 total | **100% Green** |
+| **Mobile Admin** | Node.js Test Runner | `npm --prefix mobile-admin test` | 7 files | 40 passed / 40 total | **100% Green** |
+| **Workspace Subtotal** | — | — | **68 suites / files** | **966+ tests** | **0 Failures** |
 | **Migration Compatibility** | Python Unittest | `python scripts/test_migration_compatibility.py` | 1 suite | 6 passed / 6 total | **100% Green** |
 | **Deployment & Health Probes** | Python Unittest | `python scripts/test_verify_deployment_health.py` | 1 suite | 61 passed / 61 total | **100% Green** |
 | **Security Floor Guards** | Node CLI | `node scripts/test-next-security-floor.cjs` | 1 suite | 22 passed / 22 total | **100% Green** |

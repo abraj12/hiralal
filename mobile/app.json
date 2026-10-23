@@ -36,6 +36,7 @@
       "./plugins/withPlayIntegrity",
       "./plugins/withReleaseSigning",
       "./plugins/withDeveloperModeSecurity",
+      "./plugins/withNetworkSecurityConfig",
       [
         "expo-notifications",
         {

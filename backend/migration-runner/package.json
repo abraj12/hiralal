@@ -4,8 +4,8 @@
   "description": "Minimal isolated migration runner for Hiralal & Sons Rewards Platform",
   "private": true,
   "dependencies": {
-    "@prisma/client": "6.19.3",
-    "prisma": "6.19.3"
+    "@prisma/client": "^6.4.1",
+    "prisma": "^6.4.1"
   },
   "overrides": {
     "deepmerge-ts": "^8.0.2"

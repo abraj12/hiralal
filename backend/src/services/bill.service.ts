@@ -45,8 +45,8 @@ export class BillService {
       throw new Error('Account is scheduled for deletion; new invoice submissions are disabled.');
     }
 
-    if (!Number.isFinite(data.billAmount) || data.billAmount <= 0) {
-      throw new Error('Bill amount must be greater than zero.');
+    if (!Number.isFinite(data.billAmount) || data.billAmount < 1.00) {
+      throw new Error('Bill amount must be greater than zero. Minimum bill amount is ₹1.00.');
     }
 
     const cleanInvoiceNumber = data.invoiceNumber.trim().toUpperCase();
@@ -78,6 +78,15 @@ export class BillService {
       uploadedFileKey = uploadResult.fileKey;
 
       return await prisma.$transaction(async (tx) => {
+        // Re-query and lock the User record to eliminate TOCTOU race with account deletion (DB-002)
+        const lockedUser = await tx.user.findUnique({
+          where: { id: data.userId },
+          select: { status: true, deletionScheduledAt: true },
+        });
+        if (!lockedUser || lockedUser.status !== 'ACTIVE' || lockedUser.deletionScheduledAt) {
+          throw new Error('Account is inactive or scheduled for deletion; invoice submission aborted.');
+        }
+
         // Serialize operations on this invoice number and document hash to eliminate TOCTOU races
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:' + cleanInvoiceNumber}))`;
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:doc:' + fileHash}))`;
@@ -488,6 +497,10 @@ export class BillService {
 
       // 4. Final reward calculation strictly rule-based
       const finalReward = RewardService.calculateReward(gstCalc.eligibleRewardAmount, rulePercentage);
+
+      if (finalReward <= 0) {
+        throw new Error('Calculated reward amount must be greater than ₹0.00 to credit rewards.');
+      }
 
       // 5. Ensure wallet exists and credit atomically
       let wallet = await tx.wallet.findUnique({
