@@ -433,7 +433,7 @@ describe('Auditor Remediation Regression Suite: Financial Drift, Statutory Purge
         where: { action: 'CRITICAL_FINANCIAL_DRIFT', entityType: 'Payout', entityId: payout.id },
       });
       expect(audit).not.toBeNull();
-      expect(audit?.newValue).toContain('SINGLE_PAYOUT_RECONCILIATION');
+      expect(audit?.newValue).toContain('Single payout gateway polling reconciliation');
     } finally {
       global.fetch = originalFetch;
     }
