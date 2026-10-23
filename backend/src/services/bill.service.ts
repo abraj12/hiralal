@@ -45,7 +45,7 @@ export class BillService {
       throw new Error('Account is scheduled for deletion; new invoice submissions are disabled.');
     }
 
-    if (data.billAmount <= 0) {
+    if (!Number.isFinite(data.billAmount) || data.billAmount <= 0) {
       throw new Error('Bill amount must be greater than zero.');
     }
 
@@ -242,6 +242,7 @@ export class BillService {
     profession?: Profession | 'ALL';
     status?: BillStatus | 'ALL';
     search?: string;
+    userRole?: string;
   }) {
     const where: any = {};
 
@@ -276,7 +277,12 @@ export class BillService {
     return await Promise.all(
       bills.map(async (b) => {
         let freshUrl: string | null = null;
-        if (b.fileKey) {
+        const canAccessDocument =
+          !filters.userRole ||
+          filters.userRole === 'BILL_ADMIN' ||
+          (filters.userRole === 'OPERATIONS_ADMIN' && Boolean(b.requiresSecondaryApproval));
+
+        if (b.fileKey && canAccessDocument) {
           try {
             freshUrl = await StorageService.getSignedInvoiceUrl(b.fileKey, 1800);
           } catch (e: any) {
@@ -495,12 +501,22 @@ export class BillService {
             availableBalance: 0.0,
             processingAmount: 0.0,
             totalRedeemed: 0.0,
+            deficitLiability: 0.0,
           },
         });
       }
 
+      // Lock wallet FOR UPDATE to read fresh deficitLiability and prevent concurrent race conditions
+      const lockedWalletRows = await tx.$queryRaw<Array<{ id: string; deficitLiability: any }>>`
+        SELECT "id", "deficitLiability"
+        FROM "Wallet"
+        WHERE "id" = ${wallet.id}
+        FOR UPDATE
+      `;
+      const lockedWallet = lockedWalletRows[0] || wallet;
+
       // FIN-FINDING-04: Offset deficit liability from previous financial drift clawbacks
-      const currentDeficit = Number(wallet.deficitLiability || 0);
+      const currentDeficit = Number(lockedWallet.deficitLiability || 0);
       const deficitOffset = Math.min(currentDeficit, finalReward);
       const netCreditToBalance = finalReward - deficitOffset;
 
@@ -533,8 +549,16 @@ export class BillService {
         },
       });
 
-      if (options?.isOperationsAdminApproved && bill.requiresSecondaryApproval && bill.verifiedByAdminId && bill.verifiedByAdminId === adminId) {
-        throw new Error('Secondary approver cannot be the same administrator who performed primary verification.');
+      if (options?.isOperationsAdminApproved && bill.requiresSecondaryApproval) {
+        if (bill.verifiedByAdminId && bill.verifiedByAdminId === adminId) {
+          throw new Error('Secondary approver cannot be the same administrator who performed primary verification.');
+        }
+        if (bill.parentBillId) {
+          const parent = await tx.bill.findUnique({ where: { id: bill.parentBillId }, select: { verifiedByAdminId: true } });
+          if (parent?.verifiedByAdminId && parent.verifiedByAdminId === adminId) {
+            throw new Error('Secondary approver cannot be the same administrator who performed primary verification.');
+          }
+        }
       }
 
       // 8. Update bill status and store complete financial calculation snapshot

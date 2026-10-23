@@ -133,8 +133,9 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
   }, [visible, user, setupOnly, initialStep]);
 
   const handleVerifyPan = async () => {
-    if (!panNumber || panNumber.trim().length !== 10) {
-      setErrorMsg('Please enter a valid 10-character PAN number.');
+    const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+    if (!panNumber || !PAN_REGEX.test(panNumber.trim().toUpperCase())) {
+      setErrorMsg('Please enter a valid 10-character PAN number (e.g. ABCDE1234F).');
       return;
     }
     if (!panName.trim()) {
@@ -210,8 +211,16 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
         setPaymentVerified(true);
         setMaskedPayment(res.paymentAccount?.maskedInfo || upiId.trim());
       } else {
-        if (!accountHolder.trim() || !accountNumber.trim() || !ifscCode.trim()) {
+        const cleanAcc = accountNumber.trim();
+        const cleanIfsc = ifscCode.trim().toUpperCase();
+        if (!accountHolder.trim() || !cleanAcc || !cleanIfsc) {
           throw new Error('Please fill in Account Name, Account Number, and IFSC Code.');
+        }
+        if (!/^\d{9,18}$/.test(cleanAcc)) {
+          throw new Error('Account number must be between 9 and 18 digits.');
+        }
+        if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanIfsc)) {
+          throw new Error('Please enter a valid 11-character IFSC code (e.g. HDFC0001234).');
         }
         const requestHash = await createBeneficiaryVerificationRequestHash({
           accountType: 'BANK',

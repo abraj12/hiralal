@@ -221,7 +221,20 @@ export class ReconciliationWorker {
     const errors: string[] = [];
 
     if (!isRazorpayConfigured) {
-      return { reconciledCount: 0, errors: ['RazorpayX not configured; skipping automated gateway sync'] };
+      const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
+      for (const payout of stuckPayouts) {
+        if (payout.createdAt <= twentyMinutesAgo && !payout.requiresManualReview) {
+          await prisma.payout.update({
+            where: { id: payout.id },
+            data: {
+              requiresManualReview: true,
+              manualReviewReason: 'Gateway credentials unconfigured; payout held for operator audit.',
+            },
+          });
+          reconciledCount++;
+        }
+      }
+      return { reconciledCount, errors: ['RazorpayX not configured; escalated aged stuck payouts to manual review'] };
     }
 
     const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');

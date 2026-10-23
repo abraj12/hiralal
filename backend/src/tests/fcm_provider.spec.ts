@@ -671,32 +671,47 @@ describe('Firebase Cloud Messaging (FCM HTTP v1) Provider Hardened Tests', () =>
 
   // 10. Persistence of In-App Notifications When Push Fails
   test('in-app notifications are persisted in database regardless of push delivery failure', async () => {
+    // Ensure test user has an active token so push is actually attempted
+    const token = await prisma.pushDeviceToken.create({
+      data: {
+        userId: testUserId,
+        token: 'fcm_test_push_failure_token',
+        platform: 'ANDROID',
+        isActive: true,
+      },
+    });
+
     // Mock FcmProvider to simulate total network failure
-    jest.spyOn(FcmProvider, 'sendMulticast').mockRejectedValueOnce(new Error('Complete network partition'));
+    const pushSpy = jest.spyOn(FcmProvider, 'sendMulticast').mockRejectedValueOnce(new Error('Complete network partition'));
 
-    const testDedupeKey = `dedupe_push_fail_${Date.now()}`;
+    try {
+      const testDedupeKey = `dedupe_push_fail_${Date.now()}`;
 
-    const notification = await NotificationService.createForUser({
-      userId: testUserId,
-      title: 'Persisted In-App Alert',
-      message: 'This message must remain readable in worker inbox.',
-      dedupeKey: testDedupeKey,
-      metadata: { invoiceId: 'inv_abc_999' },
-    });
+      const notification = await NotificationService.createForUser({
+        userId: testUserId,
+        title: 'Persisted In-App Alert',
+        message: 'This message must remain readable in worker inbox.',
+        dedupeKey: testDedupeKey,
+        metadata: { invoiceId: 'inv_abc_999' },
+      });
 
-    expect(notification).toBeDefined();
-    expect(notification.id).toBeDefined();
-    expect(notification.title).toBe('Persisted In-App Alert');
-    expect(notification.message).toBe('This message must remain readable in worker inbox.');
+      expect(notification).toBeDefined();
+      expect(notification.id).toBeDefined();
+      expect(notification.title).toBe('Persisted In-App Alert');
+      expect(notification.message).toBe('This message must remain readable in worker inbox.');
 
-    // Query database directly to confirm persistence
-    const savedInDb = await prisma.notification.findUnique({
-      where: { dedupeKey: testDedupeKey },
-    });
+      // Query database directly to confirm persistence
+      const savedInDb = await prisma.notification.findUnique({
+        where: { dedupeKey: testDedupeKey },
+      });
 
-    expect(savedInDb).not.toBeNull();
-    expect(savedInDb?.userId).toBe(testUserId);
-    expect(savedInDb?.isRead).toBe(false);
+      expect(savedInDb).not.toBeNull();
+      expect(savedInDb?.userId).toBe(testUserId);
+      expect(savedInDb?.isRead).toBe(false);
+    } finally {
+      pushSpy.mockRestore();
+      await prisma.pushDeviceToken.deleteMany({ where: { id: token.id } });
+    }
   });
 
   // 11. Multicast Dispatch Aggregation

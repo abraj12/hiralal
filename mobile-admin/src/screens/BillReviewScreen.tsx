@@ -264,6 +264,7 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
     const isPending = item.status === 'PENDING' || item.status === 'UNDER_REVIEW';
     const isApproved = item.status === 'APPROVED';
     const isRejected = item.status === 'REJECTED';
+    const isRoleAuthorized = Boolean(user?.role) && (item.requiresSecondaryApproval ? user?.role === 'OPERATIONS_ADMIN' : user?.role === 'BILL_ADMIN');
 
     return (
       <View style={styles.card}>
@@ -311,31 +312,39 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
         </View>
 
         {isPending && (
-          <View style={styles.actionsRow}>
-            <TouchableOpacity
-              style={[styles.btnAction, styles.btnApprove]}
-              onPress={() => openReviewModal(item)}
-              disabled={actionLoading === item.id}
-            >
-              {actionLoading === item.id ? (
-                <ActivityIndicator color="#ffffff" size="small" />
-              ) : (
-                <>
-                  <CheckCircle2 size={16} color="#ffffff" />
-                  <Text style={styles.btnActionText}>Review & Approve</Text>
-                </>
-              )}
-            </TouchableOpacity>
+          isRoleAuthorized ? (
+            <View style={styles.actionsRow}>
+              <TouchableOpacity
+                style={[styles.btnAction, styles.btnApprove]}
+                onPress={() => openReviewModal(item)}
+                disabled={actionLoading === item.id}
+              >
+                {actionLoading === item.id ? (
+                  <ActivityIndicator color="#ffffff" size="small" />
+                ) : (
+                  <>
+                    <CheckCircle2 size={16} color="#ffffff" />
+                    <Text style={styles.btnActionText}>Review & Approve</Text>
+                  </>
+                )}
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.btnAction, styles.btnReject]}
-              onPress={() => setRejectId(item.id)}
-              disabled={actionLoading === item.id}
-            >
-              <XCircle size={16} color="#DC2626" />
-              <Text style={[styles.btnActionText, { color: '#DC2626' }]}>Reject</Text>
-            </TouchableOpacity>
-          </View>
+              <TouchableOpacity
+                style={[styles.btnAction, styles.btnReject]}
+                onPress={() => setRejectId(item.id)}
+                disabled={actionLoading === item.id}
+              >
+                <XCircle size={16} color="#DC2626" />
+                <Text style={[styles.btnActionText, { color: '#DC2626' }]}>Reject</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={[styles.actionsRow, { justifyContent: 'center', paddingVertical: 8 }]}>
+              <Text style={{ fontSize: 12, color: '#64748B', fontStyle: 'italic' }}>
+                {item.requiresSecondaryApproval ? 'Requires Operations Admin review' : 'Requires Bill Review Admin review'}
+              </Text>
+            </View>
+          )
         )}
       </View>
     );

@@ -5,6 +5,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.4.0] - 2026-10-23
+
+### Wave 7 & Wave 8 Master Code Audit Remediations & Security Hardening
+- **Role Isolation & Authorization (`VULN-AUTH-01`, `REDTEAM-01`)**:
+  - Enforced server-side document URL filtering in `GET /api/v1/admin/bills`, passing caller `userRole` to `BillService.getAdminBills` so `OPERATIONS_ADMIN` is prevented from accessing presigned URLs for standard bills.
+  - Hardened dual-control secondary approval so that the administrator who performed primary verification on a bill or its parent revision cannot act as secondary approver.
+- **Database & Concurrency Integrity (`FINDING-TX-01`, `FINDING-DB-01`, `FINDING-DB-02`)**:
+  - Acquired `Wallet` row lock `FOR UPDATE` before reading `deficitLiability` in `BillService.approveBill`, eliminating stale deficit snapshot calculations and race-condition deadlocks.
+  - Added forward-only migration `20261023230000_financial_and_bill_check_constraints` enforcing database-level `CHECK ("amount" > 0)` on `WalletTransaction`, `CHECK ("billAmount" > 0)` on `Bill`, and `CHECK ("calculatedReward" >= 0)` on `Bill`.
+- **Worker & Reconciliation Hardening (`FINDING-WRK-01`, `FINDING-WRK-02`, `SEC-01`)**:
+  - Prevented state-machine leaks in `PayoutWorker` on Razorpay setup compensation failures, ensuring failed attempts escalate to manual review and do not falsely complete outbox events.
+  - Hardened `ReconciliationWorker` to escalate aged stuck payouts (> 20 mins) to manual review even if gateway credentials are unconfigured.
+  - Included Cloudflare R2 credentials in production startup validation for `SERVICE_ROLE=worker` to guarantee erasure compliance.
+- **Account Deletion & Data Privacy (`FINDING-RET-01`, `FINDING-RET-02`)**:
+  - Complied with DPDP Act 2023 Right to Erasure by purging all `AppInstallation` records on account deletion.
+  - Implemented automated `WALLET_FORFEITURE` ledger adjustments to settle remaining available balances upon confirmed deletion.
+- **Client & Infrastructure Parity (`VULN-FRONT-01`, `VULN-MOB-01`, `VULN-MOB-02`, `VULN-INFRA-01`, `VULN-BUILD-01`)**:
+  - Made role authorization fail-closed in `BillVerificationModal.tsx` and gated Reject/Cancel triggers.
+  - Enforced password length >= 8, PAN/IFSC/Account regex, and mobile admin review button authorization.
+  - Added domain allowlist to mobile `resolveDocumentUrl` and re-emitted `Permissions-Policy` in Nginx.
+  - Synchronized living documentation; verified 100% test pass rate across 922 workspace tests and 1,011 repository-wide verified tests (66 suites, 0 failures).
+
 ## [2.3.0] - 2026-10-23
 
 ### Wave 6 Comprehensive Audit Remediation & Hardening

@@ -20,9 +20,11 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import request from 'supertest';
+import jwt from 'jsonwebtoken';
 import { PaymentType } from '@prisma/client';
 import { prisma } from '../db';
 import { app } from '../server';
+import { config } from '../config';
 import { PayoutService, HARD_MAX_REDEMPTION_CEILING, isRedemptionWindowOpen } from '../services/payout.service';
 import { AccountDeletionService } from '../services/account-deletion.service';
 import { NotificationService } from '../services/notification.service';
@@ -33,6 +35,7 @@ describe('Audit Remediation RC1 Regression Suite', () => {
   const testPassword = 'Password@2026';
   let testUserId: string;
   let testWalletId: string;
+  let opsAdminToken: string;
 
   beforeAll(async () => {
     // Clean up any existing test user data
@@ -68,6 +71,25 @@ describe('Audit Remediation RC1 Regression Suite', () => {
       },
     });
     testWalletId = wallet.id;
+
+    let opsAdmin = await prisma.user.findFirst({ where: { role: 'OPERATIONS_ADMIN' } });
+    if (!opsAdmin) {
+      opsAdmin = await prisma.user.create({
+        data: {
+          mobile: '9870000088',
+          fullName: 'RC1 Ops Admin',
+          passwordHash: await bcrypt.hash('SecurePass123!', 10),
+          role: 'OPERATIONS_ADMIN',
+          status: 'ACTIVE',
+          isVerified: true,
+        },
+      });
+    }
+    opsAdminToken = jwt.sign(
+      { userId: opsAdmin.id, role: opsAdmin.role },
+      config.admin.accessSecret || config.jwt.accessSecret,
+      { expiresIn: '2h' }
+    );
   });
 
   afterAll(async () => {
@@ -292,26 +314,30 @@ describe('Audit Remediation RC1 Regression Suite', () => {
     });
 
     test('Task 2.1 / F-03: Partial update min-max boundary validation rejects min > max', async () => {
-      // Set baseline settings: min = 100, max = 50000
+      // Set baseline settings: min = 100, max = 500
       await prisma.redemptionSettings.upsert({
         where: { id: 'default' },
-        create: { id: 'default', minimumRedemptionAmount: 100, maximumRedemptionAmount: 50000 },
-        update: { minimumRedemptionAmount: 100, maximumRedemptionAmount: 50000 },
+        create: { id: 'default', minimumRedemptionAmount: 100, maximumRedemptionAmount: 500 },
+        update: { minimumRedemptionAmount: 100, maximumRedemptionAmount: 500 },
       });
 
-      // Attempt partial update setting min = 60,000 (exceeds existing max 50,000)
-      const prevSettings = await prisma.redemptionSettings.findUnique({ where: { id: 'default' } });
-      const minRedemption = 60000;
-      const effectiveMin = minRedemption;
-      const effectiveMax = prevSettings?.maximumRedemptionAmount ? Number(prevSettings.maximumRedemptionAmount) : HARD_MAX_REDEMPTION_CEILING;
+      // Attempt setting min = 600 via HTTP API (exceeds existing max 500)
+      const resExceed = await request(app)
+        .put('/api/v1/admin/settings/redemption')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ minimumRedemptionAmount: 600 });
 
-      expect(effectiveMin > effectiveMax).toBe(true);
+      expect(resExceed.status).toBe(400);
+      expect(resExceed.body.message).toContain('cannot exceed maximum redemption amount');
 
-      // Attempt partial update setting max = 50 (below existing min 100)
-      const newMax = 50;
-      const effMin2 = prevSettings?.minimumRedemptionAmount ? Number(prevSettings.minimumRedemptionAmount) : null;
-      const effMax2 = newMax;
-      expect(effMin2 !== null && effMin2 > effMax2).toBe(true);
+      // Attempt setting max = 60,000 (exceeds immutable ceiling 50,000)
+      const resCeil = await request(app)
+        .put('/api/v1/admin/settings/redemption')
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ maximumRedemptionAmount: 60000 });
+
+      expect(resCeil.status).toBe(400);
+      expect(resCeil.body.message).toContain('Maximum redemption amount must be between ₹0 and ₹50,000.');
     });
 
     test('Task 2.3 / F-13: checkUserEligibility rejects redemption when daily ₹50,000 limit is exhausted', async () => {

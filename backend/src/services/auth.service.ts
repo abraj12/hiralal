@@ -445,12 +445,26 @@ export class AuthService {
     });
 
     // 7. Dispatch SMS outside transaction
-    const smsResult = await SmsService.sendOtp({
-      mobile,
-      otpCode: txResult.otpCode,
-    });
+    let smsResult;
+    try {
+      smsResult = await SmsService.sendOtp({
+        mobile,
+        otpCode: txResult.otpCode,
+      });
+    } catch (smsErr: any) {
+      smsResult = { success: false, error: smsErr?.message || 'Gateway dispatch exception' };
+    }
 
     if (!smsResult.success && config.isProduction) {
+      // Clear cooldown so admin is not deadlocked on SMS gateway failure
+      await prisma.otpRequest.updateMany({
+        where: { mobile, purpose: 'ADMIN_LOGIN', cooldownUntil: { gt: new Date() } },
+        data: { cooldownUntil: null, isUsed: true },
+      });
+      await prisma.verificationToken.updateMany({
+        where: { mobile, purpose: 'ADMIN_LOGIN', isUsed: false },
+        data: { isUsed: true },
+      });
       throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
     }
 

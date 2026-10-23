@@ -741,6 +741,7 @@ router.get('/bills', requireAdmin, async (req: AuthenticatedRequest, res: Respon
       profession: profFilter ?? 'ALL',
       status: (status && status !== 'ALL') ? (status as BillStatus) : 'ALL',
       search,
+      userRole: req.user?.role,
     });
 
     res.json({

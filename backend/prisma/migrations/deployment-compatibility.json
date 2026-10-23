@@ -259,6 +259,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Add a unique non-null provider payout ID index after a duplicate-data preflight, ensuring one external payout ID cannot map to multiple local financial records."
+    },
+    {
+      "id": "20261023230000_financial_and_bill_check_constraints",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive PostgreSQL check constraints on WalletTransaction amount (> 0) and Bill billAmount (> 0) and calculatedReward (>= 0) to prevent zero or negative financial records."
     }
   ]
 }

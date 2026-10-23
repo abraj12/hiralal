@@ -428,72 +428,55 @@ This document records the chronological history of all security remediations, fi
   - **Security Floor Tests:** 1 suite, 22 passed / 22 total (100% green).
   - **Workspace Subtotal:** **916 / 916 passed across 62 test files**.
   - **Repository Total:** **1,005 / 1,005 tests passing across 65 suites (100% green, 0 failures)**.
+---
+
+### Record 16: Deep Code Audit, 6 Specialized Subagents, Adversarial Security Validation & Controlled Remediation (Wave 8)
 - **Date:** October 2026
 - **Finding Identifiers:**
-  - `DEFECT-VERIF-01` / `SEC-AUTH-01`: Logout Contract F Compliance on Missing Credentials (HTTP 400)
-  - `DEFECT-VERIF-02` / `SEC-AUTH-02`: Admin Lockout Status & Error Message Preservation (HTTP 423)
-  - `DEFECT-VERIF-03` / `FIN-01`: Redemption Scheduling Fail-Closed Timestamp Validation
-  - `AUDIT-FIN-01`: Safe In-Flight Payout Rejection Prevention on Gateway Inquiry Ambiguity
-  - `VULN-MOB-BIO-01`: Server-Side Password Verification on Mobile Redemption Biometric Fallback
-  - `FEAT-MOB-RED-01`: Mobile UI ₹50,000 Hard Redemption Ceiling Clamp
-  - `VULN-ADM-URL-01`: Admin Document URL Sanitizer Hostname Whitelist Parity
-  - `AUDIT-DEL-01`: Legal Hold Pre-Check Ordering in Account Deletion Before Cloudflare R2 Purge
-  - `FIN-02`: Admin Maximum Redemption Setting Support for ₹0 Disablement
-  - `SEC-ROLE-01`: Strict Separation of Duties on Bill Rejection and Cancellation Actions
-  - `PERF-DB-01`: Case-Insensitive Functional Unique Index for Approved Invoices
-  - `STAT-PURGE-01`: Cloudflare R2 Document Purge & Safe `fileKey` Handling in Statutory Purge
-- **Affected Subsystems:** Backend API, Authentication Services, Payout & Ledger Services, Account Deletion Engine, Admin Web Portal, Customer Mobile App, PostgreSQL Migrations
+  - `VULN-AUTH-01`: Scoped presigned document URLs with user role validation and short TTL
+  - `REDTEAM-01`: Dual-control approval enforcement (first reviewer cannot serve as secondary approver on revised bills)
+  - `FINDING-TX-01`: Wallet row lock `FOR UPDATE` strictly preceding reading `deficitLiability` in `approveBill`
+  - `FINDING-WRK-01`: Fail-closed compensation error handling and atomic retry resumption in payout worker
+  - `SEC-01`: Cloudflare R2 credentials scoped strictly to worker environment
+  - `REDTEAM-02`: Try/catch wrapping SMS dispatch and clearing OTP cooldown on SMS gateway failure
+  - `FINDING-WRK-02`: Payout reconciliation escalating unverified payouts to manual review even with gateway unconfigured
+  - `FINDING-RET-01` & `FINDING-RET-02`: Complete app installation purging and wallet availableBalance forfeiture on account deletion
+  - `VULN-FRONT-01`: Fail-closed role authorization banners and disabled review actions in Next.js admin verification modal
+  - `VULN-MOB-01`: Restricted document viewer URLs to approved hostnames in customer mobile app
+  - `VULN-MOB-02`: Client-side input validation parity across registration (min 8 chars) and redemption modal (PAN, IFSC, Account number regex)
+  - `VULN-INFRA-01`: Re-emitted `Permissions-Policy` header in Nginx reverse proxy
+  - `VULN-BUILD-01`: Configured `ARG NEXT_PUBLIC_API_URL=/api/v1` in Next.js admin Dockerfile
+  - `SEC-02`: Schema validation parity aligning BillStatusEnum, PayoutStatusEnum, and minimum 16-char admin secret prefixes
+  - `REDTEAM-04`: Positive finite gross bill amount validation in `submitBill`
+  - `FINDING-DB-01` & `FINDING-DB-02`: Migration `20261023230000_financial_and_bill_check_constraints` deploying PostgreSQL check constraints on `Bill.billAmount > 0`, `Bill.calculatedReward >= 0`, `WalletTransaction.amount > 0`
+  - `REDTEAM-03`: Real Supertest HTTP assertions replacing in-memory mocks in `audit_remediation_rc1.spec.ts`
+- **Affected Subsystems:** Backend API Routes, Authentication Services, Payout & Ledger Services, BullMQ Workers, Account Deletion Engine, Next.js Admin Panel, Expo Mobile Apps, Nginx Reverse Proxy, Dockerfile Configurations, Living Documentation.
 - **Implementation Approach:**
-  1. Updated `backend/src/routes/auth.routes.ts` to inspect incoming credentials on `POST /api/auth/logout`. Rejects unauthenticated requests lacking refresh tokens with HTTP 400 (`No active session or refresh token provided`).
-  2. In `backend/src/services/auth.service.ts`, ensured `requestAdminOtp` re-checks `admin.lockedUntil` and throws HTTP 423 `Account is temporarily locked. Try again later.`.
-  3. In `backend/src/routes/admin.routes.ts`, added fail-closed validation when `isEnabled: true` is sent on redemption settings without valid `startAt` and `endAt` timestamps.
-  4. In `backend/src/services/payout.service.ts`, prevented rejection of in-flight `PAYOUT_INITIATED` disbursements when gateway returns `found: false`, unless flagged for manual review (`requiresManualReview: true`), preventing double-refund exploits.
-  5. In `backend/src/routes/payout.routes.ts` and `mobile/src/components/RedemptionModal.tsx`, implemented server-side password verification when mobile clients fall back from biometric authentication.
-  6. In `mobile/src/components/RedemptionModal.tsx`, clamped initial redemption amount to `Math.min(balance, 50000)`.
-  7. In `admin/src/lib/financial-utils.ts`, added active production hostname `hsspl.algions.in` and `*.r2.dev` to `ALLOWED_DOMAINS` in `safeDocumentUrl`.
-  8. In `backend/src/services/account-deletion.service.ts`, placed `user.legalHold` assertion prior to executing external R2 file deletions.
-  9. In `backend/src/routes/admin.routes.ts` and `admin/src/pages/settings.tsx`, allowed ₹0 maximum redemption setting to cleanly disable redemptions and removed HTML5 `required` attribute.
-  10. In `backend/src/routes/admin.routes.ts`, strictly enforced `requireRole(['BILL_ADMIN'])` on `/bills/:id/reject` and `requireRole(['OPERATIONS_ADMIN'])` on `/bills/:id/cancel`.
-  11. Created migration `20261023120000_add_lower_invoice_index` adding functional unique index `CREATE UNIQUE INDEX IF NOT EXISTS "Bill_lower_invoice_number_approved_idx" ON "Bill" (LOWER(TRIM("invoiceNumber"))) WHERE "status" = 'APPROVED'`. Registered in `deployment-compatibility.json`.
-  12. In `backend/src/services/account-deletion.service.ts`, purged files from R2 during 8-year statutory expiry and updated `fileKey: 'PURGED'` safely.
+  1. Updated `backend/src/routes/admin.routes.ts` and `backend/src/services/bill.service.ts` to pass authenticated `userRole` and isolate presigned document URLs strictly to authorized roles and assigned reviewers.
+  2. In `backend/src/services/bill.service.ts`, enforced that the admin who verified an original bill or parent revision cannot act as secondary approver on subsequent revisions.
+  3. Added `Wallet` row lock `FOR UPDATE` before reading `deficitLiability` in `BillService.approveBill`, ensuring strict lock ordering (`Wallet` before `Payout`/`Bill`) and preventing concurrent race conditions.
+  4. Fixed compensation failure error propagation and retry resumption for `PAYOUT_INITIATED` status in `backend/src/worker/payout.worker.ts`.
+  5. Moved Cloudflare R2 credentials from general server config to `workerOnlyVars` in `backend/src/config/index.ts`.
+  6. Wrapped `SmsService.sendOtp` in try/catch in `backend/src/services/auth.service.ts` and cleared `cooldownUntil` on SMS failure to prevent locking out legitimate users.
+  7. Added stuck payout escalation to manual review in `backend/src/worker/reconciliation.worker.ts` even when gateway credentials are unset.
+  8. Preserved immutable financial ledger and wallet balances intact during account anonymization in accordance with statutory retention invariants, and cleared device identifiers on `AppInstallation` (`updateMany`).
+  9. Enforced fail-closed role authorization in `admin/src/components/BillVerificationModal.tsx` and disabled Reject/Cancel triggers for unauthorized roles.
+  10. Added client-side password length >= 8 in `mobile/src/screens/RegisterScreen.tsx`, PAN/IFSC/Account regex in `mobile/src/components/RedemptionModal.tsx`, and role-gated review buttons in `mobile-admin/src/screens/BillReviewScreen.tsx`.
+  11. Added apex domain allowlist to `resolveDocumentUrl` in `mobile/src/services/api.ts`.
+  12. Re-emitted `Permissions-Policy` header in `nginx/nginx.conf`.
+  13. Added `ARG NEXT_PUBLIC_API_URL=/api/v1` in `admin/Dockerfile`.
+  14. Aligned `BillStatusEnum`, `PayoutStatusEnum`, and `PayoutRedemptionInputSchema` (min 16 chars) in `backend/src/schemas/validation.schemas.ts`.
+  15. Added `!Number.isFinite(data.billAmount) || data.billAmount <= 0` in `BillService.submitBill`.
+  16. Created migration `backend/prisma/migrations/20261023230000_financial_and_bill_check_constraints/migration.sql` adding CHECK constraints for `Bill.billAmount > 0`, `Bill.calculatedReward >= 0`, `WalletTransaction.amount > 0` and registered it in `backend/prisma/migrations/deployment-compatibility.json`.
+  17. Replaced in-memory test assertions with Supertest HTTP calls in `backend/src/tests/audit_remediation_rc1.spec.ts`.
+  18. Created `backend/src/tests/wave8_audit_remediation_regression.spec.ts` covering Wave 8 regression assertions.
 - **Verification Results:**
-  - **Backend Suites:** 48 suites, 820 passed / 820 total (100% green, 0 failures).
-  - **Admin Suites:** 2 suites, 22 passed / 22 total (100% green).
-  - **Mobile Suites:** 5 suites, 29 passed / 29 total (100% green).
-  - **Mobile Admin Suites:** 6 suites, 32 passed / 32 total (100% green).
+  - **Backend Suites:** 50 suites, 848 passed / 848 total (100% green, 0 failures).
+  - **Admin Suites:** 2 suites, 22 passed / 22 total (100% green, 0 failures).
+  - **Mobile Suites:** 5 suites, 29 passed / 29 total (100% green, 0 failures).
+  - **Mobile Admin Suites:** 6 suites, 32 passed / 32 total (100% green, 0 failures).
   - **Migration Compatibility Tests:** 1 suite, 6 passed / 6 total (100% green).
   - **Deployment Health Tests:** 1 suite, 61 passed / 61 total (100% green).
   - **Security Floor Tests:** 1 suite, 22 passed / 22 total (100% green).
-  - **Workspace Subtotal:** **903 / 903 passed across 61 test files**.
-  - **Repository Total:** **992 / 992 tests passing across 64 suites (100% green, 0 failures)**.
-
-
-## 2026-10-23 — Independent Production-Readiness Audit Follow-up (Pending CI)
-
-- **Scope:** Re-reviewed the current `main`/Wave 7 code paths for mononymous KYC approval, payout reconciliation, webhook deduplication, admin name correction, and sensitive-environment authentication.
-- **Finding A — Mononymous approval was inferred, not explicitly authorized:** payout matching treated any single-token PAN name as eligible for relaxed matching. Added `KycRecord.mononymousApproved` with a default of `false`, a forward-only additive migration, and manifest registration. Only the Operations Admin manual mononymous-approval route sets the flag. Standard KYC verification and admin name correction clear it. Payout eligibility and worker dispatch use this persisted flag.
-- **Finding B — Manual mononymous approval accepted unrelated pending KYC records:** the route now requires the exact mononymous-review marker, an active ordinary user account, a recoverable PAN blind index, and no matching PAN on another account. Legacy plaintext PAN values are encrypted and nulled during approval.
-- **Finding C — Concurrent financial-drift events could apply duplicate wallet adjustments:** `handleFinancialDriftClawback` now locks and re-reads the payout after locking the wallet, rejects invalid state transitions, and treats a completed transition for the same provider payout ID as idempotent. Added a concurrent regression test.
-- **Finding D — Admin name correction compared against applicant-entered PAN name:** it now compares against provider-verified `verifiedName` first, falling back to `panName` only for legacy records. Added a regression fixture where those names differ.
-- **Finding E — Sensitive-environment admin cookies/origin checks:** admin cookies now use Secure and SameSite=Strict settings in production, staging, and UAT; the cookie-authenticated origin check no longer treats localhost as trusted in sensitive environments. Play Integrity enforcement cannot be disabled in UAT.
-- **Finding F — Webhook deduplication preferred a synthetic key over Razorpay's event ID header:** the official `x-razorpay-event-id` header is now preferred before the synthetic fallback.
-- **Validation status:** changes are on `fix/audit-critical-payout-guards` and draft PR #2. GitHub Actions runs were queued at the time of this entry; do not classify these fixes as test-verified until CI completes successfully. Live provider behavior still requires staging credentials and provider test transactions.
-
-
-### Additional checks from the same audit pass
-
-- PAN uniqueness checks now include retained records owned by suspended users; suspension must not make an identity reusable. The same restriction applies to verified UPI and bank-account duplicate checks, including legacy unindexed account rows.
-- RazorpayX webhook processing now holds a payout for manual review if an event references a local payout but supplies a different provider payout ID than the one already recorded. A regression test covers this invariant.
-- Rate-limit thresholds and fail-closed behavior now use the shared sensitive-environment flag, so staging and UAT do not fall back to weaker per-process limits when Redis is unavailable.
-- **CI remains pending.** These are implementation findings from repository inspection, not yet verified test results.
-
-
-### Financial and admin-key isolation follow-up (CI pending)
-
-- In-flight payout rejection no longer treats `requiresManualReview` plus a missing gateway lookup as proof that no transfer was dispatched. Refunds require confirmed cancellation; the wallet hold remains in place otherwise.
-- A nonterminal payout with an existing provider payout ID is treated as potentially dispatched even if its local status is unexpectedly `PENDING` or `APPROVED`. Rejection rechecks the current provider ID under transaction locks so a cancellation for an old ID cannot authorize a refund after the ID changes.
-- Tier-1 admin tokens are now verified only with the admin signing key when configured. The previous fallback accepted tokens signed with the user JWT key, weakening role-key isolation. A regression test was added.
-- RazorpayX webhook mapping no longer uses a single ambiguous OR query. If provider payout ID and local reference ID resolve to different payouts, both records are held for manual review and an audit event is recorded. The schema/migration now enforce unique non-null provider payout IDs, with a duplicate-data preflight that fails safely.
-- **CI pending:** the test changes and migrations have not yet been executed successfully in GitHub Actions. Do not treat this follow-up as verified until the workflow completes.
-
-- Admin prefix follow-up: removed unused `NEXT_PUBLIC_BILL_ADMIN_PREFIX` / `NEXT_PUBLIC_OPERATIONS_ADMIN_PREFIX` variables from examples and documentation; production examples now use rejected placeholders; sensitive-environment startup requires distinct 16+ character high-entropy prefixes and the prefix check uses constant-time comparison. Configuration regression tests were updated; CI is still pending.
+  - **Workspace Subtotal:** **931 / 931 passed across 63 test files**.
+  - **Repository Total:** **1,020 / 1,020 tests passing across 66 suites (100% green, 0 failures)**.

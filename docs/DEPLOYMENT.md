@@ -52,7 +52,7 @@ The production platform is hosted on a **Hostinger KVM 2 VPS** running Ubuntu 24
   - Backend API: Capped at 768 MB (`--max-old-space-size=512`).
   - Background Worker: Capped at 512 MB (`--max-old-space-size=384`).
   - Admin Portal: Capped at 512 MB.
-  - Redis 7: Capped at 256 MB (`maxmemory 200mb`, `noeviction`).
+  - Redis 7: Capped at 256 MB (`maxmemory 200mb`, `volatile-lru`).
   - Nginx: Capped at 128 MB.
   - Total Stack Usage: ~3.45 GB allocated, leaving ~4.5 GB headroom for OS cache, backups, and spikes.
 
@@ -139,15 +139,14 @@ export BACKUP_ENCRYPTION_PASSPHRASE="strong-cryptographic-passphrase"
 ## 6. Rollback Procedures
 
 If an issue occurs following a new deployment:
-1. Revert to the previous application image or tag:
+1. Trigger automated container rollback via the release rollback controller:
    ```bash
-   git checkout <PREVIOUS_STABLE_COMMIT_OR_TAG>
-   docker compose up -d --build
+   ./scripts/deploy/rollback-release.sh <PREVIOUS_STABLE_SHA> <FAILED_CANDIDATE_SHA>
    ```
-2. If database rollback is needed, restore the pre-deployment snapshot:
-   ```bash
-   ./scripts/restore-db.sh /opt/hiralal/backups/pre_deploy_snapshot.sql.gz.enc hiralal_rewards
-   ```
+2. **Database Schema Forward-Only Policy**:
+   - To preserve ledger integrity and prevent financial transaction loss, **never restore database snapshots over live production writes**.
+   - Database schema changes follow an immutable, forward-only roll-forward strategy.
+   - If an applied migration has breaking compatibility, `rollback-release.sh` blocks rollback and fails closed until a forward-fix migration is prepared.
 3. Verify system health and queue resumption:
    ```bash
    curl -k https://localhost/health/ready

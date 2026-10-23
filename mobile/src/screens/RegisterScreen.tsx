@@ -86,8 +86,8 @@ export default function RegisterScreen() {
       setErrorMsg('First name is required.');
       return;
     }
-    if (!password) {
-      setErrorMsg('Please enter your full name and choose a secure password.');
+    if (!password || password.length < 8) {
+      setErrorMsg('Password must be at least 8 characters long.');
       return;
     }
     if (!verificationToken) {

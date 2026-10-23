@@ -75,15 +75,33 @@ const getBaseUrl = () => {
 export const API_BASE = getBaseUrl();
 console.log('📡 Mobile API configured at:', API_BASE);
 
+const ALLOWED_DOC_HOST_PATTERNS = [
+  /^localhost$/,
+  /^127\.0\.0\.1$/,
+  /(\.|\b)s3\.amazonaws\.com$/,
+  /(\.|\b)r2\.cloudflarestorage\.com$/,
+  /(\.|\b)r2\.dev$/,
+  /(\.|\b)cloudfront\.net$/,
+  /(\.|\b)hsspl\.algions\.in$/,
+  /(\.|\b)hiralalandsons\.com$/,
+  /(\.|\b)hiralalandsonspvtltd\.com$/,
+];
+
 export function resolveDocumentUrl(url?: string | null): string | null {
   if (!url || typeof url !== 'string' || !url.trim()) return null;
   const clean = url.trim();
   if (clean.startsWith('https://')) {
-    return clean;
+    try {
+      const parsed = new URL(clean);
+      const isAllowed = ALLOWED_DOC_HOST_PATTERNS.some((p) => p.test(parsed.hostname.toLowerCase()));
+      return isAllowed ? clean : null;
+    } catch {
+      return null;
+    }
   }
   if (clean.startsWith('http://')) {
     if (process.env.NODE_ENV === 'production') {
-      return clean.replace(/^http:\/\//i, 'https://');
+      return null;
     }
     return clean;
   }

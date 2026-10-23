@@ -271,8 +271,17 @@ export class PayoutWorker {
     });
 
     if (claim.count !== 1) {
-      console.log(`[PAYOUT-WORKER] Payout ${payoutId} is not in APPROVED state or already claimed. Skipping dispatch.`);
-      return;
+      // Check if this payout is already in PAYOUT_INITIATED (e.g. from an uncompleted prior attempt)
+      const existing = await prisma.payout.findUnique({
+        where: { id: payoutId },
+        select: { status: true, requiresManualReview: true },
+      });
+      if (existing?.status === 'PAYOUT_INITIATED' && !existing.requiresManualReview) {
+        console.log(`[PAYOUT-WORKER] Payout ${payoutId} already claimed in PAYOUT_INITIATED. Resuming dispatch.`);
+      } else {
+        console.log(`[PAYOUT-WORKER] Payout ${payoutId} is not in APPROVED state or already claimed. Skipping dispatch.`);
+        return;
+      }
     }
 
     // Reload payout with relations after atomic claim
@@ -465,7 +474,19 @@ export class PayoutWorker {
       });
     } catch (setupErr: any) {
       console.error(`[PAYOUT-WORKER] Pre-dispatch setup failed for payout ${payout.id}: ${setupErr.message}. Refunding user balance.`);
-      await PayoutService.failBeforeDispatch(payout.id, `Gateway account setup failed: ${setupErr.message}`);
+      try {
+        await PayoutService.failBeforeDispatch(payout.id, `Gateway account setup failed: ${setupErr.message}`);
+      } catch (compErr: any) {
+        console.error(`[PAYOUT-WORKER] Compensation failed for payout ${payout.id}: ${compErr.message}. Flagging for manual review.`);
+        await prisma.payout.update({
+          where: { id: payout.id },
+          data: {
+            requiresManualReview: true,
+            failureReason: `Setup failure (${setupErr.message}) and compensation failure: ${compErr.message}`,
+          },
+        });
+        throw compErr;
+      }
       return;
     }
 

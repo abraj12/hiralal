@@ -3,10 +3,10 @@ import { z } from 'zod';
 export const ProfessionEnum = z.enum(['PLUMBER', 'TILE_INSTALLER']);
 export type ProfessionType = z.infer<typeof ProfessionEnum>;
 
-export const BillStatusEnum = z.enum(['PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED']);
+export const BillStatusEnum = z.enum(['PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'CANCELLED', 'DUPLICATE']);
 export type BillStatusType = z.infer<typeof BillStatusEnum>;
 
-export const PayoutStatusEnum = z.enum(['PENDING', 'PROCESSING', 'SUCCESS', 'FAILED', 'REVERSED']);
+export const PayoutStatusEnum = z.enum(['PENDING', 'APPROVED', 'PAYOUT_INITIATED', 'PROCESSING', 'SUCCESS', 'FAILED', 'REVERSED']);
 export type PayoutStatusType = z.infer<typeof PayoutStatusEnum>;
 
 export const PaymentTypeEnum = z.enum(['UPI', 'BANK_ACCOUNT', 'BANK']);
@@ -36,7 +36,7 @@ export const BillUploadInputSchema = z.object({
 });
 
 export const PayoutRedemptionInputSchema = z.object({
-  idempotencyKey: z.string().trim().min(8).max(128),
+  idempotencyKey: z.string().trim().min(16).max(128),
 });
 
 export const DeviceTokenInputSchema = z.object({

@@ -84,6 +84,8 @@
    - `ENCRYPTION_KEY=...` (32-byte secret for app-level encryption)
    - `FIELD_ENCRYPTION_KEY=...` (64-hex-character AES-256 key)
    - `STORAGE_HMAC_SECRET=...` (64-hex-character HMAC key)
+   - `BLIND_INDEX_SECRET=...` (64-hex-character HMAC key for searchable encrypted indexes)
+   - `OTP_HMAC_SECRET=...` (64-hex-character HMAC key for OTP challenge digests)
    - `BACKUP_ENCRYPTION_PASSPHRASE=...` (Mandatory strong cryptographic passphrase)
    - `R2_ACCESS_KEY_ID=...`, `R2_SECRET_ACCESS_KEY=...`, `R2_ENDPOINT=...`, `R2_BUCKET_NAME=...`
    - `RAZORPAYX_KEY_ID=...`, `RAZORPAYX_KEY_SECRET=...`, `RAZORPAYX_ACCOUNT_NUMBER=...`, `RAZORPAYX_WEBHOOK_SECRET=...`

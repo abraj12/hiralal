@@ -69,7 +69,7 @@ With 8 GiB physical memory on Hostinger KVM 2 VPS, resource stability is maintai
 | **Backend API** | 768 MB | 256 MB | `--max-old-space-size=512`, Express event loop |
 | **Worker Daemon** | 512 MB | 128 MB | `--max-old-space-size=384`, Outbox & Reconciliation runners |
 | **Admin Panel** | 512 MB | 128 MB | Next.js production SSR runtime |
-| **Redis 7** | 256 MB | 64 MB | `--maxmemory 200mb`, `--maxmemory-policy noeviction` |
+| **Redis 7** | 256 MB | 64 MB | `--maxmemory 200mb`, `--maxmemory-policy volatile-lru` |
 | **Nginx** | 128 MB | 32 MB | Event-driven reverse proxy, SSL cache |
 | **Host OS & Kernel** | ~700 MB | - | Linux kernel, page cache, Docker daemon |
 | **Available Headroom** | **~4.6 GB** | - | Buffer for spikes, builds, and automated backups |
@@ -168,7 +168,8 @@ npm run seed
 ```bash
 npm test -- --runInBand --forceExit
 ```
-All unit, integration, and security test suites run in-band and maintain a **100% pass rate** (903/903 tests passing across all workspaces: 820 backend, 22 admin, 29 mobile, 32 mobile-admin; 992 total verified tests repository-wide):
+All unit, integration, and security test suites run in-band and maintain a **100% pass rate** (931/931 tests passing across all workspaces: 848 backend, 22 admin, 29 mobile, 32 mobile-admin; 1,020 total verified tests repository-wide across 66 suites):
+- `wave8_audit_remediation_regression.spec.ts` (Master Code Audit remediations: bill document presigned URL isolation, dual-control revision approval, finite positive bill amount bounds, and Zod schema alignment)
 - `audit_remediation_rc1.spec.ts` (Phase 1–4 audit remediations: Play Integrity registration request hash, un-clamped deficit debt balance modeling, hard ₹50,000 per-redemption ceiling, strictly UPI/IMPS rails with zero NEFT, and centralized error middleware)
 - `exact_name_matching.spec.ts` (**Mandatory exact PAN card to bank account holder name matching policy**; approved prefix stripping only, complete rejection of fuzzy, subset, swapped, or omitted names)
 - `final_audit_remediation_regression.spec.ts` (Comprehensive regression suite covering findings `VERIF-01` through `VERIF-17`)
@@ -240,7 +241,7 @@ The script decrypts, decompresses, restores the SQL dump via `psql`, and execute
 
 ---
 
-## 8. AWS Security Group & Network Configuration
+## 8. Hostinger VPS UFW Firewall & Network Configuration
 
 | Port | Protocol | Source | Purpose |
 |:---|:---|:---|:---|

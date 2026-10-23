@@ -210,7 +210,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   }
 
   const isSecondary = Boolean(bill.requiresSecondaryApproval);
-  const isRoleAuthorized = !currentUserRole || (isSecondary ? currentUserRole === 'OPERATIONS_ADMIN' : currentUserRole === 'BILL_ADMIN');
+  const isRoleAuthorized = Boolean(currentUserRole) && (isSecondary ? currentUserRole === 'OPERATIONS_ADMIN' : currentUserRole === 'BILL_ADMIN');
 
   const handleApprove = async () => {
     setIsSubmitting(true);
@@ -677,8 +677,8 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 <button
                   type="button"
                   onClick={handleReject}
-                  disabled={isSubmitting}
-                  className="px-4 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg shadow-sm"
+                  disabled={isSubmitting || !isRoleAuthorized}
+                  className="px-4 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg shadow-sm disabled:opacity-50"
                 >
                   {isSubmitting ? 'Rejecting...' : 'Confirm Rejection'}
                 </button>
@@ -710,8 +710,8 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 <button
                   type="button"
                   onClick={handleCancel}
-                  disabled={isSubmitting}
-                  className="px-4 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg shadow-sm"
+                  disabled={isSubmitting || !isRoleAuthorized}
+                  className="px-4 py-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg shadow-sm disabled:opacity-50"
                 >
                   {isSubmitting ? 'Cancelling...' : 'Confirm Cancellation'}
                 </button>
@@ -734,16 +734,19 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
             <div className="flex items-center space-x-2">
               <button
                 type="button"
+                disabled={!isRoleAuthorized}
                 onClick={() => setCancelMode(true)}
-                className="px-3 py-2 border border-amber-200 text-amber-700 hover:bg-amber-50 text-xs font-bold rounded-xl transition flex items-center space-x-1"
-                title="Cancel fraudulent or invalid submission"
+                className={`px-3 py-2 border border-amber-200 text-amber-700 hover:bg-amber-50 text-xs font-bold rounded-xl transition flex items-center space-x-1 ${!isRoleAuthorized ? 'opacity-40 cursor-not-allowed' : ''}`}
+                title={!isRoleAuthorized ? (isSecondary ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : 'Cancel fraudulent or invalid submission'}
               >
                 <span>Cancel</span>
               </button>
               <button
                 type="button"
+                disabled={!isRoleAuthorized}
                 onClick={() => setRejectMode(true)}
-                className="px-3 py-2 border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-xl transition flex items-center space-x-1"
+                className={`px-3 py-2 border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-xl transition flex items-center space-x-1 ${!isRoleAuthorized ? 'opacity-40 cursor-not-allowed' : ''}`}
+                title={!isRoleAuthorized ? (isSecondary ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
               >
                 <XCircle className="w-4 h-4" />
                 <span>Reject</span>

@@ -57,7 +57,7 @@ To maintain commercial-grade accounting integrity:
    - `balanceAfter`
    - `referenceType` (`BILL`, `PAYOUT`, `ADMIN`)
    - `referenceId`
-2. **Double-Entry Ledger Parity**: Ledger consistency enforces `wallet.availableBalance = Σ WalletTransaction`. In the event of late settlement or deficit adjustments, balance subtraction is never artificially clamped to zero; negative balances explicitly model platform debt to guarantee mathematical ledger parity.
+2. **Double-Entry Ledger Parity**: Ledger consistency enforces `wallet.availableBalance - wallet.deficitLiability = Σ WalletTransaction`. In the event of late settlement or deficit adjustments, PostgreSQL check constraint `chk_wallet_balance_non_negative` strictly guarantees `availableBalance >= 0`, while platform debt is explicitly recorded in `deficitLiability` (`chk_wallet_deficit_liability_non_negative`). Net wallet equity is mathematically modeled as `availableBalance - deficitLiability = totalEarned - totalRedeemed - processingAmount`, preserving double-entry ledger parity without negative balance clamping.
 3. **Pessimistic & Optimistic Concurrency**: Financial transactions lock the wallet row (`SELECT ... FOR UPDATE`) inside atomic database transactions and track an incrementing `version` field.
 4. **Append-Only Audit Log Immutability**: PostgreSQL trigger `trg_audit_log_immutable` strictly prohibits `UPDATE` and `DELETE` operations on `AuditLog`, ensuring permanent tamper-evident audit trails.
 
@@ -136,8 +136,8 @@ Financial integrity requires strict bank-side name verification before funds can
 ### 7. Dual Authentication & Role Segregation
 
 The platform enforces strict role-based separation:
-- **`BILL_ADMIN`**: Gated to Bill verification (`GET /api/admin/bills`, `GET /api/admin/bills/:id/document-url`, `POST /api/admin/bills/:id/verify`) and read-only dashboard overview.
-- **`OPERATIONS_ADMIN`**: Gated to Payout approval/rejection (`/api/admin/payouts`), user directory, settings (reward rules, GST rules, redemption windows), audit logs, and broadcast notifications.
+- **`BILL_ADMIN`**: Gated to Bill verification (`GET /api/v1/admin/bills`, `GET /api/v1/admin/bills/:id/document-url`, `POST /api/v1/admin/bills/:id/verify`) and read-only dashboard overview.
+- **`OPERATIONS_ADMIN`**: Gated to Payout approval/rejection (`/api/v1/admin/payouts`), user directory, settings (reward rules, GST rules, redemption windows), audit logs, and broadcast notifications.
 - **Legacy `ADMIN` Role**: Deprecated and fails closed. Blocked from accessing admin routes. Must be migrated forward using `migrate-legacy-admin.ts`.
 - **Password-First Admin Two-Factor Auth**: Admin credentials require password validation FIRST before issuing a single-use verification challenge and dispatching transactional OTP. Admin sessions enforce single active sessions across devices.
 
