@@ -1924,7 +1924,6 @@ export class AuthService {
     AuthService.validatePassword(params.newPassword, 'New password');
 
     const tokenHash = sha256Hash(params.verificationToken);
-    const newHash = await bcrypt.hash(params.newPassword, 12);
 
     await prisma.$transaction(async (tx) => {
       // 1. Lock user row FOR UPDATE first to establish strict lock hierarchy
@@ -1974,6 +1973,8 @@ export class AuthService {
         where: { id: targetRows[0].id },
         data: { isUsed: true },
       });
+
+      const newHash = await bcrypt.hash(params.newPassword, 12);
 
       await tx.user.update({
         where: { id: user.id },

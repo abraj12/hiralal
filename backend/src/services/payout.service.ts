@@ -1034,14 +1034,12 @@ export class PayoutService {
       return updatedPayout;
     });
 
-    if (transitionedToSuccess) {
-      NotificationService.dispatchPushForUser(
+    NotificationService.dispatchPushForUser(
       result.userId,
       'Payout Request Rejected',
       `Your payout request of ${Number(result.amount).toLocaleString('en-IN')} Points was rejected (${reason.trim()}). The funds have been refunded to your wallet.`,
       { payoutId: result.id, amount: Number(result.amount), rejectionReason: reason.trim() }
-      ).catch((err) => console.error('[PAYOUT-SERVICE] Push dispatch failed:', err.message));
-    }
+    ).catch((err) => console.error('[PAYOUT-SERVICE] Push dispatch failed:', err.message));
 
     return result;
   }
