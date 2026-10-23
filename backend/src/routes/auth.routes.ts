@@ -486,6 +486,7 @@ router.post('/logout', loginIpLimiter, async (req: Request, res: Response) => {
   try {
     const { refreshToken } = req.body;
     let userId: string | undefined;
+    let tokenSessionId: string | undefined;
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
@@ -493,12 +494,14 @@ router.post('/logout', loginIpLimiter, async (req: Request, res: Response) => {
         const decoded = jwt.verify(token, config.jwt.accessSecret, { algorithms: ['HS256'] }) as any;
         if (decoded?.userId || decoded?.id) {
           userId = decoded.userId || decoded.id;
+          tokenSessionId = decoded.sessionId;
         }
       } catch {
         try {
           const decodedAdmin = jwt.verify(token, config.admin.accessSecret, { algorithms: ['HS256'] }) as any;
           if (decodedAdmin?.userId || decodedAdmin?.id) {
             userId = decodedAdmin.userId || decodedAdmin.id;
+            tokenSessionId = decodedAdmin.sessionId;
           }
         } catch {
           // Token is invalid/unverified - do not trust userId from unverified token
@@ -527,6 +530,7 @@ router.post('/logout', loginIpLimiter, async (req: Request, res: Response) => {
           const decodedAdmin = jwt.verify(cookieToken, config.admin.accessSecret, { algorithms: ['HS256'] }) as any;
           if (decodedAdmin?.userId || decodedAdmin?.id) {
             userId = decodedAdmin.userId || decodedAdmin.id;
+            tokenSessionId = decodedAdmin.sessionId;
           }
         } catch {
           // Token is invalid/unverified
@@ -549,7 +553,42 @@ router.post('/logout', loginIpLimiter, async (req: Request, res: Response) => {
       });
     }
 
-    await AuthService.logout(refreshToken, userId);
+    // Stale session validation (Finding 1): If logout is authenticated via an access token,
+    // verify the token is bound to the currently active session.
+    // A stale access token from a superseded session MUST NOT invalidate a newer session.
+    if (tokenSessionId && userId) {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { activeSessionId: true },
+      });
+
+      if (user?.activeSessionId && user.activeSessionId !== tokenSessionId) {
+        return res.status(401).json({
+          success: false,
+          code: 'STALE_SESSION',
+          message: 'Session has already been invalidated by a newer login.',
+        });
+      }
+
+      const activeSession = await prisma.authSession.findFirst({
+        where: {
+          userId,
+          sessionId: tokenSessionId,
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+      });
+
+      if (!activeSession && !refreshToken) {
+        return res.status(401).json({
+          success: false,
+          code: 'SESSION_REVOKED',
+          message: 'Session has already been revoked.',
+        });
+      }
+    }
+
+    await AuthService.logout(refreshToken, userId, tokenSessionId);
 
     res.json({ success: true, message: 'Logged out successfully.' });
   } catch (err: any) {

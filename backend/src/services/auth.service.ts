@@ -817,7 +817,7 @@ export class AuthService {
           where: { mobile: cleanMobile },
         });
         if (existingUser) {
-          shouldSendSms = false;
+          throw new Error('This mobile number is already registered. Please proceed to login.');
         }
       }
 
@@ -935,10 +935,11 @@ export class AuthService {
         where: { mobile: cleanMobile },
       });
 
+      let shouldSendSms = true;
       // Anti-enumeration: If user does not exist, is not role 'USER', or is not ACTIVE,
-      // silently return synthetic response without generating OTP or sending SMS.
+      // silently suppress SMS delivery while writing uniform cooldown & rate-limit records
       if (!existingUser || existingUser.role !== 'USER' || existingUser.status !== 'ACTIVE') {
-        return { shouldSendSms: false };
+        shouldSendSms = false;
       }
 
       // 1. Cooldown enforcement: prevent rapid resend within 60 seconds
@@ -968,18 +969,19 @@ export class AuthService {
         return { shouldSendSms: false };
       }
 
-      // 3. Record OTP Request
+      // 3. Record OTP Request uniformly for BOTH eligible and ineligible requests
+      const recordedOtpHash = shouldSendSms ? otpHash : hmacHashOtp(`SUPPRESSED_RESET_${Date.now()}_${cleanMobile}`);
       const createdRecord = await tx.otpRequest.create({
         data: {
           mobile: cleanMobile,
-          otpHash,
+          otpHash: recordedOtpHash,
           purpose: 'FORGOT_PASSWORD',
           expiresAt,
           cooldownUntil,
         },
       });
 
-      return { shouldSendSms: true, otpRequestId: createdRecord.id };
+      return { shouldSendSms, otpRequestId: createdRecord.id };
     });
 
     // 4. Secure SMS dispatch outside transaction
@@ -1010,6 +1012,9 @@ export class AuthService {
           }
         }
       }
+    } else {
+      // Synthetic defensive delay to equalize timing with real SMS gateway network latency
+      await new Promise((r) => setTimeout(r, 250));
     }
 
     return antiEnumerationResponse;
@@ -1888,8 +1893,10 @@ export class AuthService {
 
   /**
    * Revokes user session(s) on logout, clearing activeSessionId immediately.
+   * Bound to the caller's specific session ID to prevent stale access tokens from
+   * revoking newer active sessions created on other devices (Finding 1).
    */
-  static async logout(refreshTokenStr?: string, userId?: string) {
+  static async logout(refreshTokenStr?: string, userId?: string, sessionId?: string) {
     if (refreshTokenStr) {
       const tokenHash = sha256Hash(refreshTokenStr);
       // Task 3.6: Prevent Session DoS - only active unrevoked and non-expired sessions may trigger logout
@@ -1902,11 +1909,12 @@ export class AuthService {
       });
       if (session) {
         await prisma.authSession.updateMany({
-          where: { userId: session.userId, revokedAt: null },
+          where: { id: session.id, revokedAt: null },
           data: { revokedAt: new Date() },
         });
-        await prisma.user.update({
-          where: { id: session.userId },
+        // Clear activeSessionId on user ONLY IF this session was the user's active session
+        await prisma.user.updateMany({
+          where: { id: session.userId, activeSessionId: session.sessionId },
           data: { activeSessionId: null },
         });
         return;
@@ -1918,14 +1926,52 @@ export class AuthService {
     }
 
     if (userId) {
-      await prisma.authSession.updateMany({
-        where: { userId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-      await prisma.user.update({
-        where: { id: userId },
-        data: { activeSessionId: null },
-      });
+      if (sessionId) {
+        // Stale session protection: verify session is active and matches user's activeSessionId
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { activeSessionId: true },
+        });
+
+        // If the user's activeSessionId does not match this token's sessionId,
+        // it means this token is STALE (superseded by a newer login on another device).
+        // It must NOT revoke the newer session!
+        if (!user || user.activeSessionId !== sessionId) {
+          return;
+        }
+
+        const activeAuthSession = await prisma.authSession.findFirst({
+          where: {
+            userId,
+            sessionId,
+            revokedAt: null,
+            expiresAt: { gt: new Date() },
+          },
+        });
+
+        if (!activeAuthSession) {
+          return;
+        }
+
+        await prisma.authSession.updateMany({
+          where: { userId, sessionId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        await prisma.user.updateMany({
+          where: { id: userId, activeSessionId: sessionId },
+          data: { activeSessionId: null },
+        });
+      } else {
+        // Fallback for legacy tokens without sessionId (e.g. older tests)
+        await prisma.authSession.updateMany({
+          where: { userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        await prisma.user.update({
+          where: { id: userId },
+          data: { activeSessionId: null },
+        });
+      }
     }
   }
 
