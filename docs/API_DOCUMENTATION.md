@@ -172,13 +172,13 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
 - **Path**: `/bills`
 - **Headers**: `Authorization: Bearer <USER_TOKEN>`
 - **Content-Type**: `multipart/form-data`
-- **Form Fields**:
-  - `invoiceNumber`: `"INV-2026-9901"`
-  - `invoiceDate`: `"2026-10-10"` (YYYY-MM-DD)
-  - `billAmount`: `10000.00`
-  - `invoiceFile`: `[Binary PDF / JPEG / PNG up to 15MB]`
-  - `parentBillId`: `"parent-bill-uuid"` (Optional: when resubmitting a rejected invoice as a linked revision)
-  - `remarks`: `"CPVC fittings and pipes"` (Optional)
+- **Form Fields (Strictly Four User Inputs)**:
+  - `invoiceNumber`: `"INV-2026-9901"` (Required: invoice number printed on the bill)
+  - `invoiceDate`: `"2026-10-10"` (Required: YYYY-MM-DD date printed on the bill)
+  - `billAmount`: `10000.00` (Required: total invoice amount in ₹)
+  - `invoiceFile`: `[Binary PDF / JPEG / PNG up to 10MB]` (Required: bill document upload)
+  - `parentBillId`: `"parent-bill-uuid"` (Optional: internal reference when resubmitting a rejected invoice as a linked revision)
+  *(Note: Hiralal & Sons is the sole seller operating this rewards platform; user submissions require strictly the four inputs above and do not accept vendor/shop or GST parameters).*
 - **Response (201)**:
   ```json
   {

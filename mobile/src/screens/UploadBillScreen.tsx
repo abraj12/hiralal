@@ -48,7 +48,6 @@ export default function UploadBillScreen() {
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(getIndiaCalendarToday());
   const [billAmount, setBillAmount] = useState('');
-  const [remarks, setRemarks] = useState('');
   const [selectedFile, setSelectedFile] = useState<SelectedFileInfo | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -173,7 +172,6 @@ export default function UploadBillScreen() {
           invoiceNumber: invoiceNumber.trim(),
           invoiceDate,
           billAmount: amount,
-          remarks: remarks.trim() || undefined,
         },
         selectedFile
       );
@@ -188,7 +186,6 @@ export default function UploadBillScreen() {
           invoiceNumber: invoiceNumber.trim(),
           invoiceDate,
           billAmount: amount,
-          remarks: remarks.trim() || undefined,
           file: selectedFile,
         },
         attestation
@@ -353,21 +350,6 @@ export default function UploadBillScreen() {
             <Text style={styles.rewardPreviewDesc}>
               Reward points will be verified and credited directly to your wallet after administrator invoice audit.
             </Text>
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Remarks (Optional)</Text>
-            <TextInput
-              style={[styles.input, { height: 80, textAlignVertical: 'top' }]}
-              value={remarks}
-              onChangeText={setRemarks}
-              placeholder={
-                theme.profession === 'PLUMBER'
-                  ? 'e.g. CPVC pipes, elbow fittings, brass valves...'
-                  : 'e.g. Vitrified floor tiles, tile adhesive...'
-              }
-              multiline
-            />
           </View>
 
           <TouchableOpacity
