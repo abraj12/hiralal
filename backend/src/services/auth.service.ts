@@ -16,15 +16,23 @@ import { SmsService } from './sms';
 export function normalizeStrictIndianMobile(identifier: string): string | null {
   if (!identifier || typeof identifier !== 'string') return null;
   const trimmed = identifier.trim();
+  // 10-digit Indian standard (starting with 6, 7, 8, or 9)
   if (/^[6-9]\d{9}$/.test(trimmed)) {
     return trimmed;
   }
+  // +91 prefix
   if (/^\+91[6-9]\d{9}$/.test(trimmed)) {
     return trimmed.slice(3);
   }
+  // 91 prefix without plus
   if (/^91[6-9]\d{9}$/.test(trimmed)) {
     return trimmed.slice(2);
   }
+  // 0091 international dialing prefix
+  if (/^0091[6-9]\d{9}$/.test(trimmed)) {
+    return trimmed.slice(4);
+  }
+  // 0 domestic leading-zero prefix
   if (/^0[6-9]\d{9}$/.test(trimmed)) {
     return trimmed.slice(1);
   }
@@ -814,12 +822,9 @@ export class AuthService {
   }) {
     const startTimeMs = Date.now();
     const validatedPurpose = requireGenericOtpPurpose(params.purpose);
-    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
-    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+    const cleanMobile = normalizeStrictIndianMobile(params.mobile);
+    if (!cleanMobile) {
       throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
-    }
-    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
-      throw new Error('Please enter a valid 10-digit Indian mobile number.');
     }
 
     const now = new Date();
@@ -959,12 +964,9 @@ export class AuthService {
     ipAddress?: string;
   }) {
     const startTimeMs = Date.now();
-    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
-    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+    const cleanMobile = normalizeStrictIndianMobile(params.mobile);
+    if (!cleanMobile) {
       throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
-    }
-    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
-      throw new Error('Please enter a valid 10-digit Indian mobile number.');
     }
 
     const now = new Date();
@@ -989,11 +991,8 @@ export class AuthService {
         where: { mobile: cleanMobile },
       });
 
-      // Anti-enumeration: If user does not exist, is not role 'USER', or is not ACTIVE,
-      // silently return synthetic response without generating OTP, writing DB records, or sending SMS.
-      if (!existingUser || existingUser.role !== 'USER' || existingUser.status !== 'ACTIVE') {
-        return { shouldSendSms: false };
-      }
+      // Anti-enumeration: determine if SMS should be dispatched
+      const shouldSendSms = Boolean(existingUser && existingUser.role === 'USER' && existingUser.status === 'ACTIVE');
 
       // 1. Cooldown enforcement: prevent rapid resend within 60 seconds
       const activeCooldown = await tx.otpRequest.findFirst({
@@ -1022,18 +1021,19 @@ export class AuthService {
         return { shouldSendSms: false };
       }
 
-      // 3. Record OTP Request
+      // 3. Record OTP Request (Uniformly created to enforce 60s cooldown and 10-min rate limits, preventing enumeration - FINDING-08)
+      const recordedOtpHash = shouldSendSms ? otpHash : hmacHashOtp(`SUPPRESSED_${Date.now()}_${cleanMobile}`);
       const createdRecord = await tx.otpRequest.create({
         data: {
           mobile: cleanMobile,
-          otpHash,
+          otpHash: recordedOtpHash,
           purpose: 'FORGOT_PASSWORD',
           expiresAt,
           cooldownUntil,
         },
       });
 
-      return { shouldSendSms: true, otpRequestId: createdRecord.id };
+      return { shouldSendSms, otpRequestId: createdRecord.id };
     });
 
     // 4. Secure SMS dispatch outside transaction
@@ -1089,12 +1089,9 @@ export class AuthService {
     mobile: string;
     ipAddress?: string;
   }) {
-    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
-    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+    const cleanMobile = normalizeStrictIndianMobile(params.mobile);
+    if (!cleanMobile) {
       throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
-    }
-    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
-      throw new Error('Please enter a valid 10-digit Indian mobile number.');
     }
 
     const now = new Date();
@@ -1216,8 +1213,8 @@ export class AuthService {
     verificationToken?: string;
     expiresAt?: string;
   }> {
-    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
-    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+    const cleanMobile = normalizeStrictIndianMobile(params.mobile);
+    if (!cleanMobile) {
       throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
     }
     const cleanOtp = (params.otpCode || '').trim();
@@ -1392,8 +1389,8 @@ export class AuthService {
       throw new Error(genericFailure);
     }
 
-    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
-    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+    const cleanMobile = normalizeStrictIndianMobile(params.mobile);
+    if (!cleanMobile) {
       throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
     }
     if (cleanMobile.length !== 10) {
@@ -1468,8 +1465,8 @@ export class AuthService {
     userAgent?: string;
     ipAddress?: string;
   }) {
-    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
-    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+    const cleanMobile = normalizeStrictIndianMobile(params.mobile);
+    if (!cleanMobile) {
       throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
     }
 
@@ -1622,15 +1619,18 @@ export class AuthService {
    * Subsequent login replaces and invalidates previous session immediately.
    */
   static async login(mobile: string, pass: string, userAgent?: string, ipAddress?: string) {
-    const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
+    const DUMMY_HASH = '$2a$12$jHE.gfGaFakB2NGhVAW/sOFtME3Z60H5Npbm8HoygCnjfg35SS4Zi';
+    const cleanMobile = normalizeStrictIndianMobile(mobile);
+    if (!cleanMobile) {
+      await bcrypt.compare(pass, DUMMY_HASH);
+      throw new Error('Invalid mobile number or password.');
+    }
 
     const user = await prisma.user.findUnique({
       where: { mobile: cleanMobile },
       include: { wallet: true },
     });
 
-    // VULN-CRYPTO-01: Cost 12 dummy hash to match real password hashing cost factor and eliminate timing oracles
-    const DUMMY_HASH = '$2a$12$jHE.gfGaFakB2NGhVAW/sOFtME3Z60H5Npbm8HoygCnjfg35SS4Zi';
     if (!user) {
       await bcrypt.compare(pass, DUMMY_HASH);
       throw new Error('Invalid mobile number or password.');
@@ -2048,12 +2048,9 @@ export class AuthService {
     userAgent?: string;
     ipAddress?: string;
   }) {
-    if (typeof params.mobile !== 'string' || !/^\d{10}$/.test(params.mobile.replace(/\D/g, '').slice(-10))) {
+    const cleanMobile = normalizeStrictIndianMobile(params.mobile);
+    if (!cleanMobile) {
       throw new Error(PASSWORD_RESET_INVALID_MESSAGE);
-    }
-    const cleanMobile = String(params.mobile || '').replace(/\D/g, '').slice(-10);
-    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
-      throw new Error('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
     }
 
     if (typeof params.verificationToken !== 'string' || !/^[0-9a-f]{64}$/i.test(params.verificationToken.trim())) {

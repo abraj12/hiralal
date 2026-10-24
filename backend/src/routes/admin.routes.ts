@@ -968,6 +968,8 @@ const handleBillVerification = async (req: AuthenticatedRequest, res: Response) 
         gstRuleId: gstIncluded ? (typeof gstRuleId === 'string' && gstRuleId.trim() ? gstRuleId.trim() : undefined) : undefined,
         gstOverrideReason: gstIncluded && typeof gstOverrideReason === 'string' ? gstOverrideReason.trim() : undefined,
         isOperationsAdminApproved: admin.role === 'OPERATIONS_ADMIN',
+        vendorGstin: typeof req.body.vendorGstin === 'string' && req.body.vendorGstin.trim() ? req.body.vendorGstin.trim() : undefined,
+        merchantName: typeof req.body.merchantName === 'string' && req.body.merchantName.trim() ? req.body.merchantName.trim() : undefined,
       });
 
       return res.json({
@@ -1556,6 +1558,8 @@ router.post('/settings/gst-rules', requireOperationsAdmin, async (req: Authentic
       ratePercentage: validatedRate,
       description,
       isDefault,
+      effectiveFrom: req.body.effectiveFrom !== undefined ? String(req.body.effectiveFrom).trim() : undefined,
+      effectiveUntil: req.body.effectiveUntil !== undefined ? (req.body.effectiveUntil ? String(req.body.effectiveUntil).trim() : null) : undefined,
     });
 
     res.status(201).json({

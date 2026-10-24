@@ -157,6 +157,24 @@ export class AccountDeletionService {
         );
       }
 
+      // Financial fencing: reject if active rewards balance or deficit liability exists
+      const wallet = await tx.wallet.findUnique({
+        where: { userId },
+        select: { availableBalance: true, deficitLiability: true },
+      });
+      if (wallet) {
+        if (Number(wallet.availableBalance) > 0) {
+          throw new Error(
+            'Account deletion cannot be requested while you have an active rewards balance. Please redeem your rewards first.'
+          );
+        }
+        if (Number(wallet.deficitLiability || 0) > 0) {
+          throw new Error(
+            'Account deletion cannot be requested due to an outstanding deficit liability. Please contact support.'
+          );
+        }
+      }
+
       return {
         mobile: locked.mobile,
       };
@@ -327,6 +345,24 @@ export class AccountDeletionService {
         );
       }
 
+      // Re-enforce wallet balance and deficit liability fencing under row lock
+      const wallet = await tx.wallet.findUnique({
+        where: { userId: lockedUser.id },
+        select: { availableBalance: true, deficitLiability: true },
+      });
+      if (wallet) {
+        if (Number(wallet.availableBalance) > 0) {
+          throw new Error(
+            'Account deletion cannot be confirmed while you have an active rewards balance. Please redeem your rewards first.'
+          );
+        }
+        if (Number(wallet.deficitLiability || 0) > 0) {
+          throw new Error(
+            'Account deletion cannot be confirmed due to an outstanding deficit liability. Please contact support.'
+          );
+        }
+      }
+
       // 3. Verify OTP in transaction (recording failed attempts if invalid)
       const otpResult = await AuthService.verifyOtpInTransaction(
         tx,
@@ -493,9 +529,11 @@ export class AccountDeletionService {
       FROM "User" u
       LEFT JOIN "AccountDeletionOperation" op ON op."userId" = u."id" AND op."status" IN ('PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE')
       WHERE (
-        (u."deletionScheduledAt" <= (clock_timestamp() AT TIME ZONE 'UTC') AND u."status" <> 'SUSPENDED')
+        (u."deletionScheduledAt" IS NOT NULL AND u."deletionScheduledAt" <= (clock_timestamp() AT TIME ZONE 'UTC') AND u."status" <> 'SUSPENDED')
         OR
         (u."status" = 'SUSPENDED' AND u."mobile" LIKE 'DEL_%' AND op."id" IS NOT NULL)
+        OR
+        (op."id" IS NOT NULL AND (u."status" = 'SUSPENDED' OR u."deletionScheduledAt" IS NULL))
       )
       AND u."legalHold" = false
       ORDER BY u."id" ASC
@@ -555,11 +593,22 @@ export class AccountDeletionService {
               await tx.$queryRaw`
                 UPDATE "AccountDeletionOperation"
                 SET "status" = 'CANCELLED',
+                    "lastError" = 'Deletion cancelled: Account is suspended or deletion schedule cleared.',
                     "completedAt" = (clock_timestamp() AT TIME ZONE 'UTC'),
                     "leaseExpiresAt" = NULL
                 WHERE "userId" = ${u.id}
                   AND "status" IN ('PENDING', 'IN_PROGRESS', 'FAILED_RETRYABLE')
               `;
+              if (lockedUser.status === 'SUSPENDED') {
+                await tx.auditLog.create({
+                  data: {
+                    action: 'ACCOUNT_DELETION_BLOCKED_SUSPENDED',
+                    entityType: 'User',
+                    entityId: u.id,
+                    newValue: JSON.stringify({ reason: 'Account suspended during deletion grace period' }),
+                  },
+                });
+              }
             }
             return { claimed: false, reason: 'CANCELLED_OR_INACTIVE' };
           }
@@ -710,7 +759,7 @@ export class AccountDeletionService {
             where: { id: operationId },
             data: {
               status: 'CANCELLED',
-              failureReason: 'Deletion cancelled: Active statutory legal hold placed on user account prior to storage file deletion.',
+              lastError: 'Deletion cancelled: Active statutory legal hold placed on user account prior to storage file deletion.',
               leaseOwner: null,
               leaseExpiresAt: null,
             },
@@ -842,7 +891,7 @@ export class AccountDeletionService {
             await tx.$executeRaw`
               UPDATE "AccountDeletionOperation"
               SET "status" = 'CANCELLED',
-                  "failureReason" = 'Deletion cancelled due to active statutory legal hold placed on user account.',
+                  "lastError" = 'Deletion cancelled due to active statutory legal hold placed on user account.',
                   "leaseOwner" = NULL,
                   "completedAt" = clock_timestamp() AT TIME ZONE 'UTC',
                   "updatedAt" = clock_timestamp() AT TIME ZONE 'UTC'
@@ -853,6 +902,40 @@ export class AccountDeletionService {
               data: {
                 deletionRequestedAt: null,
                 deletionScheduledAt: null,
+              },
+            });
+            return;
+          }
+
+          // FINDING-06: Respect administrative suspension imposed during deletion grace period
+          if (lockedUser.status === 'SUSPENDED' && !lockedUser.mobile.startsWith('DEL_')) {
+            console.warn(`[ACCOUNT-DELETION] User ${u.id} is under administrative suspension. Aborting scheduled deletion.`);
+            await tx.$executeRaw`
+              UPDATE "AccountDeletionOperation"
+              SET "status" = 'CANCELLED',
+                  "lastError" = 'Deletion cancelled due to administrative suspension placed on user account.',
+                  "leaseOwner" = NULL,
+                  "completedAt" = clock_timestamp() AT TIME ZONE 'UTC',
+                  "updatedAt" = clock_timestamp() AT TIME ZONE 'UTC'
+              WHERE "id" = ${operationId};
+            `;
+            await tx.user.update({
+              where: { id: u.id },
+              data: {
+                deletionRequestedAt: null,
+                deletionScheduledAt: null,
+              },
+            });
+            await tx.auditLog.create({
+              data: {
+                action: 'ACCOUNT_DELETION_BLOCKED_SUSPENDED',
+                entityType: 'User',
+                entityId: u.id,
+                newValue: JSON.stringify({
+                  userId: u.id,
+                  operationId,
+                  reason: 'User account suspended by administrator during grace period',
+                }),
               },
             });
             return;
@@ -1005,6 +1088,31 @@ export class AccountDeletionService {
             throw new Error(
               `[ACCOUNT-DELETION] Deletion deferred: user has pending bill #${pendingBill.invoiceNumber || pendingBill.id} awaiting review.`
             );
+          }
+
+          // FINDING-01: Wallet balance and deficit liability fencing under row lock
+          const wallet = await tx.wallet.findUnique({
+            where: { userId: u.id },
+            select: { availableBalance: true, deficitLiability: true },
+          });
+          if (wallet) {
+            if (Number(wallet.availableBalance) > 0 || Number(wallet.deficitLiability || 0) > 0) {
+              const reason = Number(wallet.availableBalance) > 0
+                ? 'ACTIVE_WALLET_BALANCE_REMAINING'
+                : 'DEFICIT_LIABILITY_OUTSTANDING';
+              await tx.$queryRaw`
+                UPDATE "AccountDeletionOperation"
+                SET "scheduledFor" = (clock_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 hour',
+                    "status" = 'PENDING',
+                    "leaseOwner" = NULL,
+                    "leaseExpiresAt" = NULL,
+                    "lastError" = ${reason}
+                WHERE "id" = ${operationId}
+              `;
+              throw new Error(
+                `[ACCOUNT-DELETION] Deletion deferred: user has ${reason} (balance: ${wallet.availableBalance}, deficit: ${wallet.deficitLiability}).`
+              );
+            }
           }
 
           // 3. Purge active push tokens, notifications, redact AppInstallation, sessions, and OTP requests

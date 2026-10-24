@@ -1,6 +1,7 @@
 import { prisma } from '../db';
 import { GstRule } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
+import { parseIndiaEffectiveDateTime } from '../utils/timezone.utils';
 
 const roundMoney = (value: number | Decimal): number => {
   const dec = value instanceof Decimal ? value : new Decimal(value.toString());
@@ -250,8 +251,8 @@ export class GstService {
       ratePercentage: unknown;
       description?: unknown;
       isDefault?: unknown;
-      effectiveFrom?: Date;
-      effectiveUntil?: Date | null;
+      effectiveFrom?: Date | string | null;
+      effectiveUntil?: Date | string | null;
     },
     tx: any = prisma
   ): Promise<GstRule> {
@@ -268,12 +269,23 @@ export class GstService {
     const isDefault = params.isDefault === true;
     const description = (params.description as string | undefined)?.trim();
 
+    // FINDING-14: Deterministic Asia/Kolkata IST parsing for effective dates
+    const effectiveFromDate = params.effectiveFrom !== undefined && params.effectiveFrom !== null
+      ? parseIndiaEffectiveDateTime(params.effectiveFrom)
+      : new Date();
+    const effectiveUntilDate = params.effectiveUntil !== undefined && params.effectiveUntil !== null
+      ? parseIndiaEffectiveDateTime(params.effectiveUntil)
+      : null;
+
+    if (effectiveUntilDate && effectiveUntilDate <= effectiveFromDate) {
+      throw new Error('effectiveUntil must be strictly after effectiveFrom.');
+    }
+
     const executeInTx = async (db: any) => {
       if (isDefault) {
         // Serialize concurrent default-rule mutations using PostgreSQL advisory xact lock
         await db.$executeRaw`SELECT 1::int AS lock_acquired FROM (SELECT pg_advisory_xact_lock(7212026, 1)) AS lock_result`;
         
-        const effectiveFromDate = params.effectiveFrom || new Date();
         const now = new Date();
 
         if (effectiveFromDate > now) {
@@ -304,8 +316,8 @@ export class GstService {
           description: description || `${validatedRate}% GST`,
           isDefault,
           isActive: true,
-          effectiveFrom: params.effectiveFrom || new Date(),
-          effectiveUntil: params.effectiveUntil || null,
+          effectiveFrom: effectiveFromDate,
+          effectiveUntil: effectiveUntilDate,
           createdByAdminId: adminId,
           updatedByAdminId: adminId,
         },

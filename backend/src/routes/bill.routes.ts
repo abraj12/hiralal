@@ -264,6 +264,8 @@ router.post(
       mimeType,
       remarks: remarks?.trim() || undefined,
       parentBillId: req.body.parentBillId ? String(req.body.parentBillId).trim() : undefined,
+      vendorGstin: req.body.vendorGstin ? String(req.body.vendorGstin).trim() : undefined,
+      merchantName: req.body.merchantName ? String(req.body.merchantName).trim() : undefined,
     });
 
     res.status(201).json({

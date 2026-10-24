@@ -247,6 +247,13 @@ export class PaymentService {
       throw new Error('Please enter a valid bank account number (9 to 18 digits).');
     }
 
+    // FINDING-04: Strip leading zeroes to obtain canonical bank account number for blind indexing
+    // and duplicate beneficiary anti-collusion protection across user profiles.
+    const canonicalAccount = cleanAccount.replace(/^0+/, '');
+    if (canonicalAccount.length < 5) {
+      throw new Error('Please enter a valid bank account number.');
+    }
+
     if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanIfsc)) {
       throw new Error('Please enter a valid 11-character Indian IFSC code (e.g. HDFC0001234).');
     }
@@ -261,7 +268,7 @@ export class PaymentService {
     }
 
     const maskedInfo = this.maskPaymentInfo('BANK_ACCOUNT', cleanAccount, params.bankName);
-    const beneficiaryBlindIndex = generateBlindIndex(`BANK:${cleanIfsc}:${cleanAccount}`);
+    const beneficiaryBlindIndex = generateBlindIndex(`BANK:${cleanIfsc}:${canonicalAccount}`);
 
     // Prevent cross-user duplicate registration using exact normalized account number + IFSC blind index
     const existingOther = await prisma.paymentAccount.findFirst({
@@ -294,14 +301,15 @@ export class PaymentService {
       if (other.accountNumberEncrypted) {
         try {
           const decrypted = decryptSensitive(other.accountNumberEncrypted);
+          const otherCanonical = decrypted.trim().replace(/^0+/, '');
           // SEC-MED-06: Opportunistically backfill blind index on legacy unindexed row
-          const backfilledIndex = generateBlindIndex(`BANK:${cleanIfsc}:${decrypted}`);
+          const backfilledIndex = generateBlindIndex(`BANK:${cleanIfsc}:${otherCanonical}`);
           prisma.paymentAccount.update({
             where: { id: other.id },
             data: { beneficiaryBlindIndex: backfilledIndex },
           }).catch(() => {});
 
-          if (decrypted === cleanAccount) {
+          if (otherCanonical === canonicalAccount || decrypted === cleanAccount) {
             throw new Error('This bank account is already registered and verified with another user account.');
           }
         } catch (e: any) {

@@ -10,7 +10,6 @@
     <!-- Production domain security configuration with certificate pinning -->
     <domain-config cleartextTrafficPermitted="false">
         <domain includeSubdomains="true">hsspl.algions.in</domain>
-        <domain includeSubdomains="true">hsspl.aglions.in</domain>
         <pin-set expiration="2027-12-31">
             <!-- Let's Encrypt ISRG Root X1 -->
             <pin digest="SHA-256">C5+o0AITHadrtpqMe4ZhtRfDCCDa60MBXZRe89mbDHQ=</pin>

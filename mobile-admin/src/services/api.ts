@@ -63,18 +63,65 @@ const getBaseUrl = () => {
 export const API_BASE = getBaseUrl();
 console.log('📡 Mobile API configured at:', API_BASE);
 
+export const ALLOWED_DOC_HOST_PATTERNS = [
+  /^localhost$/,
+  /^127\.0\.0\.1$/,
+  /(\.|\b)s3\.amazonaws\.com$/,
+  /(\.|\b)r2\.cloudflarestorage\.com$/,
+  /(\.|\b)r2\.dev$/,
+  /(\.|\b)cloudfront\.net$/,
+  /(\.|\b)hsspl\.algions\.in$/,
+  /(\.|\b)hiralalandsons\.com$/,
+  /(\.|\b)hiralalandsonspvtltd\.com$/,
+];
+
+export function isAllowedDocumentUrl(url?: string | null): boolean {
+  if (!url || typeof url !== 'string' || !url.trim()) return false;
+  const clean = url.trim();
+  try {
+    const parsed = new URL(clean);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return false;
+    }
+    if (parsed.protocol === 'http:' && process.env.NODE_ENV === 'production') {
+      return false;
+    }
+    return ALLOWED_DOC_HOST_PATTERNS.some((p) => p.test(parsed.hostname.toLowerCase()));
+  } catch {
+    return false;
+  }
+}
+
 export function resolveDocumentUrl(url?: string | null): string | null {
   if (!url || typeof url !== 'string' || !url.trim()) return null;
   const clean = url.trim();
   if (clean.startsWith('https://')) {
-    return clean;
+    try {
+      const parsed = new URL(clean);
+      const isAllowed = ALLOWED_DOC_HOST_PATTERNS.some((p) => p.test(parsed.hostname.toLowerCase()));
+      return isAllowed ? clean : null;
+    } catch {
+      return null;
+    }
   }
   if (clean.startsWith('http://')) {
     if (process.env.NODE_ENV === 'production') {
-      return clean.replace(/^http:\/\//i, 'https://');
+      return null;
     }
-    return clean;
+    try {
+      const parsed = new URL(clean);
+      const isAllowed = ALLOWED_DOC_HOST_PATTERNS.some((p) => p.test(parsed.hostname.toLowerCase()));
+      return isAllowed ? clean : null;
+    } catch {
+      return null;
+    }
   }
+
+  // Reject unsupported protocols like javascript:, file:, data:
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(clean)) {
+    return null;
+  }
+
   const baseOrigin = API_BASE.replace(/\/api(\/v1)?\/?$/, '');
   return `${baseOrigin}${clean.startsWith('/') ? '' : '/'}${clean}`;
 }
@@ -631,20 +678,6 @@ export class MobileApiClient {
   static deactivateDevicePushToken(token: string) {
     return this.request(`/notifications/device-token/${encodeURIComponent(token)}`, {
       method: 'DELETE',
-    });
-  }
-
-  static getIntegrityNonce(options: { action: string; requestHash: string }) {
-    return this.request<{ success: boolean; nonce: string; message?: string }>('/auth/integrity/nonce', {
-      method: 'POST',
-      body: JSON.stringify(options),
-    });
-  }
-
-  static getPreAuthIntegrityNonce(options: { requestHash: string; action?: string }) {
-    return this.request<{ success: boolean; nonce: string; message?: string }>('/auth/integrity/pre-auth/nonce', {
-      method: 'POST',
-      body: JSON.stringify(options),
     });
   }
 }

@@ -39,6 +39,7 @@ enum TransactionType {
   PAYOUT_REVERSAL
   MANUAL_ADJUSTMENT
   REFUND
+  DEFICIT_OFFSET
 }
 
 enum KycStatus {
@@ -221,7 +222,9 @@ model Bill {
   fileHash             String?     @unique
   fileSize             Int?
   mimeType             String?
-  rejectionReason      String?
+  vendorGstin                String?
+  merchantName               String?
+  rejectionReason            String?
   verifiedByAdminId    String?
   remarks              String?
   createdAt            DateTime    @default(now())
@@ -246,6 +249,8 @@ model Bill {
   @@index([rewardRuleId])
   @@index([gstRuleId])
   @@index([createdAt])
+  @@index([vendorGstin])
+  @@index([merchantName])
 }
 
 model RewardRule {

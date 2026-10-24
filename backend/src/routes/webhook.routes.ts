@@ -100,25 +100,24 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
       },
     });
 
-    // 2. Atomically claim exclusive processing lease (60-second bounded lease)
-    const leaseThreshold = new Date(Date.now() - 60 * 1000);
-    const claim = await prisma.webhookEvent.updateMany({
-      where: {
-        provider: 'RAZORPAYX',
-        eventId,
-        isProcessed: false,
-        OR: [
-          { processingStartedAt: null },
-          { processingStartedAt: { lt: leaseThreshold } },
-        ],
-      },
-      data: {
-        processingStartedAt: new Date(),
-        attempts: { increment: 1 },
-      },
-    });
+    // 2. Atomically claim exclusive processing lease (180-second bounded lease with attempt CAS tracking - FINDING-10)
+    const claimedRows = await prisma.$queryRaw<Array<{ id: string; attempts: number }>>`
+      UPDATE "WebhookEvent"
+      SET "processingStartedAt" = clock_timestamp() AT TIME ZONE 'UTC',
+          "attempts" = "attempts" + 1
+      WHERE "provider" = 'RAZORPAYX'
+        AND "eventId" = ${eventId}
+        AND "isProcessed" = false
+        AND (
+          "processingStartedAt" IS NULL
+          OR "processingStartedAt" < (clock_timestamp() AT TIME ZONE 'UTC') - INTERVAL '180 seconds'
+        )
+      RETURNING "id", "attempts";
+    `;
 
-    if (claim.count === 0) {
+    const claimedEvent = claimedRows && claimedRows.length > 0 ? claimedRows[0] : null;
+
+    if (!claimedEvent) {
       // Event is either already processed or actively leased by another concurrent worker
       const current = await prisma.webhookEvent.findUnique({
         where: { provider_event_unique: { provider: 'RAZORPAYX', eventId } },
@@ -406,9 +405,14 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
         }
       }
 
-      // 4. Mark event as processed only after financial transition succeeds
-      await prisma.webhookEvent.update({
-        where: { provider_event_unique: { provider: 'RAZORPAYX', eventId } },
+      // 4. Mark event as processed only after financial transition succeeds with CAS attempt check (FINDING-10)
+      const finalized = await prisma.webhookEvent.updateMany({
+        where: {
+          provider: 'RAZORPAYX',
+          eventId,
+          attempts: claimedEvent.attempts,
+          isProcessed: false,
+        },
         data: {
           isProcessed: true,
           processedAt: new Date(),
@@ -417,11 +421,20 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
         },
       });
 
+      if (finalized.count === 0) {
+        console.warn(`[WEBHOOK] Stale worker finalization skipped for event ${eventId}. Lease was taken over by a newer attempt.`);
+      }
+
       res.status(200).json({ status: 'ok' });
     } catch (processErr: any) {
-      // Release lease and record error for retry
-      await prisma.webhookEvent.update({
-        where: { provider_event_unique: { provider: 'RAZORPAYX', eventId } },
+      // Release lease and record error for retry ONLY IF our lease attempt is still current
+      await prisma.webhookEvent.updateMany({
+        where: {
+          provider: 'RAZORPAYX',
+          eventId,
+          attempts: claimedEvent.attempts,
+          isProcessed: false,
+        },
         data: {
           processingStartedAt: null,
           lastError: processErr.message || 'Processing failure',

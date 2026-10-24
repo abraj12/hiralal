@@ -317,6 +317,11 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     throw new Error('[FATAL] BLIND_INDEX_SECRET must be at least 32 characters for HMAC blind indexing.');
   }
 
+  // FINDING-19: Validate OTP_HMAC_SECRET length in production
+  if (env.OTP_HMAC_SECRET && env.OTP_HMAC_SECRET.length < 32) {
+    throw new Error('[FATAL] OTP_HMAC_SECRET must be at least 32 characters for HMAC signing.');
+  }
+
   // Ensure Redis password in production is at least 24 characters
   if ((role === 'api' || role === 'worker') && env.REDIS_PASSWORD) {
     if (env.REDIS_PASSWORD.length < 24) {
@@ -376,9 +381,6 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     if (env.JWT_ACCESS_SECRET && env.JWT_REFRESH_SECRET && env.JWT_ACCESS_SECRET === env.JWT_REFRESH_SECRET) {
       throw new Error('[FATAL] JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be distinct secrets.');
     }
-    if (env.STORAGE_HMAC_SECRET && env.STORAGE_HMAC_SECRET.length < 16) {
-      throw new Error('[FATAL] STORAGE_HMAC_SECRET must be at least 16 characters for HMAC signing.');
-    }
     if (!env.JWT_ADMIN_ACCESS_SECRET || env.JWT_ADMIN_ACCESS_SECRET === 'dev_admin_dedicated_access_secret_key_hiralal_2026') {
       throw new Error('[FATAL] JWT_ADMIN_ACCESS_SECRET must be explicitly defined in production and cannot use development fallback.');
     }
@@ -390,6 +392,27 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     }
     if (env.JWT_REFRESH_SECRET && env.JWT_ADMIN_ACCESS_SECRET === env.JWT_REFRESH_SECRET) {
       throw new Error('[FATAL] JWT_ADMIN_ACCESS_SECRET and JWT_REFRESH_SECRET must be distinct secrets.');
+    }
+
+    // FINDING-19: Mutual distinctness enforcement across all cryptographic keys
+    const sensitiveSecrets: Record<string, string | undefined> = {
+      JWT_ACCESS_SECRET: env.JWT_ACCESS_SECRET,
+      JWT_REFRESH_SECRET: env.JWT_REFRESH_SECRET,
+      JWT_ADMIN_ACCESS_SECRET: env.JWT_ADMIN_ACCESS_SECRET,
+      STORAGE_HMAC_SECRET: env.STORAGE_HMAC_SECRET,
+      OTP_HMAC_SECRET: env.OTP_HMAC_SECRET,
+      FIELD_ENCRYPTION_KEY: env.FIELD_ENCRYPTION_KEY,
+      BLIND_INDEX_SECRET: env.BLIND_INDEX_SECRET,
+    };
+    const secretEntries = Object.entries(sensitiveSecrets).filter(([_, val]) => Boolean(val && val.trim()));
+    for (let i = 0; i < secretEntries.length; i++) {
+      for (let j = i + 1; j < secretEntries.length; j++) {
+        const [nameA, valA] = secretEntries[i];
+        const [nameB, valB] = secretEntries[j];
+        if (valA === valB) {
+          throw new Error(`[FATAL] ${nameA} and ${nameB} must be distinct cryptographic secrets.`);
+        }
+      }
     }
     if (env.OTP_TTL_SECONDS) {
       const ttl = parseInt(env.OTP_TTL_SECONDS, 10);

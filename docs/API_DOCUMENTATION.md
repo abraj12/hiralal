@@ -96,9 +96,10 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
 - **Body**:
   ```json
   {
-    "prefix": "BADM"
+    "prefix": "BILL-ADMIN-SEC-2026-X9K2"
   }
   ```
+  *(Note: Production strictly mandates admin prefixes to be at least 16 characters in length with Shannon entropy >= 3.0. Short or trivial prefixes are rejected at startup).*
 - **Response (200)**:
   ```json
   {
@@ -114,7 +115,7 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
 - **Body**:
   ```json
   {
-    "identifier": "BADM9876543210",
+    "identifier": "BILL-ADMIN-SEC-2026-X9K29876543210",
     "password": "StrongBillAdminPassword123!"
   }
   ```
@@ -137,7 +138,7 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
 - **Body**:
   ```json
   {
-    "identifier": "BADM9876543210",
+    "identifier": "BILL-ADMIN-SEC-2026-X9K29876543210",
     "challengeToken": "<CHALLENGE_TOKEN_UUID>",
     "otpCode": "654321"
   }

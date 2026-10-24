@@ -76,7 +76,7 @@ describe('Account Deletion Lifecycle & Minimum Redemption Threshold Tests', () =
         isVerified: true,
         wallet: {
           create: {
-            availableBalance: 250.0,
+            availableBalance: 0.0,
             totalRedeemed: 0.0,
           },
         },
@@ -131,6 +131,38 @@ describe('Account Deletion Lifecycle & Minimum Redemption Threshold Tests', () =
       await expect(AccountDeletionService.requestDeletion(userId, 'WrongPass123')).rejects.toThrow(
         'Incorrect password'
       );
+    });
+
+    test('FINDING-01: rejects account deletion request if user has positive rewards balance', async () => {
+      await prisma.wallet.update({
+        where: { id: walletId },
+        data: { availableBalance: 500.0 },
+      });
+
+      await expect(AccountDeletionService.requestDeletion(userId, testPassword)).rejects.toThrow(
+        'Account deletion cannot be requested while you have an active rewards balance. Please redeem your rewards first.'
+      );
+
+      await prisma.wallet.update({
+        where: { id: walletId },
+        data: { availableBalance: 0.0 },
+      });
+    });
+
+    test('FINDING-01: rejects account deletion request if user has outstanding deficit liability', async () => {
+      await prisma.wallet.update({
+        where: { id: walletId },
+        data: { deficitLiability: 200.0 },
+      });
+
+      await expect(AccountDeletionService.requestDeletion(userId, testPassword)).rejects.toThrow(
+        'Account deletion cannot be requested due to an outstanding deficit liability. Please contact support.'
+      );
+
+      await prisma.wallet.update({
+        where: { id: walletId },
+        data: { deficitLiability: 0.0 },
+      });
     });
 
     test('successfully initiates account deletion request and dispatches OTP with purpose ACCOUNT_DELETION', async () => {
@@ -337,10 +369,10 @@ describe('Account Deletion Lifecycle & Minimum Redemption Threshold Tests', () =
       expect(anonymizedPayment?.upiId).toBeNull();
       expect(anonymizedPayment?.accountHolderName).toBe('ANONYMIZED');
 
-      // Verify Financial Ledger RETAINED
+      // Verify Financial Ledger RETAINED (availableBalance 0 after full redemption)
       const wallet = await prisma.wallet.findUnique({ where: { id: walletId } });
       expect(wallet).toBeDefined();
-      expect(Number(wallet?.availableBalance)).toBe(250.0);
+      expect(Number(wallet?.availableBalance)).toBe(0.0);
 
       const transactions = await prisma.walletTransaction.findMany({ where: { walletId } });
       expect(transactions.length).toBe(1);

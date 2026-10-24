@@ -46,7 +46,7 @@ The platform separates administrative privileges into two non-overlapping roles:
 Admin authentication requires three sequential factors:
 1. **Tier 1 (Prefix Verification):** Client submits the administrator prefix manually. The prefix is a server-side high-entropy credential (minimum 16 characters), is compared in constant time, and must never be placed in `NEXT_PUBLIC_*` variables or bundled into the frontend. Production/staging/UAT startup rejects short or low-entropy prefixes. A successful check returns a short-lived `X-Tier1-Token`.
 2. **Tier 2 (Password Verification):** Client submits username/mobile, password, and `X-Tier1-Token`. Password attempts are throttled by a 15-minute sliding window (max 5 failed attempts).
-3. **Tier 3 (Transactional 2FA OTP):** Backend issues an encrypted challenge and dispatches a 6-digit OTP via SMS/WhatsApp. The admin must verify this challenge within 5 minutes to receive access and refresh tokens.
+3. **Tier 3 (Transactional 2FA OTP):** Backend issues an encrypted challenge and dispatches a 6-digit OTP via WhatsApp Business API (with automated MSG91 SMS failover). The admin must verify this challenge within 5 minutes to receive access and refresh tokens.
 
 ### C. Single Active Session Enforcement
 Both craftsmen and administrators are restricted to a single active session:
@@ -55,8 +55,8 @@ Both craftsmen and administrators are restricted to a single active session:
 - Subsequent logins on other devices invalidate previous sessions immediately.
 
 ### D. Anti-Enumeration & Toll-Fraud Defenses on OTP Endpoints
-- **Purpose-Specific Phone Validation**: On `POST /auth/send-otp` (and `POST /auth/request-otp`), requesting an OTP for `purpose = 'REGISTRATION'` for a phone number that already exists returns HTTP 200 with generic success message but suppresses actual SMS delivery (`shouldSendSms = false`), preventing account enumeration and toll-fraud.
-- **Login Purpose Safeguard**: Requesting OTP for `purpose = 'LOGIN'` for an unregistered mobile returns HTTP 200 with generic success message but suppresses SMS delivery.
+- **Purpose-Specific Phone Validation**: On `POST /auth/send-otp` (and `POST /auth/request-otp`), requesting an OTP for `purpose = 'REGISTRATION'` for a phone number that already exists returns HTTP 200 with generic success message but suppresses actual WhatsApp/SMS delivery (`shouldSendSms = false`), preventing account enumeration and toll-fraud.
+- **Login Purpose Safeguard**: Requesting OTP for `purpose = 'LOGIN'` for an unregistered mobile returns HTTP 200 with generic success message but suppresses WhatsApp/SMS delivery.
 - **Strict Rate Limiting**: OTP requests are throttled per IP and per mobile number with sliding window limits and IP burst limits.
 
 ---
@@ -65,7 +65,7 @@ Both craftsmen and administrators are restricted to a single active session:
 
 ### A. Data at Rest Encryption
 - **PAN Card & Sensitive KYC Data:** Encrypted using **AES-256-GCM** with unique 96-bit initialization vectors (IVs) and authentication tags before persistence in PostgreSQL.
-- **Blind Indexing for Searching:** Searchable PII (such as PAN and mobile numbers) utilizes **HMAC-SHA256** blind indexing with an isolated server pepper (`FIELD_ENCRYPTION_KEY`). Blank or falsy inputs return `null` to avoid unique constraint collisions.
+- **Blind Indexing for Searching:** Searchable PII (such as PAN and mobile numbers) utilizes **HMAC-SHA256** blind indexing with an isolated server pepper (`BLIND_INDEX_SECRET`). Blank or falsy inputs return `null` to avoid unique constraint collisions.
 - **Offsite Backups:** PostgreSQL database dumps are compressed (`gzip -9`) and encrypted using **AES-256-GCM** with PBKDF2 key derivation before being uploaded to Cloudflare R2.
 
 ### B. Data in Transit
@@ -82,7 +82,7 @@ Both craftsmen and administrators are restricted to a single active session:
 4. **Absolute NEFT Prohibition:** Payout rails are strictly limited to instant settlement methods (`UPI` and `IMPS`). The database enum `PaymentType` permits only `UPI` and `BANK_ACCOUNT`; worker dispatch enforces `mode: 'UPI' | 'IMPS'`. NEFT is blocked across routes, services, workers, and fallback routines.
 5. **Single Default Payment Account:** Database partial unique index `PaymentAccount_user_single_default_idx` (`userId WHERE "isDefault" = true`) prevents concurrent registration of multiple default disbursement destinations.
 6. **Duplicate Reward Credit Elimination:** Database partial unique index `idx_wallet_tx_bill_reward_credit_unique` (`referenceId WHERE "referenceType" = 'BILL' AND "type" = 'REWARD_CREDIT'`) rejects duplicate reward credits at the DB storage layer.
-7. **Worker CAS Leases:** Background workers (`payout.worker.ts`, `reconciliation.worker.ts`) claim jobs using 60-second atomic Compare-And-Swap (CAS) leases on `WebhookEvent.lockedUntil` to eliminate duplicate execution across cluster nodes.
+7. **Worker CAS Leases:** Background workers and webhook consumers claim jobs using 180-second atomic Compare-And-Swap (CAS) leases on `WebhookEvent.lockedUntil` with attempt fencing (`attempts` validation) on finalization to eliminate duplicate execution across cluster nodes.
 8. **Reversal Invariant Assertions:** Inbound webhooks must match expected currency (`INR`) and exact paise amounts before payout state transitions occur. Any drift triggers automated manual review flags.
 
 ---

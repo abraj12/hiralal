@@ -21,7 +21,7 @@ describe('Phase 1 Verification & Regression Suite (High-Priority Security & Avai
       const content = fs.readFileSync(configPath, 'utf8');
       expect(content).toContain('<pin-set');
       expect(content).toContain('hsspl.algions.in');
-      expect(content).toContain('hsspl.aglions.in');
+      expect(content).not.toContain('hsspl.aglions.in');
       expect(content).not.toContain('hiralalandcompany.com');
       expect(content).toContain('<pin digest="SHA-256">');
       expect(content).toContain('C5+o0AITHadrtpqMe4ZhtRfDCCDa60MBXZRe89mbDHQ='); // Let's Encrypt ISRG Root X1

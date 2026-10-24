@@ -182,6 +182,9 @@ export class PayoutService {
     if (user.status !== 'ACTIVE') {
       throw new Error('User account is suspended or inactive.');
     }
+    if (user.deletionScheduledAt || user.deletionRequestedAt) {
+      throw new Error('Cannot request rewards payout while account deletion is requested or scheduled.');
+    }
 
     const { settings, isWindowOpen } = await this.getRedemptionSettings(user.profession || undefined);
 
@@ -357,6 +360,9 @@ export class PayoutService {
         }
         if (user.status !== 'ACTIVE') {
           throw new Error('User account is suspended or inactive.');
+        }
+        if (user.deletionScheduledAt || user.deletionRequestedAt) {
+          throw new Error('Cannot request rewards payout while account deletion is requested or scheduled.');
         }
 
         const verifiedKycRecord = user.kycRecords.length > 0 ? user.kycRecords[0] : null;

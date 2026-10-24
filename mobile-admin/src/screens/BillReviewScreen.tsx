@@ -28,7 +28,7 @@ import {
   Search,
 } from 'lucide-react-native';
 import { useAdminApp as useApp } from '../context/AdminAppContext';
-import { MobileApiClient } from '../services/api';
+import { MobileApiClient, isAllowedDocumentUrl } from '../services/api';
 
 interface GstRuleOption {
   id: string;
@@ -179,8 +179,8 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
 
   const handleOpenExternal = async (url: string) => {
     try {
-      if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url.trim())) {
-        Alert.alert('Security Alert', 'Untrusted or invalid document URL protocol.');
+      if (!url || typeof url !== 'string' || !isAllowedDocumentUrl(url)) {
+        Alert.alert('Security Alert', 'Untrusted or unauthorized document destination host.');
         return;
       }
       const supported = await Linking.canOpenURL(url);

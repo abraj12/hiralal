@@ -24,6 +24,8 @@ export class BillService {
     mimeType: string;
     remarks?: string;
     parentBillId?: string;
+    vendorGstin?: string;
+    merchantName?: string;
   }) {
     const user = await prisma.user.findUnique({
       where: { id: data.userId },
@@ -146,17 +148,43 @@ export class BillService {
           }
         }
 
-        // Check cross-user duplicate invoice number across the platform (case-insensitive)
-        const existingGlobalApproved = await tx.bill.findFirst({
-          where: {
-            invoiceNumber: { equals: cleanInvoiceNumber, mode: 'insensitive' },
-            status: 'APPROVED',
-            userId: { not: data.userId },
-          },
-        });
+        // FINDING-05: Normalize vendor identity
+        const cleanVendorGstin = data.vendorGstin && typeof data.vendorGstin === 'string' && data.vendorGstin.trim()
+          ? data.vendorGstin.trim().toUpperCase()
+          : null;
+        if (cleanVendorGstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/i.test(cleanVendorGstin)) {
+          throw new Error('Invalid Indian GSTIN format. Expected 15-character alphanumeric GSTIN (e.g. 08AAAAA0000A1Z5).');
+        }
+        const cleanMerchantName = data.merchantName && typeof data.merchantName === 'string' && data.merchantName.trim()
+          ? data.merchantName.trim()
+          : null;
+
+        // Check cross-user duplicate invoice number scoped by vendor GSTIN or merchant (case-insensitive)
+        let existingGlobalApproved = null;
+        if (cleanVendorGstin) {
+          existingGlobalApproved = await tx.bill.findFirst({
+            where: {
+              invoiceNumber: { equals: cleanInvoiceNumber, mode: 'insensitive' },
+              vendorGstin: { equals: cleanVendorGstin, mode: 'insensitive' },
+              status: 'APPROVED',
+              userId: { not: data.userId },
+            },
+          });
+        } else if (cleanMerchantName) {
+          existingGlobalApproved = await tx.bill.findFirst({
+            where: {
+              invoiceNumber: { equals: cleanInvoiceNumber, mode: 'insensitive' },
+              merchantName: { equals: cleanMerchantName, mode: 'insensitive' },
+              vendorGstin: null,
+              status: 'APPROVED',
+              userId: { not: data.userId },
+            },
+          });
+        }
 
         if (existingGlobalApproved) {
-          throw new Error(`Invoice #${cleanInvoiceNumber} has already been submitted and approved on the platform.`);
+          const scope = cleanVendorGstin ? ` from vendor GSTIN ${cleanVendorGstin}` : '';
+          throw new Error(`Invoice #${cleanInvoiceNumber}${scope} has already been submitted and approved on the platform.`);
         }
 
         return await tx.bill.create({
@@ -174,6 +202,8 @@ export class BillService {
             parentBillId,
             revisionNumber,
             requiresSecondaryApproval,
+            vendorGstin: cleanVendorGstin,
+            merchantName: cleanMerchantName,
             fileUrl: uploadResult.fileUrl,
             fileKey: uploadResult.fileKey,
             fileHash,
@@ -345,6 +375,8 @@ export class BillService {
           gstOverrideReason?: string;
           correctedGrossAmount?: number;
           isOperationsAdminApproved?: boolean;
+          vendorGstin?: string;
+          merchantName?: string;
         },
     adminIdArg?: string,
     optionsArg?: {
@@ -353,6 +385,8 @@ export class BillService {
       gstRuleId?: string;
       gstOverrideReason?: string;
       isOperationsAdminApproved?: boolean;
+      vendorGstin?: string;
+      merchantName?: string;
     }
   ) {
     let billId: string;
@@ -363,6 +397,8 @@ export class BillService {
       gstRuleId?: string;
       gstOverrideReason?: string;
       isOperationsAdminApproved?: boolean;
+      vendorGstin?: string;
+      merchantName?: string;
     } | undefined;
 
     if (typeof billIdOrParams === 'object') {
@@ -423,21 +459,61 @@ export class BillService {
       }
 
       // Defense-in-depth: check if another bill with the same invoiceNumber was already approved
-      // SEC-HIGH-01: Acquire PostgreSQL advisory transaction lock keyed to normalized invoice number
-      // to strictly serialize cross-user approvals of identical invoice numbers and eliminate TOCTOU races.
+      // FINDING-05: Scope invoice uniqueness by vendor identity (GSTIN or Merchant Name) or submitter userId
+      // SEC-HIGH-01: Acquire PostgreSQL advisory transaction lock keyed to scoped invoice identity to eliminate TOCTOU races
+      const effectiveGstin = options?.vendorGstin !== undefined
+        ? (options.vendorGstin?.trim().toUpperCase() || null)
+        : bill.vendorGstin;
+      const effectiveMerchant = options?.merchantName !== undefined
+        ? (options.merchantName?.trim() || null)
+        : bill.merchantName;
+
       if (bill.invoiceNumber) {
         const cleanInvoice = bill.invoiceNumber.trim().toUpperCase();
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:' + cleanInvoice}))`;
 
-        const alreadyApproved = await tx.bill.findFirst({
-          where: {
-            id: { not: bill.id },
-            invoiceNumber: { equals: bill.invoiceNumber.trim(), mode: 'insensitive' },
-            status: 'APPROVED',
-          },
-        });
-        if (alreadyApproved) {
-          throw new Error(`Another bill with invoice #${bill.invoiceNumber} has already been approved.`);
+        if (effectiveGstin) {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:' + effectiveGstin + ':' + cleanInvoice}))`;
+          const alreadyApproved = await tx.bill.findFirst({
+            where: {
+              id: { not: bill.id },
+              invoiceNumber: { equals: cleanInvoice, mode: 'insensitive' },
+              vendorGstin: { equals: effectiveGstin, mode: 'insensitive' },
+              status: 'APPROVED',
+            },
+          });
+          if (alreadyApproved) {
+            throw new Error(`Another bill with invoice #${bill.invoiceNumber} from vendor GSTIN ${effectiveGstin} has already been approved.`);
+          }
+        } else if (effectiveMerchant) {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:m:' + effectiveMerchant.toLowerCase() + ':' + cleanInvoice}))`;
+          const alreadyApproved = await tx.bill.findFirst({
+            where: {
+              id: { not: bill.id },
+              invoiceNumber: { equals: cleanInvoice, mode: 'insensitive' },
+              merchantName: { equals: effectiveMerchant, mode: 'insensitive' },
+              vendorGstin: null,
+              status: 'APPROVED',
+            },
+          });
+          if (alreadyApproved) {
+            throw new Error(`Another bill with invoice #${bill.invoiceNumber} from merchant ${effectiveMerchant} has already been approved.`);
+          }
+        } else {
+          // Unorganized retail without GSTIN or merchant name is scoped per user
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:u:' + bill.userId + ':' + cleanInvoice}))`;
+          const alreadyApproved = await tx.bill.findFirst({
+            where: {
+              id: { not: bill.id },
+              invoiceNumber: { equals: cleanInvoice, mode: 'insensitive' },
+              userId: bill.userId,
+              vendorGstin: null,
+              merchantName: null,
+              status: 'APPROVED',
+            },
+          });
+          if (alreadyApproved) {
+            throw new Error(`Another bill with invoice #${bill.invoiceNumber} has already been approved for this account.`);
+          }
         }
       }
 
@@ -525,13 +601,14 @@ export class BillService {
         }
 
         // Lock wallet FOR UPDATE to read fresh deficitLiability and prevent concurrent race conditions
-        const lockedWalletRows = await tx.$queryRaw<Array<{ id: string; deficitLiability: any }>>`
-          SELECT "id", "deficitLiability"
+        const lockedWalletRows = await tx.$queryRaw<Array<{ id: string; availableBalance: any; deficitLiability: any }>>`
+          SELECT "id", "availableBalance", "deficitLiability"
           FROM "Wallet"
           WHERE "id" = ${wallet.id}
           FOR UPDATE
         `;
         const lockedWallet = lockedWalletRows[0] || wallet;
+        const previousBalance = Number(lockedWallet.availableBalance || 0);
 
         // FIN-FINDING-04: Offset deficit liability from previous financial drift clawbacks
         const currentDeficit = Number(lockedWallet.deficitLiability || 0);
@@ -551,21 +628,48 @@ export class BillService {
         const updatedWallet = updatedWalletRows[0];
         newBalance = Number(updatedWallet.availableBalance);
 
-        // 7. Create immutable ledger record
-        await tx.walletTransaction.create({
-          data: {
-            walletId: wallet.id,
-            userId: bill.userId,
-            amount: finalReward,
-            type: 'REWARD_CREDIT',
-            balanceAfter: newBalance,
-            referenceType: 'BILL',
-            referenceId: bill.id,
-            description: deficitOffset > 0
-              ? `Reward of ${Number(finalReward).toLocaleString('en-IN')} Points credited (${Number(deficitOffset).toLocaleString('en-IN')} Points offset against deficit liability) for approved invoice #${bill.invoiceNumber} (${profession})`
-              : `Reward of ${Number(finalReward).toLocaleString('en-IN')} Points credited for approved invoice #${bill.invoiceNumber} (${profession})`,
-          },
-        });
+        // 7. Create immutable ledger record(s) - FINDING-15: Double-entry ledger continuity
+        if (deficitOffset > 0) {
+          const balanceAfterGrossCredit = previousBalance + finalReward;
+          await tx.walletTransaction.create({
+            data: {
+              walletId: wallet.id,
+              userId: bill.userId,
+              amount: finalReward,
+              type: 'REWARD_CREDIT',
+              balanceAfter: balanceAfterGrossCredit,
+              referenceType: 'BILL',
+              referenceId: bill.id,
+              description: `Reward of ${Number(finalReward).toLocaleString('en-IN')} Points credited for approved invoice #${bill.invoiceNumber} (${profession})`,
+            },
+          });
+
+          await tx.walletTransaction.create({
+            data: {
+              walletId: wallet.id,
+              userId: bill.userId,
+              amount: deficitOffset,
+              type: 'DEFICIT_OFFSET',
+              balanceAfter: newBalance,
+              referenceType: 'BILL',
+              referenceId: bill.id,
+              description: `Deficit liability offset of ${Number(deficitOffset).toLocaleString('en-IN')} Points deducted against approved invoice #${bill.invoiceNumber} (${profession})`,
+            },
+          });
+        } else {
+          await tx.walletTransaction.create({
+            data: {
+              walletId: wallet.id,
+              userId: bill.userId,
+              amount: finalReward,
+              type: 'REWARD_CREDIT',
+              balanceAfter: newBalance,
+              referenceType: 'BILL',
+              referenceId: bill.id,
+              description: `Reward of ${Number(finalReward).toLocaleString('en-IN')} Points credited for approved invoice #${bill.invoiceNumber} (${profession})`,
+            },
+          });
+        }
       } else {
         const existingWallet = await tx.wallet.findUnique({
           where: { userId: bill.userId },
@@ -578,11 +682,23 @@ export class BillService {
         if (bill.verifiedByAdminId && bill.verifiedByAdminId === adminId) {
           throw new Error('Secondary approver cannot be the same administrator who performed primary verification.');
         }
-        if (bill.parentBillId) {
-          const parent = await tx.bill.findUnique({ where: { id: bill.parentBillId }, select: { verifiedByAdminId: true } });
-          if (parent?.verifiedByAdminId && parent.verifiedByAdminId === adminId) {
-            throw new Error('Secondary approver cannot be the same administrator who performed primary verification.');
+        // FINDING-07: Dual custody revision ancestor recursion - check all ancestor revisions up to root
+        let currentAncestorId = bill.parentBillId;
+        const visitedAncestors = new Set<string>();
+        while (currentAncestorId && !visitedAncestors.has(currentAncestorId)) {
+          visitedAncestors.add(currentAncestorId);
+          const ancestor = await tx.bill.findUnique({
+            where: { id: currentAncestorId },
+            select: { parentBillId: true, verifiedByAdminId: true, secondaryApprovedByAdminId: true },
+          });
+          if (!ancestor) break;
+          if (
+            (ancestor.verifiedByAdminId && ancestor.verifiedByAdminId === adminId) ||
+            (ancestor.secondaryApprovedByAdminId && ancestor.secondaryApprovedByAdminId === adminId)
+          ) {
+            throw new Error('Secondary approver cannot be the same administrator who performed primary verification or secondary approval on any ancestor revision of this bill.');
           }
+          currentAncestorId = ancestor.parentBillId;
         }
       }
 
@@ -593,6 +709,8 @@ export class BillService {
           status: 'APPROVED',
           grossBillAmount: gross,
           billAmount: gross,
+          vendorGstin: effectiveGstin,
+          merchantName: effectiveMerchant,
           gstIncluded: gstCalc.gstIncluded,
           gstRate: gstCalc.gstRate,
           gstAmount: gstCalc.gstAmount,

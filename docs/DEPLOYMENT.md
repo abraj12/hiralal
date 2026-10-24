@@ -48,13 +48,13 @@ The production platform is hosted on a **Hostinger KVM 2 VPS** running Ubuntu 24
 
 - **Server:** Hostinger KVM 2 VPS (2 vCPU, 8 GB RAM, 100 GB NVMe Disk).
 - **Service Memory Reservations & Caps:**
-  - PostgreSQL 16: Capped at 1,280 MB (`shared_buffers=512MB`, `work_mem=16MB`).
+  - PostgreSQL 16: Capped at 1,536 MB (`shared_buffers=384MB`, `work_mem=4MB`, `effective_cache_size=1GB`, `maintenance_work_mem=64MB`).
   - Backend API: Capped at 768 MB (`--max-old-space-size=512`).
   - Background Worker: Capped at 512 MB (`--max-old-space-size=384`).
   - Admin Portal: Capped at 512 MB.
   - Redis 7: Capped at 256 MB (`maxmemory 200mb`, `volatile-lru`).
   - Nginx: Capped at 128 MB.
-  - Total Stack Usage: ~3.45 GB allocated, leaving ~4.5 GB headroom for OS cache, backups, and spikes.
+  - Total Stack Usage: ~3.7 GB allocated, leaving ~4.3 GB headroom for OS cache, backups, and spikes.
 
 ---
 
@@ -93,9 +93,12 @@ docker compose up -d --build
 ```
 
 ### Step 3: Execute Database Migrations
-Migrations are applied idempotently using Prisma:
+Migrations are applied idempotently using the dedicated isolated migration runner container:
 ```bash
-docker compose exec backend npx prisma migrate deploy
+docker compose --profile tools run --rm migrate
+
+# Fallback in running container:
+# docker compose exec backend npx prisma migrate deploy
 ```
 
 ### Step 4: Verify Deployment Health
@@ -127,9 +130,10 @@ export BACKUP_ENCRYPTION_PASSPHRASE="strong-cryptographic-passphrase"
 ### Restoring from an Encrypted Backup
 ```bash
 export BACKUP_ENCRYPTION_PASSPHRASE="strong-cryptographic-passphrase"
-./scripts/restore-db.sh /path/to/backup.sql.gz.enc [TARGET_DATABASE]
+./scripts/restore-db.sh /path/to/backup.sql.gz.enc [TARGET_DATABASE] --allow-production-overwrite
 ```
 *Safety features:*
+- Target database safety guard: Restoring into a production database (`hiralal_rewards`) strictly requires the `--allow-production-overwrite` flag (or `RESTORE_CONFIRM_OVERWRITE=true`) to prevent inadvertent destructive overwrites.
 - Takes a pre-restore safety snapshot before touching the active database.
 - Runs with `set -euo pipefail`. If any restore step fails, operations halt immediately.
 - Executes verification queries to ensure schema tables (`User`, `Wallet`, `_prisma_migrations`) are intact.

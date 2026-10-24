@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { PayoutService } from '../services/payout.service';
+import { AuthService } from '../services/auth.service';
 import { payoutRedeemLimiter } from '../middleware/rateLimit.middleware';
 import { requireActionIntegrity } from '../middleware/integrity.middleware';
 import { prisma } from '../db';
@@ -58,10 +59,29 @@ const handleRedeemRequest = async (req: AuthenticatedRequest, res: Response) => 
     if (!userRecord || !userRecord.passwordHash) {
       return res.status(400).json({ success: false, message: 'User account not found.' });
     }
+
+    // FINDING-12: Enforce lockout before checking password
+    if (userRecord.lockedUntil && userRecord.lockedUntil > new Date()) {
+      return res.status(429).json({
+        success: false,
+        message: 'Account is temporarily locked due to too many failed password attempts. Please try again later.',
+      });
+    }
+
     const isMatch = await bcrypt.compare(req.body.password, userRecord.passwordHash);
     if (!isMatch) {
+      const lockResult = await AuthService.recordFailedPasswordAttempt(user.id);
+      if (lockResult.isLocked) {
+        return res.status(429).json({
+          success: false,
+          message: 'Account is temporarily locked due to too many failed password attempts. Please try again later.',
+        });
+      }
       return res.status(400).json({ success: false, message: 'Incorrect account password. Verification failed.' });
     }
+
+    // Reset failed password attempts on successful verification
+    await AuthService.resetFailedPasswordAttempts(user.id);
 
     // 100% full available balance redemption (server-controlled)
     const result = await PayoutService.requestRedemption(user.id, idempotencyKey);

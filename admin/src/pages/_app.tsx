@@ -8,7 +8,8 @@ import { AdminErrorBoundary } from '../components/AdminErrorBoundary';
 
 export default function App({ Component, pageProps }: AppProps) {
   const router = useRouter();
-  const [authorized, setAuthorized] = useState(false);
+  // FINDING-17: Track authorized path to eliminate transient flash of unauthorized content on route change
+  const [authorizedPath, setAuthorizedPath] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -26,7 +27,7 @@ export default function App({ Component, pageProps }: AppProps) {
           const opsAdminAllowed = ['/', '/bills', '/users', '/rewards', '/payouts', '/audit-logs', '/notifications', '/settings'];
 
           if (isLogin) {
-            setAuthorized(true);
+            setAuthorizedPath('/login');
             router.replace('/');
             return;
           }
@@ -36,7 +37,7 @@ export default function App({ Component, pageProps }: AppProps) {
             (role === 'OPERATIONS_ADMIN' && opsAdminAllowed.includes(pathname));
 
           if (!isAllowed) {
-            setAuthorized(false);
+            setAuthorizedPath(null);
             if (role === 'BILL_ADMIN' || role === 'OPERATIONS_ADMIN') {
               router.replace('/');
             } else {
@@ -45,12 +46,12 @@ export default function App({ Component, pageProps }: AppProps) {
             }
             return;
           } else {
-            setAuthorized(true);
+            setAuthorizedPath(pathname);
           }
         } else {
           AdminApiClient.clearToken();
           if (!isLogin) {
-            setAuthorized(false);
+            setAuthorizedPath(null);
             router.replace('/login');
           }
         }
@@ -58,7 +59,7 @@ export default function App({ Component, pageProps }: AppProps) {
         if (!mounted) return;
         AdminApiClient.clearToken();
         if (!isLogin) {
-          setAuthorized(false);
+          setAuthorizedPath(null);
           router.replace('/login');
         }
       }
@@ -67,13 +68,15 @@ export default function App({ Component, pageProps }: AppProps) {
     if (!isLogin) {
       verifySession();
     } else {
-      setAuthorized(true);
+      setAuthorizedPath('/login');
     }
 
     return () => {
       mounted = false;
     };
   }, [router.pathname]);
+
+  const isAuthorized = router.pathname === '/login' || authorizedPath === router.pathname;
 
   return (
     <>
@@ -83,7 +86,7 @@ export default function App({ Component, pageProps }: AppProps) {
         <meta name="robots" content="noindex, nofollow, noarchive" />
         <link rel="icon" href="/assets/brand_logo.png" />
       </Head>
-      {authorized || router.pathname === '/login' ? (
+      {isAuthorized ? (
         <AdminErrorBoundary>
           <Component {...pageProps} />
         </AdminErrorBoundary>
