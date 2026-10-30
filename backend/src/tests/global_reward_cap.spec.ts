@@ -319,6 +319,7 @@ describe('Part B & C — Pool-Free Reward Integrity, Volume Scaling, Self-Approv
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           customRewardAmount: 500.0,
         });
 

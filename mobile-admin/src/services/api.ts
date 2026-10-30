@@ -552,6 +552,8 @@ export class MobileApiClient {
           gstRate?: number;
           gstRuleId?: string;
           gstOverrideReason?: string;
+          vendorGstin?: string;
+          merchantName?: string;
         },
     legacyRejectionReason?: string
   ) {

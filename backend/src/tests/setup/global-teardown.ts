@@ -9,7 +9,9 @@
  * they do not mask test failures).
  */
 
+import dotenv from 'dotenv';
 import { PrismaClient, UserRole } from '@prisma/client';
+import { assertSafeTestDatabase } from './test-db-guard';
 
 const TEST_ADMIN_MOBILE_PATTERNS = [
   '9999900001', // bill-admin seed
@@ -18,6 +20,9 @@ const TEST_ADMIN_MOBILE_PATTERNS = [
 ];
 
 module.exports = async function globalTeardown() {
+  // HIR-M-11: Never run destructive cleanup against a non-test database
+  dotenv.config();
+  assertSafeTestDatabase();
   const prisma = new PrismaClient();
   try {
     const adminUsers = await prisma.user.findMany({

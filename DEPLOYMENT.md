@@ -46,6 +46,7 @@
      - Port 80 (HTTP) allowed for ACME challenges and HTTP-to-HTTPS redirect.
      - Port 443 (HTTPS) allowed for production TLS traffic.
      - Ports 5432 (Postgres), 6379 (Redis), 5000 (Backend API), and 3000 (Admin) explicitly blocked from public WAN access.
+   - **Docker `DOCKER-USER` chain**: ports 80/443 accepted only from Cloudflare ranges, bound to the public interface (auto-detected from the default route, or set `EXT_IF=eth0`). The interface binding is required so container egress to RazorpayX, SignCare, Google, Meta and R2 is not dropped. After running, verify egress: `docker exec hiralal_backend node -e "fetch('https://api.razorpay.com').then(r=>console.log(r.status))"`.
    - **Fail2ban SSH Protection**:
      - Protects against brute-force attempts (`bantime = 1h`, `findtime = 10m`, `maxretry = 5`).
    - **Kernel & Sysctl Hardening**:

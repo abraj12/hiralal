@@ -308,7 +308,7 @@ describe('Hiralal Rewards Platform — Part 2 Master Remediation Suite', () => {
       const verifyRes = await request(app)
         .post('/api/admin/bills/some-bill-id/verify')
         .set('Authorization', `Bearer ${workerToken}`)
-        .send({ action: 'APPROVE', gstIncluded: false });
+        .send({ action: 'APPROVE', gstIncluded: false, merchantName: 'Test Plumbing Supplies' });
       expect(verifyRes.status).toBe(403);
     });
 

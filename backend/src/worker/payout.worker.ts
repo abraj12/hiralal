@@ -87,6 +87,10 @@ export class PayoutWorker {
   private static isOutboxPolling = false;
   private static pollTimer: NodeJS.Timeout | null = null;
 
+  // HIR-H-03: A PAYOUT_INITIATED claim older than this is considered abandoned (full dispatch path
+  // is bounded by three 10-second network timeouts).
+  static readonly DISPATCH_CLAIM_STALE_MS = 5 * 60 * 1000;
+
   // Redis Keys and State (DEF-EXT-02: Worker polling cursor state & health monitoring)
   private static readonly HEARTBEAT_KEY = 'worker:payout:heartbeat';
   private static readonly CHECKPOINT_KEY = 'worker:payout:checkpoint';
@@ -271,17 +275,52 @@ export class PayoutWorker {
     });
 
     if (claim.count !== 1) {
-      // Check if this payout is already in PAYOUT_INITIATED (e.g. from an uncompleted prior attempt)
+      // HIR-H-03: A PAYOUT_INITIATED payout may still be owned by a live dispatcher. Only take it over
+      // once its claim is stale, via compare-and-swap on initiatedAt, and never re-send it to the
+      // provider without first checking whether the provider already holds a payout for it.
       const existing = await prisma.payout.findUnique({
         where: { id: payoutId },
-        select: { status: true, requiresManualReview: true },
+        select: { status: true, requiresManualReview: true, initiatedAt: true },
       });
-      if (existing?.status === 'PAYOUT_INITIATED' && !existing.requiresManualReview) {
-        console.log(`[PAYOUT-WORKER] Payout ${payoutId} already claimed in PAYOUT_INITIATED. Resuming dispatch.`);
-      } else {
-        console.log(`[PAYOUT-WORKER] Payout ${payoutId} is not in APPROVED state or already claimed. Skipping dispatch.`);
+      const staleBefore = new Date(Date.now() - PayoutWorker.DISPATCH_CLAIM_STALE_MS);
+      if (
+        existing?.status !== 'PAYOUT_INITIATED' ||
+        existing.requiresManualReview ||
+        !existing.initiatedAt ||
+        existing.initiatedAt > staleBefore
+      ) {
+        console.log(`[PAYOUT-WORKER] Payout ${payoutId} is not claimable (status ${existing?.status ?? 'missing'}). Skipping dispatch.`);
         return;
       }
+
+      const takeover = await prisma.payout.updateMany({
+        where: {
+          id: payoutId,
+          status: 'PAYOUT_INITIATED',
+          requiresManualReview: false,
+          initiatedAt: existing.initiatedAt,
+        },
+        data: { initiatedAt: new Date() },
+      });
+      if (takeover.count !== 1) {
+        console.log(`[PAYOUT-WORKER] Payout ${payoutId} stale claim was taken over concurrently. Skipping dispatch.`);
+        return;
+      }
+
+      const lookup = await PayoutService.queryGatewayByReference(payoutId);
+      if (lookup.error || lookup.timeout) {
+        // Ambiguous: leave PAYOUT_INITIATED for the next stale-claim cycle; never dispatch blind.
+        throw new Error(`Provider lookup failed before resuming stale payout ${payoutId}: ${lookup.message || 'timeout'}`);
+      }
+      if (lookup.found && lookup.payout?.id) {
+        await prisma.payout.updateMany({
+          where: { id: payoutId, status: 'PAYOUT_INITIATED' },
+          data: { status: 'PROCESSING', razorpayPayoutId: lookup.payout.id },
+        });
+        console.log(`[PAYOUT-WORKER] Payout ${payoutId} already exists at provider (${lookup.payout.id}); moved to PROCESSING without re-dispatch.`);
+        return;
+      }
+      console.log(`[PAYOUT-WORKER] Payout ${payoutId} stale claim taken over; provider has no record. Resuming dispatch.`);
     }
 
     // Reload payout with relations after atomic claim
@@ -584,10 +623,33 @@ export class PayoutWorker {
             },
           });
         } else if (payoutRes.status >= 400 && payoutRes.status < 500) {
-          // Definitive Terminal Client Error: Bad request / invalid account / permanent rejection
+          // HIR-H-03: A 4xx (e.g. idempotency-key conflict) does not prove that no payout exists.
+          // Refund only after the provider confirms it holds no payout for this reference.
           const reason = payoutData.error?.description || 'Disbursement rejected by payment gateway';
-          console.warn(`[PAYOUT-WORKER] Payout ${payout.id} rejected by Razorpay: ${reason}`);
-          await PayoutService.reversePayout(payout.id, reason);
+          const lookup = await PayoutService.queryGatewayByReference(payout.id);
+          if (lookup.found && lookup.payout?.id) {
+            console.error(`[PAYOUT-WORKER] Payout ${payout.id} got HTTP ${payoutRes.status} but provider holds ${lookup.payout.id}. Not refunding.`);
+            await prisma.payout.updateMany({
+              where: { id: payout.id, status: 'PAYOUT_INITIATED' },
+              data: {
+                status: 'PROCESSING',
+                razorpayPayoutId: lookup.payout.id,
+                failureReason: `Gateway returned ${payoutRes.status} (${reason}) but an existing provider payout was found (Pending reconciliation)`,
+              },
+            });
+          } else if (lookup.error || lookup.timeout) {
+            console.error(`[PAYOUT-WORKER] Payout ${payout.id} got HTTP ${payoutRes.status}; provider lookup inconclusive. Holding in PROCESSING.`);
+            await prisma.payout.updateMany({
+              where: { id: payout.id, status: 'PAYOUT_INITIATED' },
+              data: {
+                status: 'PROCESSING',
+                failureReason: `Gateway returned ${payoutRes.status} (${reason}); provider lookup inconclusive (Pending reconciliation)`,
+              },
+            });
+          } else {
+            console.warn(`[PAYOUT-WORKER] Payout ${payout.id} rejected by Razorpay and absent at provider: ${reason}`);
+            await PayoutService.reversePayout(payout.id, reason);
+          }
         } else {
           // 5xx Server Error: Gateway is in ambiguous state!
           // TIMEOUT SAFETY: DO NOT REVERSE WALLET! Move to PROCESSING for reconciliation.

@@ -348,6 +348,7 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: 'true', // string instead of boolean
         });
 
@@ -374,6 +375,7 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: true,
           gstRate: 12.0,
           // no gstRuleId and no gstOverrideReason
@@ -389,6 +391,7 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: true,
           gstRate: 12.0,
           gstOverrideReason: 'Attempt manual override',
@@ -410,6 +413,7 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: true,
           gstRuleId: activeRule!.id,
         });
@@ -425,6 +429,7 @@ describe('P0 Remediation & Financial Integrity Test Suite', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: false,
         });
 

@@ -283,7 +283,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     const approveRes = await request(app)
       .post(`/api/admin/bills/${billId}/verify`)
       .set('Authorization', `Bearer ${billAdminToken}`)
-      .send({ action: 'APPROVE', gstIncluded: false, remarks: 'Valid authorized plumbing invoice' });
+      .send({ action: 'APPROVE', gstIncluded: false, merchantName: 'Test Plumbing Supplies', remarks: 'Valid authorized plumbing invoice' });
 
     expect(approveRes.status).toBe(200);
     expect(approveRes.body.bill.status).toBe('APPROVED');

@@ -44,6 +44,11 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   );
   const [selectedGstRuleId, setSelectedGstRuleId] = useState<string>(bill.gstRuleId || '');
 
+  // HIR-H-01: Vendor identity scopes invoice uniqueness to the issuing vendor
+  const [vendorGstin, setVendorGstin] = useState<string>(bill.vendorGstin || '');
+  const [merchantName, setMerchantName] = useState<string>(bill.merchantName || '');
+  const hasVendorIdentity = vendorGstin.trim().length > 0 || merchantName.trim().length >= 2;
+
   const [rewardPercentage, setRewardPercentage] = useState<number | null>(
     bill.rewardRateSnapshot !== null && bill.rewardRateSnapshot !== undefined
       ? Number(bill.rewardRateSnapshot)
@@ -213,6 +218,10 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   const isRoleAuthorized = Boolean(currentUserRole) && (isSecondary ? currentUserRole === 'OPERATIONS_ADMIN' : currentUserRole === 'BILL_ADMIN');
 
   const handleApprove = async () => {
+    if (!hasVendorIdentity) {
+      setError('Enter the vendor GSTIN printed on the invoice, or the merchant/shop name if it has no GSTIN.');
+      return;
+    }
     setIsSubmitting(true);
     setError(null);
     try {
@@ -221,6 +230,8 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
         gstIncluded,
         gstRate: gstIncluded ? selectedGstRate : 0,
         gstRuleId: gstIncluded ? (selectedGstRuleId || undefined) : undefined,
+        vendorGstin: vendorGstin.trim() ? vendorGstin.trim().toUpperCase() : undefined,
+        merchantName: merchantName.trim() || undefined,
       });
       onVerified();
       onClose();
@@ -411,6 +422,30 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
           <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200 space-y-4">
             {isPending ? (
               <>
+                <div className="space-y-2 pb-3 border-b border-slate-200">
+                  <span className="text-xs font-bold text-slate-900 block">Vendor on invoice (required)</span>
+                  <input
+                    type="text"
+                    value={vendorGstin}
+                    onChange={(e) => setVendorGstin(e.target.value)}
+                    maxLength={15}
+                    placeholder="Vendor GSTIN, e.g. 08AAAAA0000A1Z5"
+                    aria-label="Vendor GSTIN"
+                    className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono uppercase"
+                  />
+                  <input
+                    type="text"
+                    value={merchantName}
+                    onChange={(e) => setMerchantName(e.target.value)}
+                    maxLength={200}
+                    placeholder="Merchant / shop name (required if no GSTIN)"
+                    aria-label="Merchant name"
+                    className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="text-[10px] text-slate-400 block">
+                    Used to stop the same invoice being rewarded to more than one account.
+                  </span>
+                </div>
                 <div className="flex items-start justify-between">
                   <label
                     htmlFor="gstIncludedCheckbox"
@@ -759,6 +794,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   rulesUnavailable ||
                   rewardPercentage === null ||
                   (gstIncluded && !selectedGstRuleId) ||
+                  !hasVendorIdentity ||
                   !isRoleAuthorized
                 }
                 title={!isRoleAuthorized ? (isSecondary ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
@@ -766,6 +802,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   rulesUnavailable ||
                   rewardPercentage === null ||
                   (gstIncluded && !selectedGstRuleId) ||
+                  !hasVendorIdentity ||
                   !isRoleAuthorized
                     ? 'bg-slate-400 opacity-50 cursor-not-allowed shadow-none'
                     : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'

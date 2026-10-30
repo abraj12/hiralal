@@ -660,12 +660,8 @@ export class PayoutService {
       { payoutId: updatedPayout.id, amount: Number(updatedPayout.amount) }
     ).catch((err) => console.error('[PAYOUT-SERVICE] Push dispatch failed:', err.message));
 
-    // Trigger dispatch worker asynchronously in non-test environment
-    if (config.nodeEnv !== 'test') {
-      this.triggerPayoutDispatch(updatedPayout.id).catch((err) => {
-        console.warn(`[PAYOUT-DISPATCH-DEFERRED] Payout ${updatedPayout.id} queued for background worker: ${err.message}`);
-      });
-    }
+    // HIR-H-03: Dispatch is performed exclusively by the worker's outbox poller (PAYOUT_DISPATCH event
+    // created above). Dispatching in-process here as well raced the poller for the same payout.
 
     return updatedPayout;
   }
@@ -1491,14 +1487,6 @@ export class PayoutService {
     ).catch((err) => console.error('[PAYOUT-SERVICE] Push dispatch failed:', err.message));
 
     return result;
-  }
-
-  /**
-   * Invokes immediate worker dispatch or falls back to background processor.
-   */
-  static async triggerPayoutDispatch(payoutId: string) {
-    const { PayoutWorker } = await import('../worker/payout.worker');
-    await PayoutWorker.processPayout(payoutId);
   }
 
   /**

@@ -623,6 +623,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
         .set('Authorization', `Bearer ${billAdminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
         });
 
       expect(res.status).toBe(400);
@@ -646,6 +647,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
         .set('Authorization', `Bearer ${billAdminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: true,
           gstRuleId: activeGstRule.id,
           gstRate: 5.0, // active rule is 18.0!
@@ -663,6 +665,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
         .set('Authorization', `Bearer ${billAdminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: true,
           gstRuleId: activeGstRule.id,
           gstRate: 18.0,
@@ -694,6 +697,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
         .set('Authorization', `Bearer ${billAdminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: false,
         });
 
