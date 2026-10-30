@@ -12,6 +12,7 @@ import {
 import { validateStructuredName, compareNames } from '../utils/name.utils';
 import { UserRole, Profession, OtpPurpose, Prisma } from '@prisma/client';
 import { SmsService } from './sms';
+import { ConsentService } from './consent.service';
 
 export function normalizeStrictIndianMobile(identifier: string): string | null {
   if (!identifier || typeof identifier !== 'string') return null;
@@ -1472,6 +1473,7 @@ export class AuthService {
     verificationToken: string;
     userAgent?: string;
     ipAddress?: string;
+    recordLegalAcceptance?: boolean;
   }) {
     const cleanMobile = normalizeStrictIndianMobile(params.mobile);
     if (!cleanMobile) {
@@ -1592,6 +1594,14 @@ export class AuthService {
           expiresAt: sessionExpiresAt,
         },
       });
+
+      // HIR-M-08: evidence of the accepted Terms / Privacy Policy versions and age confirmation
+      if (params.recordLegalAcceptance) {
+        await ConsentService.recordRegistrationAcceptance(tx, newUser.id, {
+          ipAddress: params.ipAddress,
+          userAgent: params.userAgent,
+        });
+      }
 
       return { user: newUser, wallet: newWallet };
     });

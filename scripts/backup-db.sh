@@ -110,13 +110,30 @@ BACKUP_SIZE=$(ls -lh "${ENC_BACKUP}" | awk '{print $5}')
 echo "[$(date -u)] [2/4] Local backup created and encrypted: ${ENC_BACKUP} (${BACKUP_SIZE})"
 
 # 4. Mandatory Offsite Cloudflare R2 Upload & Remote Verification
-R2_BACKUP_BUCKET="${R2_BACKUP_BUCKET:-${R2_BUCKET_NAME:-}}"
+# HIR-M-10: Backups must live in a dedicated bucket written with dedicated credentials, so a
+# compromise of the application's R2 keys cannot delete or overwrite the backups.
+R2_BACKUP_BUCKET="${R2_BACKUP_BUCKET:-}"
+R2_BACKUP_ENDPOINT="${R2_BACKUP_ENDPOINT:-${R2_ENDPOINT:-}}"
+R2_BACKUP_ACCESS_KEY_ID="${R2_BACKUP_ACCESS_KEY_ID:-}"
+R2_BACKUP_SECRET_ACCESS_KEY="${R2_BACKUP_SECRET_ACCESS_KEY:-}"
 
-if [ -z "${R2_BACKUP_BUCKET}" ] || [ -z "${R2_ENDPOINT:-}" ] || [ -z "${R2_ACCESS_KEY_ID:-}" ] || [ -z "${R2_SECRET_ACCESS_KEY:-}" ]; then
+if [ -z "${R2_BACKUP_BUCKET}" ] || [ -z "${R2_BACKUP_ENDPOINT}" ] || [ -z "${R2_BACKUP_ACCESS_KEY_ID}" ] || [ -z "${R2_BACKUP_SECRET_ACCESS_KEY}" ]; then
   echo "[FATAL ERROR] [3/4] Offsite backup configuration is missing or incomplete." >&2
-  echo "Required: R2_BACKUP_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY." >&2
+  echo "Required: R2_BACKUP_BUCKET, R2_BACKUP_ACCESS_KEY_ID, R2_BACKUP_SECRET_ACCESS_KEY (and R2_BACKUP_ENDPOINT or R2_ENDPOINT)." >&2
   echo "[EMERGENCY RECOVERY] Encrypted local file retained at: ${ENC_BACKUP}" >&2
   echo "Backup status: FAILED (Offsite fail-closed policy)." >&2
+  exit 2
+fi
+
+if [ -n "${R2_BUCKET_NAME:-}" ] && [ "${R2_BACKUP_BUCKET}" = "${R2_BUCKET_NAME}" ]; then
+  echo "[FATAL ERROR] [3/4] R2_BACKUP_BUCKET must differ from the invoice bucket R2_BUCKET_NAME." >&2
+  echo "[EMERGENCY RECOVERY] Encrypted local file retained at: ${ENC_BACKUP}" >&2
+  exit 2
+fi
+
+if [ -n "${R2_ACCESS_KEY_ID:-}" ] && [ "${R2_BACKUP_ACCESS_KEY_ID}" = "${R2_ACCESS_KEY_ID}" ]; then
+  echo "[FATAL ERROR] [3/4] R2_BACKUP_ACCESS_KEY_ID must be a dedicated backup credential, not the application's R2 key." >&2
+  echo "[EMERGENCY RECOVERY] Encrypted local file retained at: ${ENC_BACKUP}" >&2
   exit 2
 fi
 
@@ -132,7 +149,7 @@ fi
 
 # Run upload and verification runner (VULN-DR-03: verify host Node has @aws-sdk/client-s3 installed before invoking host runner)
 if command -v node >/dev/null 2>&1 && node -e "require('@aws-sdk/client-s3')" >/dev/null 2>&1; then
-  if ! node "${UPLOAD_SCRIPT}" "${ENC_BACKUP}" "${REMOTE_PREFIX}" "${R2_BACKUP_BUCKET}"; then
+  if ! R2_ENDPOINT="${R2_BACKUP_ENDPOINT}" R2_ACCESS_KEY_ID="${R2_BACKUP_ACCESS_KEY_ID}" R2_SECRET_ACCESS_KEY="${R2_BACKUP_SECRET_ACCESS_KEY}"        node "${UPLOAD_SCRIPT}" "${ENC_BACKUP}" "${REMOTE_PREFIX}" "${R2_BACKUP_BUCKET}"; then
     echo "[FATAL ERROR] Offsite upload or remote verification FAILED." >&2
     echo "[EMERGENCY RECOVERY] Encrypted local file retained at: ${ENC_BACKUP}" >&2
     echo "Backup status: FAILED." >&2
@@ -145,9 +162,9 @@ else
   chmod 600 "${R2_ENV_FILE}"
   cat << EOF > "${R2_ENV_FILE}"
 R2_BACKUP_BUCKET=${R2_BACKUP_BUCKET}
-R2_ENDPOINT=${R2_ENDPOINT}
-R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}
-R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
+R2_ENDPOINT=${R2_BACKUP_ENDPOINT}
+R2_ACCESS_KEY_ID=${R2_BACKUP_ACCESS_KEY_ID}
+R2_SECRET_ACCESS_KEY=${R2_BACKUP_SECRET_ACCESS_KEY}
 EOF
   docker cp "${ENC_BACKUP}" "${BACKEND_CONTAINER}:/tmp/enc_backup.sql.gz.enc"
   if ! docker exec --env-file "${R2_ENV_FILE}" "${BACKEND_CONTAINER}" node /app/scripts/upload-backup.js "/tmp/enc_backup.sql.gz.enc" "${REMOTE_PREFIX}" "${R2_BACKUP_BUCKET}"; then

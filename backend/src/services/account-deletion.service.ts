@@ -1119,10 +1119,9 @@ export class AccountDeletionService {
           // E-04: Notifications containing PII must be purged upon account deletion
           await tx.notification.deleteMany({ where: { userId: u.id } });
           await tx.pushDeviceToken.deleteMany({ where: { userId: u.id } });
-          await tx.appInstallation.updateMany({
-            where: { userId: u.id },
-            data: { userId: null, pushToken: null },
-          });
+          // HIR-M-09: installation rows (device installation ID, push token, app version) are personal
+          // data with no retention purpose once the account is erased
+          await tx.appInstallation.deleteMany({ where: { userId: u.id } });
           await tx.authSession.deleteMany({ where: { userId: u.id } });
           await tx.otpRequest.deleteMany({ where: { mobile: lockedUser.mobile } });
           await tx.verificationToken.deleteMany({ where: { mobile: lockedUser.mobile } });
@@ -1236,6 +1235,24 @@ export class AccountDeletionService {
             },
           });
 
+          // HIR-M-09: Redact personal data in the account's identity and KYC audit entries (IP address,
+          // user agent, names in old/new values). Financial audit entries (bills, payouts) are retained
+          // for statutory purposes. The AuditLog trigger only permits this redaction-shaped update.
+          const userKycIds = (
+            await tx.kycRecord.findMany({ where: { userId: u.id }, select: { id: true } })
+          ).map((k: { id: string }) => k.id);
+          await tx.$executeRaw`SELECT set_config('app.audit_redaction', 'on', true)`;
+          await tx.$executeRaw`
+            UPDATE "AuditLog"
+            SET "ipAddress" = NULL,
+                "userAgent" = NULL,
+                "oldValue" = CASE WHEN "oldValue" IS NULL THEN NULL ELSE '[REDACTED]' END,
+                "newValue" = CASE WHEN "newValue" IS NULL THEN NULL ELSE '[REDACTED]' END
+            WHERE ("entityType" = 'User' AND "entityId" = ${u.id})
+               OR ("entityType" = 'KycRecord' AND ("entityId" = ${u.id} OR "entityId" = ANY(${userKycIds}::text[])))
+          `;
+          await tx.$executeRaw`SELECT set_config('app.audit_redaction', 'off', true)`;
+
           // 6. Task 4.3: Append-only immutable compensating event for deleted account PII redaction
           await tx.auditLog.create({
             data: {
@@ -1243,7 +1260,7 @@ export class AccountDeletionService {
               entityType: 'User',
               entityId: u.id,
               adminId: null,
-              newValue: 'User account anonymized and scheduled for statutory retention. Prior audit history marked redacted.',
+              newValue: 'User account anonymized. Identity and KYC audit entries redacted; financial audit entries retained for statutory purposes.',
               ipAddress: '0.0.0.0',
               userAgent: 'ANONYMIZED',
             },

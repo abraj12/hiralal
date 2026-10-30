@@ -8,6 +8,7 @@ import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';
 import { resetAdmins } from './test_helpers';
+import { currentLegalAcceptance } from '../legal/documents';
 
 describe('Unified User/Admin Authentication, Silent Role Detection & Production Verification', () => {
   const craftsmanMobile = '9876511111';
@@ -578,6 +579,7 @@ describe('Unified User/Admin Authentication, Silent Role Detection & Production 
       const regRes = await request(app)
         .post('/api/auth/register')
         .send({
+        ...currentLegalAcceptance(),
           mobile: regMobile,
           firstName: 'Ramesh',
           lastName: 'Sharma',

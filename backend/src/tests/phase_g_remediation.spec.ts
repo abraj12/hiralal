@@ -643,33 +643,11 @@ describe('Account Deletion — Concurrency Fencing & Cleanup', () => {
     expect(user?.mobile).toBe(TEST_MOBILE);
   });
 
-  test('AppInstallation records have userId and pushToken cleared on anonymization', async () => {
-    const testInstall = await prisma.appInstallation.create({
-      data: {
-        installationId: `cleanup-test-${Date.now()}`,
-        userId,
-        platform: 'ANDROID',
-        pushToken: 'ExponentPushToken[test-cleanup-token]',
-        welcomeStatus: 'DELIVERED',
-      },
-    });
-
-    expect(testInstall.userId).toBe(userId);
-    expect(testInstall.pushToken).not.toBeNull();
-
-    // Execute anonymization transaction logic
-    await prisma.$transaction(async (tx: any) => {
-      await tx.appInstallation.updateMany({
-        where: { userId },
-        data: { userId: null, pushToken: null },
-      });
-    });
-
-    const updatedInstall = await prisma.appInstallation.findUnique({ where: { id: testInstall.id } });
-    expect(updatedInstall?.userId).toBeNull();
-    expect(updatedInstall?.pushToken).toBeNull();
-
-    await prisma.appInstallation.delete({ where: { id: testInstall.id } });
+  test('HIR-M-09: account deletion deletes AppInstallation records instead of keeping them detached', () => {
+    const servicePath = path.join(__dirname, '../services/account-deletion.service.ts');
+    const content = fs.readFileSync(servicePath, 'utf8');
+    expect(content).toContain('tx.appInstallation.deleteMany({ where: { userId: u.id } })');
+    expect(content).not.toContain('data: { userId: null, pushToken: null }');
   });
 
   test('atomic lease version fencing prevents duplicate worker claims', async () => {

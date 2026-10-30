@@ -8,6 +8,7 @@ import { getIstYearAndMonth } from '../utils/timezone.utils';
 import { closeRedis } from '../redis';
 import { resetAdmins } from './test_helpers';
 import { hmacHashOtp } from '../utils/crypto.utils';
+import { currentLegalAcceptance } from '../legal/documents';
 
 describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
   let userToken: string;
@@ -203,6 +204,7 @@ describe('Hiralal & Sons - End-to-End API Integration Tests', () => {
     const regRes = await request(app)
       .post('/api/auth/register')
       .send({
+        ...currentLegalAcceptance(),
         mobile: uniqueMobile,
         fullName: 'Vikram Singh',
         password: 'Password@123',

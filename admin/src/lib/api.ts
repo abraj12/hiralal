@@ -198,8 +198,6 @@ export class AdminApiClient {
       gstRate?: number;
       gstRuleId?: string;
       gstOverrideReason?: string;
-      vendorGstin?: string;
-      merchantName?: string;
     },
     legacyRejectionReason?: string
   ) {

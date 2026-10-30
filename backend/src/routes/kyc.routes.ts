@@ -3,13 +3,15 @@ import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/a
 import { KycService } from '../services/kyc.service';
 import { kycLimiter } from '../middleware/rateLimit.middleware';
 import { requireActionIntegrity } from '../middleware/integrity.middleware';
+import { ConsentService } from '../services/consent.service';
+import { PAN_CONSENT_TEXT } from '../legal/documents';
 
 const router = Router();
 
 router.post('/pan/verify', authenticate, requireUser, kycLimiter, requireActionIntegrity('KYC_SUBMIT'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
-    const { panNumber, panName, consent, consentText } = req.body;
+    const { panNumber, panName, consent } = req.body;
 
     if (!panNumber || !panName || typeof panNumber !== 'string' || typeof panName !== 'string') {
       return res.status(400).json({ success: false, message: 'PAN number and full name on PAN card must be valid text.' });
@@ -22,12 +24,18 @@ router.post('/pan/verify', authenticate, requireUser, kycLimiter, requireActionI
       });
     }
 
+    // HIR-M-08: record the server-owned consent text the app displays, not client-supplied wording
+    await ConsentService.recordPanConsent(user.id, {
+      ipAddress: req.ip || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'],
+    });
+
     const record = await KycService.submitPan({
       userId: user.id,
       panNumber,
       panName,
       consent: true,
-      consentText,
+      consentText: PAN_CONSENT_TEXT,
     });
 
     res.json({

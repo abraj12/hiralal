@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -9,11 +9,13 @@ import {
   Image,
   ActivityIndicator,
   Platform,
+  Modal,
 } from 'react-native';
 import { ArrowLeft, CheckCircle2, ChevronRight, AlertCircle, Wrench, Grid, MoreHorizontal } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { ProfessionType } from '../theme/professionTheme';
 import { MobileApiClient } from '../services/api';
+import { AGE_CONFIRMATION_TEXT } from '../legal/consentTexts';
 
 export default function RegisterScreen() {
   const { setCurrentScreen, refreshData } = useApp();
@@ -38,6 +40,29 @@ export default function RegisterScreen() {
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // HIR-M-06 / HIR-M-08: the user must read and accept the current server-versioned documents
+  const [legalDocs, setLegalDocs] = useState<{
+    terms?: { title: string; version: string; content: string };
+    privacy?: { title: string; version: string; content: string };
+  }>({});
+  const [acceptedLegal, setAcceptedLegal] = useState(false);
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
+  const [viewingDoc, setViewingDoc] = useState<{ title: string; content: string } | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    Promise.all([MobileApiClient.getLegalDocument('terms'), MobileApiClient.getLegalDocument('privacy')])
+      .then(([terms, privacy]) => {
+        if (mounted) setLegalDocs({ terms: terms.document, privacy: privacy.document });
+      })
+      .catch(() => {
+        if (mounted) setLegalDocs({});
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handleSendOtp = async () => {
     if (!mobile || mobile.length !== 10) {
@@ -95,6 +120,14 @@ export default function RegisterScreen() {
       setStep(2);
       return;
     }
+    if (!legalDocs.terms || !legalDocs.privacy) {
+      setErrorMsg('Could not load the Terms & Conditions and Privacy Policy. Check your connection and try again.');
+      return;
+    }
+    if (!acceptedLegal || !ageConfirmed) {
+      setErrorMsg('Please accept the Terms & Conditions and Privacy Policy and confirm you are 18 or older.');
+      return;
+    }
 
     setLoading(true);
     setErrorMsg(null);
@@ -111,6 +144,9 @@ export default function RegisterScreen() {
         password,
         profession: selectedProfession,
         verificationToken,
+        acceptedTermsVersion: legalDocs.terms.version,
+        acceptedPrivacyVersion: legalDocs.privacy.version,
+        ageConfirmed,
       });
       if (res.token) {
         await MobileApiClient.setToken(res.token);
@@ -416,10 +452,34 @@ export default function RegisterScreen() {
               <Text style={styles.pillValue}>{selectedProfession}</Text>
             </View>
 
+            <TouchableOpacity style={styles.legalRow} onPress={() => setAcceptedLegal(!acceptedLegal)} activeOpacity={0.7}>
+              <View style={[styles.legalCheckbox, acceptedLegal && styles.legalCheckboxOn]}>
+                {acceptedLegal && <CheckCircle2 size={14} color="#ffffff" />}
+              </View>
+              <Text style={styles.legalText}>
+                I have read and agree to the{' '}
+                <Text style={styles.legalLink} onPress={() => legalDocs.terms && setViewingDoc(legalDocs.terms)}>
+                  Terms & Conditions
+                </Text>{' '}
+                and the{' '}
+                <Text style={styles.legalLink} onPress={() => legalDocs.privacy && setViewingDoc(legalDocs.privacy)}>
+                  Privacy Policy
+                </Text>
+                .
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.legalRow} onPress={() => setAgeConfirmed(!ageConfirmed)} activeOpacity={0.7}>
+              <View style={[styles.legalCheckbox, ageConfirmed && styles.legalCheckboxOn]}>
+                {ageConfirmed && <CheckCircle2 size={14} color="#ffffff" />}
+              </View>
+              <Text style={styles.legalText}>{AGE_CONFIRMATION_TEXT}</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
-              style={styles.continueBtn}
+              style={[styles.continueBtn, (!acceptedLegal || !ageConfirmed) && { opacity: 0.6 }]}
               onPress={handleCompleteRegistration}
-              disabled={loading}
+              disabled={loading || !acceptedLegal || !ageConfirmed}
               activeOpacity={0.85}
             >
               {loading ? (
@@ -431,11 +491,41 @@ export default function RegisterScreen() {
           </View>
         )}
       </ScrollView>
+
+      <Modal visible={Boolean(viewingDoc)} animationType="slide" onRequestClose={() => setViewingDoc(null)}>
+        <View style={styles.legalModal}>
+          <Text style={styles.legalModalTitle}>{viewingDoc?.title}</Text>
+          <ScrollView style={{ flex: 1 }}>
+            <Text style={styles.legalModalBody}>{viewingDoc?.content}</Text>
+          </ScrollView>
+          <TouchableOpacity style={styles.continueBtn} onPress={() => setViewingDoc(null)}>
+            <Text style={styles.continueBtnText}>Close</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  legalRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 12 },
+  legalCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#94A3B8',
+    marginRight: 10,
+    marginTop: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  legalCheckboxOn: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
+  legalText: { flex: 1, fontSize: 13, color: '#334155', lineHeight: 19 },
+  legalLink: { color: '#2563EB', fontWeight: '700', textDecorationLine: 'underline' },
+  legalModal: { flex: 1, padding: 20, paddingTop: 48, backgroundColor: '#ffffff' },
+  legalModalTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 12 },
+  legalModalBody: { fontSize: 13, color: '#334155', lineHeight: 20 },
   container: {
     flex: 1,
     backgroundColor: '#ffffff',

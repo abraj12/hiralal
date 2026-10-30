@@ -751,6 +751,55 @@ export class ReconciliationWorker {
   /**
    * Starts periodic reconciliation loop (runs every 3 minutes).
    */
+  /**
+   * HIR-L-02: APPROVED payouts hold funds in processingAmount until the worker dispatches them.
+   * If dispatch keeps failing (outbox event FAILED) or the event is missing, nothing else would
+   * ever look at them, so flag them for Operations Admin review.
+   */
+  static async flagStalledApprovedPayouts(stalledAfterMs = 30 * 60 * 1000): Promise<number> {
+    const cutoff = new Date(Date.now() - stalledAfterMs);
+    const candidates = await prisma.payout.findMany({
+      where: { status: 'APPROVED', requiresManualReview: false, updatedAt: { lte: cutoff } },
+      select: { id: true },
+      take: 100,
+    });
+
+    let flagged = 0;
+    for (const candidate of candidates) {
+      const liveEvent = await prisma.outboxEvent.findFirst({
+        where: {
+          eventType: 'PAYOUT_DISPATCH',
+          status: { in: ['PENDING', 'PROCESSING'] },
+          payload: { path: ['payoutId'], equals: candidate.id },
+        },
+        select: { id: true },
+      });
+      if (liveEvent) continue;
+
+      const updated = await prisma.payout.updateMany({
+        where: { id: candidate.id, status: 'APPROVED', requiresManualReview: false },
+        data: {
+          requiresManualReview: true,
+          manualReviewReason:
+            'Approved payout was not dispatched (dispatch event failed or missing). Funds remain reserved; Operations Admin must reconcile.',
+        },
+      });
+      if (updated.count === 1) {
+        flagged++;
+        await prisma.auditLog.create({
+          data: {
+            action: 'PAYOUT_DISPATCH_STALLED',
+            entityType: 'Payout',
+            entityId: candidate.id,
+            newValue: JSON.stringify({ payoutId: candidate.id, flaggedAt: new Date().toISOString() }),
+          },
+        });
+        console.warn(`[RECONCILIATION] Approved payout ${candidate.id} never dispatched; flagged for manual review.`);
+      }
+    }
+    return flagged;
+  }
+
   static startReconciliation(intervalMs = 180000): void {
     if (this.isRunning) return;
     this.isRunning = true;
@@ -761,6 +810,7 @@ export class ReconciliationWorker {
         const task = (async () => {
           await this.updateHeartbeat('running', { lastPolledAt: new Date().toISOString() });
           const stuckReport = await this.reconcileStuckPayouts();
+          await this.flagStalledApprovedPayouts();
           const webhooksRetried = await this.retryUnprocessedWebhooks();
           await this.updateHeartbeat('idle', {
             lastPollCompletedAt: new Date().toISOString(),

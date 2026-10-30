@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { X, CheckCircle2, ShieldCheck, ArrowRight, CreditCard, AlertCircle } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
+import { PAN_CONSENT_TEXT, BENEFICIARY_CONSENT_TEXT } from '../legal/consentTexts';
 import { MobileApiClient } from '../services/api';
 import { MobileIntegrityService } from '../services/integrity.service';
 import {
@@ -41,6 +42,8 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
   const [panNumber, setPanNumber] = useState('');
   const [panName, setPanName] = useState('');
   const [panConsent, setPanConsent] = useState(false);
+  // HIR-M-08: consent to share bank/UPI details with RazorpayX for verification and payouts
+  const [beneficiaryConsent, setBeneficiaryConsent] = useState(false);
   const [panVerified, setPanVerified] = useState(false);
   const [maskedPan, setMaskedPan] = useState('');
 
@@ -150,7 +153,8 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
     setErrorMsg(null);
     setIsSubmitting(true);
     try {
-      const consentText = 'I provide consent to verify my PAN identity for rewards payout compliance.';
+      // HIR-M-08: must match the text shown next to the checkbox and the server's PAN_CONSENT_TEXT
+      const consentText = PAN_CONSENT_TEXT;
       const requestHash = await createPanVerificationRequestHash({
         panNumber: panNumber.trim().toUpperCase(),
         panName: panName.trim(),
@@ -192,6 +196,10 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
 
   const handleVerifyPayment = async () => {
     setErrorMsg(null);
+    if (!beneficiaryConsent) {
+      setErrorMsg('Please agree to account verification with our payment partner to continue.');
+      return;
+    }
     setIsSubmitting(true);
     try {
       if (paymentType === 'UPI') {
@@ -448,7 +456,7 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
                       {panConsent && <CheckCircle2 size={16} color="#ffffff" />}
                     </View>
                     <Text style={styles.consentText}>
-                      I hereby give consent to verify my PAN identity with the income tax database for reward disbursement compliance.
+                      {PAN_CONSENT_TEXT}
                     </Text>
                   </TouchableOpacity>
 
@@ -634,9 +642,20 @@ export default function RedemptionModal({ visible, onClose, setupOnly = false, i
                       )}
 
                       <TouchableOpacity
-                        style={[styles.primaryButton, { backgroundColor: theme.primaryColor }]}
+                        style={styles.consentRow}
+                        onPress={() => setBeneficiaryConsent(!beneficiaryConsent)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.checkbox, beneficiaryConsent && { backgroundColor: theme.primaryColor, borderColor: theme.primaryColor }]}>
+                          {beneficiaryConsent && <CheckCircle2 size={16} color="#ffffff" />}
+                        </View>
+                        <Text style={styles.consentText}>{BENEFICIARY_CONSENT_TEXT}</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.primaryButton, { backgroundColor: theme.primaryColor }, !beneficiaryConsent && { opacity: 0.6 }]}
                         onPress={handleVerifyPayment}
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || !beneficiaryConsent}
                       >
                         {isSubmitting ? (
                           <ActivityIndicator color="#ffffff" />

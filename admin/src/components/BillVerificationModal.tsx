@@ -44,10 +44,11 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   );
   const [selectedGstRuleId, setSelectedGstRuleId] = useState<string>(bill.gstRuleId || '');
 
-  // HIR-H-01: Vendor identity scopes invoice uniqueness to the issuing vendor
-  const [vendorGstin, setVendorGstin] = useState<string>(bill.vendorGstin || '');
-  const [merchantName, setMerchantName] = useState<string>(bill.merchantName || '');
-  const hasVendorIdentity = vendorGstin.trim().length > 0 || merchantName.trim().length >= 2;
+  // Hiralal & Sons is the only seller; invoice uniqueness is derived by the backend from the invoice
+  // number and invoice month, so no vendor details are entered here.
+  const [gstExclusionReason, setGstExclusionReason] = useState<string>('');
+  // HIR-M-04: approving a Hiralal & Sons invoice as GST-exclusive requires a recorded reason
+  const hasRequiredGstReason = gstIncluded || gstExclusionReason.trim().length >= 10;
 
   const [rewardPercentage, setRewardPercentage] = useState<number | null>(
     bill.rewardRateSnapshot !== null && bill.rewardRateSnapshot !== undefined
@@ -227,8 +228,8 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
       : currentUserRole === 'OPERATIONS_ADMIN');
 
   const handleApprove = async () => {
-    if (!hasVendorIdentity) {
-      setError('Enter the vendor GSTIN printed on the invoice, or the merchant/shop name if it has no GSTIN.');
+    if (!hasRequiredGstReason) {
+      setError('Explain (at least 10 characters) why GST is not included in this invoice.');
       return;
     }
     setIsSubmitting(true);
@@ -239,8 +240,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
         gstIncluded,
         gstRate: gstIncluded ? selectedGstRate : 0,
         gstRuleId: gstIncluded ? (selectedGstRuleId || undefined) : undefined,
-        vendorGstin: vendorGstin.trim() ? vendorGstin.trim().toUpperCase() : undefined,
-        merchantName: merchantName.trim() || undefined,
+        gstOverrideReason: !gstIncluded && gstExclusionReason.trim() ? gstExclusionReason.trim() : undefined,
       });
       onVerified();
       onClose();
@@ -433,30 +433,6 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
           <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200 space-y-4">
             {isPending ? (
               <>
-                <div className="space-y-2 pb-3 border-b border-slate-200">
-                  <span className="text-xs font-bold text-slate-900 block">Vendor on invoice (required)</span>
-                  <input
-                    type="text"
-                    value={vendorGstin}
-                    onChange={(e) => setVendorGstin(e.target.value)}
-                    maxLength={15}
-                    placeholder="Vendor GSTIN, e.g. 08AAAAA0000A1Z5"
-                    aria-label="Vendor GSTIN"
-                    className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono uppercase"
-                  />
-                  <input
-                    type="text"
-                    value={merchantName}
-                    onChange={(e) => setMerchantName(e.target.value)}
-                    maxLength={200}
-                    placeholder="Merchant / shop name (required if no GSTIN)"
-                    aria-label="Merchant name"
-                    className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="text-[10px] text-slate-400 block">
-                    Used to stop the same invoice being rewarded to more than one account.
-                  </span>
-                </div>
                 <div className="flex items-start justify-between">
                   <label
                     htmlFor="gstIncludedCheckbox"
@@ -480,6 +456,23 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                     </div>
                   </label>
                 </div>
+
+                {!gstIncluded && (
+                  <div className="pt-2 border-t border-slate-200">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Reason GST is not included (required, at least 10 characters):
+                    </label>
+                    <input
+                      type="text"
+                      value={gstExclusionReason}
+                      onChange={(e) => setGstExclusionReason(e.target.value)}
+                      maxLength={500}
+                      placeholder="e.g. Invoice shows no GST component; composition dealer"
+                      aria-label="Reason GST is not included"
+                      className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                )}
 
                 {gstIncluded && (
                   <div className="pt-2 border-t border-slate-200">
@@ -805,7 +798,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   rulesUnavailable ||
                   rewardPercentage === null ||
                   (gstIncluded && !selectedGstRuleId) ||
-                  !hasVendorIdentity ||
+                  !hasRequiredGstReason ||
                   !isRoleAuthorized
                 }
                 title={!isRoleAuthorized ? (isSecondary && !isPrimaryStep ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
@@ -813,7 +806,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   rulesUnavailable ||
                   rewardPercentage === null ||
                   (gstIncluded && !selectedGstRuleId) ||
-                  !hasVendorIdentity ||
+                  !hasRequiredGstReason ||
                   !isRoleAuthorized
                     ? 'bg-slate-400 opacity-50 cursor-not-allowed shadow-none'
                     : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'

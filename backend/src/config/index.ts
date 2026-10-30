@@ -789,6 +789,23 @@ export function validateProductionFcm(env: Record<string, string | undefined>, r
   validateFcmPrivateKey(privateKey);
 }
 
+/**
+ * HIR-M-06: The published Privacy Policy and Terms must name a reachable grievance contact.
+ * Checked at API startup in sensitive environments (production, staging, uat).
+ */
+export function validateProductionLegalContact(env: Record<string, string | undefined> = process.env): void {
+  const required = ['LEGAL_COMPANY_ADDRESS', 'LEGAL_GRIEVANCE_OFFICER_NAME', 'LEGAL_GRIEVANCE_OFFICER_EMAIL'];
+  const missing = required.filter((name) => !env[name] || isPlaceholderCredential(env[name]));
+  if (missing.length > 0) {
+    throw new Error(
+      `[FATAL] Legal contact details must be configured before the app can serve its Privacy Policy and Terms. Missing: ${missing.join(', ')}`
+    );
+  }
+  if (!/^[^@s]+@[^@s]+.[^@s]+$/.test(env.LEGAL_GRIEVANCE_OFFICER_EMAIL!.trim())) {
+    throw new Error('[FATAL] LEGAL_GRIEVANCE_OFFICER_EMAIL must be a valid email address.');
+  }
+}
+
 export function normalizeAdminPrefix(prefix: string | undefined): string {
   if (!prefix) return '';
   return prefix.trim().toUpperCase();

@@ -30,6 +30,7 @@ import { AccountDeletionService } from '../services/account-deletion.service';
 import { requireActionIntegrity, requirePreAuthActionIntegrity } from '../middleware/integrity.middleware';
 import { computeIntegrityRequestHash } from '../utils/integrityRequestHash';
 import { sendInternalError } from '../middleware/error.middleware';
+import { ConsentService } from '../services/consent.service';
 
 const router = Router();
 
@@ -196,6 +197,12 @@ router.post('/register', registerIpLimiter, async (req: Request, res: Response) 
       });
     }
 
+    // HIR-M-06 / HIR-M-08: explicit acceptance of the current legal documents and age confirmation
+    const acceptanceError = ConsentService.validateRegistrationAcceptance(req.body);
+    if (acceptanceError) {
+      return res.status(400).json({ success: false, code: 'LEGAL_ACCEPTANCE_REQUIRED', message: acceptanceError });
+    }
+
     let tokenToConsume = verificationToken;
 
     // Graceful adapter: if older client provided otpCode directly, verify OTP first to acquire token
@@ -222,6 +229,7 @@ router.post('/register', registerIpLimiter, async (req: Request, res: Response) 
       verificationToken: tokenToConsume,
       ipAddress,
       userAgent,
+      recordLegalAcceptance: true,
     });
 
     res.status(201).json({ success: true, ...result });

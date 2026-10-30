@@ -18,14 +18,43 @@ import { ReconciliationWorker } from '../worker/reconciliation.worker';
 import { AuthService } from '../services/auth.service';
 import { NotificationService } from '../services/notification.service';
 import { BillStatus, PayoutStatus, Profession, UserStatus } from '@prisma/client';
-import { getIstYearAndMonth, parseStrictIndiaTimestamp } from '../utils/timezone.utils';
+import { getIstYearAndMonth, parseStrictIndiaTimestamp, parseIndiaEffectiveDateTime } from '../utils/timezone.utils';
 import { adminActionLimiter } from '../middleware/rateLimit.middleware';
 import { decryptSensitive, encryptSensitive, generateBlindIndex } from '../utils/crypto.utils';
+import { toPaise } from '../utils/money.utils';
 
 const router = Router();
 
 // Protect all admin endpoints with authentication
 router.use(authenticate);
+
+/**
+ * HIR-L-03: Records administrator access to personal data and invoice documents.
+ * Failures to write the access log are reported but never expose data without a record attempt.
+ */
+async function recordAdminAccess(
+  req: AuthenticatedRequest,
+  action: string,
+  entityType: string,
+  entityId: string,
+  details: Record<string, unknown>
+): Promise<void> {
+  try {
+    await prisma.auditLog.create({
+      data: {
+        adminId: req.user?.id,
+        action,
+        entityType,
+        entityId,
+        newValue: JSON.stringify(details),
+        ipAddress: req.ip || req.socket?.remoteAddress,
+        userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 300) : undefined,
+      },
+    });
+  } catch (err: any) {
+    console.error(`[ADMIN-ACCESS-LOG] Failed to record ${action} for ${entityType} ${entityId}: ${err.message}`);
+  }
+}
 
 /** Valid profession values for enum-safe query filtering (F-17) */
 const VALID_PROFESSIONS: Profession[] = ['PLUMBER', 'TILE_INSTALLER'];
@@ -363,6 +392,10 @@ router.get('/users/:id', requireOperationsAdmin, async (req: AuthenticatedReques
       where: { userId: user.id },
       orderBy: { createdAt: 'desc' },
       take: 50,
+    });
+
+    await recordAdminAccess(req, 'USER_RECORD_VIEWED', 'User', user.id, {
+      sections: ['profile', 'wallet', 'kyc', 'paymentAccounts', 'bills', 'payouts', 'ledger'],
     });
 
     res.json({
@@ -751,6 +784,15 @@ router.get('/bills', requireAdmin, async (req: AuthenticatedRequest, res: Respon
       userRole: req.user?.role,
     });
 
+    const billsWithDocumentUrls = bills.filter((b: any) => Boolean(b.fileUrl)).map((b: any) => b.id);
+    if (billsWithDocumentUrls.length > 0) {
+      await recordAdminAccess(req, 'BILL_DOCUMENT_URLS_ISSUED', 'Bill', 'LIST', {
+        count: billsWithDocumentUrls.length,
+        billIds: billsWithDocumentUrls,
+        filters: { status, profession: profFilter ?? 'ALL', search: search || null },
+      });
+    }
+
     res.json({
       success: true,
       bills,
@@ -796,6 +838,10 @@ router.get('/bills/:id/document-url', requireAdmin, async (req: AuthenticatedReq
     }
 
     const documentUrl = await StorageService.getSignedInvoiceUrl(bill.fileKey, 1800);
+    await recordAdminAccess(req, 'BILL_DOCUMENT_ACCESSED', 'Bill', bill.id, {
+      invoiceNumber: bill.invoiceNumber,
+      expiresInSeconds: 1800,
+    });
     res.json({
       success: true,
       documentUrl,
@@ -927,7 +973,7 @@ const handleBillVerification = async (req: AuthenticatedRequest, res: Response) 
     // Role enforcement and secondary deviation review check
     const targetBill = await prisma.bill.findUnique({
       where: { id: req.params.id },
-      select: { id: true, requiresSecondaryApproval: true, status: true, verifiedByAdminId: true, vendorGstin: true, merchantName: true },
+      select: { id: true, requiresSecondaryApproval: true, status: true, verifiedByAdminId: true },
     });
 
     if (!targetBill) {
@@ -980,28 +1026,11 @@ const handleBillVerification = async (req: AuthenticatedRequest, res: Response) 
         }
       }
 
-      // HIR-H-01: Vendor identity is mandatory so invoice uniqueness is scoped to the issuing vendor,
-      // not to the submitting user. Without it the same invoice can be approved for every account.
-      // A vendor recorded by the primary verifier (HIR-M-02) satisfies the requirement for the secondary approver.
-      const hasVendorGstin =
-        (typeof req.body.vendorGstin === 'string' && req.body.vendorGstin.trim().length > 0) || Boolean(targetBill.vendorGstin);
-      const hasMerchantName =
-        (typeof req.body.merchantName === 'string' && req.body.merchantName.trim().length >= 2) || Boolean(targetBill.merchantName);
-      if (!hasVendorGstin && !hasMerchantName) {
-        return res.status(400).json({
-          success: false,
-          code: 'VENDOR_IDENTITY_REQUIRED',
-          message: 'Enter the vendor GSTIN printed on the invoice, or the merchant/shop name if the invoice has no GSTIN, before approving.',
-        });
-      }
-      if (typeof req.body.merchantName === 'string' && req.body.merchantName.trim().length > 200) {
-        return res.status(400).json({ success: false, message: 'Merchant name cannot exceed 200 characters.' });
-      }
+      // Hiralal & Sons is the only seller: invoice uniqueness is derived from the invoice number and
+      // invoice month by BillService/the database, never from administrator-entered vendor details.
 
       if (targetBill.requiresSecondaryApproval && admin.role === 'BILL_ADMIN') {
         const verifiedBill = await BillService.recordPrimaryVerification(req.params.id, admin.id, {
-          vendorGstin: typeof req.body.vendorGstin === 'string' ? req.body.vendorGstin : undefined,
-          merchantName: typeof req.body.merchantName === 'string' ? req.body.merchantName : undefined,
           remarks: typeof req.body.remarks === 'string' ? req.body.remarks : undefined,
         });
         return res.json({
@@ -1012,14 +1041,23 @@ const handleBillVerification = async (req: AuthenticatedRequest, res: Response) 
         });
       }
 
+      const trimmedGstReason = typeof gstOverrideReason === 'string' ? gstOverrideReason.trim() : '';
+      // HIR-M-04: every invoice comes from Hiralal & Sons, a GST-registered seller. Treating one as
+      // GST-exclusive raises the reward base, so it requires a recorded justification.
+      if (!gstIncluded && trimmedGstReason.length < 10) {
+        return res.status(400).json({
+          success: false,
+          code: 'GST_EXCLUSION_REASON_REQUIRED',
+          message: 'Explain (at least 10 characters) why GST is not included in this Hiralal & Sons invoice before approving.',
+        });
+      }
+
       const result = await BillService.approveBill(req.params.id, admin.id, {
         gstIncluded,
         gstRate: gstIncluded ? (typeof gstRate === 'number' ? gstRate : undefined) : 0,
         gstRuleId: gstIncluded ? (typeof gstRuleId === 'string' && gstRuleId.trim() ? gstRuleId.trim() : undefined) : undefined,
-        gstOverrideReason: gstIncluded && typeof gstOverrideReason === 'string' ? gstOverrideReason.trim() : undefined,
+        gstOverrideReason: trimmedGstReason || undefined,
         isOperationsAdminApproved: admin.role === 'OPERATIONS_ADMIN',
-        vendorGstin: typeof req.body.vendorGstin === 'string' && req.body.vendorGstin.trim() ? req.body.vendorGstin.trim() : undefined,
-        merchantName: typeof req.body.merchantName === 'string' && req.body.merchantName.trim() ? req.body.merchantName.trim() : undefined,
       });
 
       return res.json({
@@ -1164,6 +1202,7 @@ router.post('/payouts/:id/action', requireOperationsAdmin, adminActionLimiter, a
       const payout = await PayoutService.rejectRedemption(id, admin.id, reason.trim());
       return res.json({ success: true, message: 'Payout rejected and refunded to user.', payout });
     } else if (action === 'FINALIZE_SUCCESS') {
+      // HIR-M-05: manual settlement must be backed by the provider's own record of a processed payout
       const existing = await prisma.payout.findUnique({ where: { id } });
       if (!existing) {
         return res.status(404).json({ success: false, message: 'Payout not found.' });
@@ -1180,22 +1219,47 @@ router.post('/payouts/:id/action', requireOperationsAdmin, adminActionLimiter, a
           message: `Cannot manually finalize payout in ${existing.status} status. Payouts must be approved and dispatched before manual settlement.`,
         });
       }
-      const gatewayId = req.body.razorpayPayoutId || existing.razorpayPayoutId || `MANUAL_ADMIN_SETTLEMENT_${id}_${Date.now()}`;
-      const payout = await PayoutService.finalizeSuccess(id, gatewayId, admin.id);
-      await prisma.auditLog.create({
-        data: {
-          adminId: admin.id,
-          action: 'PAYOUT_MANUALLY_FINALIZED',
-          entityType: 'Payout',
-          entityId: id,
-          newValue: JSON.stringify({
-            payoutId: id,
-            reason: reason?.trim() || 'Manual settlement confirmation by operations administrator',
-            adminId: admin.id,
-          }),
-        },
+      const settlementReason = typeof reason === 'string' ? reason.trim() : '';
+      if (settlementReason.length < 10) {
+        return res.status(400).json({ success: false, message: 'A settlement reason of at least 10 characters is required.' });
+      }
+      const providerId = (typeof req.body.razorpayPayoutId === 'string' && req.body.razorpayPayoutId.trim()) || existing.razorpayPayoutId;
+      if (!providerId || !/^pout_[A-Za-z0-9]+$/.test(providerId)) {
+        return res.status(400).json({
+          success: false,
+          code: 'PROVIDER_PAYOUT_ID_REQUIRED',
+          message: 'A valid RazorpayX payout ID (pout_…) is required for manual settlement.',
+        });
+      }
+      if (existing.razorpayPayoutId && existing.razorpayPayoutId !== providerId) {
+        return res.status(409).json({ success: false, message: 'The supplied payout ID does not match the provider ID already recorded.' });
+      }
+
+      const lookup = await PayoutService.fetchGatewayPayout(providerId);
+      if (!lookup.ok) {
+        return res.status(502).json({ success: false, code: 'PROVIDER_LOOKUP_FAILED', message: `Cannot verify the payout with RazorpayX: ${lookup.message}` });
+      }
+      const providerPayout = lookup.payout || {};
+      const expectedPaise = Number(toPaise(existing.amount));
+      const mismatch =
+        providerPayout.status !== 'processed'
+          ? `provider status is '${providerPayout.status || 'unknown'}', not 'processed'`
+          : Number(providerPayout.amount) !== expectedPaise
+          ? `provider amount ${providerPayout.amount} does not match ${expectedPaise} paise`
+          : providerPayout.currency && providerPayout.currency !== 'INR'
+          ? `provider currency ${providerPayout.currency} is not INR`
+          : providerPayout.reference_id && providerPayout.reference_id !== existing.id
+          ? 'provider reference does not match this payout'
+          : null;
+      if (mismatch) {
+        return res.status(409).json({ success: false, code: 'PROVIDER_NOT_PROCESSED', message: `Manual settlement refused: ${mismatch}.` });
+      }
+
+      const payout = await PayoutService.finalizeSuccess(id, providerId, admin.id, {
+        reason: settlementReason,
+        providerStatus: providerPayout.status,
       });
-      return res.json({ success: true, message: 'Payout manually finalized as SUCCESS.', payout });
+      return res.json({ success: true, message: 'Payout manually finalized as SUCCESS after provider verification.', payout });
     } else if (action === 'SYNC_GATEWAY') {
       const syncResult = await ReconciliationWorker.reconcileSinglePayout(id);
       const updated = await prisma.payout.findUnique({ where: { id } });
@@ -1458,6 +1522,46 @@ router.put('/settings/redemption', requireOperationsAdmin, async (req: Authentic
 });
 
 /**
+ * HIR-M-03: Business guardrails for reward-rule changes made through the admin API.
+ * - Rates above REWARD_RATE_MAX_PERCENT (default 25%) are rejected.
+ * - A rule may only take effect in the past when it is the profession's first rule; otherwise a
+ *   back-dated rule would silently re-price bills that are already pending approval.
+ */
+const REWARD_RULE_BACKDATE_TOLERANCE_MS = 5 * 60 * 1000;
+
+function getRewardRateMaxPercent(): number {
+  const parsed = parseFloat(process.env.REWARD_RATE_MAX_PERCENT || '25');
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 100 ? parsed : 25;
+}
+
+async function validateRewardRuleChange(
+  profession: Profession,
+  rewardPercentage: number,
+  effectiveFrom: Date | string | undefined
+): Promise<string | null> {
+  const maxRate = getRewardRateMaxPercent();
+  if (rewardPercentage > maxRate) {
+    return `Reward percentage cannot exceed the configured platform maximum of ${maxRate}%.`;
+  }
+
+  if (effectiveFrom !== undefined) {
+    let effectiveAt: Date;
+    try {
+      effectiveAt = parseIndiaEffectiveDateTime(effectiveFrom);
+    } catch (err: any) {
+      return err.message || 'Effective from date must be a valid date.';
+    }
+    if (effectiveAt.getTime() < Date.now() - REWARD_RULE_BACKDATE_TOLERANCE_MS) {
+      const existingRules = await prisma.rewardRule.count({ where: { profession } });
+      if (existingRules > 0) {
+        return 'Reward rules cannot take effect in the past once a rule exists for this profession. Choose the current time or a future date.';
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * 8. Dynamic Reward Rules Configuration (Profession-Specific & Versioned)
  */
 router.get('/settings/reward-rules', requireOperationsAdmin, async (req: AuthenticatedRequest, res: Response) => {
@@ -1499,6 +1603,15 @@ router.post('/settings/reward-rules', requireOperationsAdmin, async (req: Authen
       return res.status(400).json({ success: false, message: 'Reward percentage must be a valid, finite number.' });
     }
 
+    const guardError = await validateRewardRuleChange(
+      profession as Profession,
+      pct,
+      effectiveFrom !== undefined && effectiveFrom !== null && effectiveFrom !== '' ? effectiveFrom : undefined
+    );
+    if (guardError) {
+      return res.status(400).json({ success: false, code: 'REWARD_RULE_GUARDRAIL', message: guardError });
+    }
+
     const created = await RewardRuleService.createRule(admin.id, {
       profession: profession as Profession,
       rewardPercentage: pct,
@@ -1537,6 +1650,10 @@ router.put('/settings/reward-rules', requireOperationsAdmin, async (req: Authent
     }
 
     const prof = profession as Profession;
+    const guardError = await validateRewardRuleChange(prof, parseFloat(percentage), undefined);
+    if (guardError) {
+      return res.status(400).json({ success: false, code: 'REWARD_RULE_GUARDRAIL', message: guardError });
+    }
     const updated = await RewardService.updateRewardRules(admin.id, {
       percentage: parseFloat(percentage),
       profession: prof,

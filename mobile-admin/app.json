@@ -16,7 +16,8 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/brand_logo.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "allowBackup": false
     },
     "web": {
       "favicon": "./assets/brand_logo.png"
@@ -26,6 +27,7 @@
       "./plugins/withDeveloperModeSecurity",
       "./plugins/withReleaseSigning",
       "./plugins/withNetworkSecurityConfig",
+      "./plugins/withSecureWindow",
       [
         "expo-notifications",
         {

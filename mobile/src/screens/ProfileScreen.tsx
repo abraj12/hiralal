@@ -388,15 +388,14 @@ export default function ProfileScreen() {
             style={styles.menuItem}
             activeOpacity={0.7}
             onPress={() => {
+              // HIR-M-06 / HIR-M-07: show the server-versioned document instead of hard-coded text
               setInfoModalTitle('Terms & Conditions');
-              setInfoModalContent(
-                'HIRALAL AND SONS SALES PVT. LTD. - REWARDS PROGRAM TERMS\n\n' +
-                '1. Participation: Open to genuine plumbers and tile installation craftsmen.\n\n' +
-                '2. Invoices: Invoices uploaded must represent genuine purchases of eligible materials. Duplicate or forged bills will result in immediate suspension.\n\n' +
-                '3. Verification: Rewards are credited after automated GST and administrative verification.\n\n' +
-                '4. Payouts: Redemptions are processed at 100% full balance to verified bank accounts or UPI IDs following PAN identity matching.\n\n' +
-                '5. Fraud Protection: Any attempt to exploit system vulnerabilities or misrepresent credentials will trigger automatic account lock and audit investigation.'
-              );
+              setInfoModalContent('Loading…');
+              MobileApiClient.getLegalDocument('terms')
+                .then((res) => setInfoModalContent(`${res.document.content}
+
+(Version ${res.document.version})`))
+                .catch(() => setInfoModalContent('Could not load the Terms & Conditions. Please check your connection and try again.'));
               setInfoModalVisible(true);
             }}
           >
@@ -412,14 +411,14 @@ export default function ProfileScreen() {
             style={styles.menuItem}
             activeOpacity={0.7}
             onPress={() => {
+              // HIR-M-06 / HIR-M-07: show the server-versioned document instead of hard-coded text
               setInfoModalTitle('Privacy Policy');
-              setInfoModalContent(
-                'HIRALAL AND SONS SALES PVT. LTD. - PRIVACY POLICY\n\n' +
-                '1. Data Collection: We collect your mobile number, full name, profession, invoice uploads, PAN details, and bank account information exclusively for rewards fulfillment and statutory tax compliance.\n\n' +
-                '2. Encryption & Security: Sensitive financial information including PAN and bank accounts are encrypted with AES-256-GCM. Passwords are hash-protected with bcrypt.\n\n' +
-                '3. Disclosure: We do not sell or share personal information with third parties except verified payment gateways (RazorpayX) and government tax authorities as mandated by law.\n\n' +
-                '4. Session Security: Single active session enforcement protects worker accounts against unauthorized simultaneous access.'
-              );
+              setInfoModalContent('Loading…');
+              MobileApiClient.getLegalDocument('privacy')
+                .then((res) => setInfoModalContent(`${res.document.content}
+
+(Version ${res.document.version})`))
+                .catch(() => setInfoModalContent('Could not load the Privacy Policy. Please check your connection and try again.'));
               setInfoModalVisible(true);
             }}
           >
