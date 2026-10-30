@@ -34,7 +34,13 @@ export function getInvoiceIdentity(invoiceNumber: string, invoiceDate: Date) {
   };
 }
 
-/** True when a Prisma error is a unique-constraint violation (P2002) on Bill. */
+/** True when a Prisma error is a unique-constraint violation (P2002) or custom trigger rejection on Bill. */
 export function isUniqueViolation(err: any): boolean {
-  return err?.code === 'P2002' || err?.meta?.code === '23505' || /23505|unique constraint/i.test(String(err?.message || ''));
+  return (
+    err?.code === 'P2002' ||
+    err?.meta?.code === '23505' ||
+    /23505|unique constraint|reserved by another customer|permanently disqualified/i.test(
+      String(err?.message || '')
+    )
+  );
 }

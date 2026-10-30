@@ -28,7 +28,7 @@ import { useApp } from '../context/AppContext';
 import { resolveDocumentUrl } from '../services/api';
 
 export default function BillsScreen() {
-  const { theme, bills, setCurrentScreen, refreshData } = useApp();
+  const { theme, bills, setCurrentScreen, setParentBill, refreshData } = useApp();
   const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
   const [selectedBill, setSelectedBill] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -328,8 +328,22 @@ export default function BillsScreen() {
                   );
                 })()}
 
+                {selectedBill.status === 'REJECTED' && (
+                  <TouchableOpacity
+                    style={[styles.resubmitActionBtn, { backgroundColor: '#DC2626' }]}
+                    onPress={() => {
+                      const billToResubmit = selectedBill;
+                      setSelectedBill(null);
+                      setParentBill(billToResubmit);
+                      setCurrentScreen('UPLOAD_BILL');
+                    }}
+                  >
+                    <Text style={styles.resubmitActionText}>+ Resubmit Corrected Invoice</Text>
+                  </TouchableOpacity>
+                )}
+
                 <TouchableOpacity
-                  style={[styles.closeActionBtn, { backgroundColor: theme.primaryColor }]}
+                  style={[styles.closeActionBtn, { backgroundColor: theme.primaryColor, marginTop: selectedBill.status === 'REJECTED' ? 10 : 16 }]}
                   onPress={() => setSelectedBill(null)}
                 >
                   <Text style={styles.closeActionText}>Close</Text>
@@ -593,6 +607,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#334155',
     marginTop: 2,
+  },
+  resubmitActionBtn: {
+    paddingVertical: 13,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 16,
+    shadowColor: '#DC2626',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  resubmitActionText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   closeActionBtn: {
     paddingVertical: 12,

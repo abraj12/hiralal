@@ -35,18 +35,21 @@ module.exports = async function globalTeardown() {
 
     const adminUserIds = adminUsers.map((u) => u.id);
     if (adminUserIds.length > 0) {
-      // AUDIT-RED-03: Delete child records to satisfy RESTRICT foreign keys
-      await prisma.authSession.deleteMany({ where: { userId: { in: adminUserIds } } });
-      await prisma.auditLog.deleteMany({ where: { adminId: { in: adminUserIds } } });
-      await prisma.notificationCampaign.deleteMany({ where: { createdByAdminId: { in: adminUserIds } } });
-      await prisma.bill.deleteMany({ where: { userId: { in: adminUserIds } } });
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL app.allow_audit_log_cleanup = 'on';`).catch(() => {});
+        // AUDIT-RED-03: Delete child records to satisfy RESTRICT foreign keys
+        await tx.authSession.deleteMany({ where: { userId: { in: adminUserIds } } });
+        await tx.auditLog.deleteMany({ where: { adminId: { in: adminUserIds } } });
+        await tx.notificationCampaign.deleteMany({ where: { createdByAdminId: { in: adminUserIds } } });
+        await tx.bill.deleteMany({ where: { userId: { in: adminUserIds } } });
 
-      const deleted = await prisma.user.deleteMany({
-        where: { id: { in: adminUserIds } },
+        const deleted = await tx.user.deleteMany({
+          where: { id: { in: adminUserIds } },
+        });
+        if (deleted.count > 0) {
+          console.log(`[GlobalTeardown] Cleaned up ${deleted.count} seeded test admin user(s).`);
+        }
       });
-      if (deleted.count > 0) {
-        console.log(`[GlobalTeardown] Cleaned up ${deleted.count} seeded test admin user(s).`);
-      }
     }
   } catch (err: any) {
     // Non-fatal — test results should not be masked by teardown errors

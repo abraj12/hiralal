@@ -214,9 +214,20 @@ if id "${DEPLOY_USER}" >/dev/null 2>&1; then
 fi
 
 # 7. Automated Security Updates
-echo "==> [7/7] Enabling unattended automated security updates..."
+echo "==> [7/8] Enabling unattended automated security updates..."
 systemctl enable unattended-upgrades
 systemctl start unattended-upgrades
+
+# 8. CERT-In Cyber Security Directions Compliance (Direction No. 20(3)/2022-CERT-In)
+echo "==> [8/8] Configuring CERT-In time synchronization (NTP) & 180-day log retention..."
+if [ -f "${APP_DIR}/deploy/systemd/timesyncd.conf" ]; then
+  cp "${APP_DIR}/deploy/systemd/timesyncd.conf" /etc/systemd/timesyncd.conf
+  systemctl restart systemd-timesyncd 2>/dev/null || true
+fi
+if [ -f "${APP_DIR}/deploy/logrotate/hiralal-logs.conf" ]; then
+  cp "${APP_DIR}/deploy/logrotate/hiralal-logs.conf" /etc/logrotate.d/hiralal
+  chmod 644 /etc/logrotate.d/hiralal
+fi
 
 echo "========================================================================"
 echo "Hostinger KVM 2 Production Server Hardening COMPLETE!"
@@ -225,4 +236,5 @@ echo "- Firewall: UFW enabled (Ports 22, 80, 443 permitted; internal ports denie
 echo "- Fail2ban: Active on SSH"
 echo "- Docker: Installed with Compose plugin"
 echo "- Application Directory: /opt/hiralal"
+echo "- CERT-In: NTP synchronized with NIC/NPL & 180-day logrotate active"
 echo "========================================================================"

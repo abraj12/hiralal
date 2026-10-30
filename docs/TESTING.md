@@ -29,21 +29,24 @@ Every test suite in the repository has been executed and confirmed passing. The 
 The backend test suite uses Jest configured with TypeScript, Prisma, and Redis mocking:
 
 ```bash
-# Run all 50 test suites in sequence
+# Run all backend test suites in sequence
 cd backend
 npm test
 
-# Equivalent direct command:
-npx jest --runInBand --detectOpenHandles --forceExit
+# Test database target configuration (HIR-AUD-P2-06):
+# Test execution strictly requires a database ending in "_test" to protect development data.
+# The test runner automatically defaults to "hiralal_rewards_test" or reads TEST_DATABASE_URL / .env.test.
+# To initialize or sync the test database:
+DATABASE_URL="postgresql://postgres:1234@localhost:5432/hiralal_rewards_test?schema=public" npx prisma migrate deploy
 
 # Run dedicated audit remediation RC1 regression suite:
-npx jest --runInBand --detectOpenHandles --forceExit src/tests/audit_remediation_rc1.spec.ts
+npm test src/tests/audit_remediation_rc1.spec.ts
 
-# Run specific suite (e.g. Auditor Reconciliation & Retention Regression):
-npx jest --runInBand --detectOpenHandles --forceExit src/tests/auditor_reconciliation_and_retention_regression.spec.ts
+# Run invoice reservation and lifecycle regression suite (HIR-AUD-P2-07):
+npm test src/tests/invoice_reservation_and_lifecycle.spec.ts
 
 # Run admin authentication suite:
-npx jest --runInBand --detectOpenHandles --forceExit src/tests/admin_otp_enforcement.spec.ts
+npm test src/tests/admin_otp_enforcement.spec.ts
 
 # Compile TypeScript without emitting JS:
 npm run build

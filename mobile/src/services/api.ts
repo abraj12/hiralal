@@ -564,6 +564,7 @@ export class MobileApiClient {
       invoiceDate: string;
       billAmount: number;
       remarks?: string;
+      parentBillId?: string;
       file?: {
         uri: string;
         name: string;
@@ -592,6 +593,9 @@ export class MobileApiClient {
       formData.append('billAmount', String(data.billAmount));
       if (data.remarks) {
         formData.append('remarks', data.remarks);
+      }
+      if (data.parentBillId) {
+        formData.append('parentBillId', data.parentBillId);
       }
 
       if (Platform.OS === 'web') {

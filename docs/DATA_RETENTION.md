@@ -27,6 +27,7 @@ counsel before release.
 | Identity audit entries (logins, password changes, name corrections) | `AuditLog` | Redacted at account deletion | — |
 | Financial audit entries (bill approval, payouts) | `AuditLog` | Kept with financial records | Audit trail |
 | Notifications, device tokens, installations, sessions, OTPs | various | Deleted at account deletion | — |
+| System, Nginx, application and container logs | Host `/var/log/*`, Docker | 180 days rolling | CERT-In Directions Section 4(ii) |
 | Encrypted database backups | Dedicated R2 backup bucket | Local 30 days (`RETENTION_DAYS`); remote: set a lifecycle rule ⚖️ | Disaster recovery |
 
 Data of deleted users remains inside encrypted backups until those backups expire. The remote backup bucket's

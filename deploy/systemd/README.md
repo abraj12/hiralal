@@ -95,3 +95,39 @@ sudo systemctl start hiralal-backup.timer
 # 5. Verify timer status
 sudo systemctl list-timers --all | grep hiralal
 ```
+
+---
+
+## 3. CERT-In Cyber Security Directions Compliance
+
+Pursuant to CERT-In Direction No. 20(3)/2022-CERT-In under Section 70B(6) of the IT Act, 2000:
+
+### A. Mandatory Clock Synchronization (Section 4(i))
+All ICT systems must synchronize their clocks with the NTP servers of National Informatics Centre (NIC) or National Physical Laboratory (NPL):
+
+```bash
+# 1. Deploy CERT-In NTP configuration
+sudo cp deploy/systemd/timesyncd.conf /etc/systemd/timesyncd.conf
+
+# 2. Restart systemd-timesyncd service
+sudo systemctl restart systemd-timesyncd
+
+# 3. Verify synchronization status with time.nic.in / time.nplindia.org
+timedatectl timesync-status
+```
+
+### B. Mandatory 180-Day Log Retention (Section 4(ii))
+System, Nginx, application, and container logs must be maintained securely for a rolling 180 days within Indian jurisdiction:
+
+```bash
+# 1. Deploy logrotate policy
+sudo cp deploy/logrotate/hiralal-logs.conf /etc/logrotate.d/hiralal
+sudo chmod 644 /etc/logrotate.d/hiralal
+
+# 2. Test logrotate dry run
+sudo logrotate -d /etc/logrotate.d/hiralal
+```
+
+### C. 6-Hour Incident Reporting SOP
+Refer to [`docs/security/CERT_IN_INCIDENT_REPORTING_SOP.md`](../../docs/security/CERT_IN_INCIDENT_REPORTING_SOP.md) for the mandatory 6-hour reporting protocol to `incident@cert-in.org.in`.
+

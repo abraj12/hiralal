@@ -106,8 +106,39 @@ export class BillService {
           throw new Error('This invoice document has already been uploaded to the system. Duplicate documents are rejected.');
         }
 
-        // Single-seller invoice identity check across ALL customers. The amount is not part of the
-        // identity, so a different claimed amount cannot make a duplicate invoice look unique.
+        // Check if invoice identity is permanently disqualified (cancelled fraud)
+        const disqualifiedClaim = await tx.bill.findFirst({
+          where: {
+            invoicePeriod: identity.invoicePeriod,
+            invoiceKey: identity.invoiceKey,
+            OR: [
+              { status: 'CANCELLED' },
+              { isDisqualified: true },
+            ],
+          },
+          select: { id: true },
+        });
+        if (disqualifiedClaim) {
+          throw new Error(`Invoice #${cleanInvoiceNumber} dated ${identity.invoicePeriod} has been disqualified and cannot be submitted for rewards.`);
+        }
+
+        // Check if invoice identity is currently reserved by a rejected bill during its 7-day correction window
+        const now = new Date();
+        const reservedClaim = await tx.bill.findFirst({
+          where: {
+            invoicePeriod: identity.invoicePeriod,
+            invoiceKey: identity.invoiceKey,
+            status: 'REJECTED',
+            reservationExpiresAt: { gt: now },
+          },
+          orderBy: { reservationExpiresAt: 'desc' },
+        });
+
+        if (reservedClaim && reservedClaim.userId !== data.userId) {
+          throw new Error(`Invoice #${cleanInvoiceNumber} dated ${identity.invoicePeriod} is currently reserved by another customer under review.`);
+        }
+
+        // Single-seller invoice identity check across ALL customers for live claims.
         const liveClaim = await tx.bill.findFirst({
           where: {
             invoicePeriod: identity.invoicePeriod,
@@ -136,6 +167,8 @@ export class BillService {
           if (!parent) {
             throw new Error('The invoice being resubmitted was not found.');
           }
+        } else if (reservedClaim && reservedClaim.userId === data.userId) {
+          parent = reservedClaim;
         } else {
           parent = await tx.bill.findFirst({
             where: { userId: data.userId, invoicePeriod: identity.invoicePeriod, invoiceKey: identity.invoiceKey },
@@ -209,8 +242,14 @@ export class BillService {
           console.error(`[STORAGE-CLEANUP-FAILED] Failed to delete file ${uploadedFileKey}:`, cleanupErr.message);
         }
       }
-      // Database-level backstop: Bill_live_invoice_identity_key / Bill_parentBillId_key / fileHash
+      // Database-level backstop: Bill_live_invoice_identity_key / Bill_parentBillId_key / fileHash / custom triggers
       if (isUniqueViolation(err)) {
+        if (/reserved by another customer/i.test(String(err?.message || ''))) {
+          throw new Error(`Invoice #${cleanInvoiceNumber} dated ${identity.invoicePeriod} is currently reserved by another customer under review.`);
+        }
+        if (/disqualified/i.test(String(err?.message || ''))) {
+          throw new Error(`Invoice #${cleanInvoiceNumber} dated ${identity.invoicePeriod} has been disqualified and cannot be submitted for rewards.`);
+        }
         throw new Error(`Invoice #${cleanInvoiceNumber} dated ${identity.invoicePeriod} has already been submitted on the platform.`);
       }
       throw err;
@@ -847,12 +886,14 @@ export class BillService {
         throw new Error(`Bills with status ${bill.status} cannot be rejected.`);
       }
 
+      const reservationExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
       const updated = await tx.bill.update({
         where: { id: billId },
         data: {
           status: 'REJECTED',
           rejectionReason: rejectionReason.trim(),
           verifiedByAdminId: adminId,
+          reservationExpiresAt,
         },
       });
 
@@ -942,6 +983,9 @@ export class BillService {
           cancellationReason: reason.trim(),
           cancelledByAdminId: adminId,
           cancelledAt: new Date(),
+          isDisqualified: true,
+          disqualifiedAt: new Date(),
+          reservationExpiresAt: null,
         },
       });
 

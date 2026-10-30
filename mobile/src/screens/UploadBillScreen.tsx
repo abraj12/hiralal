@@ -43,11 +43,15 @@ function getIndiaCalendarToday(): string {
 }
 
 export default function UploadBillScreen() {
-  const { theme, setCurrentScreen, setActiveTab, refreshData } = useApp();
+  const { theme, setCurrentScreen, setActiveTab, refreshData, parentBill, setParentBill } = useApp();
 
-  const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState(getIndiaCalendarToday());
-  const [billAmount, setBillAmount] = useState('');
+  const [invoiceNumber, setInvoiceNumber] = useState(parentBill ? String(parentBill.invoiceNumber || '') : '');
+  const [invoiceDate, setInvoiceDate] = useState(
+    parentBill && parentBill.invoiceDate
+      ? new Date(parentBill.invoiceDate).toISOString().split('T')[0]
+      : getIndiaCalendarToday()
+  );
+  const [billAmount, setBillAmount] = useState(parentBill ? String(parentBill.billAmount || '') : '');
   const [selectedFile, setSelectedFile] = useState<SelectedFileInfo | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -187,9 +191,11 @@ export default function UploadBillScreen() {
           invoiceDate,
           billAmount: amount,
           file: selectedFile,
+          parentBillId: parentBill ? parentBill.id : undefined,
         },
         attestation
       );
+      setParentBill(null);
       setIsSuccess(true);
       refreshData();
     } catch (e: any) {
@@ -239,15 +245,44 @@ export default function UploadBillScreen() {
       <View style={styles.topBar}>
         <TouchableOpacity
           style={styles.backButton}
-          onPress={() => setCurrentScreen('MAIN')}
+          onPress={() => {
+            setParentBill(null);
+            setCurrentScreen('MAIN');
+          }}
         >
           <ArrowLeft size={20} color="#0F172A" />
         </TouchableOpacity>
-        <Text style={styles.topBarTitle}>{theme.uploadTitle}</Text>
+        <Text style={styles.topBarTitle}>
+          {parentBill ? 'Resubmit Invoice' : theme.uploadTitle}
+        </Text>
         <View style={{ width: 36 }} />
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 40 }}>
+        {parentBill && (
+          <View style={styles.revisionBadge}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.revisionBadgeTitle}>
+                Correcting Revision #{(parentBill.revisionNumber || 1) + 1}
+              </Text>
+              <Text style={styles.revisionBadgeSub}>
+                Re-submitting rejected invoice #{parentBill.invoiceNumber}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => {
+                setParentBill(null);
+                setInvoiceNumber('');
+                setInvoiceDate(getIndiaCalendarToday());
+                setBillAmount('');
+              }}
+              style={styles.cancelRevisionBtn}
+            >
+              <Text style={styles.cancelRevisionText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {errorMsg && (
           <View style={styles.errorBox}>
             <AlertCircle size={15} color="#DC2626" />
@@ -403,6 +438,42 @@ const styles = StyleSheet.create({
   },
   scroll: {
     flex: 1,
+  },
+  revisionBadge: {
+    marginHorizontal: 20,
+    marginTop: 12,
+    marginBottom: 4,
+    padding: 14,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  revisionBadgeTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#991B1B',
+  },
+  revisionBadgeSub: {
+    fontSize: 11,
+    color: '#B91C1C',
+    marginTop: 2,
+  },
+  cancelRevisionBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  cancelRevisionText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#DC2626',
   },
   documentPickerContainer: {
     margin: 20,

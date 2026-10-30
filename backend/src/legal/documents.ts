@@ -19,8 +19,8 @@ export type ConsentPurpose =
   | 'PAN_VERIFICATION'
   | 'BENEFICIARY_VERIFICATION';
 
-export const TERMS_VERSION = '2026-10-30';
-export const PRIVACY_VERSION = '2026-10-30';
+export const TERMS_VERSION = '2026-11-01';
+export const PRIVACY_VERSION = '2026-11-01';
 export const PAN_CONSENT_VERSION = '2026-10-30';
 export const BENEFICIARY_CONSENT_VERSION = '2026-10-30';
 
@@ -76,7 +76,7 @@ The Program is open to plumbers and tile installers in India who are 18 years of
 You may upload invoices for genuine purchases of eligible materials made by you. For each invoice you enter the invoice number, invoice date and total amount, and attach a clear photo or PDF. Invoices older than five years or dated in the future are not accepted. The same invoice can earn a reward only once across the whole Program, whoever submits it. Uploading duplicate, altered or forged invoices is not allowed.
 
 4. Review and approval
-Every invoice is reviewed by our administrators before any reward is given. They record the vendor's GSTIN or shop name and decide whether the amount includes GST. If an invoice is rejected you may resubmit a corrected version; a resubmission whose amount is more than 25% higher than before needs a second review by another administrator. We may reject or cancel any invoice that we believe is not genuine.
+Every invoice is reviewed by our administrators before any reward is given. Our administrators verify whether the invoice represents an eligible purchase from Hiralal & Sons Sales Pvt. Ltd. and determine the applicable GST treatment. If an invoice is rejected you may resubmit a corrected version; a resubmission whose amount is more than 25% higher than before needs a second review by another administrator. We may reject or cancel any invoice that we believe is not genuine.
 
 5. How rewards are calculated
 Your reward is a percentage of the eligible invoice amount. Where the invoice includes GST, the GST is removed first and the reward is calculated on the remaining amount. The percentage depends on your profession and may change from time to time; the percentage in force on the date and time you submitted the invoice applies. Rewards are shown as Points in your wallet; one Point equals one Indian Rupee when paid out. Rewards are added to your wallet only when an invoice is approved.
@@ -116,7 +116,7 @@ ${c.companyName} ("we", "us") decides why and how your personal data is used in 
 - Mobile number: to create your account, sign you in and send one-time passwords (OTPs).
 - Name and profession: to identify you and apply the reward rules for your profession.
 - Password: stored only as a one-way hash, to protect your account.
-- Invoices (photo or PDF, invoice number, date, amount, vendor details): to verify purchases and calculate rewards, and to keep tax and accounting records.
+- Invoices (photo or PDF, invoice number, date, amount): to verify purchases and calculate rewards, and to keep tax and accounting records.
 - PAN and the name registered with it: to verify your identity before payouts, with your consent.
 - Bank account number, IFSC or UPI ID, and the account-holder name: to verify the account and send payouts, with your consent.
 - Wallet, reward and payout history: to run the Program and keep financial records.

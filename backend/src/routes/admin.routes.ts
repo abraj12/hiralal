@@ -980,30 +980,52 @@ const handleBillVerification = async (req: AuthenticatedRequest, res: Response) 
       return res.status(404).json({ success: false, message: 'Bill not found.' });
     }
 
-    if (!targetBill.requiresSecondaryApproval && admin.role !== 'BILL_ADMIN') {
-      return res.status(403).json({
-        success: false,
-        code: 'BILL_ADMIN_APPROVAL_REQUIRED',
-        message: 'Standard invoice approvals and reviews must be performed by a Bill Review Administrator.',
-      });
-    }
-
-    // HIR-M-02: Invoice revisions above the deviation threshold need two people:
-    // BILL_ADMIN primary verification, then OPERATIONS_ADMIN secondary approval.
-    if (targetBill.requiresSecondaryApproval && action === 'APPROVE') {
-      if (admin.role === 'BILL_ADMIN' && targetBill.verifiedByAdminId) {
-        return res.status(409).json({
+    // Role-based authorization for actions (HIR-AUD-P1-04):
+    // CANCEL: strictly OPERATIONS_ADMIN (fraud/administrative disqualification)
+    // REJECT: strictly BILL_ADMIN (invoice verification rejection)
+    // APPROVE: BILL_ADMIN for standard bills; secondary OPERATIONS_ADMIN for >25% deviation
+    if (action === 'CANCEL') {
+      if (admin.role !== 'OPERATIONS_ADMIN') {
+        return res.status(403).json({
           success: false,
-          code: 'AWAITING_SECONDARY_APPROVAL',
-          message: 'This invoice revision has been verified and is awaiting Operations Administrator approval.',
+          code: 'OPERATIONS_ADMIN_REQUIRED',
+          message: 'Only Operations Administrators can cancel or disqualify invoices.',
         });
       }
-      if (admin.role === 'OPERATIONS_ADMIN' && !targetBill.verifiedByAdminId) {
-        return res.status(409).json({
+    } else if (action === 'REJECT') {
+      if (admin.role !== 'BILL_ADMIN') {
+        return res.status(403).json({
           success: false,
-          code: 'PRIMARY_VERIFICATION_REQUIRED',
-          message: 'This invoice revision must first be verified by the Bill Review Administrator.',
+          code: 'BILL_ADMIN_APPROVAL_REQUIRED',
+          message: 'Standard invoice approvals and reviews must be performed by a Bill Review Administrator.',
         });
+      }
+    } else if (action === 'APPROVE') {
+      if (!targetBill.requiresSecondaryApproval) {
+        if (admin.role !== 'BILL_ADMIN') {
+          return res.status(403).json({
+            success: false,
+            code: 'BILL_ADMIN_APPROVAL_REQUIRED',
+            message: 'Standard invoice approvals and reviews must be performed by a Bill Review Administrator.',
+          });
+        }
+      } else {
+        // HIR-M-02: Invoice revisions above the deviation threshold need two people:
+        // BILL_ADMIN primary verification, then OPERATIONS_ADMIN secondary approval.
+        if (admin.role === 'BILL_ADMIN' && targetBill.verifiedByAdminId) {
+          return res.status(409).json({
+            success: false,
+            code: 'AWAITING_SECONDARY_APPROVAL',
+            message: 'This invoice revision has been verified and is awaiting Operations Administrator approval.',
+          });
+        }
+        if (admin.role === 'OPERATIONS_ADMIN' && !targetBill.verifiedByAdminId) {
+          return res.status(409).json({
+            success: false,
+            code: 'PRIMARY_VERIFICATION_REQUIRED',
+            message: 'This invoice revision must first be verified by the Bill Review Administrator.',
+          });
+        }
       }
     }
 

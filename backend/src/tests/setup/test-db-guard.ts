@@ -1,4 +1,6 @@
 import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
 
 /**
  * HIR-M-11 / T-1: Refuses to let the test suite touch any database that is not
@@ -34,7 +36,17 @@ export function assertSafeTestDatabase(
 }
 
 module.exports = async function globalSetup() {
-  dotenv.config();
+  const envTestPath = path.resolve(process.cwd(), '.env.test');
+  if (fs.existsSync(envTestPath)) {
+    dotenv.config({ path: envTestPath, override: true });
+  } else {
+    dotenv.config();
+  }
+  if (process.env.TEST_DATABASE_URL) {
+    process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+  } else if (process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('_test')) {
+    process.env.DATABASE_URL = process.env.DATABASE_URL.replace(/(\/hiralal_rewards)(\?|$)/, '$1_test$2');
+  }
   assertSafeTestDatabase();
 };
 module.exports.assertSafeTestDatabase = assertSafeTestDatabase;

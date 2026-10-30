@@ -93,12 +93,14 @@ interface AppContextType {
   };
   transactions: any[];
   bills: any[];
+  parentBill: any | null;
   activeTab: 'HOME' | 'BILLS' | 'REWARDS' | 'WALLET' | 'PROFILE';
   currentScreen: 'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL' | 'NOTIFICATIONS';
   isLoading: boolean;
   unreadNotificationCount: number;
   setActiveTab: (tab: 'HOME' | 'BILLS' | 'REWARDS' | 'WALLET' | 'PROFILE') => void;
   setCurrentScreen: (screen: 'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL' | 'NOTIFICATIONS') => void;
+  setParentBill: (bill: any | null) => void;
   setProfession: (profession: ProfessionType) => void;
   login: (mobile: string, pass: string) => Promise<any>;
   logout: () => void;
@@ -113,6 +115,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeTab, setActiveTab] = useState<'HOME' | 'BILLS' | 'REWARDS' | 'WALLET' | 'PROFILE'>('HOME');
   const [currentScreen, setCurrentScreen] = useState<'WELCOME' | 'LOGIN' | 'REGISTER' | 'MAIN' | 'UPLOAD_BILL' | 'NOTIFICATIONS'>('WELCOME');
   const [unreadNotificationCount, setUnreadNotificationCount] = useState<number>(0);
+  const [parentBill, setParentBill] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const [wallet, setWallet] = useState({
@@ -285,12 +288,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         wallet,
         transactions,
         bills,
+        parentBill,
         activeTab,
         currentScreen,
         isLoading,
         unreadNotificationCount,
         setActiveTab,
         setCurrentScreen,
+        setParentBill,
         setProfession: setProfessionState,
         login,
         logout,

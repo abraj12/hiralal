@@ -13,7 +13,7 @@
     "seed": "ts-node src/prisma/seed.ts",
     "pan:migrate-legacy": "node dist/scripts/migrate-legacy-pan.js",
     "admin:migrate-legacy": "node dist/scripts/migrate-legacy-admin.js",
-    "test": "jest --runInBand --detectOpenHandles --forceExit"
+    "test": "node scripts/run-tests.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1146.0",

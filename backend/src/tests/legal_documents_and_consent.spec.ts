@@ -51,6 +51,14 @@ describe('Phase 5 — legal documents and consent records (HIR-M-06, M-07, M-08)
     expect(terms.body.document.content).not.toMatch(/automated GST/i);
     expect(terms.body.document.content).toContain('₹50,000');
     expect(terms.body.document.content).toMatch(/Grievance Officer/);
+
+    // HIR-AUD-P1-03: Single-seller architecture - zero multi-vendor phrases
+    expect(TERMS_VERSION).toBe('2026-11-01');
+    expect(PRIVACY_VERSION).toBe('2026-11-01');
+    expect(terms.body.document.content).not.toMatch(/vendor's GSTIN/i);
+    expect(terms.body.document.content).not.toMatch(/shop name/i);
+    expect(privacy.body.document.content).not.toMatch(/vendor details/i);
+    expect(terms.body.document.content).toContain('Hiralal & Sons Sales Pvt. Ltd.');
   });
 
   it('rejects registration without accepting the current documents', async () => {

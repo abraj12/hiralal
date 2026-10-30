@@ -249,8 +249,12 @@ model Bill {
   requiresSecondaryApproval  Boolean     @default(false)
   secondaryApprovedByAdminId String?
   secondaryApprovedAt        DateTime?
+  reservationExpiresAt       DateTime?
+  isDisqualified             Boolean     @default(false)
+  disqualifiedAt             DateTime?
 
   @@index([invoicePeriod, invoiceKey])
+  @@index([invoicePeriod, invoiceKey, reservationExpiresAt])
   @@index([userId])
   @@index([status])
   @@index([invoiceNumber])
