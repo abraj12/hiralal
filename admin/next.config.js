@@ -36,7 +36,7 @@ const nextConfig = {
           },
           {
             key: 'Content-Security-Policy',
-            value: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.r2.cloudflarestorage.com; font-src 'self' data:; connect-src 'self' https://*.r2.cloudflarestorage.com; frame-src 'self' blob: https://*.r2.cloudflarestorage.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none';",
+            value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.r2.cloudflarestorage.com; font-src 'self' data:; connect-src 'self' https://*.r2.cloudflarestorage.com; frame-src 'self' blob: https://*.r2.cloudflarestorage.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none';",
           },
         ],
       },

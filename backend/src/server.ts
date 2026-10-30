@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
 import crypto from 'crypto';
-import { config } from './config';
+import { config, validateProductionLegalContact } from './config';
 import { checkDatabaseConnection, checkAdminRoleIntegrity } from './db';
 import { checkRedisConnection } from './redis';
 import { errorHandler } from './middleware/error.middleware';
@@ -21,6 +21,7 @@ import webhookRoutes from './routes/webhook.routes';
 import adminRoutes from './routes/admin.routes';
 import notificationRoutes from './routes/notification.routes';
 import pushTokenRoutes from './routes/push-token.routes';
+import legalRoutes from './routes/legal.routes';
 
 const app = express();
 
@@ -201,6 +202,7 @@ v1Router.use('/webhooks', webhookRoutes);
 v1Router.use('/admin', adminRoutes);
 v1Router.use('/notifications', notificationRoutes);
 v1Router.use('/push-token', pushTokenRoutes);
+v1Router.use('/legal', legalRoutes);
 
 app.use('/api/v1', v1Router);
 app.use('/api', v1Router);
@@ -223,6 +225,11 @@ app.use(errorHandler);
  * In production, PostgreSQL, Redis, and Two-Admin role invariants must succeed BEFORE app.listen().
  */
 async function startServer(): Promise<any> {
+  // 0. HIR-M-06: legal documents must carry real grievance contact details
+  if (config.isSensitiveEnv) {
+    validateProductionLegalContact(process.env);
+  }
+
   // 1. PostgreSQL connectivity check
   const dbOk = await checkDatabaseConnection();
   if (!dbOk) {

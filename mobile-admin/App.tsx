@@ -15,6 +15,7 @@ import OpsAdminDashboardScreen from './src/screens/OpsAdminDashboardScreen';
 import OpsAdminUsersScreen from './src/screens/OpsAdminUsersScreen';
 import OpsAdminPayoutsScreen from './src/screens/OpsAdminPayoutsScreen';
 import OpsAdminMoreScreen from './src/screens/OpsAdminMoreScreen';
+import AdminChangePasswordScreen from './src/screens/AdminChangePasswordScreen';
 
 function AdminAppNavigator() {
   const { currentScreen, user, role, logout } = useAdminApp();
@@ -31,6 +32,11 @@ function AdminAppNavigator() {
 
   if (currentScreen === 'LOGIN' || !user) {
     return <AdminLoginScreen />;
+  }
+
+  // HIR-M-12: forced rotation of initial administrator passwords
+  if (user.mustChangePassword) {
+    return <AdminChangePasswordScreen />;
   }
 
   const renderScreen = () => {

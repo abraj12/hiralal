@@ -1,7 +1,7 @@
 # Production Multi-Stage Dockerfile for Hiralal & Sons Rewards Backend
 # Optimized for linux/arm64 (AWS Graviton2 t4g.medium) and linux/amd64
 
-FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS builder
 
 WORKDIR /app
 
@@ -26,7 +26,7 @@ RUN npm run build
 RUN npm prune --omit=dev && npm cache clean --force
 
 # Stage 2: Production Runner
-FROM node:22-alpine AS runner
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runner
 
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.revision="${VCS_REF}"

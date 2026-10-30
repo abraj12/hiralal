@@ -283,6 +283,30 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Additive columns vendorGstin and merchantName on Bill, DEFICIT_OFFSET enum value on TransactionType, drops global invoice index, and creates vendor-scoped composite partial unique indexes on approved bills."
+    },
+    {
+      "id": "20261030120000_user_must_change_password",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive mustChangePassword and passwordChangedAt columns on User; flags existing administrators for forced password rotation (HIR-M-12)."
+    },
+    {
+      "id": "20261030130000_audit_log_redaction_and_maintenance_role",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Replaces the AuditLog immutability trigger: permits only PII-redaction-shaped updates under app.audit_redaction and ties cleanup bypass to hiralal_maintenance role membership when that role exists (HIR-M-09, HIR-L-04)."
+    },
+    {
+      "id": "20261030140000_consent_records",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive ConsentRecord table recording accepted legal-document versions and purpose-specific consents (HIR-M-08)."
     }
   ]
 }

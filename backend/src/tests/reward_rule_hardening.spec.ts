@@ -164,7 +164,7 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
         .send({
           profession: 'PLUMBER',
           rewardPercentage: 0.65,
-          effectiveFrom: '2026-10-15',
+          effectiveFrom: '2027-10-15',
         });
 
       expect(postRes.status).toBe(201);

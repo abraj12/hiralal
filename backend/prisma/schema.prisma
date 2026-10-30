@@ -102,6 +102,8 @@ model User {
   status                      UserStatus  @default(ACTIVE)
   isVerified                  Boolean     @default(false)
   activeSessionId             String?
+  mustChangePassword          Boolean     @default(false)
+  passwordChangedAt           DateTime?
   failedPasswordAttempts      Int         @default(0)
   lockedUntil                 DateTime?
   deletionRequestedAt         DateTime?
@@ -124,6 +126,7 @@ model User {
   sessions                  AuthSession[]
   appInstallations          AppInstallation[]
   accountDeletionOperations AccountDeletionOperation[]
+  consentRecords            ConsentRecord[]
 
   @@index([profession])
   @@index([role])
@@ -222,6 +225,12 @@ model Bill {
   fileHash             String?     @unique
   fileSize             Int?
   mimeType             String?
+  // Single-seller invoice identity (Hiralal & Sons + YYYY-MM + normalised number). Always set by the
+  // Bill_invoice_identity_trigger from invoiceDate / invoiceNumber; live claims are unique across all
+  // customers via the partial index Bill_live_invoice_identity_key (see migration 20261030150000).
+  invoicePeriod        String      @default("")
+  invoiceKey           String      @default("")
+  // Legacy, no longer written: Hiralal & Sons is the only seller. Kept for historical rows.
   vendorGstin                String?
   merchantName               String?
   rejectionReason            String?
@@ -230,9 +239,9 @@ model Bill {
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
 
-  parentBillId               String?
+  parentBillId               String?     @unique
   parentBill                 Bill?       @relation("BillRevisions", fields: [parentBillId], references: [id], onDelete: Restrict)
-  childRevisions             Bill[]      @relation("BillRevisions")
+  childRevision              Bill?       @relation("BillRevisions")
   revisionNumber             Int         @default(1)
   cancellationReason         String?
   cancelledByAdminId         String?
@@ -241,16 +250,13 @@ model Bill {
   secondaryApprovedByAdminId String?
   secondaryApprovedAt        DateTime?
 
-  @@unique([userId, invoiceNumber, revisionNumber], name: "user_invoice_revision_unique")
-  @@index([parentBillId])
+  @@index([invoicePeriod, invoiceKey])
   @@index([userId])
   @@index([status])
   @@index([invoiceNumber])
   @@index([rewardRuleId])
   @@index([gstRuleId])
   @@index([createdAt])
-  @@index([vendorGstin])
-  @@index([merchantName])
 }
 
 model RewardRule {
@@ -549,4 +555,20 @@ model AccountDeletionOperation {
   @@index([scheduledFor])
   @@index([nextRetryAt])
   @@index([leaseOwner])
+}
+
+// HIR-M-08: Evidence of what each user accepted or consented to, and when
+model ConsentRecord {
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose         String // TERMS_OF_SERVICE, PRIVACY_NOTICE, AGE_CONFIRMATION, PAN_VERIFICATION, BENEFICIARY_VERIFICATION
+  documentVersion String
+  textSha256      String
+  ipAddress       String?
+  userAgent       String?
+  givenAt         DateTime  @default(now())
+  withdrawnAt     DateTime?
+
+  @@index([userId, purpose])
 }

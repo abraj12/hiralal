@@ -44,10 +44,11 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   );
   const [selectedGstRuleId, setSelectedGstRuleId] = useState<string>(bill.gstRuleId || '');
 
-  // HIR-H-01: Vendor identity scopes invoice uniqueness to the issuing vendor
-  const [vendorGstin, setVendorGstin] = useState<string>(bill.vendorGstin || '');
-  const [merchantName, setMerchantName] = useState<string>(bill.merchantName || '');
-  const hasVendorIdentity = vendorGstin.trim().length > 0 || merchantName.trim().length >= 2;
+  // Hiralal & Sons is the only seller; invoice uniqueness is derived by the backend from the invoice
+  // number and invoice month, so no vendor details are entered here.
+  const [gstExclusionReason, setGstExclusionReason] = useState<string>('');
+  // HIR-M-04: approving a Hiralal & Sons invoice as GST-exclusive requires a recorded reason
+  const hasRequiredGstReason = gstIncluded || gstExclusionReason.trim().length >= 10;
 
   const [rewardPercentage, setRewardPercentage] = useState<number | null>(
     bill.rewardRateSnapshot !== null && bill.rewardRateSnapshot !== undefined
@@ -215,11 +216,20 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   }
 
   const isSecondary = Boolean(bill.requiresSecondaryApproval);
-  const isRoleAuthorized = Boolean(currentUserRole) && (isSecondary ? currentUserRole === 'OPERATIONS_ADMIN' : currentUserRole === 'BILL_ADMIN');
+  // HIR-M-02: flagged revisions need BILL_ADMIN primary verification, then OPERATIONS_ADMIN approval
+  const isPrimaryVerified = Boolean(bill.verifiedByAdminId);
+  const isPrimaryStep = isSecondary && !isPrimaryVerified;
+  const isRoleAuthorized =
+    Boolean(currentUserRole) &&
+    (!isSecondary
+      ? currentUserRole === 'BILL_ADMIN'
+      : isPrimaryStep
+      ? currentUserRole === 'BILL_ADMIN'
+      : currentUserRole === 'OPERATIONS_ADMIN');
 
   const handleApprove = async () => {
-    if (!hasVendorIdentity) {
-      setError('Enter the vendor GSTIN printed on the invoice, or the merchant/shop name if it has no GSTIN.');
+    if (!hasRequiredGstReason) {
+      setError('Explain (at least 10 characters) why GST is not included in this invoice.');
       return;
     }
     setIsSubmitting(true);
@@ -230,8 +240,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
         gstIncluded,
         gstRate: gstIncluded ? selectedGstRate : 0,
         gstRuleId: gstIncluded ? (selectedGstRuleId || undefined) : undefined,
-        vendorGstin: vendorGstin.trim() ? vendorGstin.trim().toUpperCase() : undefined,
-        merchantName: merchantName.trim() || undefined,
+        gstOverrideReason: !gstIncluded && gstExclusionReason.trim() ? gstExclusionReason.trim() : undefined,
       });
       onVerified();
       onClose();
@@ -348,9 +357,11 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
           <div className="mx-6 mt-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl flex items-center space-x-2">
             <ShieldCheck className="w-4 h-4 shrink-0 text-amber-600" />
             <span>
-              {isSecondary
-                ? 'This invoice revision has upward price inflation (>25%) and strictly requires Operations Admin review.'
-                : 'Standard invoice verification must be performed by a Bill Review Administrator.'}
+              {!isSecondary
+                ? 'Standard invoice verification must be performed by a Bill Review Administrator.'
+                : isPrimaryStep
+                ? 'This invoice revision has upward price inflation (>25%). The Bill Review Administrator must verify it first; the Operations Administrator then approves it.'
+                : 'This invoice revision has been verified by the Bill Review Administrator and awaits Operations Administrator approval.'}
             </span>
           </div>
         )}
@@ -422,30 +433,6 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
           <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200 space-y-4">
             {isPending ? (
               <>
-                <div className="space-y-2 pb-3 border-b border-slate-200">
-                  <span className="text-xs font-bold text-slate-900 block">Vendor on invoice (required)</span>
-                  <input
-                    type="text"
-                    value={vendorGstin}
-                    onChange={(e) => setVendorGstin(e.target.value)}
-                    maxLength={15}
-                    placeholder="Vendor GSTIN, e.g. 08AAAAA0000A1Z5"
-                    aria-label="Vendor GSTIN"
-                    className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono uppercase"
-                  />
-                  <input
-                    type="text"
-                    value={merchantName}
-                    onChange={(e) => setMerchantName(e.target.value)}
-                    maxLength={200}
-                    placeholder="Merchant / shop name (required if no GSTIN)"
-                    aria-label="Merchant name"
-                    className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="text-[10px] text-slate-400 block">
-                    Used to stop the same invoice being rewarded to more than one account.
-                  </span>
-                </div>
                 <div className="flex items-start justify-between">
                   <label
                     htmlFor="gstIncludedCheckbox"
@@ -469,6 +456,23 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                     </div>
                   </label>
                 </div>
+
+                {!gstIncluded && (
+                  <div className="pt-2 border-t border-slate-200">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Reason GST is not included (required, at least 10 characters):
+                    </label>
+                    <input
+                      type="text"
+                      value={gstExclusionReason}
+                      onChange={(e) => setGstExclusionReason(e.target.value)}
+                      maxLength={500}
+                      placeholder="e.g. Invoice shows no GST component; composition dealer"
+                      aria-label="Reason GST is not included"
+                      className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                )}
 
                 {gstIncluded && (
                   <div className="pt-2 border-t border-slate-200">
@@ -772,7 +776,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 disabled={!isRoleAuthorized}
                 onClick={() => setCancelMode(true)}
                 className={`px-3 py-2 border border-amber-200 text-amber-700 hover:bg-amber-50 text-xs font-bold rounded-xl transition flex items-center space-x-1 ${!isRoleAuthorized ? 'opacity-40 cursor-not-allowed' : ''}`}
-                title={!isRoleAuthorized ? (isSecondary ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : 'Cancel fraudulent or invalid submission'}
+                title={!isRoleAuthorized ? (isSecondary && !isPrimaryStep ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : 'Cancel fraudulent or invalid submission'}
               >
                 <span>Cancel</span>
               </button>
@@ -781,7 +785,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 disabled={!isRoleAuthorized}
                 onClick={() => setRejectMode(true)}
                 className={`px-3 py-2 border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-xl transition flex items-center space-x-1 ${!isRoleAuthorized ? 'opacity-40 cursor-not-allowed' : ''}`}
-                title={!isRoleAuthorized ? (isSecondary ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
+                title={!isRoleAuthorized ? (isSecondary && !isPrimaryStep ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
               >
                 <XCircle className="w-4 h-4" />
                 <span>Reject</span>
@@ -794,15 +798,15 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   rulesUnavailable ||
                   rewardPercentage === null ||
                   (gstIncluded && !selectedGstRuleId) ||
-                  !hasVendorIdentity ||
+                  !hasRequiredGstReason ||
                   !isRoleAuthorized
                 }
-                title={!isRoleAuthorized ? (isSecondary ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
+                title={!isRoleAuthorized ? (isSecondary && !isPrimaryStep ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
                 className={`px-4 py-2 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center space-x-1.5 ${
                   rulesUnavailable ||
                   rewardPercentage === null ||
                   (gstIncluded && !selectedGstRuleId) ||
-                  !hasVendorIdentity ||
+                  !hasRequiredGstReason ||
                   !isRoleAuthorized
                     ? 'bg-slate-400 opacity-50 cursor-not-allowed shadow-none'
                     : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
@@ -812,6 +816,8 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 <span>
                   {isSubmitting
                     ? 'Approving...'
+                    : isPrimaryStep
+                    ? 'Verify & Forward to Operations'
                     : `Approve & Credit ${calculatedReward.toFixed(2)} Pts`}
                 </span>
               </button>

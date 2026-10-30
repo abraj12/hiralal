@@ -298,28 +298,42 @@ describe('Immutable Invoices, Deviations, Legal Holds & Financial Integrity Suit
       expect(highDevRevision.requiresSecondaryApproval).toBe(true);
       expect(highDevRevision.status).toBe('UNDER_REVIEW');
 
-      // BILL_ADMIN attempt to approve must be rejected with HTTP 403
+      const merchantName = `Test Merchant ${Math.random().toString(36).slice(2)}`;
+
+      // HIR-M-02: OPERATIONS_ADMIN cannot approve before BILL_ADMIN primary verification
+      const prematureOpsRes = await request(app)
+        .post(`/api/v1/admin/bills/${highDevRevision.id}/verify`)
+        .set('Authorization', `Bearer ${opsAdminToken}`)
+        .send({ action: 'APPROVE', merchantName, gstIncluded: false });
+
+      expect(prematureOpsRes.status).toBe(409);
+      expect(prematureOpsRes.body.code).toBe('PRIMARY_VERIFICATION_REQUIRED');
+
+      // BILL_ADMIN "approve" records primary verification only — no reward credited
       const billAdminRes = await request(app)
         .post(`/api/v1/admin/bills/${highDevRevision.id}/verify`)
         .set('Authorization', `Bearer ${billAdminToken}`)
-        .send({
-          action: 'APPROVE',
-          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
-          gstIncluded: false,
-        });
+        .send({ action: 'APPROVE', merchantName, gstIncluded: false });
 
-      expect(billAdminRes.status).toBe(403);
-      expect(billAdminRes.body.code).toBe('SECONDARY_APPROVAL_REQUIRED');
+      expect(billAdminRes.status).toBe(200);
+      expect(billAdminRes.body.primaryVerified).toBe(true);
+      expect(billAdminRes.body.bill.status).toBe('UNDER_REVIEW');
+      expect(billAdminRes.body.bill.verifiedByAdminId).toBe(billAdmin.id);
 
-      // OPERATIONS_ADMIN can approve the revision
+      // A second BILL_ADMIN attempt cannot approve the bill itself
+      const repeatBillAdminRes = await request(app)
+        .post(`/api/v1/admin/bills/${highDevRevision.id}/verify`)
+        .set('Authorization', `Bearer ${billAdminToken}`)
+        .send({ action: 'APPROVE', merchantName, gstIncluded: false });
+
+      expect(repeatBillAdminRes.status).toBe(409);
+      expect(repeatBillAdminRes.body.code).toBe('AWAITING_SECONDARY_APPROVAL');
+
+      // OPERATIONS_ADMIN can now approve the revision
       const opsAdminRes = await request(app)
         .post(`/api/v1/admin/bills/${highDevRevision.id}/verify`)
         .set('Authorization', `Bearer ${opsAdminToken}`)
-        .send({
-          action: 'APPROVE',
-          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
-          gstIncluded: false,
-        });
+        .send({ action: 'APPROVE', merchantName, gstIncluded: false });
 
       expect(opsAdminRes.status).toBe(200);
       expect(opsAdminRes.body.bill.status).toBe('APPROVED');

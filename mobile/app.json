@@ -26,7 +26,8 @@
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.VIBRATE"
-      ]
+      ],
+      "allowBackup": false
     },
     "web": {
       "favicon": "./assets/brand_logo.png"

@@ -244,6 +244,21 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       }
     }
 
+    // HIR-M-12: Administrators flagged for forced rotation may only change their password
+    // (and read their own profile) until they have done so.
+    if (isAdminRole && user.mustChangePassword) {
+      const path = (req.originalUrl || '').split('?')[0].replace(/\/+$/, '');
+      const allowed = /\/auth\/(password\/change|me)$/.test(path);
+      if (!allowed) {
+        res.status(403).json({
+          success: false,
+          code: 'PASSWORD_CHANGE_REQUIRED',
+          message: 'You must change your initial administrator password before continuing.',
+        });
+        return;
+      }
+    }
+
     req.user = user;
     authPassed = true;
   } catch (error) {

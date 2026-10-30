@@ -225,9 +225,12 @@ describe('Admin Roles, Prefix Authentication, Single Session & Service Coverage'
         AuthService.requestOtp({ mobile: '123', purpose: 'REGISTRATION' })
       ).rejects.toThrow(/Please enter a valid 10-digit Indian mobile number/i);
 
+      // HIR-L-01: an existing number gets the same response as a new one, and no usable OTP is stored
+      const existingNumberResponse = await AuthService.requestOtp({ mobile: regularUserMobile, purpose: 'REGISTRATION' });
+      expect(existingNumberResponse.message).toMatch(/dispatched/i);
       await expect(
-        AuthService.requestOtp({ mobile: regularUserMobile, purpose: 'REGISTRATION' })
-      ).rejects.toThrow(/already registered/i);
+        AuthService.verifyOtp({ mobile: regularUserMobile, otpCode: '000000', purpose: 'REGISTRATION' })
+      ).rejects.toThrow();
 
       await expect(
         AuthService.requestOtp({

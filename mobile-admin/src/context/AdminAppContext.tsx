@@ -11,6 +11,7 @@ export interface AdminUser {
   role: AdminRole;
   isVerified: boolean;
   status: string;
+  mustChangePassword?: boolean;
 }
 
 interface AdminAppContextType {

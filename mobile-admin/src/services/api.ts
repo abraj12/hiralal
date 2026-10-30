@@ -466,6 +466,14 @@ export class MobileApiClient {
     });
   }
 
+  // HIR-M-12: authenticated password change; the server revokes all sessions afterwards
+  static changePassword(currentPassword: string, newPassword: string) {
+    return this.request('/auth/password/change', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+  }
+
   static verifyAdminOtp(identifier: string, otpCode: string, challengeToken?: string) {
     return this.request('/auth/admin/otp/verify', {
       method: 'POST',
@@ -552,8 +560,6 @@ export class MobileApiClient {
           gstRate?: number;
           gstRuleId?: string;
           gstOverrideReason?: string;
-          vendorGstin?: string;
-          merchantName?: string;
         },
     legacyRejectionReason?: string
   ) {

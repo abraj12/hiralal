@@ -5,8 +5,9 @@ import { RewardRuleService } from './reward-rule.service';
 import { GstService } from './gst.service';
 import { StorageService } from './storage';
 import { NotificationService } from './notification.service';
-import { BillStatus, Profession } from '@prisma/client';
+import { Bill, BillStatus, Profession } from '@prisma/client';
 import { parseIndiaBusinessDate } from '../utils/timezone.utils';
+import { getInvoiceIdentity, isUniqueViolation } from '../utils/invoice-identity.utils';
 
 export class BillService {
   /**
@@ -24,8 +25,6 @@ export class BillService {
     mimeType: string;
     remarks?: string;
     parentBillId?: string;
-    vendorGstin?: string;
-    merchantName?: string;
   }) {
     const user = await prisma.user.findUnique({
       where: { id: data.userId },
@@ -52,6 +51,8 @@ export class BillService {
     }
 
     const cleanInvoiceNumber = data.invoiceNumber.trim().toUpperCase();
+    const invoiceDate = parseIndiaBusinessDate(data.invoiceDate);
+    const identity = getInvoiceIdentity(cleanInvoiceNumber, invoiceDate);
 
     // 1. Validate file, magic-bytes, and calculate SHA-256 hash BEFORE storage write
     const { fileHash, normalizedMime } = StorageService.validateAndHashFile({
@@ -92,11 +93,11 @@ export class BillService {
           throw new Error('Account is inactive or scheduled for deletion; invoice submission aborted.');
         }
 
-        // Serialize operations on this invoice number and document hash to eliminate TOCTOU races
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:' + cleanInvoiceNumber}))`;
+        // Serialize operations on this invoice identity and document hash to eliminate TOCTOU races
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${identity.lockKey}))`;
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:doc:' + fileHash}))`;
 
-        // Check duplicate document file hash across all users
+        // Check duplicate document file hash across all users (additional check on top of invoice identity)
         const duplicateDoc = await tx.bill.findFirst({
           where: { fileHash },
         });
@@ -105,23 +106,44 @@ export class BillService {
           throw new Error('This invoice document has already been uploaded to the system. Duplicate documents are rejected.');
         }
 
-        // Check existing submissions by this user for this invoice number
-        const existingUserBills = await tx.bill.findMany({
+        // Single-seller invoice identity check across ALL customers. The amount is not part of the
+        // identity, so a different claimed amount cannot make a duplicate invoice look unique.
+        const liveClaim = await tx.bill.findFirst({
           where: {
-            userId: data.userId,
-            invoiceNumber: cleanInvoiceNumber,
+            invoicePeriod: identity.invoicePeriod,
+            invoiceKey: identity.invoiceKey,
+            status: { in: ['PENDING', 'UNDER_REVIEW', 'APPROVED'] },
           },
-          orderBy: { revisionNumber: 'desc' },
+          select: { userId: true, status: true },
         });
-
-        const approvedBill = existingUserBills.find((b) => b.status === 'APPROVED');
-        if (approvedBill) {
-          throw new Error(`Invoice #${cleanInvoiceNumber} has already been approved.`);
+        if (liveClaim) {
+          if (liveClaim.userId === data.userId) {
+            throw new Error(
+              liveClaim.status === 'APPROVED'
+                ? `Invoice #${cleanInvoiceNumber} dated ${identity.invoicePeriod} has already been approved.`
+                : `Invoice #${cleanInvoiceNumber} dated ${identity.invoicePeriod} is currently undergoing review.`
+            );
+          }
+          throw new Error(`Invoice #${cleanInvoiceNumber} dated ${identity.invoicePeriod} has already been submitted on the platform.`);
         }
 
-        const activeBill = existingUserBills.find((b) => b.status === 'PENDING' || b.status === 'UNDER_REVIEW');
-        if (activeBill) {
-          throw new Error(`Invoice #${cleanInvoiceNumber} is currently undergoing review.`);
+        // Rejected-invoice resubmission: link to the rejected bill so revision history is preserved.
+        // An explicit parentBillId lets the customer correct the number/date of a rejected invoice;
+        // otherwise this customer's latest rejected bill with the same identity is used.
+        let parent: Bill | null = null;
+        if (data.parentBillId) {
+          parent = await tx.bill.findFirst({ where: { id: data.parentBillId, userId: data.userId } });
+          if (!parent) {
+            throw new Error('The invoice being resubmitted was not found.');
+          }
+        } else {
+          parent = await tx.bill.findFirst({
+            where: { userId: data.userId, invoicePeriod: identity.invoicePeriod, invoiceKey: identity.invoiceKey },
+            orderBy: [{ createdAt: 'desc' }, { revisionNumber: 'desc' }],
+          });
+          if (parent && parent.status !== 'REJECTED') {
+            throw new Error(`Invoice #${cleanInvoiceNumber} cannot be resubmitted while in status ${parent.status}.`);
+          }
         }
 
         let revisionNumber = 1;
@@ -129,18 +151,25 @@ export class BillService {
         let requiresSecondaryApproval = false;
         let initialStatus: BillStatus = 'PENDING';
 
-        if (existingUserBills.length > 0) {
-          // Must be a revision of a previously rejected bill
-          const latestRejected = existingUserBills[0];
-          if (latestRejected.status !== 'REJECTED') {
-            throw new Error(`Invoice #${cleanInvoiceNumber} cannot be resubmitted while in status ${latestRejected.status}.`);
+        if (parent) {
+          if (parent.status !== 'REJECTED') {
+            throw new Error('Only rejected invoices can be resubmitted.');
           }
-          parentBillId = latestRejected.id;
-          revisionNumber = latestRejected.revisionNumber + 1;
+          const existingChild = await tx.bill.findFirst({ where: { parentBillId: parent.id }, select: { id: true } });
+          if (existingChild) {
+            throw new Error('This rejected invoice has already been resubmitted. Resubmit the latest revision instead.');
+          }
+          parentBillId = parent.id;
+          revisionNumber = parent.revisionNumber + 1;
 
-          const rootBill = existingUserBills[existingUserBills.length - 1];
+          let rootBill = parent;
+          for (let depth = 0; rootBill.parentBillId && depth < 50; depth++) {
+            const ancestor = await tx.bill.findUnique({ where: { id: rootBill.parentBillId } });
+            if (!ancestor) break;
+            rootBill = ancestor;
+          }
           const rootGross = Number(rootBill.grossBillAmount || rootBill.billAmount);
-          const parentGross = Number(latestRejected.grossBillAmount || latestRejected.billAmount);
+          const parentGross = Number(parent.grossBillAmount || parent.billAmount);
           const newGross = data.billAmount;
           if ((parentGross > 0 && newGross > parentGross * 1.25) || (rootGross > 0 && newGross > rootGross * 1.25)) {
             requiresSecondaryApproval = true;
@@ -148,51 +177,12 @@ export class BillService {
           }
         }
 
-        // FINDING-05: Normalize vendor identity
-        const cleanVendorGstin = data.vendorGstin && typeof data.vendorGstin === 'string' && data.vendorGstin.trim()
-          ? data.vendorGstin.trim().toUpperCase()
-          : null;
-        if (cleanVendorGstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/i.test(cleanVendorGstin)) {
-          throw new Error('Invalid Indian GSTIN format. Expected 15-character alphanumeric GSTIN (e.g. 08AAAAA0000A1Z5).');
-        }
-        const cleanMerchantName = data.merchantName && typeof data.merchantName === 'string' && data.merchantName.trim()
-          ? data.merchantName.trim()
-          : null;
-
-        // Check cross-user duplicate invoice number scoped by vendor GSTIN or merchant (case-insensitive)
-        let existingGlobalApproved = null;
-        if (cleanVendorGstin) {
-          existingGlobalApproved = await tx.bill.findFirst({
-            where: {
-              invoiceNumber: { equals: cleanInvoiceNumber, mode: 'insensitive' },
-              vendorGstin: { equals: cleanVendorGstin, mode: 'insensitive' },
-              status: 'APPROVED',
-              userId: { not: data.userId },
-            },
-          });
-        } else if (cleanMerchantName) {
-          existingGlobalApproved = await tx.bill.findFirst({
-            where: {
-              invoiceNumber: { equals: cleanInvoiceNumber, mode: 'insensitive' },
-              merchantName: { equals: cleanMerchantName, mode: 'insensitive' },
-              vendorGstin: null,
-              status: 'APPROVED',
-              userId: { not: data.userId },
-            },
-          });
-        }
-
-        if (existingGlobalApproved) {
-          const scope = cleanVendorGstin ? ` from vendor GSTIN ${cleanVendorGstin}` : '';
-          throw new Error(`Invoice #${cleanInvoiceNumber}${scope} has already been submitted and approved on the platform.`);
-        }
-
         return await tx.bill.create({
           data: {
             id: billId,
             userId: data.userId,
             invoiceNumber: cleanInvoiceNumber,
-            invoiceDate: parseIndiaBusinessDate(data.invoiceDate),
+            invoiceDate,
             billAmount: data.billAmount,
             grossBillAmount: data.billAmount,
             gstIncluded: false,
@@ -202,8 +192,6 @@ export class BillService {
             parentBillId,
             revisionNumber,
             requiresSecondaryApproval,
-            vendorGstin: cleanVendorGstin,
-            merchantName: cleanMerchantName,
             fileUrl: uploadResult.fileUrl,
             fileKey: uploadResult.fileKey,
             fileHash,
@@ -220,6 +208,10 @@ export class BillService {
         } catch (cleanupErr: any) {
           console.error(`[STORAGE-CLEANUP-FAILED] Failed to delete file ${uploadedFileKey}:`, cleanupErr.message);
         }
+      }
+      // Database-level backstop: Bill_live_invoice_identity_key / Bill_parentBillId_key / fileHash
+      if (isUniqueViolation(err)) {
+        throw new Error(`Invoice #${cleanInvoiceNumber} dated ${identity.invoicePeriod} has already been submitted on the platform.`);
       }
       throw err;
     }
@@ -375,8 +367,6 @@ export class BillService {
           gstOverrideReason?: string;
           correctedGrossAmount?: number;
           isOperationsAdminApproved?: boolean;
-          vendorGstin?: string;
-          merchantName?: string;
         },
     adminIdArg?: string,
     optionsArg?: {
@@ -385,8 +375,6 @@ export class BillService {
       gstRuleId?: string;
       gstOverrideReason?: string;
       isOperationsAdminApproved?: boolean;
-      vendorGstin?: string;
-      merchantName?: string;
     }
   ) {
     let billId: string;
@@ -397,8 +385,6 @@ export class BillService {
       gstRuleId?: string;
       gstOverrideReason?: string;
       isOperationsAdminApproved?: boolean;
-      vendorGstin?: string;
-      merchantName?: string;
     } | undefined;
 
     if (typeof billIdOrParams === 'object') {
@@ -458,91 +444,24 @@ export class BillService {
         throw new Error(`Bills with status ${bill.status} cannot be approved.`);
       }
 
-      // Defense-in-depth: check if another bill with the same invoiceNumber was already approved
-      // FINDING-05: Scope invoice uniqueness by vendor identity (GSTIN or Merchant Name) or submitter userId
-      // SEC-HIGH-01: Acquire PostgreSQL advisory transaction lock keyed to scoped invoice identity to eliminate TOCTOU races
-      const effectiveGstin = options?.vendorGstin !== undefined
-        ? (options.vendorGstin?.trim().toUpperCase() || null)
-        : bill.vendorGstin;
-      const effectiveMerchant = options?.merchantName !== undefined
-        ? (options.merchantName?.trim() || null)
-        : bill.merchantName;
-
-      if (effectiveGstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(effectiveGstin)) {
-        throw new Error('Invalid Indian GSTIN format. Expected 15-character alphanumeric GSTIN (e.g. 08AAAAA0000A1Z5).');
-      }
-
-      if (bill.invoiceNumber) {
-        const cleanInvoice = bill.invoiceNumber.trim().toUpperCase();
-
-        if (effectiveGstin) {
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:' + effectiveGstin + ':' + cleanInvoice}))`;
-          const alreadyApproved = await tx.bill.findFirst({
-            where: {
-              id: { not: bill.id },
-              invoiceNumber: { equals: cleanInvoice, mode: 'insensitive' },
-              vendorGstin: { equals: effectiveGstin, mode: 'insensitive' },
-              status: 'APPROVED',
-            },
-          });
-          if (alreadyApproved) {
-            throw new Error(`Another bill with invoice #${bill.invoiceNumber} from vendor GSTIN ${effectiveGstin} has already been approved.`);
-          }
-        } else if (effectiveMerchant) {
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:m:' + effectiveMerchant.toLowerCase() + ':' + cleanInvoice}))`;
-          const alreadyApproved = await tx.bill.findFirst({
-            where: {
-              id: { not: bill.id },
-              invoiceNumber: { equals: cleanInvoice, mode: 'insensitive' },
-              merchantName: { equals: effectiveMerchant, mode: 'insensitive' },
-              vendorGstin: null,
-              status: 'APPROVED',
-            },
-          });
-          if (alreadyApproved) {
-            throw new Error(`Another bill with invoice #${bill.invoiceNumber} from merchant ${effectiveMerchant} has already been approved.`);
-          }
-        } else {
-          // Unorganized retail without GSTIN or merchant name is scoped per user
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:u:' + bill.userId + ':' + cleanInvoice}))`;
-          const alreadyApproved = await tx.bill.findFirst({
-            where: {
-              id: { not: bill.id },
-              invoiceNumber: { equals: cleanInvoice, mode: 'insensitive' },
-              userId: bill.userId,
-              vendorGstin: null,
-              merchantName: null,
-              status: 'APPROVED',
-            },
-          });
-          if (alreadyApproved) {
-            throw new Error(`Another bill with invoice #${bill.invoiceNumber} has already been approved for this account.`);
-          }
-        }
-
-        // HIR-H-01 / HIR-L-10: Cross-user physical-invoice duplicate guard independent of vendor fields.
-        // The same paper invoice re-photographed by another account (or re-typed with punctuation
-        // changes) has the same normalised number, invoice date and gross amount.
-        const normalizedInvoice = cleanInvoice.replace(/[^A-Z0-9]/g, '');
-        if (normalizedInvoice) {
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:norm:' + normalizedInvoice}))`;
-          const grossForDuplicateCheck = Number(bill.grossBillAmount || bill.billAmount);
-          const physicalDuplicates = await tx.$queryRaw<Array<{ id: string }>>`
-            SELECT "id"
-            FROM "Bill"
-            WHERE "status" = 'APPROVED'
-              AND "id" <> ${bill.id}
-              AND regexp_replace(upper("invoiceNumber"), '[^A-Z0-9]', '', 'g') = ${normalizedInvoice}
-              AND "invoiceDate" = ${bill.invoiceDate}
-              AND COALESCE("grossBillAmount", "billAmount") = ${grossForDuplicateCheck}::decimal
-            LIMIT 1
-          `;
-          if (physicalDuplicates.length > 0) {
-            throw new Error(
-              `[DUPLICATE_PHYSICAL_INVOICE] An approved bill with the same invoice number, invoice date and amount already exists (bill ${physicalDuplicates[0].id}). Reject this submission or escalate to Operations Administration.`
-            );
-          }
-        }
+      // Defense-in-depth: single-seller invoice identity (Hiralal & Sons + YYYY-MM + normalised number)
+      // must not already be approved for ANY customer. The amount is not part of the identity.
+      // Bill_live_invoice_identity_key enforces the same rule in the database.
+      const identity = getInvoiceIdentity(bill.invoiceNumber, bill.invoiceDate);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${identity.lockKey}))`;
+      const alreadyApproved = await tx.bill.findFirst({
+        where: {
+          id: { not: bill.id },
+          invoicePeriod: identity.invoicePeriod,
+          invoiceKey: identity.invoiceKey,
+          status: 'APPROVED',
+        },
+        select: { id: true },
+      });
+      if (alreadyApproved) {
+        throw new Error(
+          `[DUPLICATE_INVOICE] Invoice #${bill.invoiceNumber} dated ${identity.invoicePeriod} has already been approved (bill ${alreadyApproved.id}). Reject this submission as a duplicate.`
+        );
       }
 
       if (!bill.user.profession) {
@@ -728,6 +647,17 @@ export class BillService {
           }
           currentAncestorId = ancestor.parentBillId;
         }
+
+        // HIR-M-02: Dual custody requires a recorded BILL_ADMIN primary verification before the
+        // Operations Administrator's secondary approval can credit the wallet.
+        const primaryVerifier = bill.verifiedByAdminId
+          ? await tx.user.findUnique({ where: { id: bill.verifiedByAdminId }, select: { role: true } })
+          : null;
+        if (!primaryVerifier || primaryVerifier.role !== 'BILL_ADMIN') {
+          throw new Error(
+            '[PRIMARY_VERIFICATION_REQUIRED] This invoice revision must first be verified by the Bill Review Administrator before Operations Administrator approval.'
+          );
+        }
       }
 
       // 8. Update bill status and store complete financial calculation snapshot
@@ -737,8 +667,6 @@ export class BillService {
           status: 'APPROVED',
           grossBillAmount: gross,
           billAmount: gross,
-          vendorGstin: effectiveGstin,
-          merchantName: effectiveMerchant,
           gstIncluded: gstCalc.gstIncluded,
           gstRate: gstCalc.gstRate,
           gstAmount: gstCalc.gstAmount,
@@ -766,6 +694,7 @@ export class BillService {
           entityId: bill.id,
           newValue: JSON.stringify({
             invoiceNumber: bill.invoiceNumber,
+            invoicePeriod: identity.invoicePeriod,
             profession,
             grossBillAmount: gross,
             gstIncluded: gstCalc.gstIncluded,
@@ -815,6 +744,65 @@ export class BillService {
     ).catch((err) => console.error('[BILL-SERVICE] Push notification dispatch failed:', err.message));
 
     return result;
+  }
+
+  /**
+   * HIR-M-02: Records the Bill Review Administrator's primary verification of an invoice revision that
+   * requires secondary approval. No reward is credited; the bill stays UNDER_REVIEW until the
+   * Operations Administrator performs the secondary approval.
+   */
+  static async recordPrimaryVerification(
+    billId: string,
+    adminId: string,
+    params: { remarks?: string }
+  ) {
+    return await prisma.$transaction(async (tx) => {
+      const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "Bill" WHERE "id" = ${billId} FOR UPDATE
+      `;
+      if (!lockedRows || lockedRows.length === 0) {
+        throw new Error('Bill not found.');
+      }
+
+      const bill = await tx.bill.findUnique({ where: { id: billId } });
+      if (!bill) throw new Error('Bill not found.');
+      if (!bill.requiresSecondaryApproval) {
+        throw new Error('Primary verification applies only to invoice revisions that require secondary approval.');
+      }
+      if (bill.status !== 'PENDING' && bill.status !== 'UNDER_REVIEW') {
+        throw new Error(`Bills with status ${bill.status} cannot be verified.`);
+      }
+      if (bill.verifiedByAdminId) {
+        throw new Error('This invoice revision has already been verified and is awaiting Operations Administrator approval.');
+      }
+      if (bill.userId === adminId) {
+        throw new Error('Administrators cannot verify bills submitted under their own account.');
+      }
+
+      const updated = await tx.bill.update({
+        where: { id: billId },
+        data: {
+          status: 'UNDER_REVIEW',
+          verifiedByAdminId: adminId,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          adminId,
+          action: 'BILL_PRIMARY_VERIFIED',
+          entityType: 'Bill',
+          entityId: billId,
+          newValue: JSON.stringify({
+            invoiceNumber: bill.invoiceNumber,
+            remarks: params.remarks?.trim() || null,
+            forwardedTo: 'OPERATIONS_ADMIN',
+          }),
+        },
+      });
+
+      return updated;
+    });
   }
 
   /**

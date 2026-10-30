@@ -84,9 +84,6 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
   const [reviewGstRate, setReviewGstRate] = useState<number | undefined>(undefined);
   const [reviewGstRuleId, setReviewGstRuleId] = useState<string | undefined>(undefined);
   const [reviewGstOverrideReason, setReviewGstOverrideReason] = useState<string>('');
-  // HIR-H-01: Vendor identity scopes invoice uniqueness to the issuing vendor
-  const [reviewVendorGstin, setReviewVendorGstin] = useState<string>('');
-  const [reviewMerchantName, setReviewMerchantName] = useState<string>('');
 
   const fetchBills = async () => {
     setLoading(true);
@@ -113,8 +110,6 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
     setDocLoading(true);
     setReviewGstIncluded(false);
     setReviewGstOverrideReason('');
-    setReviewVendorGstin(bill.vendorGstin || '');
-    setReviewMerchantName(bill.merchantName || '');
     setReviewConfig(null);
     setReviewConfigError(null);
     setReviewConfigLoading(true);
@@ -212,25 +207,23 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
       return;
     }
 
-    if (!reviewVendorGstin.trim() && reviewMerchantName.trim().length < 2) {
-      Alert.alert('Vendor Required', 'Enter the vendor GSTIN printed on the invoice, or the merchant/shop name if it has no GSTIN.');
-      return;
-    }
 
     setActionLoading(reviewBill.id);
     try {
-      await MobileApiClient.verifyAdminBill(reviewBill.id, {
+      const approveRes: any = await MobileApiClient.verifyAdminBill(reviewBill.id, {
         action: 'APPROVE',
         gstIncluded: reviewGstIncluded,
         gstRate: reviewGstIncluded ? (reviewGstRate ?? 0) : 0,
         gstRuleId: reviewGstIncluded ? reviewGstRuleId : undefined,
         gstOverrideReason: reviewGstOverrideReason.trim() || undefined,
-        vendorGstin: reviewVendorGstin.trim() ? reviewVendorGstin.trim().toUpperCase() : undefined,
-        merchantName: reviewMerchantName.trim() || undefined,
       });
       setReviewBill(null);
       await fetchBills();
-      Alert.alert('Bill Approved', 'The bill has been verified and reward credited.');
+      if (approveRes?.primaryVerified) {
+        Alert.alert('Forwarded for Approval', 'Verified and forwarded to the Operations Administrator. No reward has been credited yet.');
+      } else {
+        Alert.alert('Bill Approved', 'The bill has been verified and reward credited.');
+      }
     } catch (e: any) {
       Alert.alert('Approval Failed', e.message || 'Could not approve bill.');
     } finally {
@@ -276,7 +269,11 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
     const isPending = item.status === 'PENDING' || item.status === 'UNDER_REVIEW';
     const isApproved = item.status === 'APPROVED';
     const isRejected = item.status === 'REJECTED';
-    const isRoleAuthorized = Boolean(user?.role) && (item.requiresSecondaryApproval ? user?.role === 'OPERATIONS_ADMIN' : user?.role === 'BILL_ADMIN');
+    // HIR-M-02: flagged revisions need BILL_ADMIN primary verification, then OPERATIONS_ADMIN approval
+    const isPrimaryStep = Boolean(item.requiresSecondaryApproval) && !item.verifiedByAdminId;
+    const isRoleAuthorized =
+      Boolean(user?.role) &&
+      (item.requiresSecondaryApproval && !isPrimaryStep ? user?.role === 'OPERATIONS_ADMIN' : user?.role === 'BILL_ADMIN');
 
     return (
       <View style={styles.card}>
@@ -353,7 +350,7 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
           ) : (
             <View style={[styles.actionsRow, { justifyContent: 'center', paddingVertical: 8 }]}>
               <Text style={{ fontSize: 12, color: '#64748B', fontStyle: 'italic' }}>
-                {item.requiresSecondaryApproval ? 'Requires Operations Admin review' : 'Requires Bill Review Admin review'}
+                {item.requiresSecondaryApproval && !isPrimaryStep ? 'Awaiting Operations Admin approval' : 'Requires Bill Review Admin review'}
               </Text>
             </View>
           )
@@ -605,24 +602,16 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
                 </TouchableOpacity>
 
                 <View style={{ marginBottom: 12 }}>
-                  <Text style={styles.rateLabel}>Vendor on invoice (required):</Text>
-                  <TextInput
-                    style={styles.overrideInput}
-                    value={reviewVendorGstin}
-                    onChangeText={setReviewVendorGstin}
-                    autoCapitalize="characters"
-                    maxLength={15}
-                    placeholder="Vendor GSTIN, e.g. 08AAAAA0000A1Z5"
-                    placeholderTextColor="#94A3B8"
-                  />
-                  <TextInput
-                    style={[styles.overrideInput, { marginTop: 8 }]}
-                    value={reviewMerchantName}
-                    onChangeText={setReviewMerchantName}
-                    maxLength={200}
-                    placeholder="Merchant / shop name (required if no GSTIN)"
-                    placeholderTextColor="#94A3B8"
-                  />
+                  {!reviewGstIncluded && (
+                    <TextInput
+                      style={[styles.overrideInput, { marginTop: 8 }]}
+                      value={reviewGstOverrideReason}
+                      onChangeText={setReviewGstOverrideReason}
+                      maxLength={500}
+                      placeholder="Reason GST is not included (required, min 10 characters)"
+                      placeholderTextColor="#94A3B8"
+                    />
+                  )}
                 </View>
 
                 {reviewConfigLoading && (

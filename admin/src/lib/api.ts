@@ -95,6 +95,9 @@ export class AdminApiClient {
 
       if (!res.ok) {
         const isCsrfMismatch = res.status === 403 && data.code === 'CSRF_TOKEN_MISMATCH';
+        if (res.status === 403 && data.code === 'PASSWORD_CHANGE_REQUIRED' && typeof window !== 'undefined' && !window.location.pathname.includes('/change-password')) {
+          window.location.href = '/change-password';
+        }
         if ((res.status === 401 || isCsrfMismatch) && typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
           this.clearToken();
           window.location.href = '/login';
@@ -166,6 +169,14 @@ export class AdminApiClient {
     });
   }
 
+  // HIR-M-12: authenticated password change; the server revokes all sessions afterwards
+  static changePassword(currentPassword: string, newPassword: string) {
+    return this.request('/auth/password/change', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+  }
+
   static getMe() {
     return this.request('/auth/me');
   }
@@ -187,8 +198,6 @@ export class AdminApiClient {
       gstRate?: number;
       gstRuleId?: string;
       gstOverrideReason?: string;
-      vendorGstin?: string;
-      merchantName?: string;
     },
     legacyRejectionReason?: string
   ) {

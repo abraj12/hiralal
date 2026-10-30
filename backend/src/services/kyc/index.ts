@@ -139,19 +139,18 @@ export class KycService {
       return existingUserKyc;
     }
 
+    // HIR-M-01: Only a VERIFIED record proves ownership of a PAN. Unverified or mononymous-review
+    // records from another account must not be able to block the genuine PAN holder.
     const existingOther = await prisma.kycRecord.findFirst({
       where: {
         OR: [{ panBlindIndex }, { panNumber: cleanPan }],
         userId: { not: userId },
+        panStatus: 'VERIFIED',
       },
     });
 
     if (existingOther) {
-      throw new Error(
-        existingOther.panStatus === 'VERIFIED'
-          ? 'This PAN number is already verified with another user account.'
-          : 'This PAN number has already been registered with another user account.'
-      );
+      throw new Error('This PAN number is already verified with another user account.');
     }
 
     // 4. Dispatch to KYC Provider
@@ -200,28 +199,32 @@ export class KycService {
       });
 
       if (isMononymousCandidate) {
-        // SEC-AUDIT-05: Check for existing pending KYC record to avoid P2002 unique constraint error on resubmission
+        // HIR-M-01: The review record never claims the unique PAN blind index; Operations Admin
+        // assigns it only on manual approval, after a VERIFIED-only duplicate check.
+        const mononymousReviewReason =
+          'MONONYMOUS_APPLICANT_MANUAL_REVIEW_REQUIRED: Single-name applicant requires authorized manual document review.';
+        const pendingReviewData = {
+          panName: verifiedPanName,
+          maskedPan: this.maskPan(cleanPan),
+          panNumberEncrypted: encryptSensitive(cleanPan),
+          panBlindIndex: null,
+          provider: 'SIGNCARE',
+          providerRequestId: result.providerRequestId || null,
+          nameMatched: false,
+          rejectionReason: mononymousReviewReason,
+          consent: true,
+          consentTimestamp: new Date(),
+        };
         const existingPending = await prisma.kycRecord.findFirst({
-          where: { userId, panBlindIndex, panStatus: 'PENDING' },
+          where: { userId, panStatus: 'PENDING', rejectionReason: { startsWith: 'MONONYMOUS_APPLICANT_MANUAL_REVIEW_REQUIRED:' } },
+          orderBy: { createdAt: 'desc' },
         });
 
-        if (!existingPending) {
-          // Record pending KYC record flagged for manual administrator review (Unresolved Finding A)
+        if (existingPending) {
+          await prisma.kycRecord.update({ where: { id: existingPending.id }, data: pendingReviewData });
+        } else {
           await prisma.kycRecord.create({
-            data: {
-              userId,
-              panName: verifiedPanName,
-              panStatus: 'PENDING',
-              maskedPan: this.maskPan(cleanPan),
-              panNumberEncrypted: encryptSensitive(cleanPan),
-              panBlindIndex,
-              provider: 'SIGNCARE',
-              providerRequestId: result.providerRequestId || null,
-              nameMatched: false,
-              rejectionReason: 'MONONYMOUS_APPLICANT_MANUAL_REVIEW_REQUIRED: Single-name applicant requires authorized manual document review.',
-              consent: true,
-              consentTimestamp: new Date(),
-            },
+            data: { userId, panStatus: 'PENDING', ...pendingReviewData },
           });
         }
 
@@ -231,7 +234,8 @@ export class KycService {
       }
 
       throw new Error(
-        `Name mismatch: Your account name "${user.fullName}" does not match the name on your PAN card ("${verifiedPanName}"). Please correct your account name in Profile Settings.`
+        // HIR-M-01: Never disclose the provider-verified PAN holder name to the requester.
+        'Name mismatch: Your account name does not match the name registered with this PAN. Please make sure your profile name exactly matches your PAN card.'
       );
     }
 
@@ -240,6 +244,13 @@ export class KycService {
 
     // 6. Atomically persist KYC record and lock user name
     const kyc = await prisma.$transaction(async (tx) => {
+      // HIR-M-01: Release the unique blind index from any other account's unverified record
+      // (e.g. created before this fix) so the verified PAN holder can claim it.
+      await tx.kycRecord.updateMany({
+        where: { panBlindIndex, userId: { not: userId }, panStatus: { not: 'VERIFIED' } },
+        data: { panBlindIndex: null },
+      });
+
       const existingRecord = await tx.kycRecord.findFirst({
         where: { userId },
         orderBy: { createdAt: 'desc' },

@@ -29,6 +29,8 @@ import { PlayIntegrityService } from '../services/integrity/playIntegrity.servic
 import { AccountDeletionService } from '../services/account-deletion.service';
 import { requireActionIntegrity, requirePreAuthActionIntegrity } from '../middleware/integrity.middleware';
 import { computeIntegrityRequestHash } from '../utils/integrityRequestHash';
+import { sendInternalError } from '../middleware/error.middleware';
+import { ConsentService } from '../services/consent.service';
 
 const router = Router();
 
@@ -195,6 +197,12 @@ router.post('/register', registerIpLimiter, async (req: Request, res: Response) 
       });
     }
 
+    // HIR-M-06 / HIR-M-08: explicit acceptance of the current legal documents and age confirmation
+    const acceptanceError = ConsentService.validateRegistrationAcceptance(req.body);
+    if (acceptanceError) {
+      return res.status(400).json({ success: false, code: 'LEGAL_ACCEPTANCE_REQUIRED', message: acceptanceError });
+    }
+
     let tokenToConsume = verificationToken;
 
     // Graceful adapter: if older client provided otpCode directly, verify OTP first to acquire token
@@ -221,6 +229,7 @@ router.post('/register', registerIpLimiter, async (req: Request, res: Response) 
       verificationToken: tokenToConsume,
       ipAddress,
       userAgent,
+      recordLegalAcceptance: true,
     });
 
     res.status(201).json({ success: true, ...result });
@@ -608,7 +617,7 @@ router.post('/logout', loginIpLimiter, async (req: Request, res: Response) => {
     };
     res.clearCookie('admin_access_token', { ...cookieOpts, httpOnly: true });
     res.clearCookie('csrf_token', { ...cookieOpts, httpOnly: false });
-    res.status(500).json({ success: false, message: err.message });
+    sendInternalError(req, res, err, 'logout');
   }
 });
 
@@ -816,6 +825,40 @@ router.post(
 );
 
 // ==========================================
+// 5b. AUTHENTICATED PASSWORD CHANGE (HIR-M-12)
+// ==========================================
+
+router.post('/password/change', authenticate, passwordResetCompleteLimiter, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const user = req.user!;
+    const { currentPassword, newPassword } = req.body ?? {};
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+
+    const result = await AuthService.changePassword({
+      userId: user.id,
+      currentPassword,
+      newPassword,
+      ipAddress,
+      userAgent,
+    });
+
+    const cookieOpts = {
+      path: '/',
+      secure: config.isProduction,
+      sameSite: (config.isProduction ? 'strict' : 'lax') as 'strict' | 'lax',
+    };
+    res.clearCookie('admin_access_token', { ...cookieOpts, httpOnly: true });
+    res.clearCookie('csrf_token', { ...cookieOpts, httpOnly: false });
+
+    return res.json({ success: true, requiresReauthentication: true, ...result });
+  } catch (err: any) {
+    const status = typeof err.message === 'string' && err.message.includes('locked') ? 429 : 400;
+    return res.status(status).json({ success: false, message: err.message || 'Password change failed.' });
+  }
+});
+
+// ==========================================
 // 6. CURRENT USER PROFILE (/me) & NAME EDIT
 // ==========================================
 
@@ -843,6 +886,7 @@ router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response)
           mobile: user.mobile,
           role: user.role,
           status: user.status,
+          mustChangePassword: user.mustChangePassword,
         },
       });
     }
@@ -886,7 +930,7 @@ router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response)
         : null,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    sendInternalError(req, res, err, 'GET /auth/me');
   }
 });
 
@@ -1038,7 +1082,7 @@ router.post(
 
       return res.json({ success: true, ...result });
     } catch (err: any) {
-      return res.status(500).json({ success: false, message: err.message });
+      return sendInternalError(req, res, err, 'integrity nonce');
     }
   }
 );
@@ -1083,7 +1127,7 @@ router.post(
 
       return res.json({ success: true, ...result });
     } catch (err: any) {
-      return res.status(500).json({ success: false, message: err.message });
+      return sendInternalError(req, res, err, 'pre-auth integrity nonce');
     }
   }
 );
@@ -1157,7 +1201,7 @@ router.post(
 
       return res.json({ success: true, verdict });
     } catch (err: any) {
-      return res.status(500).json({ success: false, message: err.message });
+      return sendInternalError(req, res, err, 'integrity verify');
     }
   }
 );
@@ -1214,7 +1258,7 @@ router.get(
       const result = await AccountDeletionService.getDeletionStatus(user.id);
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err.message });
+      sendInternalError(req, res, err, 'account deletion status');
     }
   }
 );

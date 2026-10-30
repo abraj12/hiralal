@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Hardened `ReconciliationWorker` to escalate aged stuck payouts (> 20 mins) to manual review even if gateway credentials are unconfigured.
   - Included Cloudflare R2 credentials in production startup validation for `SERVICE_ROLE=worker` to guarantee erasure compliance.
 - **Account Deletion & Data Privacy (`FINDING-RET-01`, `FINDING-RET-02`)**:
-  - Complied with DPDP Act 2023 Right to Erasure by purging all `AppInstallation` records on account deletion.
+  - Account deletion clears `AppInstallation` user links and push tokens. (Corrected 2026-10-30: the records were not purged at the time; they are deleted since the Phase 2–6 audit remediation.)
   - Implemented automated `WALLET_FORFEITURE` ledger adjustments to settle remaining available balances upon confirmed deletion.
 - **Client & Infrastructure Parity (`VULN-FRONT-01`, `VULN-MOB-01`, `VULN-MOB-02`, `VULN-INFRA-01`, `VULN-BUILD-01`)**:
   - Made role authorization fail-closed in `BillVerificationModal.tsx` and gated Reject/Cancel triggers.

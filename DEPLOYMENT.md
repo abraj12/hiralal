@@ -180,6 +180,11 @@ sudo cp /etc/letsencrypt/live/hsspl.algions.in/privkey.pem /opt/hiralal/nginx/ss
    ```bash
    docker compose exec backend npm run seed
    ```
+   **Least-privilege database role (recommended):** after migrations, create `hiralal_app` with `scripts/db/create-least-privilege-role.sql` (instructions in the file), then set `APP_DB_USER=hiralal_app` and `APP_DB_PASSWORD` in `.env` and restart `backend` and `worker`. The app then cannot run DDL, delete audit entries or bypass the audit-log trigger; migrations and backups keep using the owner account.
+
+   **Backups:** `scripts/backup-db.sh` now requires a dedicated backup bucket and credentials (`R2_BACKUP_BUCKET`, `R2_BACKUP_ACCESS_KEY_ID`, `R2_BACKUP_SECRET_ACCESS_KEY`), distinct from the invoice bucket and application key. In Cloudflare, enable a bucket lock rule and a lifecycle expiry on that bucket (see `docs/DATA_RETENTION.md`). Deployments run a backup first, so set these before the next deployment.
+
+   Seeded administrators are flagged `mustChangePassword`: after OTP sign-in they can only change their password (minimum 12 characters) until they do. Once both administrators have changed their passwords, remove `BILL_ADMIN_INITIAL_PASSWORD` and `OPERATIONS_ADMIN_INITIAL_PASSWORD` from the server `.env`; the API does not need them at runtime.
 
 ---
 

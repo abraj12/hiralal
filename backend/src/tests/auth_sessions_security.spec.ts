@@ -8,6 +8,7 @@ import { sha256Hash, hmacHashOtp } from '../utils/crypto.utils';
 import { closeRedis, checkRedisConnection, isRedisReady, getRedisClient } from '../redis';
 import { clearRateLimitCache } from '../middleware/rateLimit.middleware';
 import { getOrCreateOpsAdmin } from './test_helpers';
+import { currentLegalAcceptance } from '../legal/documents';
 
 describe('Authentication, Single-Use Verification Tokens & Session Security Tests', () => {
   const testMobile = '9876500001';
@@ -74,6 +75,7 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
     const regRes = await request(app)
       .post('/api/auth/register')
       .send({
+        ...currentLegalAcceptance(),
         mobile: testMobile,
         fullName: 'Ramesh Plumber',
         password: testPassword,
@@ -99,6 +101,7 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
     const replayRes = await request(app)
       .post('/api/auth/register')
       .send({
+        ...currentLegalAcceptance(),
         mobile: testMobile,
         fullName: 'Ramesh Plumber 2',
         password: testPassword,
@@ -238,6 +241,7 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
       request(app)
         .post('/api/auth/register')
         .send({
+        ...currentLegalAcceptance(),
           mobile: concurrentMobile,
           fullName: 'Concurrent Craftsman 1',
           password: 'Password@123',
@@ -247,6 +251,7 @@ describe('Authentication, Single-Use Verification Tokens & Session Security Test
       request(app)
         .post('/api/auth/register')
         .send({
+        ...currentLegalAcceptance(),
           mobile: concurrentMobile,
           fullName: 'Concurrent Craftsman 2',
           password: 'Password@123',

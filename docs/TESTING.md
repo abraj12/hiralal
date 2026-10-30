@@ -60,7 +60,7 @@ npm run build
 - **`global_reward_cap.spec.ts`**: Validates pool-free reward calculations, volume scaling, and concurrent approval locks.
 - **`payout_safety_worker.spec.ts`**: Simulates RazorpayX gateway timeouts, 4xx errors, refund credits, and webhook deduplication.
 - **`concurrency_financial.spec.ts`**: Tests double-redemption prevention and `SELECT ... FOR UPDATE` row locking.
-- **`account_deletion_and_threshold.spec.ts`**: Verifies GDPR/DPDP right-to-erasure anonymization while strictly retaining financial audit trails under Section 138 NI Act and GST laws.
+- **`account_deletion_and_threshold.spec.ts`**: Verifies GDPR/DPDP right-to-erasure anonymization while strictly retaining financial audit trails required by tax and accounting record-keeping law (see docs/DATA_RETENTION.md).
 
 ### B. Admin Web Portal (`admin/`)
 The admin portal uses the native Node.js test runner (`node:test`):

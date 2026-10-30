@@ -751,6 +751,32 @@ export class PayoutService {
   /**
    * Queries RazorpayX payouts endpoint by reference_id to check if a disbursement was created.
    */
+  /**
+   * HIR-M-05: Fetches a payout from RazorpayX by provider ID for manual settlement verification.
+   */
+  static async fetchGatewayPayout(razorpayPayoutId: string): Promise<{ ok: boolean; payout?: any; message?: string }> {
+    if (!config.razorpayx.keyId || !config.razorpayx.keySecret) {
+      return { ok: false, message: 'Payment gateway credentials are not configured.' };
+    }
+    const auth = 'Basic ' + Buffer.from(`${config.razorpayx.keyId}:${config.razorpayx.keySecret}`).toString('base64');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const res = await fetch(`https://api.razorpay.com/v1/payouts/${encodeURIComponent(razorpayPayoutId)}`, {
+        headers: { Authorization: auth },
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        return { ok: false, message: `Gateway lookup returned status ${res.status}` };
+      }
+      return { ok: true, payout: await res.json() };
+    } catch (err: any) {
+      return { ok: false, message: err.name === 'AbortError' ? 'Gateway lookup timed out' : err.message };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   static async queryGatewayByReference(referenceId: string): Promise<{
     found: boolean;
     payout?: any;
@@ -1360,7 +1386,12 @@ export class PayoutService {
    * SEC-FIN: Enforces DEFECT-J01 double-spend prevention, exact processing deduction (FIN-01),
    * row-level locking (E-01), and Wallet-first lock ordering (E-02).
    */
-  static async finalizeSuccess(payoutId: string, razorpayPayoutId?: string, adminId?: string) {
+  static async finalizeSuccess(
+    payoutId: string,
+    razorpayPayoutId?: string,
+    adminId?: string,
+    manualSettlement?: { reason: string; providerStatus: string }
+  ) {
     const payoutMeta = await prisma.payout.findUnique({
       where: { id: payoutId },
       select: { id: true, walletId: true },
@@ -1474,6 +1505,25 @@ export class PayoutService {
           type: 'PAYOUT_SUCCESS',
         },
       });
+
+      // HIR-M-05: manual settlements are audited atomically with the ledger change
+      if (adminId && manualSettlement) {
+        await tx.auditLog.create({
+          data: {
+            adminId,
+            action: 'PAYOUT_MANUALLY_FINALIZED',
+            entityType: 'Payout',
+            entityId: payout.id,
+            newValue: JSON.stringify({
+              payoutId: payout.id,
+              razorpayPayoutId: updatedPayout.razorpayPayoutId,
+              providerStatus: manualSettlement.providerStatus,
+              amount: payoutAmount,
+              reason: manualSettlement.reason,
+            }),
+          },
+        });
+      }
 
       transitionedToSuccess = true;
       return updatedPayout;

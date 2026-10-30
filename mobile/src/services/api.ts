@@ -426,6 +426,10 @@ export class MobileApiClient {
     profession: string;
     verificationToken?: string;
     otpCode?: string;
+    // HIR-M-06 / HIR-M-08: versions of the documents the user accepted, and age confirmation
+    acceptedTermsVersion: string;
+    acceptedPrivacyVersion: string;
+    ageConfirmed: boolean;
   }) {
     const extraHeaders: Record<string, string> = {};
 
@@ -672,7 +676,8 @@ export class MobileApiClient {
     return this.request('/payment-account/upi/verify', {
       method: 'POST',
       headers: extraHeaders,
-      body: JSON.stringify({ upiId, accountHolderName }),
+      // HIR-M-08: the user ticked the beneficiary-verification consent before this call
+      body: JSON.stringify({ upiId, accountHolderName, consent: true }),
     });
   }
 
@@ -693,8 +698,25 @@ export class MobileApiClient {
     return this.request('/payment-account/bank/verify', {
       method: 'POST',
       headers: extraHeaders,
-      body: JSON.stringify(data),
+      // HIR-M-08: the user ticked the beneficiary-verification consent before this call
+      body: JSON.stringify({ ...data, consent: true }),
     });
+  }
+
+  // HIR-M-06: server-versioned legal documents and consent texts
+  static getLegalDocument(type: 'terms' | 'privacy') {
+    return this.request<{ success: boolean; document: { title: string; version: string; content: string } }>(`/legal/${type}`);
+  }
+
+  static getConsentTexts() {
+    return this.request<{
+      success: boolean;
+      consents: {
+        PAN_VERIFICATION: { version: string; text: string };
+        BENEFICIARY_VERIFICATION: { version: string; text: string };
+        AGE_CONFIRMATION: { text: string };
+      };
+    }>('/legal/consent-texts');
   }
 
   static getPaymentAccounts() {

@@ -3,6 +3,7 @@ import { authenticate, requireUser, AuthenticatedRequest } from '../middleware/a
 import { requireActionIntegrity } from '../middleware/integrity.middleware';
 import { paymentVerifyLimiter } from '../middleware/rateLimit.middleware';
 import { PaymentService } from '../services/payment.service';
+import { ConsentService } from '../services/consent.service';
 
 const router = Router();
 
@@ -20,6 +21,19 @@ router.post(
     if (!upiId) {
       return res.status(400).json({ success: false, message: 'UPI ID is required.' });
     }
+
+    // HIR-M-08: bank/UPI details and name are shared with RazorpayX (₹1 validation) only with consent
+    if (req.body?.consent !== true) {
+      return res.status(400).json({
+        success: false,
+        code: 'CONSENT_REQUIRED',
+        message: 'Please agree to account verification with our payment partner before continuing.',
+      });
+    }
+    await ConsentService.recordBeneficiaryConsent(user.id, {
+      ipAddress: req.ip || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'],
+    });
 
     const account = await PaymentService.addUpiAccount(user.id, upiId, accountHolderName);
 
@@ -56,6 +70,19 @@ router.post(
         message: 'Account holder name, account number, and IFSC code are required.',
       });
     }
+
+    // HIR-M-08: bank/UPI details and name are shared with RazorpayX (₹1 validation) only with consent
+    if (req.body?.consent !== true) {
+      return res.status(400).json({
+        success: false,
+        code: 'CONSENT_REQUIRED',
+        message: 'Please agree to account verification with our payment partner before continuing.',
+      });
+    }
+    await ConsentService.recordBeneficiaryConsent(user.id, {
+      ipAddress: req.ip || req.socket.remoteAddress,
+      userAgent: req.headers['user-agent'],
+    });
 
     const account = await PaymentService.addBankAccount({
       userId: user.id,

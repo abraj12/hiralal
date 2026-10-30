@@ -444,7 +444,8 @@ export async function handleRazorpayXWebhook(req: Request, res: Response): Promi
     }
   } catch (err: any) {
     console.error('[WEBHOOK-ERROR]', err);
-    res.status(500).json({ error: err.message || 'Webhook processing failed' });
+    // HIR-L-06: provider retries on 5xx; never echo internal error text
+    res.status(500).json({ error: 'Webhook processing failed' });
   }
 }
 

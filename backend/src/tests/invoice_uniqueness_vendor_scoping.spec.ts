@@ -3,7 +3,7 @@ import { BillService } from '../services/bill.service';
 import { getOrCreateBillAdmin, getOrCreateOpsAdmin } from './test_helpers';
 import bcrypt from 'bcryptjs';
 
-describe('Finding 05 & 07 Regression Suite: Vendor-Scoped Invoice Uniqueness & Ancestor Dual Custody', () => {
+describe('Finding 05 & 07 Regression Suite: Single-Seller Invoice Identity & Ancestor Dual Custody', () => {
   const user1Mobile = '9800000101';
   const user2Mobile = '9800000102';
 
@@ -102,185 +102,110 @@ describe('Finding 05 & 07 Regression Suite: Vendor-Scoped Invoice Uniqueness & A
     await prisma.$disconnect();
   });
 
-  describe('Finding 05: Vendor-Scoped Invoice Uniqueness', () => {
+  describe('Finding 05: Single-Seller Invoice Identity and Month-Scoped Uniqueness', () => {
     const sharedInvoiceNum = 'INV-UNIQ-2026-999';
-    const vendorGstinA = '08AAAAA0000A1Z5';
-    const vendorGstinB = '27BBBBB1111B2Z6';
 
-    it('allows identical invoice numbers from two distinct vendors (distinct GSTINs)', async () => {
-      // User 1 submits invoice from Vendor A
+    it('blocks duplicate invoice number when submitted by another user in the same month', async () => {
+      // User 1 submits invoice
       const bill1 = await BillService.submitBill({
         userId: user1Id,
         invoiceNumber: sharedInvoiceNum,
         invoiceDate: '2026-10-01',
         billAmount: 5000,
-        fileBuffer: makePdfBuffer('bill1_vendorA'),
+        fileBuffer: makePdfBuffer('bill1'),
         fileName: 'bill1.pdf',
         mimeType: 'application/pdf',
-        vendorGstin: vendorGstinA,
       });
 
       // Admin approves bill 1
       const approved1 = await BillService.approveBill(bill1.id, adminId, {
         gstIncluded: false,
+        gstOverrideReason: 'Composition dealer invoice',
       });
       expect(approved1.bill.status).toBe('APPROVED');
-      expect(approved1.bill.vendorGstin).toBe(vendorGstinA);
 
-      // User 2 submits same invoice number from Vendor B (distinct vendor)
-      const bill2 = await BillService.submitBill({
-        userId: user2Id,
-        invoiceNumber: sharedInvoiceNum,
-        invoiceDate: '2026-10-01',
-        billAmount: 7000,
-        fileBuffer: makePdfBuffer('bill2_vendorB'),
-        fileName: 'bill2.pdf',
-        mimeType: 'application/pdf',
-        vendorGstin: vendorGstinB,
-      });
-
-      // Admin approves bill 2 - MUST SUCCEED because vendor GSTIN is different
-      const approved2 = await BillService.approveBill(bill2.id, adminId, {
-        gstIncluded: false,
-      });
-      expect(approved2.bill.status).toBe('APPROVED');
-      expect(approved2.bill.vendorGstin).toBe(vendorGstinB);
+      // User 2 attempts to submit same invoice number in same month — MUST BE REJECTED
+      await expect(
+        BillService.submitBill({
+          userId: user2Id,
+          invoiceNumber: sharedInvoiceNum,
+          invoiceDate: '2026-10-15',
+          billAmount: 7000,
+          fileBuffer: makePdfBuffer('bill2'),
+          fileName: 'bill2.pdf',
+          mimeType: 'application/pdf',
+        })
+      ).rejects.toThrow(/already been submitted on the platform/i);
     });
 
-    it('blocks duplicate invoice number when submitted for the SAME vendor GSTIN', async () => {
-      const dupGstinInvoice = 'INV-DUP-GSTIN-001';
-      // User 1 submits and gets approval
+    it('allows identical invoice numbers across different months (monthly serial restart)', async () => {
+      const serialInvoiceNum = 'INV-SERIAL-001';
+
+      // User 1 submits in October 2026
+      const billOct = await BillService.submitBill({
+        userId: user1Id,
+        invoiceNumber: serialInvoiceNum,
+        invoiceDate: '2026-10-01',
+        billAmount: 3000,
+        fileBuffer: makePdfBuffer('oct_serial'),
+        fileName: 'oct.pdf',
+        mimeType: 'application/pdf',
+      });
+      const approvedOct = await BillService.approveBill(billOct.id, adminId, {
+        gstIncluded: false,
+        gstOverrideReason: 'Composition dealer invoice',
+      });
+      expect(approvedOct.bill.status).toBe('APPROVED');
+
+      // User 2 submits same serial in November 2026 (distinct invoice period)
+      const billNov = await BillService.submitBill({
+        userId: user2Id,
+        invoiceNumber: serialInvoiceNum,
+        invoiceDate: '2026-11-01',
+        billAmount: 3500,
+        fileBuffer: makePdfBuffer('nov_serial'),
+        fileName: 'nov.pdf',
+        mimeType: 'application/pdf',
+      });
+      const approvedNov = await BillService.approveBill(billNov.id, adminId, {
+        gstIncluded: false,
+        gstOverrideReason: 'Composition dealer invoice',
+      });
+      expect(approvedNov.bill.status).toBe('APPROVED');
+    });
+
+    it('blocks duplicate invoice number with varied punctuation/casing in the same month', async () => {
+      const baseInvoice = 'INV-VAR-001';
+
       const b1 = await BillService.submitBill({
         userId: user1Id,
-        invoiceNumber: dupGstinInvoice,
-        invoiceDate: '2026-10-01',
-        billAmount: 4000,
-        fileBuffer: makePdfBuffer('dup_gstin_1'),
-        fileName: 'dup1.pdf',
-        mimeType: 'application/pdf',
-        vendorGstin: vendorGstinA,
-      });
-      await BillService.approveBill(b1.id, adminId, { gstIncluded: false });
-
-      // User 2 submits same invoice number for SAME Vendor A
-      await expect(
-        BillService.submitBill({
-          userId: user2Id,
-          invoiceNumber: dupGstinInvoice,
-          invoiceDate: '2026-10-01',
-          billAmount: 4000,
-          fileBuffer: makePdfBuffer('dup_gstin_2'),
-          fileName: 'dup2.pdf',
-          mimeType: 'application/pdf',
-          vendorGstin: vendorGstinA,
-        })
-      ).rejects.toThrow(/from vendor GSTIN.*already been submitted and approved/i);
-    });
-
-    it('allows identical invoice numbers for two distinct merchant names without GSTIN', async () => {
-      const merchantInvoice = 'INV-LOCAL-777';
-
-      const billM1 = await BillService.submitBill({
-        userId: user1Id,
-        invoiceNumber: merchantInvoice,
-        invoiceDate: '2026-10-02',
-        billAmount: 3000,
-        fileBuffer: makePdfBuffer('merchant_A'),
-        fileName: 'merchant_A.pdf',
-        mimeType: 'application/pdf',
-        merchantName: 'Shree Ram Hardware',
-      });
-
-      const approvedM1 = await BillService.approveBill(billM1.id, adminId, {
-        gstIncluded: false,
-      });
-      expect(approvedM1.bill.status).toBe('APPROVED');
-
-      // User 2 with distinct merchant name
-      const billM2 = await BillService.submitBill({
-        userId: user2Id,
-        invoiceNumber: merchantInvoice,
-        invoiceDate: '2026-10-02',
-        billAmount: 3500,
-        fileBuffer: makePdfBuffer('merchant_B'),
-        fileName: 'merchant_B.pdf',
-        mimeType: 'application/pdf',
-        merchantName: 'Krishna Electricals',
-      });
-
-      const approvedM2 = await BillService.approveBill(billM2.id, adminId, {
-        gstIncluded: false,
-      });
-      expect(approvedM2.bill.status).toBe('APPROVED');
-    });
-
-    it('blocks duplicate invoice number for the same merchant name', async () => {
-      const dupMerchantInvoice = 'INV-DUP-MERCH-001';
-      // User 1 submits and gets approval
-      const bm1 = await BillService.submitBill({
-        userId: user1Id,
-        invoiceNumber: dupMerchantInvoice,
+        invoiceNumber: baseInvoice,
         invoiceDate: '2026-10-02',
         billAmount: 3200,
-        fileBuffer: makePdfBuffer('dup_merch_1'),
-        fileName: 'dup_m1.pdf',
+        fileBuffer: makePdfBuffer('base_inv'),
+        fileName: 'base.pdf',
         mimeType: 'application/pdf',
-        merchantName: 'Shree Ram Hardware',
       });
-      await BillService.approveBill(bm1.id, adminId, { gstIncluded: false });
+      await BillService.approveBill(b1.id, adminId, {
+        gstIncluded: false,
+        gstOverrideReason: 'Composition dealer invoice',
+      });
 
-      // User 2 submits same invoice for same merchant name
+      // User 2 submits 'inv var/001' in the same month
       await expect(
         BillService.submitBill({
           userId: user2Id,
-          invoiceNumber: dupMerchantInvoice,
-          invoiceDate: '2026-10-02',
+          invoiceNumber: 'inv var/001',
+          invoiceDate: '2026-10-05',
           billAmount: 3200,
-          fileBuffer: makePdfBuffer('dup_merch_2'),
-          fileName: 'dup_m2.pdf',
+          fileBuffer: makePdfBuffer('var_inv'),
+          fileName: 'var.pdf',
           mimeType: 'application/pdf',
-          merchantName: 'Shree Ram Hardware',
         })
-      ).rejects.toThrow(/already been submitted and approved/i);
+      ).rejects.toThrow(/already been submitted on the platform/i);
     });
 
-    it('scopes unorganized retail bills without GSTIN or merchant name per user', async () => {
-      const unorgInvoice = 'UNORG-101';
-
-      // User 1 unorganized bill
-      const billU1 = await BillService.submitBill({
-        userId: user1Id,
-        invoiceNumber: unorgInvoice,
-        invoiceDate: '2026-10-03',
-        billAmount: 1200,
-        fileBuffer: makePdfBuffer('unorg_user1'),
-        fileName: 'unorg1.pdf',
-        mimeType: 'application/pdf',
-      });
-
-      const approvedU1 = await BillService.approveBill(billU1.id, adminId, {
-        gstIncluded: false,
-      });
-      expect(approvedU1.bill.status).toBe('APPROVED');
-
-      // User 2 unorganized bill with same number succeeds
-      const billU2 = await BillService.submitBill({
-        userId: user2Id,
-        invoiceNumber: unorgInvoice,
-        invoiceDate: '2026-10-03',
-        billAmount: 1400,
-        fileBuffer: makePdfBuffer('unorg_user2'),
-        fileName: 'unorg2.pdf',
-        mimeType: 'application/pdf',
-      });
-
-      const approvedU2 = await BillService.approveBill(billU2.id, adminId, {
-        gstIncluded: false,
-      });
-      expect(approvedU2.bill.status).toBe('APPROVED');
-    });
-
-    it('HIR-H-01: blocks a re-photographed copy of the same physical invoice approved for another user', async () => {
+    it('HIR-H-01: blocks duplicate submission regardless of claiming different amounts or re-photographed files', async () => {
       const invoice = 'PHYS-DUP-7781';
 
       const original = await BillService.submitBill({
@@ -292,44 +217,23 @@ describe('Finding 05 & 07 Regression Suite: Vendor-Scoped Invoice Uniqueness & A
         fileName: 'phys1.pdf',
         mimeType: 'application/pdf',
       });
-      await BillService.approveBill(original.id, adminId, { gstIncluded: false, merchantName: 'Sharma Traders' });
-
-      // Different photo (new file hash), punctuation-varied number, different typed merchant name
-      const copy = await BillService.submitBill({
-        userId: user2Id,
-        invoiceNumber: 'phys dup/7781',
-        invoiceDate: '2026-10-04',
-        billAmount: 2750,
-        fileBuffer: makePdfBuffer('phys_dup_rephotographed'),
-        fileName: 'phys2.pdf',
-        mimeType: 'application/pdf',
+      await BillService.approveBill(original.id, adminId, {
+        gstIncluded: false,
+        gstOverrideReason: 'Composition dealer invoice',
       });
 
+      // User 2 submits same invoice with different claimed amount and different photo
       await expect(
-        BillService.approveBill(copy.id, adminId, { gstIncluded: false, merchantName: 'Sharma Trader' })
-      ).rejects.toThrow(/DUPLICATE_PHYSICAL_INVOICE/);
-
-      const stillPending = await prisma.bill.findUnique({ where: { id: copy.id } });
-      expect(stillPending?.status).toBe('PENDING');
-      const creditCount = await prisma.walletTransaction.count({
-        where: { referenceType: 'BILL', referenceId: copy.id },
-      });
-      expect(creditCount).toBe(0);
-    });
-
-    it('HIR-H-01: rejects a malformed vendor GSTIN supplied at approval', async () => {
-      const bill = await BillService.submitBill({
-        userId: user1Id,
-        invoiceNumber: 'GSTIN-FMT-1',
-        invoiceDate: '2026-10-05',
-        billAmount: 900,
-        fileBuffer: makePdfBuffer('gstin_fmt'),
-        fileName: 'gstin.pdf',
-        mimeType: 'application/pdf',
-      });
-      await expect(
-        BillService.approveBill(bill.id, adminId, { gstIncluded: false, vendorGstin: 'NOT-A-GSTIN' })
-      ).rejects.toThrow(/Invalid Indian GSTIN/);
+        BillService.submitBill({
+          userId: user2Id,
+          invoiceNumber: 'phys dup/7781',
+          invoiceDate: '2026-10-04',
+          billAmount: 5000,
+          fileBuffer: makePdfBuffer('phys_dup_rephotographed'),
+          fileName: 'phys2.pdf',
+          mimeType: 'application/pdf',
+        })
+      ).rejects.toThrow(/already been submitted on the platform/i);
     });
   });
 
@@ -344,7 +248,6 @@ describe('Finding 05 & 07 Regression Suite: Vendor-Scoped Invoice Uniqueness & A
         fileBuffer: makePdfBuffer('rev1'),
         fileName: 'rev1.pdf',
         mimeType: 'application/pdf',
-        merchantName: 'Chain Vendor',
       });
 
       // Operations Admin (opsAdminId) verified and rejected Rev 1 (grandparent)
@@ -367,7 +270,6 @@ describe('Finding 05 & 07 Regression Suite: Vendor-Scoped Invoice Uniqueness & A
         fileName: 'rev2.pdf',
         mimeType: 'application/pdf',
         parentBillId: rev1.id,
-        merchantName: 'Chain Vendor',
       });
 
       expect(rev2.requiresSecondaryApproval).toBe(true);
@@ -392,7 +294,6 @@ describe('Finding 05 & 07 Regression Suite: Vendor-Scoped Invoice Uniqueness & A
         fileName: 'rev3.pdf',
         mimeType: 'application/pdf',
         parentBillId: rev2.id,
-        merchantName: 'Chain Vendor',
       });
 
       expect(rev3.requiresSecondaryApproval).toBe(true);
