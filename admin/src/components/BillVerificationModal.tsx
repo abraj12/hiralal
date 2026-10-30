@@ -215,7 +215,16 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   }
 
   const isSecondary = Boolean(bill.requiresSecondaryApproval);
-  const isRoleAuthorized = Boolean(currentUserRole) && (isSecondary ? currentUserRole === 'OPERATIONS_ADMIN' : currentUserRole === 'BILL_ADMIN');
+  // HIR-M-02: flagged revisions need BILL_ADMIN primary verification, then OPERATIONS_ADMIN approval
+  const isPrimaryVerified = Boolean(bill.verifiedByAdminId);
+  const isPrimaryStep = isSecondary && !isPrimaryVerified;
+  const isRoleAuthorized =
+    Boolean(currentUserRole) &&
+    (!isSecondary
+      ? currentUserRole === 'BILL_ADMIN'
+      : isPrimaryStep
+      ? currentUserRole === 'BILL_ADMIN'
+      : currentUserRole === 'OPERATIONS_ADMIN');
 
   const handleApprove = async () => {
     if (!hasVendorIdentity) {
@@ -348,9 +357,11 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
           <div className="mx-6 mt-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl flex items-center space-x-2">
             <ShieldCheck className="w-4 h-4 shrink-0 text-amber-600" />
             <span>
-              {isSecondary
-                ? 'This invoice revision has upward price inflation (>25%) and strictly requires Operations Admin review.'
-                : 'Standard invoice verification must be performed by a Bill Review Administrator.'}
+              {!isSecondary
+                ? 'Standard invoice verification must be performed by a Bill Review Administrator.'
+                : isPrimaryStep
+                ? 'This invoice revision has upward price inflation (>25%). The Bill Review Administrator must verify it first; the Operations Administrator then approves it.'
+                : 'This invoice revision has been verified by the Bill Review Administrator and awaits Operations Administrator approval.'}
             </span>
           </div>
         )}
@@ -772,7 +783,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 disabled={!isRoleAuthorized}
                 onClick={() => setCancelMode(true)}
                 className={`px-3 py-2 border border-amber-200 text-amber-700 hover:bg-amber-50 text-xs font-bold rounded-xl transition flex items-center space-x-1 ${!isRoleAuthorized ? 'opacity-40 cursor-not-allowed' : ''}`}
-                title={!isRoleAuthorized ? (isSecondary ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : 'Cancel fraudulent or invalid submission'}
+                title={!isRoleAuthorized ? (isSecondary && !isPrimaryStep ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : 'Cancel fraudulent or invalid submission'}
               >
                 <span>Cancel</span>
               </button>
@@ -781,7 +792,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 disabled={!isRoleAuthorized}
                 onClick={() => setRejectMode(true)}
                 className={`px-3 py-2 border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-xl transition flex items-center space-x-1 ${!isRoleAuthorized ? 'opacity-40 cursor-not-allowed' : ''}`}
-                title={!isRoleAuthorized ? (isSecondary ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
+                title={!isRoleAuthorized ? (isSecondary && !isPrimaryStep ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
               >
                 <XCircle className="w-4 h-4" />
                 <span>Reject</span>
@@ -797,7 +808,7 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   !hasVendorIdentity ||
                   !isRoleAuthorized
                 }
-                title={!isRoleAuthorized ? (isSecondary ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
+                title={!isRoleAuthorized ? (isSecondary && !isPrimaryStep ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
                 className={`px-4 py-2 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center space-x-1.5 ${
                   rulesUnavailable ||
                   rewardPercentage === null ||
@@ -812,6 +823,8 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                 <span>
                   {isSubmitting
                     ? 'Approving...'
+                    : isPrimaryStep
+                    ? 'Verify & Forward to Operations'
                     : `Approve & Credit ${calculatedReward.toFixed(2)} Pts`}
                 </span>
               </button>

@@ -473,7 +473,9 @@ export class AuthService {
         where: { mobile, purpose: 'ADMIN_LOGIN', isUsed: false },
         data: { isUsed: true },
       });
-      throw new Error(`SMS delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
+      // HIR-L-06: keep provider error detail in server logs only
+      console.error(`[AuthService] Admin OTP delivery failed: ${smsResult.error || 'Gateway rejected dispatch'}`);
+      throw new Error('Unable to send the verification code at this time. Please try again later.');
     }
 
     return {
@@ -522,6 +524,7 @@ export class AuthService {
         failedPasswordAttempts: number;
         lockedUntil: Date | null;
         isLocked: boolean;
+        mustChangePassword: boolean;
       }>>`
         WITH clock AS (
           SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now
@@ -532,6 +535,7 @@ export class AuthService {
           u."fullName",
           u."role",
           u."status",
+          u."mustChangePassword",
           u."failedPasswordAttempts",
           u."lockedUntil",
           (
@@ -779,7 +783,9 @@ export class AuthService {
         mobile: txResult.adminUser!.mobile,
         fullName: txResult.adminUser!.fullName,
         role: txResult.adminUser!.role,
+        mustChangePassword: Boolean(txResult.adminUser!.mustChangePassword),
       },
+      mustChangePassword: Boolean(txResult.adminUser!.mustChangePassword),
       sessionId: txResult.sessionId,
       role,
     };
@@ -845,8 +851,10 @@ export class AuthService {
         const existingUser = await tx.user.findUnique({
           where: { mobile: cleanMobile },
         });
+        // HIR-L-01: Respond exactly as for a new number (no SMS sent) so this endpoint cannot be used
+        // to discover which mobile numbers hold accounts. Registration itself still refuses duplicates.
         if (existingUser) {
-          throw new Error('This mobile number is already registered. Please proceed to login.');
+          shouldSendSms = false;
         }
       }
 
@@ -2285,6 +2293,91 @@ export class AuthService {
       lastName: result.lastName,
       isNameLocked: result.isNameLocked,
     };
+  }
+
+  /**
+   * HIR-M-12: Authenticated password change for users and administrators.
+   * Verifies the current password (counting failures toward lockout), enforces a stronger minimum
+   * for administrators, clears any forced-rotation flag and revokes every session so the caller
+   * must sign in again with the new password.
+   */
+  static async changePassword(params: {
+    userId: string;
+    currentPassword: unknown;
+    newPassword: unknown;
+    ipAddress?: string;
+    userAgent?: string;
+  }): Promise<{ message: string }> {
+    if (typeof params.currentPassword !== 'string' || !params.currentPassword) {
+      throw new Error('Current password is required.');
+    }
+    AuthService.validatePassword(params.newPassword, 'New password');
+    const newPassword = params.newPassword as string;
+
+    const user = await prisma.user.findUnique({ where: { id: params.userId } });
+    if (!user || user.status !== 'ACTIVE') {
+      throw new Error('Account is unavailable.');
+    }
+
+    const isAdmin = user.role === 'BILL_ADMIN' || user.role === 'OPERATIONS_ADMIN';
+    if (isAdmin && newPassword.length < 12) {
+      throw new Error('Administrator passwords must be at least 12 characters long.');
+    }
+
+    if (user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now()) {
+      throw new Error('Account is temporarily locked due to too many failed password attempts. Please try again later.');
+    }
+
+    const isMatch = await bcrypt.compare(params.currentPassword, user.passwordHash);
+    if (!isMatch) {
+      const lockResult = await AuthService.recordFailedPasswordAttempt(user.id);
+      if (lockResult.isLocked) {
+        throw new Error('Account is temporarily locked due to too many failed password attempts. Please try again later.');
+      }
+      throw new Error('Current password is incorrect.');
+    }
+
+    if (await bcrypt.compare(newPassword, user.passwordHash)) {
+      throw new Error('New password must be different from the current password.');
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 12);
+
+    await prisma.$transaction(async (tx) => {
+      const updated = await tx.user.updateMany({
+        where: { id: user.id, passwordHash: user.passwordHash },
+        data: {
+          passwordHash: newHash,
+          mustChangePassword: false,
+          passwordChangedAt: new Date(),
+          activeSessionId: null,
+          failedPasswordAttempts: 0,
+          lockedUntil: null,
+        },
+      });
+      if (updated.count !== 1) {
+        throw new Error('Password was changed concurrently. Please sign in again.');
+      }
+
+      await tx.authSession.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          adminId: isAdmin ? user.id : null,
+          action: 'PASSWORD_CHANGED',
+          entityType: 'User',
+          entityId: user.id,
+          ipAddress: params.ipAddress,
+          userAgent: params.userAgent,
+          newValue: 'Password changed by account holder. All sessions revoked.',
+        },
+      });
+    });
+
+    return { message: 'Password changed successfully. Please sign in again with your new password.' };
   }
 
   public static validatePassword(password: unknown, fieldName = 'Password'): void {

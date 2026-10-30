@@ -102,6 +102,8 @@ model User {
   status                      UserStatus  @default(ACTIVE)
   isVerified                  Boolean     @default(false)
   activeSessionId             String?
+  mustChangePassword          Boolean     @default(false)
+  passwordChangedAt           DateTime?
   failedPasswordAttempts      Int         @default(0)
   lockedUntil                 DateTime?
   deletionRequestedAt         DateTime?

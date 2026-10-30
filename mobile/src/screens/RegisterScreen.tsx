@@ -290,7 +290,7 @@ export default function RegisterScreen() {
           <View style={styles.stepContent}>
             <Text style={styles.heading}>Enter Your Mobile Number</Text>
             <Text style={styles.subHeading}>
-              We'll send an OTP to verify your mobile number.
+              We'll send an OTP to verify your mobile number. If this number already has an account, no code is sent — please log in instead.
             </Text>
 
             <View style={styles.inputGroup}>

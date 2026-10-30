@@ -2,6 +2,27 @@ import { Request, Response, NextFunction } from 'express';
 import { config } from '../config';
 
 /**
+ * HIR-L-06: Logs an unexpected error server-side and returns a generic client message with a
+ * correlation ID, so internal, database or provider error text never reaches API clients.
+ */
+export function sendInternalError(
+  req: Request & { requestId?: string },
+  res: Response,
+  err: unknown,
+  context: string
+): void {
+  const correlationId = req.requestId || 'req-unknown';
+  console.error(`[INTERNAL ERROR] [${correlationId}] ${context}:`, err);
+  if (res.headersSent) return;
+  res.status(500).json({
+    success: false,
+    code: 'INTERNAL_SERVER_ERROR',
+    message: `An internal error occurred. Reference ID: ${correlationId}`,
+    requestId: correlationId,
+  });
+}
+
+/**
  * Centralized Application Error Middleware
  * Safely sanitizes error payloads, redacts sensitive stack traces in production,
  * and attaches unique correlation request IDs for observability.

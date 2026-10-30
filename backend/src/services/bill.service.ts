@@ -728,6 +728,17 @@ export class BillService {
           }
           currentAncestorId = ancestor.parentBillId;
         }
+
+        // HIR-M-02: Dual custody requires a recorded BILL_ADMIN primary verification before the
+        // Operations Administrator's secondary approval can credit the wallet.
+        const primaryVerifier = bill.verifiedByAdminId
+          ? await tx.user.findUnique({ where: { id: bill.verifiedByAdminId }, select: { role: true } })
+          : null;
+        if (!primaryVerifier || primaryVerifier.role !== 'BILL_ADMIN') {
+          throw new Error(
+            '[PRIMARY_VERIFICATION_REQUIRED] This invoice revision must first be verified by the Bill Review Administrator before Operations Administrator approval.'
+          );
+        }
       }
 
       // 8. Update bill status and store complete financial calculation snapshot
@@ -815,6 +826,75 @@ export class BillService {
     ).catch((err) => console.error('[BILL-SERVICE] Push notification dispatch failed:', err.message));
 
     return result;
+  }
+
+  /**
+   * HIR-M-02: Records the Bill Review Administrator's primary verification of an invoice revision that
+   * requires secondary approval. No reward is credited; the bill stays UNDER_REVIEW until the
+   * Operations Administrator performs the secondary approval.
+   */
+  static async recordPrimaryVerification(
+    billId: string,
+    adminId: string,
+    params: { vendorGstin?: string; merchantName?: string; remarks?: string }
+  ) {
+    const vendorGstin = params.vendorGstin?.trim().toUpperCase() || null;
+    const merchantName = params.merchantName?.trim() || null;
+    if (vendorGstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(vendorGstin)) {
+      throw new Error('Invalid Indian GSTIN format. Expected 15-character alphanumeric GSTIN (e.g. 08AAAAA0000A1Z5).');
+    }
+
+    return await prisma.$transaction(async (tx) => {
+      const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "Bill" WHERE "id" = ${billId} FOR UPDATE
+      `;
+      if (!lockedRows || lockedRows.length === 0) {
+        throw new Error('Bill not found.');
+      }
+
+      const bill = await tx.bill.findUnique({ where: { id: billId } });
+      if (!bill) throw new Error('Bill not found.');
+      if (!bill.requiresSecondaryApproval) {
+        throw new Error('Primary verification applies only to invoice revisions that require secondary approval.');
+      }
+      if (bill.status !== 'PENDING' && bill.status !== 'UNDER_REVIEW') {
+        throw new Error(`Bills with status ${bill.status} cannot be verified.`);
+      }
+      if (bill.verifiedByAdminId) {
+        throw new Error('This invoice revision has already been verified and is awaiting Operations Administrator approval.');
+      }
+      if (bill.userId === adminId) {
+        throw new Error('Administrators cannot verify bills submitted under their own account.');
+      }
+
+      const updated = await tx.bill.update({
+        where: { id: billId },
+        data: {
+          status: 'UNDER_REVIEW',
+          verifiedByAdminId: adminId,
+          ...(vendorGstin ? { vendorGstin } : {}),
+          ...(merchantName ? { merchantName } : {}),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          adminId,
+          action: 'BILL_PRIMARY_VERIFIED',
+          entityType: 'Bill',
+          entityId: billId,
+          newValue: JSON.stringify({
+            invoiceNumber: bill.invoiceNumber,
+            vendorGstin,
+            merchantName,
+            remarks: params.remarks?.trim() || null,
+            forwardedTo: 'OPERATIONS_ADMIN',
+          }),
+        },
+      });
+
+      return updated;
+    });
   }
 
   /**

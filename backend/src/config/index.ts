@@ -254,8 +254,8 @@ export function validateProductionConfig(role: ServiceRole = serviceRole, env: R
     'CORS_ALLOWED_ORIGINS',
     'BILL_ADMIN_MOBILE',
     'OPERATIONS_ADMIN_MOBILE',
-    'BILL_ADMIN_INITIAL_PASSWORD',
-    'OPERATIONS_ADMIN_INITIAL_PASSWORD',
+    // HIR-M-12: *_INITIAL_PASSWORD are seed-only. The API no longer requires them at runtime so
+    // they can be removed from the server environment once administrators are provisioned.
   ];
 
   const workerOnlyVars = [

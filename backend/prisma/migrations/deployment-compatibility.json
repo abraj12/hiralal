@@ -283,6 +283,14 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Additive columns vendorGstin and merchantName on Bill, DEFICIT_OFFSET enum value on TransactionType, drops global invoice index, and creates vendor-scoped composite partial unique indexes on approved bills."
+    },
+    {
+      "id": "20261030120000_user_must_change_password",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Additive mustChangePassword and passwordChangedAt columns on User; flags existing administrators for forced password rotation (HIR-M-12)."
     }
   ]
 }

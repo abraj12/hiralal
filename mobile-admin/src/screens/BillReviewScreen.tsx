@@ -219,7 +219,7 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
 
     setActionLoading(reviewBill.id);
     try {
-      await MobileApiClient.verifyAdminBill(reviewBill.id, {
+      const approveRes: any = await MobileApiClient.verifyAdminBill(reviewBill.id, {
         action: 'APPROVE',
         gstIncluded: reviewGstIncluded,
         gstRate: reviewGstIncluded ? (reviewGstRate ?? 0) : 0,
@@ -230,7 +230,11 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
       });
       setReviewBill(null);
       await fetchBills();
-      Alert.alert('Bill Approved', 'The bill has been verified and reward credited.');
+      if (approveRes?.primaryVerified) {
+        Alert.alert('Forwarded for Approval', 'Verified and forwarded to the Operations Administrator. No reward has been credited yet.');
+      } else {
+        Alert.alert('Bill Approved', 'The bill has been verified and reward credited.');
+      }
     } catch (e: any) {
       Alert.alert('Approval Failed', e.message || 'Could not approve bill.');
     } finally {
@@ -276,7 +280,11 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
     const isPending = item.status === 'PENDING' || item.status === 'UNDER_REVIEW';
     const isApproved = item.status === 'APPROVED';
     const isRejected = item.status === 'REJECTED';
-    const isRoleAuthorized = Boolean(user?.role) && (item.requiresSecondaryApproval ? user?.role === 'OPERATIONS_ADMIN' : user?.role === 'BILL_ADMIN');
+    // HIR-M-02: flagged revisions need BILL_ADMIN primary verification, then OPERATIONS_ADMIN approval
+    const isPrimaryStep = Boolean(item.requiresSecondaryApproval) && !item.verifiedByAdminId;
+    const isRoleAuthorized =
+      Boolean(user?.role) &&
+      (item.requiresSecondaryApproval && !isPrimaryStep ? user?.role === 'OPERATIONS_ADMIN' : user?.role === 'BILL_ADMIN');
 
     return (
       <View style={styles.card}>
@@ -353,7 +361,7 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
           ) : (
             <View style={[styles.actionsRow, { justifyContent: 'center', paddingVertical: 8 }]}>
               <Text style={{ fontSize: 12, color: '#64748B', fontStyle: 'italic' }}>
-                {item.requiresSecondaryApproval ? 'Requires Operations Admin review' : 'Requires Bill Review Admin review'}
+                {item.requiresSecondaryApproval && !isPrimaryStep ? 'Awaiting Operations Admin approval' : 'Requires Bill Review Admin review'}
               </Text>
             </View>
           )

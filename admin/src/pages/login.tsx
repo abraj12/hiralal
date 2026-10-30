@@ -139,7 +139,7 @@ export default function AdminLoginPage() {
       if (res.user) {
         AdminApiClient.setUser(res.user);
       }
-      router.push('/');
+      router.push(res.mustChangePassword || res.user?.mustChangePassword ? '/change-password' : '/');
     } catch (err: any) {
       setError(err.message || 'Invalid or expired verification code.');
     } finally {

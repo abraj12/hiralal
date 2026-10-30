@@ -162,7 +162,7 @@ async function main() {
           'BILL_ADMIN_INITIAL_PASSWORD is required to provision Bill Admin in production.'
         );
       }
-      const billAdminHash = await bcrypt.hash(billAdminPassword, 10);
+      const billAdminHash = await bcrypt.hash(billAdminPassword, 12);
       billAdmin = await prisma.user.create({
         data: {
           mobile: billAdminMobile,
@@ -171,6 +171,8 @@ async function main() {
           role: 'BILL_ADMIN',
           status: 'ACTIVE',
           isVerified: true,
+          // HIR-M-12: initial passwords come from environment variables and must be rotated on first sign-in
+          mustChangePassword: true,
         },
       });
       console.log(`✅ Bill Admin provisioned: ${billAdmin.fullName} (${billAdmin.mobile})`);
@@ -212,7 +214,7 @@ async function main() {
           'OPERATIONS_ADMIN_INITIAL_PASSWORD is required to provision Operations Admin in production.'
         );
       }
-      const opsAdminHash = await bcrypt.hash(opsAdminPassword, 10);
+      const opsAdminHash = await bcrypt.hash(opsAdminPassword, 12);
       opsAdmin = await prisma.user.create({
         data: {
           mobile: opsAdminMobile,
@@ -221,6 +223,8 @@ async function main() {
           role: 'OPERATIONS_ADMIN',
           status: 'ACTIVE',
           isVerified: true,
+          // HIR-M-12: initial passwords come from environment variables and must be rotated on first sign-in
+          mustChangePassword: true,
         },
       });
       console.log(`✅ Operations Admin provisioned: ${opsAdmin.fullName} (${opsAdmin.mobile})`);

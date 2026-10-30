@@ -667,6 +667,7 @@ router.post('/users/:id/verify-mononymous-kyc', requireOperationsAdmin, adminAct
     const duplicatePan = await prisma.kycRecord.findFirst({
       where: {
         userId: { not: userId },
+        panStatus: 'VERIFIED',
         OR: [
           { panBlindIndex: backfilledBlindIndex },
           ...(canonicalPan ? [{ panNumber: canonicalPan }] : []),
@@ -679,6 +680,12 @@ router.post('/users/:id/verify-mononymous-kyc', requireOperationsAdmin, adminAct
     }
 
     const updated = await prisma.$transaction(async (tx) => {
+      // HIR-M-01: Free the blind index from any other account's unverified record before claiming it
+      await tx.kycRecord.updateMany({
+        where: { panBlindIndex: backfilledBlindIndex, userId: { not: userId }, panStatus: { not: 'VERIFIED' } },
+        data: { panBlindIndex: null },
+      });
+
       const kyc = await tx.kycRecord.update({
         where: { id: pendingKyc.id },
         data: {
@@ -920,19 +927,11 @@ const handleBillVerification = async (req: AuthenticatedRequest, res: Response) 
     // Role enforcement and secondary deviation review check
     const targetBill = await prisma.bill.findUnique({
       where: { id: req.params.id },
-      select: { id: true, requiresSecondaryApproval: true, status: true },
+      select: { id: true, requiresSecondaryApproval: true, status: true, verifiedByAdminId: true, vendorGstin: true, merchantName: true },
     });
 
     if (!targetBill) {
       return res.status(404).json({ success: false, message: 'Bill not found.' });
-    }
-
-    if (targetBill.requiresSecondaryApproval && admin.role !== 'OPERATIONS_ADMIN') {
-      return res.status(403).json({
-        success: false,
-        code: 'SECONDARY_APPROVAL_REQUIRED',
-        message: 'This invoice revision exceeds upward deviation thresholds and requires review by an Operations Administrator.',
-      });
     }
 
     if (!targetBill.requiresSecondaryApproval && admin.role !== 'BILL_ADMIN') {
@@ -941,6 +940,25 @@ const handleBillVerification = async (req: AuthenticatedRequest, res: Response) 
         code: 'BILL_ADMIN_APPROVAL_REQUIRED',
         message: 'Standard invoice approvals and reviews must be performed by a Bill Review Administrator.',
       });
+    }
+
+    // HIR-M-02: Invoice revisions above the deviation threshold need two people:
+    // BILL_ADMIN primary verification, then OPERATIONS_ADMIN secondary approval.
+    if (targetBill.requiresSecondaryApproval && action === 'APPROVE') {
+      if (admin.role === 'BILL_ADMIN' && targetBill.verifiedByAdminId) {
+        return res.status(409).json({
+          success: false,
+          code: 'AWAITING_SECONDARY_APPROVAL',
+          message: 'This invoice revision has been verified and is awaiting Operations Administrator approval.',
+        });
+      }
+      if (admin.role === 'OPERATIONS_ADMIN' && !targetBill.verifiedByAdminId) {
+        return res.status(409).json({
+          success: false,
+          code: 'PRIMARY_VERIFICATION_REQUIRED',
+          message: 'This invoice revision must first be verified by the Bill Review Administrator.',
+        });
+      }
     }
 
     if (action === 'APPROVE') {
@@ -964,8 +982,11 @@ const handleBillVerification = async (req: AuthenticatedRequest, res: Response) 
 
       // HIR-H-01: Vendor identity is mandatory so invoice uniqueness is scoped to the issuing vendor,
       // not to the submitting user. Without it the same invoice can be approved for every account.
-      const hasVendorGstin = typeof req.body.vendorGstin === 'string' && req.body.vendorGstin.trim().length > 0;
-      const hasMerchantName = typeof req.body.merchantName === 'string' && req.body.merchantName.trim().length >= 2;
+      // A vendor recorded by the primary verifier (HIR-M-02) satisfies the requirement for the secondary approver.
+      const hasVendorGstin =
+        (typeof req.body.vendorGstin === 'string' && req.body.vendorGstin.trim().length > 0) || Boolean(targetBill.vendorGstin);
+      const hasMerchantName =
+        (typeof req.body.merchantName === 'string' && req.body.merchantName.trim().length >= 2) || Boolean(targetBill.merchantName);
       if (!hasVendorGstin && !hasMerchantName) {
         return res.status(400).json({
           success: false,
@@ -975,6 +996,20 @@ const handleBillVerification = async (req: AuthenticatedRequest, res: Response) 
       }
       if (typeof req.body.merchantName === 'string' && req.body.merchantName.trim().length > 200) {
         return res.status(400).json({ success: false, message: 'Merchant name cannot exceed 200 characters.' });
+      }
+
+      if (targetBill.requiresSecondaryApproval && admin.role === 'BILL_ADMIN') {
+        const verifiedBill = await BillService.recordPrimaryVerification(req.params.id, admin.id, {
+          vendorGstin: typeof req.body.vendorGstin === 'string' ? req.body.vendorGstin : undefined,
+          merchantName: typeof req.body.merchantName === 'string' ? req.body.merchantName : undefined,
+          remarks: typeof req.body.remarks === 'string' ? req.body.remarks : undefined,
+        });
+        return res.json({
+          success: true,
+          primaryVerified: true,
+          message: 'Invoice revision verified and forwarded to the Operations Administrator for secondary approval. No reward has been credited yet.',
+          bill: verifiedBill,
+        });
       }
 
       const result = await BillService.approveBill(req.params.id, admin.id, {

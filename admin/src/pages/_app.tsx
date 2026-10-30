@@ -23,8 +23,15 @@ export default function App({ Component, pageProps }: AppProps) {
         if (res?.success && res?.user) {
           AdminApiClient.setUser(res.user);
           const role = res.user.role;
-          const billAdminAllowed = ['/', '/bills'];
-          const opsAdminAllowed = ['/', '/bills', '/users', '/rewards', '/payouts', '/audit-logs', '/notifications', '/settings'];
+          const billAdminAllowed = ['/', '/bills', '/change-password'];
+          const opsAdminAllowed = ['/', '/bills', '/users', '/rewards', '/payouts', '/audit-logs', '/notifications', '/settings', '/change-password'];
+
+          // HIR-M-12: forced rotation of initial administrator passwords
+          if (res.user.mustChangePassword && pathname !== '/change-password') {
+            setAuthorizedPath(null);
+            router.replace('/change-password');
+            return;
+          }
 
           if (isLogin) {
             setAuthorizedPath('/login');

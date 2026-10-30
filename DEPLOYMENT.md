@@ -180,6 +180,7 @@ sudo cp /etc/letsencrypt/live/hsspl.algions.in/privkey.pem /opt/hiralal/nginx/ss
    ```bash
    docker compose exec backend npm run seed
    ```
+   Seeded administrators are flagged `mustChangePassword`: after OTP sign-in they can only change their password (minimum 12 characters) until they do. Once both administrators have changed their passwords, remove `BILL_ADMIN_INITIAL_PASSWORD` and `OPERATIONS_ADMIN_INITIAL_PASSWORD` from the server `.env`; the API does not need them at runtime.
 
 ---
 

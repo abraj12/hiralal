@@ -10,6 +10,7 @@ import {
   History,
   Settings,
   LogOut,
+  KeyRound,
   ShieldCheck,
   Bell,
   Menu,
@@ -233,13 +234,22 @@ export default function Sidebar({ pendingBillsCount = 0, pendingPayoutsCount = 0
                 </div>
               </div>
             </div>
-            <button
-              onClick={handleLogout}
-              title="Sign Out"
-              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
+            <div className="flex items-center">
+              <Link
+                href="/change-password"
+                title="Change Password"
+                className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+              >
+                <KeyRound className="w-4 h-4" />
+              </Link>
+              <button
+                onClick={handleLogout}
+                title="Sign Out"
+                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       </aside>
