@@ -174,6 +174,10 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
       if (url.includes('/fund_accounts')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'fa_1' }) });
       }
+      if (url.includes('/payouts?')) {
+        // HIR-H-03: provider lookup by reference_id confirms no payout exists
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ items: [] }) });
+      }
       if (url.includes('/payouts')) {
         // 400 Bad Request
         return Promise.resolve({
@@ -202,6 +206,101 @@ describe('Payout Worker, Webhook Deduplication & Timeout Safety Tests', () => {
       const walletAfter = await prisma.wallet.findUnique({ where: { userId: user.id } });
       expect(Number(walletAfter?.availableBalance)).toBe(5000.0);
       expect(Number(walletAfter?.processingAmount)).toBe(0.0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await prisma.payout.deleteMany({ where: { userId: user.id } });
+      await prisma.walletTransaction.deleteMany({ where: { userId: user.id } });
+      await prisma.wallet.update({
+        where: { userId: user.id },
+        data: { availableBalance: 5000.0, processingAmount: 0.0, totalRedeemed: 0.0 },
+      });
+    }
+  });
+
+  test('HIR-H-03a: 4xx on dispatch does NOT refund when the provider already holds a payout for the reference', async () => {
+    await prisma.payout.deleteMany({ where: { userId: user.id } });
+    await prisma.wallet.update({
+      where: { userId: user.id },
+      data: { availableBalance: 5000.0, processingAmount: 0.0, totalRedeemed: 0.0 },
+    });
+
+    const result = await PayoutService.requestRedemption(user.id, `idem-4xx-existing-${Date.now()}`);
+    const payoutId = result.payout.id;
+    await PayoutService.approveRedemption(payoutId, adminUser.id);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = jest.fn().mockImplementation((url: string) => {
+      if (url.includes('/contacts')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'cont_h03' }) });
+      if (url.includes('/fund_accounts')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'fa_h03' }) });
+      if (url.includes('/payouts?')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ items: [{ id: 'pout_existing_h03', status: 'processing' }] }) });
+      }
+      if (url.includes('/payouts')) {
+        return Promise.resolve({
+          ok: false,
+          status: 400,
+          json: () => Promise.resolve({ error: { description: 'Idempotency key used with a different request body' } }),
+        });
+      }
+      return originalFetch(url as any);
+    });
+
+    try {
+      await PayoutWorker.processPayout(payoutId);
+
+      const payoutAfter = await prisma.payout.findUnique({ where: { id: payoutId } });
+      expect(payoutAfter?.status).toBe('PROCESSING');
+      expect(payoutAfter?.razorpayPayoutId).toBe('pout_existing_h03');
+
+      const reversalTx = await prisma.walletTransaction.findFirst({
+        where: { referenceId: payoutId, type: 'PAYOUT_REVERSAL' },
+      });
+      expect(reversalTx).toBeNull();
+      const walletAfter = await prisma.wallet.findUnique({ where: { userId: user.id } });
+      expect(Number(walletAfter?.processingAmount)).toBe(5000.0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await prisma.payout.deleteMany({ where: { userId: user.id } });
+      await prisma.walletTransaction.deleteMany({ where: { userId: user.id } });
+      await prisma.wallet.update({
+        where: { userId: user.id },
+        data: { availableBalance: 5000.0, processingAmount: 0.0, totalRedeemed: 0.0 },
+      });
+    }
+  });
+
+  test('HIR-H-03b: two concurrent dispatchers send exactly one provider payout request', async () => {
+    await prisma.payout.deleteMany({ where: { userId: user.id } });
+    await prisma.wallet.update({
+      where: { userId: user.id },
+      data: { availableBalance: 5000.0, processingAmount: 0.0, totalRedeemed: 0.0 },
+    });
+
+    const result = await PayoutService.requestRedemption(user.id, `idem-concurrent-${Date.now()}`);
+    const payoutId = result.payout.id;
+    await PayoutService.approveRedemption(payoutId, adminUser.id);
+
+    let payoutPosts = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = jest.fn().mockImplementation((url: string, init?: any) => {
+      if (url.includes('/contacts')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'cont_conc' }) });
+      if (url.includes('/fund_accounts')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'fa_conc' }) });
+      if (url.includes('/payouts') && init?.method === 'POST') {
+        payoutPosts++;
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'pout_conc', status: 'processing' }) });
+      }
+      return originalFetch(url as any);
+    });
+
+    try {
+      await Promise.all([PayoutWorker.processPayout(payoutId), PayoutWorker.processPayout(payoutId)]);
+      expect(payoutPosts).toBe(1);
+      const payoutAfter = await prisma.payout.findUnique({ where: { id: payoutId } });
+      expect(payoutAfter?.status).toBe('PROCESSING');
+      const reversalTx = await prisma.walletTransaction.findFirst({
+        where: { referenceId: payoutId, type: 'PAYOUT_REVERSAL' },
+      });
+      expect(reversalTx).toBeNull();
     } finally {
       globalThis.fetch = originalFetch;
       await prisma.payout.deleteMany({ where: { userId: user.id } });

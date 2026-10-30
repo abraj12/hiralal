@@ -468,6 +468,10 @@ export class BillService {
         ? (options.merchantName?.trim() || null)
         : bill.merchantName;
 
+      if (effectiveGstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(effectiveGstin)) {
+        throw new Error('Invalid Indian GSTIN format. Expected 15-character alphanumeric GSTIN (e.g. 08AAAAA0000A1Z5).');
+      }
+
       if (bill.invoiceNumber) {
         const cleanInvoice = bill.invoiceNumber.trim().toUpperCase();
 
@@ -513,6 +517,30 @@ export class BillService {
           });
           if (alreadyApproved) {
             throw new Error(`Another bill with invoice #${bill.invoiceNumber} has already been approved for this account.`);
+          }
+        }
+
+        // HIR-H-01 / HIR-L-10: Cross-user physical-invoice duplicate guard independent of vendor fields.
+        // The same paper invoice re-photographed by another account (or re-typed with punctuation
+        // changes) has the same normalised number, invoice date and gross amount.
+        const normalizedInvoice = cleanInvoice.replace(/[^A-Z0-9]/g, '');
+        if (normalizedInvoice) {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'lock:invoice:norm:' + normalizedInvoice}))`;
+          const grossForDuplicateCheck = Number(bill.grossBillAmount || bill.billAmount);
+          const physicalDuplicates = await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT "id"
+            FROM "Bill"
+            WHERE "status" = 'APPROVED'
+              AND "id" <> ${bill.id}
+              AND regexp_replace(upper("invoiceNumber"), '[^A-Z0-9]', '', 'g') = ${normalizedInvoice}
+              AND "invoiceDate" = ${bill.invoiceDate}
+              AND COALESCE("grossBillAmount", "billAmount") = ${grossForDuplicateCheck}::decimal
+            LIMIT 1
+          `;
+          if (physicalDuplicates.length > 0) {
+            throw new Error(
+              `[DUPLICATE_PHYSICAL_INVOICE] An approved bill with the same invoice number, invoice date and amount already exists (bill ${physicalDuplicates[0].id}). Reject this submission or escalate to Operations Administration.`
+            );
           }
         }
       }

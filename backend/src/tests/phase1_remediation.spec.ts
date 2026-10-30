@@ -24,7 +24,9 @@ describe('Phase 1 Verification & Regression Suite (High-Priority Security & Avai
       expect(content).not.toContain('hsspl.aglions.in');
       expect(content).not.toContain('hiralalandcompany.com');
       expect(content).toContain('<pin digest="SHA-256">');
-      expect(content).toContain('C5+o0AITHadrtpqMe4ZhtRfDCCDa60MBXZRe89mbDHQ='); // Let's Encrypt ISRG Root X1
+      // HIR-H-02: real ISRG Root X1 SPKI pin (the previous value did not match the actual root)
+      expect(content).toContain('C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=');
+      expect(content).not.toContain('C5+o0AITHadrtpqMe4ZhtRfDCCDa60MBXZRe89mbDHQ=');
     });
   });
 

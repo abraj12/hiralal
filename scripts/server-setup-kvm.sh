@@ -102,14 +102,26 @@ if [ "${RESTRICT_CLOUDFLARE_IPS:-true}" = "true" ]; then
 
   # VULN-HIGH-11: Dual-stack Docker NAT bypass defense via DOCKER-USER chain
   # Docker NAT PREROUTING table bypasses UFW INPUT table. Restrict container ports 80/443 in DOCKER-USER chain for both IPv4 and IPv6.
+  # HIR-H-04: DOCKER-USER also sees container-originated (egress) traffic. Every ingress rule MUST be
+  # bound to the public interface, otherwise outbound HTTPS from containers to RazorpayX, SignCare,
+  # Google, Meta and Cloudflare R2 is dropped.
+  EXT_IF="${EXT_IF:-$(ip -4 route show default 2>/dev/null | awk '/default/ {for (i = 1; i < NF; i++) if ($i == "dev") {print $(i + 1); exit}}')}"
+  EXT_IF6="${EXT_IF6:-$(ip -6 route show default 2>/dev/null | awk '/default/ {for (i = 1; i < NF; i++) if ($i == "dev") {print $(i + 1); exit}}')}"
+  EXT_IF6="${EXT_IF6:-${EXT_IF}}"
+  if [ -z "${EXT_IF}" ]; then
+    echo "[FATAL] Could not detect the public network interface. Re-run with EXT_IF=<interface> (e.g. EXT_IF=eth0)." >&2
+    exit 1
+  fi
+  echo "==> Binding DOCKER-USER ingress rules to public interface ${EXT_IF} (IPv6: ${EXT_IF6})"
+
   if command -v iptables >/dev/null 2>&1; then
     iptables -N DOCKER-USER 2>/dev/null || true
     iptables -F DOCKER-USER 2>/dev/null || true
     iptables -A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     for cidr in ${CF_IPV4}; do
-      iptables -A DOCKER-USER -p tcp -m multiport --dports 80,443 -s "${cidr}" -j ACCEPT
+      iptables -A DOCKER-USER -i "${EXT_IF}" -p tcp -m multiport --dports 80,443 -s "${cidr}" -j ACCEPT
     done
-    iptables -A DOCKER-USER -p tcp -m multiport --dports 80,443 -j DROP
+    iptables -A DOCKER-USER -i "${EXT_IF}" -p tcp -m multiport --dports 80,443 -j DROP
     iptables -A DOCKER-USER -j RETURN
   fi
 
@@ -118,9 +130,9 @@ if [ "${RESTRICT_CLOUDFLARE_IPS:-true}" = "true" ]; then
     ip6tables -F DOCKER-USER 2>/dev/null || true
     ip6tables -A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     for cidr in ${CF_IPV6}; do
-      ip6tables -A DOCKER-USER -p tcp -m multiport --dports 80,443 -s "${cidr}" -j ACCEPT
+      ip6tables -A DOCKER-USER -i "${EXT_IF6}" -p tcp -m multiport --dports 80,443 -s "${cidr}" -j ACCEPT
     done
-    ip6tables -A DOCKER-USER -p tcp -m multiport --dports 80,443 -j DROP
+    ip6tables -A DOCKER-USER -i "${EXT_IF6}" -p tcp -m multiport --dports 80,443 -j DROP
     ip6tables -A DOCKER-USER -j RETURN
   fi
 

@@ -7,18 +7,32 @@
         </trust-anchors>
     </base-config>
 
-    <!-- Production domain security configuration with certificate pinning -->
+    <!-- Production domain security configuration with certificate pinning (generated from CERTIFICATE_PINS) -->
     <domain-config cleartextTrafficPermitted="false">
         <domain includeSubdomains="true">hsspl.algions.in</domain>
         <pin-set expiration="2027-12-31">
-            <!-- Let's Encrypt ISRG Root X1 -->
-            <pin digest="SHA-256">C5+o0AITHadrtpqMe4ZhtRfDCCDa60MBXZRe89mbDHQ=</pin>
-            <!-- Let's Encrypt ISRG Root X2 -->
-            <pin digest="SHA-256">diQK/QIyeekcQzp4SbpwZBD76vBPtOStwep5sV7Fnbg=</pin>
-            <!-- Cloudflare Root CA (ECC) -->
-            <pin digest="SHA-256">gbe441r5N2pd+VwzVnLzQ48q8jV0Z/f6U9n1aQO8q2s=</pin>
-            <!-- Cloudflare Root CA (RSA) / Backup Pin -->
-            <pin digest="SHA-256">VjLhhsiAhYduUzkZQwUJMrznTcTTMYFvbAIInstant4=</pin>
+            <!-- ISRG Root X1 -->
+            <pin digest="SHA-256">C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=</pin>
+            <!-- ISRG Root X2 -->
+            <pin digest="SHA-256">diGVwiVYbubAI3RW4hB9xU8e/CH2GnkuvVFZE8zmgzI=</pin>
+            <!-- GTS Root R1 -->
+            <pin digest="SHA-256">hxqRlPTu1bMS/0DITB1SSu0vd4u/8l8TjPgfaAp63Gc=</pin>
+            <!-- GTS Root R2 -->
+            <pin digest="SHA-256">Vfd95BwDeSQo+NUYxVEEIlvkOlWY2SalKK1lPhzOx78=</pin>
+            <!-- GTS Root R3 -->
+            <pin digest="SHA-256">QXnt2YHvdHR3tJYmQIr0Paosp6t/nggsEGD4QJZ3Q0g=</pin>
+            <!-- GTS Root R4 -->
+            <pin digest="SHA-256">mEflZT5enoR1FuXLgYYGqnVEoZvmf9c2bVBpiOjYQ0c=</pin>
+            <!-- GlobalSign Root CA -->
+            <pin digest="SHA-256">K87oWBWM9UZfyddvDfoxL+8lpNyoUB2ptGtn0fv6G2Q=</pin>
+            <!-- SSL.com Root Certification Authority RSA -->
+            <pin digest="SHA-256">0cRTd+vc1hjNFlHcLgLCHXUeWqn80bNDH/bs9qMTSPo=</pin>
+            <!-- SSL.com Root Certification Authority ECC -->
+            <pin digest="SHA-256">oyD01TTXvpfBro3QSZc1vIlcMjrdLTiL/M9mLCPX+Zo=</pin>
+            <!-- SSL.com TLS RSA Root CA 2022 -->
+            <pin digest="SHA-256">K89VOmb1cJAN3TK6bf4ezAbJGC1mLcG2Dh97dnwr3VQ=</pin>
+            <!-- SSL.com TLS ECC Root CA 2022 -->
+            <pin digest="SHA-256">G/ANXI8TwJTdF+AFBM8IiIUPEv0Gf6H5LA/b9guG4yE=</pin>
         </pin-set>
         <trust-anchors>
             <certificates src="system" />

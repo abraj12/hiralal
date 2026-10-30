@@ -279,6 +279,58 @@ describe('Finding 05 & 07 Regression Suite: Vendor-Scoped Invoice Uniqueness & A
       });
       expect(approvedU2.bill.status).toBe('APPROVED');
     });
+
+    it('HIR-H-01: blocks a re-photographed copy of the same physical invoice approved for another user', async () => {
+      const invoice = 'PHYS-DUP-7781';
+
+      const original = await BillService.submitBill({
+        userId: user1Id,
+        invoiceNumber: invoice,
+        invoiceDate: '2026-10-04',
+        billAmount: 2750,
+        fileBuffer: makePdfBuffer('phys_dup_original'),
+        fileName: 'phys1.pdf',
+        mimeType: 'application/pdf',
+      });
+      await BillService.approveBill(original.id, adminId, { gstIncluded: false, merchantName: 'Sharma Traders' });
+
+      // Different photo (new file hash), punctuation-varied number, different typed merchant name
+      const copy = await BillService.submitBill({
+        userId: user2Id,
+        invoiceNumber: 'phys dup/7781',
+        invoiceDate: '2026-10-04',
+        billAmount: 2750,
+        fileBuffer: makePdfBuffer('phys_dup_rephotographed'),
+        fileName: 'phys2.pdf',
+        mimeType: 'application/pdf',
+      });
+
+      await expect(
+        BillService.approveBill(copy.id, adminId, { gstIncluded: false, merchantName: 'Sharma Trader' })
+      ).rejects.toThrow(/DUPLICATE_PHYSICAL_INVOICE/);
+
+      const stillPending = await prisma.bill.findUnique({ where: { id: copy.id } });
+      expect(stillPending?.status).toBe('PENDING');
+      const creditCount = await prisma.walletTransaction.count({
+        where: { referenceType: 'BILL', referenceId: copy.id },
+      });
+      expect(creditCount).toBe(0);
+    });
+
+    it('HIR-H-01: rejects a malformed vendor GSTIN supplied at approval', async () => {
+      const bill = await BillService.submitBill({
+        userId: user1Id,
+        invoiceNumber: 'GSTIN-FMT-1',
+        invoiceDate: '2026-10-05',
+        billAmount: 900,
+        fileBuffer: makePdfBuffer('gstin_fmt'),
+        fileName: 'gstin.pdf',
+        mimeType: 'application/pdf',
+      });
+      await expect(
+        BillService.approveBill(bill.id, adminId, { gstIncluded: false, vendorGstin: 'NOT-A-GSTIN' })
+      ).rejects.toThrow(/Invalid Indian GSTIN/);
+    });
   });
 
   describe('Finding 07: Dual Custody Revision Ancestor Recursion', () => {

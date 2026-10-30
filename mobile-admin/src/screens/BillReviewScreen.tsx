@@ -84,6 +84,9 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
   const [reviewGstRate, setReviewGstRate] = useState<number | undefined>(undefined);
   const [reviewGstRuleId, setReviewGstRuleId] = useState<string | undefined>(undefined);
   const [reviewGstOverrideReason, setReviewGstOverrideReason] = useState<string>('');
+  // HIR-H-01: Vendor identity scopes invoice uniqueness to the issuing vendor
+  const [reviewVendorGstin, setReviewVendorGstin] = useState<string>('');
+  const [reviewMerchantName, setReviewMerchantName] = useState<string>('');
 
   const fetchBills = async () => {
     setLoading(true);
@@ -110,6 +113,8 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
     setDocLoading(true);
     setReviewGstIncluded(false);
     setReviewGstOverrideReason('');
+    setReviewVendorGstin(bill.vendorGstin || '');
+    setReviewMerchantName(bill.merchantName || '');
     setReviewConfig(null);
     setReviewConfigError(null);
     setReviewConfigLoading(true);
@@ -207,6 +212,11 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
       return;
     }
 
+    if (!reviewVendorGstin.trim() && reviewMerchantName.trim().length < 2) {
+      Alert.alert('Vendor Required', 'Enter the vendor GSTIN printed on the invoice, or the merchant/shop name if it has no GSTIN.');
+      return;
+    }
+
     setActionLoading(reviewBill.id);
     try {
       await MobileApiClient.verifyAdminBill(reviewBill.id, {
@@ -215,6 +225,8 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
         gstRate: reviewGstIncluded ? (reviewGstRate ?? 0) : 0,
         gstRuleId: reviewGstIncluded ? reviewGstRuleId : undefined,
         gstOverrideReason: reviewGstOverrideReason.trim() || undefined,
+        vendorGstin: reviewVendorGstin.trim() ? reviewVendorGstin.trim().toUpperCase() : undefined,
+        merchantName: reviewMerchantName.trim() || undefined,
       });
       setReviewBill(null);
       await fetchBills();
@@ -591,6 +603,27 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
                     </Text>
                   </View>
                 </TouchableOpacity>
+
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={styles.rateLabel}>Vendor on invoice (required):</Text>
+                  <TextInput
+                    style={styles.overrideInput}
+                    value={reviewVendorGstin}
+                    onChangeText={setReviewVendorGstin}
+                    autoCapitalize="characters"
+                    maxLength={15}
+                    placeholder="Vendor GSTIN, e.g. 08AAAAA0000A1Z5"
+                    placeholderTextColor="#94A3B8"
+                  />
+                  <TextInput
+                    style={[styles.overrideInput, { marginTop: 8 }]}
+                    value={reviewMerchantName}
+                    onChangeText={setReviewMerchantName}
+                    maxLength={200}
+                    placeholder="Merchant / shop name (required if no GSTIN)"
+                    placeholderTextColor="#94A3B8"
+                  />
+                </View>
 
                 {reviewConfigLoading && (
                   <View style={{ padding: 12, alignItems: 'center' }}>

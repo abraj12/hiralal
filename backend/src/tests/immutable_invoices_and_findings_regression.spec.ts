@@ -196,6 +196,7 @@ describe('Immutable Invoices, Deviations, Legal Holds & Financial Integrity Suit
         .set('Authorization', `Bearer ${billAdminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: false,
           correctedGrossAmount: 15000, // Tampering attempt
         });
@@ -214,6 +215,7 @@ describe('Immutable Invoices, Deviations, Legal Holds & Financial Integrity Suit
         .set('Authorization', `Bearer ${billAdminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: false,
         });
 
@@ -302,6 +304,7 @@ describe('Immutable Invoices, Deviations, Legal Holds & Financial Integrity Suit
         .set('Authorization', `Bearer ${billAdminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: false,
         });
 
@@ -314,6 +317,7 @@ describe('Immutable Invoices, Deviations, Legal Holds & Financial Integrity Suit
         .set('Authorization', `Bearer ${opsAdminToken}`)
         .send({
           action: 'APPROVE',
+          merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: false,
         });
 

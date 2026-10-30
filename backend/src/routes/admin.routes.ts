@@ -962,6 +962,21 @@ const handleBillVerification = async (req: AuthenticatedRequest, res: Response) 
         }
       }
 
+      // HIR-H-01: Vendor identity is mandatory so invoice uniqueness is scoped to the issuing vendor,
+      // not to the submitting user. Without it the same invoice can be approved for every account.
+      const hasVendorGstin = typeof req.body.vendorGstin === 'string' && req.body.vendorGstin.trim().length > 0;
+      const hasMerchantName = typeof req.body.merchantName === 'string' && req.body.merchantName.trim().length >= 2;
+      if (!hasVendorGstin && !hasMerchantName) {
+        return res.status(400).json({
+          success: false,
+          code: 'VENDOR_IDENTITY_REQUIRED',
+          message: 'Enter the vendor GSTIN printed on the invoice, or the merchant/shop name if the invoice has no GSTIN, before approving.',
+        });
+      }
+      if (typeof req.body.merchantName === 'string' && req.body.merchantName.trim().length > 200) {
+        return res.status(400).json({ success: false, message: 'Merchant name cannot exceed 200 characters.' });
+      }
+
       const result = await BillService.approveBill(req.params.id, admin.id, {
         gstIncluded,
         gstRate: gstIncluded ? (typeof gstRate === 'number' ? gstRate : undefined) : 0,
