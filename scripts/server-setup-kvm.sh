@@ -161,7 +161,7 @@ cat << 'EOF' > /etc/fail2ban/jail.d/sshd.local
 enabled = true
 port = ssh
 filter = sshd
-logpath = /var/log/auth.log
+backend = systemd
 maxretry = 5
 findtime = 600
 bantime = 3600

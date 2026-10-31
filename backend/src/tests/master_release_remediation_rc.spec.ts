@@ -64,7 +64,7 @@ describe('Master Release-Blocker Remediation Final Corrective Verification (Work
         isVerified: true,
         wallet: {
           create: {
-            availableBalance: 1200.0,
+            availableBalance: 0.0,
             totalRedeemed: 0.0,
           },
         },

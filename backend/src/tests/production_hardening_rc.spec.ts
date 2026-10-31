@@ -699,6 +699,7 @@ describe('Production Hardening & Financial Integrity Release Candidate Tests', (
           action: 'APPROVE',
           merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: false,
+          gstOverrideReason: 'Invoice contains zero-rated supplies per tax invoice copy',
         });
 
       expect(res.status).toBe(200);

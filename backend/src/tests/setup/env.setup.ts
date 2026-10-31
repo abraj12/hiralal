@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import { assertSafeTestDatabase } from './test-db-guard';
 
 // Load .env.test if it exists, otherwise load .env
 const testEnvPath = path.resolve(process.cwd(), '.env.test');
@@ -21,3 +22,5 @@ if (process.env.TEST_DATABASE_URL) {
 } else if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL = 'postgresql://postgres:1234@localhost:5432/hiralal_rewards_test?schema=public';
 }
+
+assertSafeTestDatabase();

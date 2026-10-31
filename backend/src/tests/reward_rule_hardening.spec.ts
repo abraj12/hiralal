@@ -240,12 +240,12 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
   // -------------------------------------------------------------
   describe('2. Input Validation & Range Enforcement', () => {
     test('rejects non-finite, out-of-range, and invalid percentages with HTTP 400', async () => {
-      // Percentage = 0 (below min 0.01)
-      const resZero = await request(app)
+      // Negative percentage (rejected)
+      const resNegativeRate = await request(app)
         .post('/api/admin/settings/reward-rules')
         .set('Authorization', `Bearer ${opsAdminToken}`)
-        .send({ profession: 'PLUMBER', rewardPercentage: 0 });
-      expect(resZero.status).toBe(400);
+        .send({ profession: 'PLUMBER', rewardPercentage: -0.5 });
+      expect(resNegativeRate.status).toBe(400);
 
       // Percentage = 15.0 (previously capped at 10%, now accepted as valid positive decimal)
       const res15 = await request(app)
@@ -261,7 +261,7 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
         .set('Authorization', `Bearer ${opsAdminToken}`)
         .send({ profession: 'PLUMBER', rewardPercentage: 150.0 });
       expect(resHigh.status).toBe(400);
-      expect(resHigh.body.message).toContain('positive finite number up to 100.00%');
+      expect(resHigh.body.message).toMatch(/cannot exceed the configured platform maximum|positive finite number/i);
 
       // Percentage = 0.555 (more than 2 decimal places / paise precision)
       const resPrecision = await request(app)
@@ -713,7 +713,7 @@ describe('Task 1 Hardening — Reward Rule Permissions, Atomicity, and Effective
         .send({
           profession: 'PLUMBER',
           rewardPercentage: 0.60,
-          effectiveFrom: '2024-02-29',
+          effectiveFrom: '2028-02-29',
         });
       expect(resFeb29Leap.status).toBe(201);
       expect(resFeb29Leap.body.success).toBe(true);

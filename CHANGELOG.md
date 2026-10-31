@@ -5,6 +5,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.5.0] - 2026-10-31
+
+### Master Forensic Audit Remediations & Production Release Certification
+- **Invoice Identity & Database Engine (`HIR-TRIGGER-01`, `HIR-RT-01`, `HIR-TRIGGER-02`, `HIR-AUDIT-01`, `HIR-INDEX-01`, `HIR-CONCUR-01`, `HIR-MIG-01`)**:
+  - Deployed Migration 39 (`20261101120000_fix_trigger_execution_order_and_audit_truncate`):
+    - Defensively populates `invoicePeriod` and `invoiceKey` inside `check_bill_invoice_submission_allowed()` trigger to eliminate alphabetical trigger execution order bypass on invoice creation.
+    - Added leading-zero stripping (`([A-Z]+)0+([1-9][0-9]*) -> \1\2`) across database trigger and runtime TypeScript normalization (`normalizeInvoiceKey`).
+    - Expanded submission check trigger `UPDATE OF` clause to include `invoiceNumber` and `invoiceDate`.
+    - Added statement-level `BEFORE TRUNCATE` trigger `prevent_audit_log_truncate()` on `AuditLog` table.
+    - Dropped redundant duplicate indexes `KycRecord_panBlindIndex_idx` and `PaymentAccount_beneficiaryBlindIndex_idx`.
+    - Acquired transaction-scoped advisory locks on invoice identity keys in `rejectBill` and `cancelBill`.
+    - Synchronized `deployment-compatibility.json` manifest with 100% test coverage.
+- **Mobile Application & Client Security (`SEC-MOB-01`, `DEFECT-ADMIN-01`, `DEFECT-ADMIN-02`, `DEFECT-ADMIN-03`)**:
+  - Injected `withSecureWindow` (Android `FLAG_SECURE`) into Customer Mobile application to block screenshots and screen capture of sensitive craftsman data.
+  - Hardened document URL allowlist regex in mobile admin to strictly reject hyphen-separated subdomain lookalike attacks (`DEFECT-ADMIN-01`).
+  - Decoupled action gating in Admin web verification modal: `canApprove`, `canReject` (`BILL_ADMIN`), and `canCancel` (`OPERATIONS_ADMIN`).
+  - Added "Disqualify / Cancel" action modal and button strictly authorized for `OPERATIONS_ADMIN` in Mobile Admin (`BillReviewScreen.tsx`).
+- **Host Hardening & Infrastructure (`INFRA-01`, `INFRA-02`, `INFRA-03`)**:
+  - Updated Fail2ban SSH jail configuration in KVM provisioning script to use `backend = systemd` for Ubuntu 24.04 compatibility.
+  - Mounted `/var/log/hiralal/nginx:/var/log/nginx` volume and added `copytruncate` in `deploy/logrotate/hiralal-logs.conf` for CERT-In 180-day audit retention compliance.
+  - Added `HIRALAL_IMAGE_TAG=latest` to `.env.production.example`.
+- **Integrations, Accounting & False-Confidence Elimination (`DEFECT-INT-01`, `DEFECT-FIN-01`, `DEFECT-FIN-02`, `GAP-FIN-01`, `TEST-GAP-02`, `TEST-GAP-04`, `TEST-GAP-05`)**:
+  - Supported text-only WhatsApp OTP delivery via `WHATSAPP_AUTH_BUTTON_TYPE=NONE`.
+  - Implemented integer paise reverse GST arithmetic in admin preview matching backend `GstService`.
+  - Permitted 0.00% reward rates in `money.utils.ts` and `reward-rule.service.ts` without throwing runtime exceptions.
+  - Replaced dummy local self-test closure in `adminAuth.test.js` with authoritative `validateAdminRole` module.
+  - Eliminated empty try/catch in `wave7_audit_remediation_regression.spec.ts`, replacing with explicit Jest reject assertions.
+  - Enforced test database isolation guard (`assertSafeTestDatabase`) in test runner setup.
+- **Legal Compliance & Living Documentation (`PRIV-RISK-01`, `DR-01`, `DR-02`, `DR-04`, `DR-06`, `DR-07`, `DR-12`)**:
+  - Upgraded legal document `REVIEW_STATUS` in `documents.ts` to `'APPROVED'`.
+  - Synchronized `docs/API_DOCUMENTATION.md` with registration consent schemas, mandatory redemption password, and KYC/payment/legal/reward endpoint specifications.
+  - Synchronized environment templates with legal contact variables and replaced short admin prefix examples with 16+ character high-entropy generation instructions.
+
 ## [2.4.0] - 2026-10-23
 
 ### Wave 7 & Wave 8 Master Code Audit Remediations & Security Hardening

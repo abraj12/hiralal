@@ -37,8 +37,12 @@ export function calculateRewardAmount(
     throw new Error('Bill amount must be a finite non-negative number.');
   }
 
-  if (!rateDec.isFinite() || rateDec.isNegative() || rateDec.isZero()) {
-    throw new Error('Reward rate percentage must be a finite positive number.');
+  if (!rateDec.isFinite() || rateDec.isNegative()) {
+    throw new Error('Reward rate percentage must be a finite non-negative number.');
+  }
+
+  if (rateDec.isZero()) {
+    return 0.0;
   }
 
   const rateFraction = rateDec.dividedBy(100);

@@ -307,6 +307,30 @@
       "breakingChanges": [],
       "allowsApplicationRollback": true,
       "description": "Additive ConsentRecord table recording accepted legal-document versions and purpose-specific consents (HIR-M-08)."
+    },
+    {
+      "id": "20261030150000_single_seller_invoice_identity",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Single-seller invoice identity enforcement (HIR-ARCH-01, HIR-INV-01): introduces invoicePeriod and invoiceKey columns, unique partial index on live bills, and database trigger."
+    },
+    {
+      "id": "20261101100000_persistent_invoice_reservation_and_disqualification",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Persistent single-seller invoice reservation (7-day correction window) and permanent disqualification for cancelled fraudulent bills (HIR-AUD-P0-01)."
+    },
+    {
+      "id": "20261101120000_fix_trigger_execution_order_and_audit_truncate",
+      "isBackwardCompatible": true,
+      "destructive": false,
+      "breakingChanges": [],
+      "allowsApplicationRollback": true,
+      "description": "Defensive key derivation in submission triggers, leading zero stripping, AuditLog TRUNCATE protection, and removal of duplicate blind indexes (HIR-TRIGGER-01, HIR-RT-01, HIR-TRIGGER-02, HIR-AUDIT-01, HIR-INDEX-01)."
     }
   ]
 }

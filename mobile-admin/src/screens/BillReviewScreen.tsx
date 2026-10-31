@@ -61,7 +61,7 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED'>('ALL');
   const [professionFilter, setProfessionFilter] = useState<'ALL' | 'PLUMBER' | 'TILE_INSTALLER'>('ALL');
   const [search, setSearch] = useState('');
 
@@ -74,6 +74,10 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
   // Rejection modal state
   const [rejectId, setRejectId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+
+  // Cancellation modal state (OPERATIONS_ADMIN)
+  const [cancelId, setCancelId] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
 
   // Per-bill Approval Review Modal state
   const [reviewBill, setReviewBill] = useState<any | null>(null);
@@ -253,6 +257,28 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
     }
   };
 
+  const handleConfirmCancel = async () => {
+    if (!cancelId || !cancelReason.trim() || cancelReason.trim().length < 3) {
+      Alert.alert('Cancellation Reason Required', 'Please enter a valid cancellation reason (minimum 3 characters).');
+      return;
+    }
+
+    setActionLoading(cancelId);
+    try {
+      await MobileApiClient.verifyAdminBill(cancelId, {
+        action: 'CANCEL',
+        cancellationReason: cancelReason.trim(),
+      });
+      setCancelId(null);
+      setCancelReason('');
+      await fetchBills();
+    } catch (e: any) {
+      Alert.alert('Cancellation Failed', e.message || 'Could not cancel bill.');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   // Live calculation for review modal
   const grossAmount = reviewBill ? Number(reviewBill.grossBillAmount || reviewBill.billAmount || 0) : 0;
   const currentGstRate = reviewGstRate ?? 0;
@@ -269,11 +295,14 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
     const isPending = item.status === 'PENDING' || item.status === 'UNDER_REVIEW';
     const isApproved = item.status === 'APPROVED';
     const isRejected = item.status === 'REJECTED';
+    const isCancelled = item.status === 'CANCELLED';
     // HIR-M-02: flagged revisions need BILL_ADMIN primary verification, then OPERATIONS_ADMIN approval
     const isPrimaryStep = Boolean(item.requiresSecondaryApproval) && !item.verifiedByAdminId;
-    const isRoleAuthorized =
+    const canApprove =
       Boolean(user?.role) &&
       (item.requiresSecondaryApproval && !isPrimaryStep ? user?.role === 'OPERATIONS_ADMIN' : user?.role === 'BILL_ADMIN');
+    const canReject = user?.role === 'BILL_ADMIN';
+    const canCancel = user?.role === 'OPERATIONS_ADMIN';
 
     return (
       <View style={styles.card}>
@@ -294,8 +323,8 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
             </View>
             <Text style={styles.dateText}>{item.invoiceDate || new Date(item.createdAt).toLocaleDateString('en-IN')}</Text>
           </View>
-          <View style={[styles.statusBadge, isPending ? styles.badgePending : item.status === 'APPROVED' ? styles.badgeApproved : styles.badgeRejected]}>
-            <Text style={[styles.statusText, isPending ? styles.statusPendingText : item.status === 'APPROVED' ? styles.statusApprovedText : styles.statusRejectedText]}>
+          <View style={[styles.statusBadge, isPending ? styles.badgePending : isApproved ? styles.badgeApproved : isCancelled ? styles.badgeCancelled : styles.badgeRejected]}>
+            <Text style={[styles.statusText, isPending ? styles.statusPendingText : isApproved ? styles.statusApprovedText : isCancelled ? styles.statusCancelledText : styles.statusRejectedText]}>
               {item.status}
             </Text>
           </View>
@@ -310,9 +339,11 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={styles.detailLabel}>Bill Amount</Text>
             <Text style={styles.amountVal}>₹{Number(item.billAmount || 0).toLocaleString('en-IN')}</Text>
-            <Text style={[styles.rewardVal, { color: isApproved ? '#059669' : isRejected ? '#DC2626' : '#D97706' }]}>
+            <Text style={[styles.rewardVal, { color: isApproved ? '#059669' : isCancelled ? '#6B7280' : isRejected ? '#DC2626' : '#D97706' }]}>
               {isApproved
                 ? `Reward: +${Number(item.calculatedReward || 0).toLocaleString('en-IN')} Points`
+                : isCancelled
+                ? 'Disqualified'
                 : isRejected
                 ? 'Rejected'
                 : 'Pending Audit'}
@@ -321,8 +352,8 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
         </View>
 
         {isPending && (
-          isRoleAuthorized ? (
-            <View style={styles.actionsRow}>
+          <View style={styles.actionsRow}>
+            {canApprove && (
               <TouchableOpacity
                 style={[styles.btnAction, styles.btnApprove]}
                 onPress={() => openReviewModal(item)}
@@ -337,7 +368,9 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
                   </>
                 )}
               </TouchableOpacity>
+            )}
 
+            {canReject && (
               <TouchableOpacity
                 style={[styles.btnAction, styles.btnReject]}
                 onPress={() => setRejectId(item.id)}
@@ -346,14 +379,27 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
                 <XCircle size={16} color="#DC2626" />
                 <Text style={[styles.btnActionText, { color: '#DC2626' }]}>Reject</Text>
               </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={[styles.actionsRow, { justifyContent: 'center', paddingVertical: 8 }]}>
-              <Text style={{ fontSize: 12, color: '#64748B', fontStyle: 'italic' }}>
-                {item.requiresSecondaryApproval && !isPrimaryStep ? 'Awaiting Operations Admin approval' : 'Requires Bill Review Admin review'}
-              </Text>
-            </View>
-          )
+            )}
+
+            {canCancel && (
+              <TouchableOpacity
+                style={[styles.btnAction, { backgroundColor: '#FEF3C7', borderColor: '#FCD34D' }]}
+                onPress={() => setCancelId(item.id)}
+                disabled={actionLoading === item.id}
+              >
+                <AlertCircle size={16} color="#B45309" />
+                <Text style={[styles.btnActionText, { color: '#B45309' }]}>Disqualify / Cancel</Text>
+              </TouchableOpacity>
+            )}
+
+            {!canApprove && !canReject && !canCancel && (
+              <View style={[styles.actionsRow, { justifyContent: 'center', paddingVertical: 8 }]}>
+                <Text style={{ fontSize: 12, color: '#64748B', fontStyle: 'italic' }}>
+                  {item.requiresSecondaryApproval && !isPrimaryStep ? 'Awaiting Operations Admin approval' : 'Requires Bill Review Admin review'}
+                </Text>
+              </View>
+            )}
+          </View>
         )}
       </View>
     );
@@ -401,7 +447,7 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
       {/* Filter Tabs */}
       <View style={styles.filterPillsRow}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-          {(['ALL', 'PENDING', 'APPROVED', 'REJECTED'] as const).map(s => (
+          {(['ALL', 'PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'] as const).map(s => (
             <TouchableOpacity
               key={s}
               style={[styles.filterPill, statusFilter === s && styles.filterPillActive]}
@@ -697,19 +743,34 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
                   onPress={() => setReviewBill(null)}
                   disabled={actionLoading === reviewBill.id}
                 >
-                  <Text style={{ color: '#475569', fontWeight: '700' }}>Cancel</Text>
+                  <Text style={{ color: '#475569', fontWeight: '700' }}>Close</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalBtn, { backgroundColor: '#FEE2E2', borderWidth: 1, borderColor: '#FCA5A5' }]}
-                  onPress={() => {
-                    const idToReject = reviewBill.id;
-                    setReviewBill(null);
-                    setRejectId(idToReject);
-                  }}
-                  disabled={actionLoading === reviewBill.id}
-                >
-                  <Text style={{ color: '#DC2626', fontWeight: '700' }}>Reject Bill</Text>
-                </TouchableOpacity>
+                {user?.role === 'BILL_ADMIN' && (
+                  <TouchableOpacity
+                    style={[styles.modalBtn, { backgroundColor: '#FEE2E2', borderWidth: 1, borderColor: '#FCA5A5' }]}
+                    onPress={() => {
+                      const idToReject = reviewBill.id;
+                      setReviewBill(null);
+                      setRejectId(idToReject);
+                    }}
+                    disabled={actionLoading === reviewBill.id}
+                  >
+                    <Text style={{ color: '#DC2626', fontWeight: '700' }}>Reject Bill</Text>
+                  </TouchableOpacity>
+                )}
+                {user?.role === 'OPERATIONS_ADMIN' && (
+                  <TouchableOpacity
+                    style={[styles.modalBtn, { backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#FCD34D' }]}
+                    onPress={() => {
+                      const idToCancel = reviewBill.id;
+                      setReviewBill(null);
+                      setCancelId(idToCancel);
+                    }}
+                    disabled={actionLoading === reviewBill.id}
+                  >
+                    <Text style={{ color: '#B45309', fontWeight: '700' }}>Disqualify / Cancel</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   style={[
                     styles.modalBtn,
@@ -772,6 +833,42 @@ export default function BillReviewScreen({ showStandaloneHeader = false }: BillR
                   onPress={handleConfirmReject}
                 >
                   <Text style={{ color: '#ffffff', fontWeight: '700' }}>Confirm Rejection</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* Cancellation Modal (OPERATIONS_ADMIN) */}
+      {cancelId && (
+        <Modal visible={true} transparent={true} animationType="slide">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Disqualify / Cancel Bill</Text>
+              <Text style={styles.modalDesc}>
+                This will permanently disqualify this invoice from rewards on the platform. Please provide a mandatory cancellation reason (min 3 chars).
+              </Text>
+              <TextInput
+                style={styles.modalInput}
+                value={cancelReason}
+                onChangeText={setCancelReason}
+                placeholder="e.g. Counterfeit dealer invoice / forged serial"
+                multiline
+                numberOfLines={3}
+              />
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: '#F1F5F9' }]}
+                  onPress={() => { setCancelId(null); setCancelReason(''); }}
+                >
+                  <Text style={{ color: '#475569', fontWeight: '700' }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: '#B45309', flex: 1 }]}
+                  onPress={handleConfirmCancel}
+                >
+                  <Text style={{ color: '#ffffff', fontWeight: '700' }}>Confirm Cancellation</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -886,6 +983,9 @@ const styles = StyleSheet.create({
   badgeRejected: {
     backgroundColor: '#FEE2E2',
   },
+  badgeCancelled: {
+    backgroundColor: '#F3F4F6',
+  },
   statusText: {
     fontSize: 11,
     fontWeight: '700',
@@ -898,6 +998,9 @@ const styles = StyleSheet.create({
   },
   statusRejectedText: {
     color: '#DC2626',
+  },
+  statusCancelledText: {
+    color: '#6B7280',
   },
   detailsRow: {
     flexDirection: 'row',

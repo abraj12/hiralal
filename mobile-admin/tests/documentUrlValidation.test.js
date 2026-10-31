@@ -40,7 +40,11 @@ test('FINDING-03: Mobile Admin Document URL Validation Suite', async (t) => {
   await t.test('strictly rejects subdomain prefix lookalike attacks', () => {
     assert.strictEqual(resolveDocumentUrl('https://s3.amazonaws.com.attacker.com/fake.pdf'), null);
     assert.strictEqual(resolveDocumentUrl('https://hsspl.algions.in.phishing.org/login'), null);
+    assert.strictEqual(resolveDocumentUrl('https://attacker-r2.dev/fake.pdf'), null);
+    assert.strictEqual(resolveDocumentUrl('https://evil-s3.amazonaws.com/fake.pdf'), null);
     assert.strictEqual(isAllowedDocumentUrl('https://s3.amazonaws.com.attacker.com/fake.pdf'), false);
+    assert.strictEqual(isAllowedDocumentUrl('https://attacker-r2.dev/fake.pdf'), false);
+    assert.strictEqual(isAllowedDocumentUrl('https://evil-s3.amazonaws.com/fake.pdf'), false);
   });
 
   await t.test('strictly rejects dangerous schemes like javascript:, file:, data:', () => {

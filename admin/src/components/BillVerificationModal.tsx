@@ -219,13 +219,13 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
   // HIR-M-02: flagged revisions need BILL_ADMIN primary verification, then OPERATIONS_ADMIN approval
   const isPrimaryVerified = Boolean(bill.verifiedByAdminId);
   const isPrimaryStep = isSecondary && !isPrimaryVerified;
-  const isRoleAuthorized =
-    Boolean(currentUserRole) &&
-    (!isSecondary
-      ? currentUserRole === 'BILL_ADMIN'
-      : isPrimaryStep
-      ? currentUserRole === 'BILL_ADMIN'
-      : currentUserRole === 'OPERATIONS_ADMIN');
+  const canApprove = Boolean(currentUserRole) && (
+    (!isSecondary && currentUserRole === 'BILL_ADMIN') ||
+    (isSecondary && isPrimaryStep && currentUserRole === 'BILL_ADMIN') ||
+    (isSecondary && !isPrimaryStep && currentUserRole === 'OPERATIONS_ADMIN')
+  );
+  const canReject = currentUserRole === 'BILL_ADMIN';
+  const canCancel = currentUserRole === 'OPERATIONS_ADMIN';
 
   const handleApprove = async () => {
     if (!hasRequiredGstReason) {
@@ -773,19 +773,19 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
             <div className="flex items-center space-x-2">
               <button
                 type="button"
-                disabled={!isRoleAuthorized}
+                disabled={!canCancel}
                 onClick={() => setCancelMode(true)}
-                className={`px-3 py-2 border border-amber-200 text-amber-700 hover:bg-amber-50 text-xs font-bold rounded-xl transition flex items-center space-x-1 ${!isRoleAuthorized ? 'opacity-40 cursor-not-allowed' : ''}`}
-                title={!isRoleAuthorized ? (isSecondary && !isPrimaryStep ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : 'Cancel fraudulent or invalid submission'}
+                className={`px-3 py-2 border border-amber-200 text-amber-700 hover:bg-amber-50 text-xs font-bold rounded-xl transition flex items-center space-x-1 ${!canCancel ? 'opacity-40 cursor-not-allowed' : ''}`}
+                title={!canCancel ? 'Requires Operations Admin role' : 'Cancel fraudulent or invalid submission'}
               >
                 <span>Cancel</span>
               </button>
               <button
                 type="button"
-                disabled={!isRoleAuthorized}
+                disabled={!canReject}
                 onClick={() => setRejectMode(true)}
-                className={`px-3 py-2 border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-xl transition flex items-center space-x-1 ${!isRoleAuthorized ? 'opacity-40 cursor-not-allowed' : ''}`}
-                title={!isRoleAuthorized ? (isSecondary && !isPrimaryStep ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
+                className={`px-3 py-2 border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-xl transition flex items-center space-x-1 ${!canReject ? 'opacity-40 cursor-not-allowed' : ''}`}
+                title={!canReject ? 'Requires Bill Review Admin role' : undefined}
               >
                 <XCircle className="w-4 h-4" />
                 <span>Reject</span>
@@ -799,15 +799,15 @@ export default function BillVerificationModal({ bill, onClose, onVerified }: Bil
                   rewardPercentage === null ||
                   (gstIncluded && !selectedGstRuleId) ||
                   !hasRequiredGstReason ||
-                  !isRoleAuthorized
+                  !canApprove
                 }
-                title={!isRoleAuthorized ? (isSecondary && !isPrimaryStep ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
+                title={!canApprove ? (isSecondary && !isPrimaryStep ? 'Requires Operations Admin role' : 'Requires Bill Review Admin role') : undefined}
                 className={`px-4 py-2 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center space-x-1.5 ${
                   rulesUnavailable ||
                   rewardPercentage === null ||
                   (gstIncluded && !selectedGstRuleId) ||
                   !hasRequiredGstReason ||
-                  !isRoleAuthorized
+                  !canApprove
                     ? 'bg-slate-400 opacity-50 cursor-not-allowed shadow-none'
                     : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
                 }`}

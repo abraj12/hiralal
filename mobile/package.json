@@ -6,7 +6,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "node --test plugins/withPlayIntegrity.test.js plugins/withReleaseSigning.test.js plugins/withDeveloperModeSecurity.test.js plugins/withNetworkSecurityConfig.test.js plugins/apiUrlValidation.test.js plugins/adminPrefixValidation.test.js plugins/dateUtils.test.js plugins/securityService.test.js"
+    "test": "node --test plugins/withSecureWindow.test.js plugins/withPlayIntegrity.test.js plugins/withReleaseSigning.test.js plugins/withDeveloperModeSecurity.test.js plugins/withNetworkSecurityConfig.test.js plugins/apiUrlValidation.test.js plugins/adminPrefixValidation.test.js plugins/dateUtils.test.js plugins/securityService.test.js"
   },
   "dependencies": {
     "expo": "^57.0.0",

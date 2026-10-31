@@ -19,15 +19,10 @@ test('Admin App Configuration - package name is com.admin.login', () => {
   );
 });
 
-test('Admin Role Enforcement - strictly permits only 2 admin roles: BILL_ADMIN and OPERATIONS_ADMIN', () => {
-  const allowedAdminRoles = ['BILL_ADMIN', 'OPERATIONS_ADMIN'];
+const { validateAdminRole, ALLOWED_ADMIN_ROLES } = require('../plugins/adminRole');
 
-  function validateAdminRole(role) {
-    if (!allowedAdminRoles.includes(role)) {
-      throw new Error(`Unauthorized role: ${role}. Access is restricted strictly to BILL_ADMIN and OPERATIONS_ADMIN.`);
-    }
-    return true;
-  }
+test('Admin Role Enforcement - strictly permits only 2 admin roles: BILL_ADMIN and OPERATIONS_ADMIN', () => {
+  assert.deepStrictEqual(ALLOWED_ADMIN_ROLES, ['BILL_ADMIN', 'OPERATIONS_ADMIN']);
 
   // 1. Valid Admin Roles
   assert.ok(validateAdminRole('BILL_ADMIN'));

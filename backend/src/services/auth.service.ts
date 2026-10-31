@@ -1030,12 +1030,15 @@ export class AuthService {
         return { shouldSendSms: false };
       }
 
-      // 3. Record OTP Request (Uniformly created to enforce 60s cooldown and 10-min rate limits, preventing enumeration - FINDING-08)
-      const recordedOtpHash = shouldSendSms ? otpHash : hmacHashOtp(`SUPPRESSED_${Date.now()}_${cleanMobile}`);
+      if (!shouldSendSms) {
+        return { shouldSendSms: false };
+      }
+
+      // 3. Record OTP Request for eligible Craftsman account
       const createdRecord = await tx.otpRequest.create({
         data: {
           mobile: cleanMobile,
-          otpHash: recordedOtpHash,
+          otpHash,
           purpose: 'FORGOT_PASSWORD',
           expiresAt,
           cooldownUntil,

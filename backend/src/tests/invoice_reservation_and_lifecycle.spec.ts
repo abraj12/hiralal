@@ -234,7 +234,7 @@ describe('HIR-AUD-P2-07: Invoice Identity, Reservation & Revision Lifecycle Suit
       fileName: 'custA.pdf',
       mimeType: 'application/pdf',
     });
-    expect(billA.invoiceKey).toBe('INVSCEN03');
+    expect(billA.invoiceKey).toBe('INVSCEN3');
 
     await expect(
       BillService.submitBill({

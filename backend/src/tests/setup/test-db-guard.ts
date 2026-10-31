@@ -48,6 +48,19 @@ module.exports = async function globalSetup() {
     process.env.DATABASE_URL = process.env.DATABASE_URL.replace(/(\/hiralal_rewards)(\?|$)/, '$1_test$2');
   }
   assertSafeTestDatabase();
+
+  const dbName = getTestDatabaseName(process.env.DATABASE_URL);
+  if (dbName && dbName.endsWith('_test')) {
+    try {
+      const { Client } = require('pg');
+      const client = new Client({ connectionString: process.env.DATABASE_URL });
+      await client.connect();
+      await client.query(`ALTER DATABASE "${dbName}" SET app.allow_audit_log_cleanup = 'on'`);
+      await client.end();
+    } catch {
+      // Non-fatal if pg driver or permissions unavailable
+    }
+  }
 };
 module.exports.assertSafeTestDatabase = assertSafeTestDatabase;
 module.exports.getTestDatabaseName = getTestDatabaseName;

@@ -79,7 +79,7 @@
    - `JWT_ACCESS_SECRET=...` (64+ character random string: `openssl rand -hex 32`)
    - `JWT_REFRESH_SECRET=...` (64+ character random string: `openssl rand -hex 32`)
    - `JWT_ADMIN_ACCESS_SECRET=...` (64+ character random string: `openssl rand -hex 32`)
-   - `BILL_ADMIN_PREFIX=BADM`, `OPERATIONS_ADMIN_PREFIX=OADM`
+   - `BILL_ADMIN_PREFIX=...` (16+ character high-entropy random string: `openssl rand -hex 16`), `OPERATIONS_ADMIN_PREFIX=...` (16+ character high-entropy random string: `openssl rand -hex 16`)
    - `BILL_ADMIN_MOBILE=...`, `OPERATIONS_ADMIN_MOBILE=...` (Distinct 10-digit mobile numbers)
    - `BILL_ADMIN_INITIAL_PASSWORD=...`, `OPERATIONS_ADMIN_INITIAL_PASSWORD=...` (Distinct strong temporary passwords)
    - `ENCRYPTION_KEY=...` (32-byte secret for app-level encryption)

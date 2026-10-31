@@ -13,7 +13,8 @@ import { formatIstDate } from './timezone.utils';
 export const INVOICE_SELLER_IDENTITY = 'HIRALAL_AND_SONS';
 
 export function normalizeInvoiceKey(invoiceNumber: string): string {
-  return invoiceNumber.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const stripped = invoiceNumber.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return stripped.replace(/([A-Z]+)0+([1-9][0-9]*)/g, '$1$2');
 }
 
 /** invoiceDate must be the stored business date (midnight Asia/Kolkata). */

@@ -82,8 +82,8 @@ export class RewardRuleService {
       throw new Error('Reward percentage must be a valid, finite number.');
     }
 
-    if (rewardPercentage <= 0 || rewardPercentage > 100.00) {
-      throw new Error('Reward percentage must be a positive finite number up to 100.00%.');
+    if (rewardPercentage < 0 || rewardPercentage > 100.00) {
+      throw new Error('Reward percentage must be a non-negative finite number up to 100.00%.');
     }
 
     const decimalStr = rewardPercentage.toString();

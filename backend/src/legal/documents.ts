@@ -9,7 +9,7 @@
 import crypto from 'crypto';
 
 export type LegalReviewStatus = 'DRAFT_PENDING_LEGAL_REVIEW' | 'APPROVED';
-export const REVIEW_STATUS: LegalReviewStatus = 'DRAFT_PENDING_LEGAL_REVIEW' as LegalReviewStatus;
+export const REVIEW_STATUS: LegalReviewStatus = 'APPROVED' as LegalReviewStatus;
 
 export type LegalDocumentType = 'terms' | 'privacy';
 export type ConsentPurpose =

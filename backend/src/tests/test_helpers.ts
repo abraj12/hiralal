@@ -94,13 +94,15 @@ export async function ensureBaselineAdmins(prisma: PrismaClient): Promise<{
         isVerified: true,
       },
     });
-  } else if (billAdmin.status !== 'ACTIVE' || (billAdmin.failedPasswordAttempts ?? 0) > 0 || billAdmin.lockedUntil) {
+  } else {
     billAdmin = await prisma.user.update({
       where: { id: billAdmin.id },
       data: {
         status: 'ACTIVE',
         failedPasswordAttempts: 0,
         lockedUntil: null,
+        mustChangePassword: false,
+        passwordHash,
       },
     });
   }
@@ -120,13 +122,15 @@ export async function ensureBaselineAdmins(prisma: PrismaClient): Promise<{
         isVerified: true,
       },
     });
-  } else if (opsAdmin.status !== 'ACTIVE' || (opsAdmin.failedPasswordAttempts ?? 0) > 0 || opsAdmin.lockedUntil) {
+  } else {
     opsAdmin = await prisma.user.update({
       where: { id: opsAdmin.id },
       data: {
         status: 'ACTIVE',
         failedPasswordAttempts: 0,
         lockedUntil: null,
+        mustChangePassword: false,
+        passwordHash,
       },
     });
   }

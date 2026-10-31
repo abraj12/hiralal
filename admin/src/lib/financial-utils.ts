@@ -8,14 +8,22 @@ export function calculateBillFinancials(
   selectedGstRate: number,
   rewardPercentage: number | null
 ) {
-  const gstAmount = gstIncluded && selectedGstRate > 0
-    ? Math.round(((grossAmount * selectedGstRate) / (100 + selectedGstRate)) * 100) / 100
-    : 0.0;
+  if (!Number.isFinite(grossAmount) || grossAmount <= 0) {
+    return { gstAmount: 0.0, eligibleRewardAmount: 0.0, calculatedReward: 0.0 };
+  }
 
-  const eligibleRewardAmount = Math.max(0, Math.round((grossAmount - gstAmount) * 100) / 100);
+  const grossPaise = Math.round(grossAmount * 100);
 
-  const calculatedReward = rewardPercentage !== null
-    ? Math.floor((eligibleRewardAmount * (rewardPercentage / 100) * 100) + 1e-9) / 100
+  let gstPaise = 0;
+  if (gstIncluded && selectedGstRate > 0) {
+    gstPaise = Math.round((grossPaise * selectedGstRate) / (100 + selectedGstRate));
+  }
+
+  const gstAmount = gstPaise / 100;
+  const eligibleRewardAmount = Math.max(0, (grossPaise - gstPaise) / 100);
+
+  const calculatedReward = rewardPercentage !== null && rewardPercentage >= 0
+    ? Math.floor(((eligibleRewardAmount * (rewardPercentage / 100)) * 100) + 1e-9) / 100
     : 0.0;
 
   return {

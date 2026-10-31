@@ -1063,7 +1063,8 @@ const handleBillVerification = async (req: AuthenticatedRequest, res: Response) 
         });
       }
 
-      const trimmedGstReason = typeof gstOverrideReason === 'string' ? gstOverrideReason.trim() : '';
+      const rawGstReason = gstOverrideReason || req.body.remarks || req.body.reason || '';
+      const trimmedGstReason = typeof rawGstReason === 'string' ? rawGstReason.trim() : '';
       // HIR-M-04: every invoice comes from Hiralal & Sons, a GST-registered seller. Treating one as
       // GST-exclusive raises the reward base, so it requires a recorded justification.
       if (!gstIncluded && trimmedGstReason.length < 10) {

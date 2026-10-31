@@ -346,11 +346,11 @@ describe('Wave 7 Audit Remediation Regression Suite', () => {
 
       // Check transaction logs for offset note
       const recoveryTx = await prisma.walletTransaction.findFirst({
-        where: { walletId: updatedWallet!.id, type: 'REWARD_CREDIT' },
+        where: { walletId: updatedWallet!.id, type: 'DEFICIT_OFFSET' },
         orderBy: { createdAt: 'desc' },
       });
       expect(recoveryTx).toBeTruthy();
-      expect(recoveryTx?.description).toContain('offset against deficit liability');
+      expect(recoveryTx?.description).toMatch(/deficit liability offset/i);
 
       // Clean up bill
       await prisma.bill.delete({ where: { id: bill.id } });
@@ -457,11 +457,9 @@ describe('Wave 7 Audit Remediation Regression Suite', () => {
       });
 
       // First mononymous submission
-      try {
-        await KycService.submitPan(monoUser.id, 'ABCDE9999F', 'Suresh Kumar', true);
-      } catch (err: any) {
-        expect(err.message).toContain('mononymous');
-      }
+      await expect(
+        KycService.submitPan(monoUser.id, 'ABCDE9999F', 'Suresh Kumar', true)
+      ).rejects.toThrow(/mononymous/);
 
       const pendingKyc = await prisma.kycRecord.findFirst({
         where: { userId: monoUser.id, panStatus: 'PENDING' },
@@ -469,11 +467,9 @@ describe('Wave 7 Audit Remediation Regression Suite', () => {
       expect(pendingKyc).toBeTruthy();
 
       // Second attempt while pending must throw the same user-friendly error without crashing or creating duplicate
-      try {
-        await KycService.submitPan(monoUser.id, 'ABCDE9999F', 'Suresh Kumar', true);
-      } catch (err: any) {
-        expect(err.message).toContain('mononymous');
-      }
+      await expect(
+        KycService.submitPan(monoUser.id, 'ABCDE9999F', 'Suresh Kumar', true)
+      ).rejects.toThrow(/mononymous/);
 
       const totalCount = await prisma.kycRecord.count({ where: { userId: monoUser.id } });
       expect(totalCount).toBe(1);

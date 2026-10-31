@@ -217,6 +217,7 @@ describe('Immutable Invoices, Deviations, Legal Holds & Financial Integrity Suit
           action: 'APPROVE',
           merchantName: `Test Merchant ${Math.random().toString(36).slice(2)}`,
           gstIncluded: false,
+          gstOverrideReason: 'Invoice contains zero-rated supplies per tax invoice copy',
         });
 
       expect(res.status).toBe(200);
@@ -304,7 +305,12 @@ describe('Immutable Invoices, Deviations, Legal Holds & Financial Integrity Suit
       const prematureOpsRes = await request(app)
         .post(`/api/v1/admin/bills/${highDevRevision.id}/verify`)
         .set('Authorization', `Bearer ${opsAdminToken}`)
-        .send({ action: 'APPROVE', merchantName, gstIncluded: false });
+        .send({
+          action: 'APPROVE',
+          merchantName,
+          gstIncluded: false,
+          gstOverrideReason: 'Invoice contains zero-rated supplies per tax invoice copy',
+        });
 
       expect(prematureOpsRes.status).toBe(409);
       expect(prematureOpsRes.body.code).toBe('PRIMARY_VERIFICATION_REQUIRED');
@@ -313,7 +319,12 @@ describe('Immutable Invoices, Deviations, Legal Holds & Financial Integrity Suit
       const billAdminRes = await request(app)
         .post(`/api/v1/admin/bills/${highDevRevision.id}/verify`)
         .set('Authorization', `Bearer ${billAdminToken}`)
-        .send({ action: 'APPROVE', merchantName, gstIncluded: false });
+        .send({
+          action: 'APPROVE',
+          merchantName,
+          gstIncluded: false,
+          gstOverrideReason: 'Invoice contains zero-rated supplies per tax invoice copy',
+        });
 
       expect(billAdminRes.status).toBe(200);
       expect(billAdminRes.body.primaryVerified).toBe(true);
@@ -324,7 +335,12 @@ describe('Immutable Invoices, Deviations, Legal Holds & Financial Integrity Suit
       const repeatBillAdminRes = await request(app)
         .post(`/api/v1/admin/bills/${highDevRevision.id}/verify`)
         .set('Authorization', `Bearer ${billAdminToken}`)
-        .send({ action: 'APPROVE', merchantName, gstIncluded: false });
+        .send({
+          action: 'APPROVE',
+          merchantName,
+          gstIncluded: false,
+          gstOverrideReason: 'Invoice contains zero-rated supplies per tax invoice copy',
+        });
 
       expect(repeatBillAdminRes.status).toBe(409);
       expect(repeatBillAdminRes.body.code).toBe('AWAITING_SECONDARY_APPROVAL');
@@ -333,7 +349,12 @@ describe('Immutable Invoices, Deviations, Legal Holds & Financial Integrity Suit
       const opsAdminRes = await request(app)
         .post(`/api/v1/admin/bills/${highDevRevision.id}/verify`)
         .set('Authorization', `Bearer ${opsAdminToken}`)
-        .send({ action: 'APPROVE', merchantName, gstIncluded: false });
+        .send({
+          action: 'APPROVE',
+          merchantName,
+          gstIncluded: false,
+          gstOverrideReason: 'Invoice contains zero-rated supplies per tax invoice copy',
+        });
 
       expect(opsAdminRes.status).toBe(200);
       expect(opsAdminRes.body.bill.status).toBe('APPROVED');
@@ -357,7 +378,7 @@ describe('Immutable Invoices, Deviations, Legal Holds & Financial Integrity Suit
 
       const res = await request(app)
         .post(`/api/v1/admin/bills/${bill.id}/verify`)
-        .set('Authorization', `Bearer ${billAdminToken}`)
+        .set('Authorization', `Bearer ${opsAdminToken}`)
         .send({
           action: 'CANCEL',
           cancellationReason: 'Confirmed counterfeit dealer invoice and fabricated GSTIN stamp',

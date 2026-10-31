@@ -66,13 +66,13 @@ console.log('📡 Mobile API configured at:', API_BASE);
 export const ALLOWED_DOC_HOST_PATTERNS = [
   /^localhost$/,
   /^127\.0\.0\.1$/,
-  /(\.|\b)s3\.amazonaws\.com$/,
-  /(\.|\b)r2\.cloudflarestorage\.com$/,
-  /(\.|\b)r2\.dev$/,
-  /(\.|\b)cloudfront\.net$/,
-  /(\.|\b)hsspl\.algions\.in$/,
-  /(\.|\b)hiralalandsons\.com$/,
-  /(\.|\b)hiralalandsonspvtltd\.com$/,
+  /^(?:[a-zA-Z0-9-]+\.)*s3\.amazonaws\.com$/,
+  /^(?:[a-zA-Z0-9-]+\.)*r2\.cloudflarestorage\.com$/,
+  /^(?:[a-zA-Z0-9-]+\.)*r2\.dev$/,
+  /^(?:[a-zA-Z0-9-]+\.)*cloudfront\.net$/,
+  /^(?:[a-zA-Z0-9-]+\.)*hsspl\.algions\.in$/,
+  /^(?:[a-zA-Z0-9-]+\.)*hiralalandsons\.com$/,
+  /^(?:[a-zA-Z0-9-]+\.)*hiralalandsonspvtltd\.com$/,
 ];
 
 export function isAllowedDocumentUrl(url?: string | null): boolean {
@@ -553,9 +553,12 @@ export class MobileApiClient {
     actionOrOptions:
       | 'APPROVE'
       | 'REJECT'
+      | 'CANCEL'
       | {
-          action: 'APPROVE' | 'REJECT';
+          action: 'APPROVE' | 'REJECT' | 'CANCEL';
           rejectionReason?: string;
+          cancellationReason?: string;
+          reason?: string;
           gstIncluded?: boolean;
           gstRate?: number;
           gstRuleId?: string;
@@ -565,7 +568,7 @@ export class MobileApiClient {
   ) {
     const payload =
       typeof actionOrOptions === 'string'
-        ? { action: actionOrOptions, rejectionReason: legacyRejectionReason }
+        ? { action: actionOrOptions, rejectionReason: legacyRejectionReason, cancellationReason: legacyRejectionReason }
         : actionOrOptions;
 
     return this.request(`/admin/bills/${encodeURIComponent(id)}/verify`, {

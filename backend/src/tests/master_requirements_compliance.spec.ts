@@ -69,13 +69,13 @@ describe('Master Remediation & Requirements Compliance Test Suite', () => {
     it('calculates reward given explicit positive percentage', () => {
       const reward = calculateRewardAmount(10000, 0.75);
       expect(reward).toBe(75);
+      expect(calculateRewardAmount(10000, 0)).toBe(0);
     });
 
     it('fails closed when reward percentage is not provided or invalid', () => {
       expect(() => (calculateRewardAmount as any)(10000)).toThrow(/Reward rate percentage is required/);
-      expect(() => calculateRewardAmount(10000, 0)).toThrow(/finite positive number/);
-      expect(() => calculateRewardAmount(10000, -1)).toThrow(/finite positive number/);
-      expect(() => calculateRewardAmount(10000, NaN)).toThrow(/finite positive number/);
+      expect(() => calculateRewardAmount(10000, -1)).toThrow(/finite non-negative number/);
+      expect(() => calculateRewardAmount(10000, NaN)).toThrow(/finite non-negative number/);
     });
   });
 

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { MobileApiClient } from '../services/api';
 import { NotificationsService } from '../services/notifications.service';
+import { isValidAdminRole } from '../services/adminRole';
 
 export type AdminRole = 'BILL_ADMIN' | 'OPERATIONS_ADMIN';
 
@@ -44,8 +45,8 @@ export const AdminAppProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const profileRes = await MobileApiClient.getProfile();
           if (profileRes && profileRes.user && mounted) {
             const userRole = profileRes.user.role;
-            // Strict role gating: Only BILL_ADMIN or OPERATIONS_ADMIN permitted
-            if (userRole === 'BILL_ADMIN' || userRole === 'OPERATIONS_ADMIN') {
+            // Strict role gating: Only BILL_ADMIN or OPERATIONS_ADMIN permitted (HIR-ROLE-01)
+            if (isValidAdminRole(userRole)) {
               setUser(profileRes.user as AdminUser);
               setCurrentScreen('MAIN');
               NotificationsService.registerDeviceToken().catch(() => {});
@@ -89,7 +90,7 @@ export const AdminAppProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
 
     const assignedRole = res.user.role;
-    if (assignedRole !== 'BILL_ADMIN' && assignedRole !== 'OPERATIONS_ADMIN') {
+    if (!isValidAdminRole(assignedRole)) {
       await MobileApiClient.clearAllTokens();
       throw new Error('Access denied. This application is restricted to authorized Hiralal administrators only.');
     }

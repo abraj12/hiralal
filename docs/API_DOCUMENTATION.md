@@ -40,7 +40,10 @@ All financial values are denominated in Indian Rupees (₹) with 2-decimal paise
     "fullName": "Ramesh Kumar",
     "password": "StrongPassword123!",
     "profession": "PLUMBER", // "PLUMBER" or "TILE_INSTALLER"
-    "otpCode": "123456"
+    "otpCode": "123456",
+    "acceptedTermsVersion": "2026-11-01",
+    "acceptedPrivacyVersion": "2026-11-01",
+    "ageConfirmed": true
   }
   ```
 - **Response (201)**:
@@ -321,8 +324,27 @@ Admin authentication enforces role separation (`BILL_ADMIN` or `OPERATIONS_ADMIN
   }
   ```
 
-#### 3.2 Request Reward Redemption (Craftsman)
-Requests 100% full available balance redemption computed from database available balance (server-controlled, capped by the immutable platform ceiling of ₹50,000 and daily redemption limits). Requires an active redemption window, verified KYC, and default payment account (UPI or Bank Account; NEFT strictly prohibited). Supports native biometric attestation or fallback password authentication:
+#### 3.2 Check Redemption Eligibility (Craftsman)
+Checks authoritative craftsman redemption eligibility against active time windows, minimum/maximum thresholds, daily quotas, active in-flight requests, and verified beneficiary match.
+- **Method**: `GET`
+- **Path**: `/payouts/eligibility`
+- **Headers**: `Authorization: Bearer <USER_TOKEN>`
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "isEligible": true,
+    "canRedeem": true,
+    "availableBalance": 2500.00,
+    "minThreshold": 1000.00,
+    "maxThreshold": 50000.00,
+    "dailyRemaining": 47500.00,
+    "reason": ""
+  }
+  ```
+
+#### 3.3 Request Reward Redemption (Craftsman)
+Requests 100% full available balance redemption computed from database available balance (server-controlled, capped by the immutable platform ceiling of ₹50,000 and daily redemption limits). Requires an active redemption window, verified KYC, and default payment account (UPI or Bank Account; NEFT strictly prohibited). Mandatory account password confirmation is strictly enforced for financial integrity (AUTH-001):
 - **Method**: `POST`
 - **Path**: `/payouts/redeem` (alias: `/payouts/request`)
 - **Headers**:
@@ -336,7 +358,7 @@ Requests 100% full available balance redemption computed from database available
     "password": "AccountPassword123!"
   }
   ```
-  *(Note: `password` is optional and utilized as secure step-up fallback when device hardware biometrics are unavailable or canceled).*
+  *(Note: `password` is strictly mandatory on every redemption request to confirm user authorization and prevent unauthorized automated payouts).*
 - **Response (201)**:
   ```json
   {
@@ -642,5 +664,203 @@ Requests 100% full available balance redemption computed from database available
       "isMononymous": true,
       "isNameLocked": true
     }
+  }
+  ```
+
+---
+
+### 6. KYC Endpoints
+
+#### 6.1 Verify PAN Card
+Submits PAN details for income tax database verification via SignCare. Requires explicit informed user consent.
+- **Method**: `POST`
+- **Path**: `/kyc/pan/verify`
+- **Headers**:
+  - `Authorization: Bearer <USER_TOKEN>`
+  - `X-Integrity-Token: <PLAY_INTEGRITY_TOKEN>` (Production)
+- **Body**:
+  ```json
+  {
+    "panNumber": "ABCDE1234F",
+    "panName": "RAMESH KUMAR",
+    "consent": true
+  }
+  ```
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "message": "PAN verified and name matched successfully.",
+    "kyc": {
+      "panStatus": "VERIFIED",
+      "maskedPan": "XXXXXX1234F",
+      "panName": "RAMESH KUMAR",
+      "verifiedName": "RAMESH KUMAR",
+      "nameMatched": true,
+      "verifiedAt": "2026-10-31T12:00:00.000Z"
+    }
+  }
+  ```
+
+#### 6.2 Get KYC Status
+- **Method**: `GET`
+- **Path**: `/kyc/status`
+- **Headers**: `Authorization: Bearer <USER_TOKEN>`
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "isVerified": true,
+    "kycRecord": {
+      "panStatus": "VERIFIED",
+      "maskedPan": "XXXXXX1234F",
+      "panName": "RAMESH KUMAR",
+      "verifiedName": "RAMESH KUMAR",
+      "nameMatched": true,
+      "verifiedAt": "2026-10-31T12:00:00.000Z"
+    }
+  }
+  ```
+
+---
+
+### 7. Payment Account Endpoints
+
+#### 7.1 Verify & Link UPI Account
+Verifies UPI ID using penny drop / account validation via RazorpayX.
+- **Method**: `POST`
+- **Path**: `/payment-account/upi/verify`
+- **Headers**:
+  - `Authorization: Bearer <USER_TOKEN>`
+  - `X-Integrity-Token: <PLAY_INTEGRITY_TOKEN>` (Production)
+- **Body**:
+  ```json
+  {
+    "upiId": "ramesh@oksbi",
+    "accountHolderName": "Ramesh Kumar",
+    "consent": true
+  }
+  ```
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "message": "UPI account verified successfully.",
+    "paymentAccount": {
+      "id": "uuid",
+      "accountType": "UPI",
+      "maskedInfo": "r***h@oksbi",
+      "isVerified": true,
+      "isDefault": true
+    }
+  }
+  ```
+
+#### 7.2 Verify & Link Bank Account
+Verifies bank account details via penny drop / account validation.
+- **Method**: `POST`
+- **Path**: `/payment-account/bank/verify`
+- **Headers**:
+  - `Authorization: Bearer <USER_TOKEN>`
+  - `X-Integrity-Token: <PLAY_INTEGRITY_TOKEN>` (Production)
+- **Body**:
+  ```json
+  {
+    "accountHolderName": "Ramesh Kumar",
+    "accountNumber": "123456789012",
+    "ifscCode": "SBIN0001234",
+    "bankName": "State Bank of India",
+    "consent": true
+  }
+  ```
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "message": "Bank account verified successfully.",
+    "paymentAccount": {
+      "id": "uuid",
+      "accountType": "BANK_ACCOUNT",
+      "bankName": "State Bank of India",
+      "maskedInfo": "XXXXXXXX9012",
+      "isVerified": true,
+      "isDefault": true
+    }
+  }
+  ```
+
+#### 7.3 List Linked Payment Accounts
+- **Method**: `GET`
+- **Path**: `/payment-account`
+- **Headers**: `Authorization: Bearer <USER_TOKEN>`
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "paymentAccounts": []
+  }
+  ```
+
+---
+
+### 8. Legal & Consent Endpoints
+
+#### 8.1 Get Active Consent Texts
+Returns server-authoritative consent texts and versions for PAN verification, beneficiary verification, and age confirmation.
+- **Method**: `GET`
+- **Path**: `/legal/consent-texts`
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "consents": {
+      "PAN_VERIFICATION": { "version": "2026-10-30", "text": "..." },
+      "BENEFICIARY_VERIFICATION": { "version": "2026-10-30", "text": "..." },
+      "AGE_CONFIRMATION": { "text": "..." }
+    }
+  }
+  ```
+
+#### 8.2 Get Legal Document (Terms of Service / Privacy Policy)
+- **Method**: `GET`
+- **Path**: `/legal/:type` (where `:type` is `terms` or `privacy`)
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "document": {
+      "type": "terms",
+      "title": "Terms of Service",
+      "version": "2026-11-01",
+      "effectiveDate": "2026-11-01",
+      "sha256": "...",
+      "content": "..."
+    }
+  }
+  ```
+
+---
+
+### 9. Rewards Summary Endpoints
+
+#### 9.1 Get User Rewards Summary
+Returns lifetime earned cashback, pending rewards, bill statistics, and recent ledger transactions for the authenticated craftsman.
+- **Method**: `GET`
+- **Path**: `/rewards`
+- **Headers**: `Authorization: Bearer <USER_TOKEN>`
+- **Response (200)**:
+  ```json
+  {
+    "success": true,
+    "summary": {
+      "lifetimeCashback": 3500.00,
+      "totalRewards": 3500.00,
+      "availableBalance": 1250.00,
+      "processingAmount": 0.00,
+      "billsApprovedCount": 7,
+      "billsPendingCount": 1,
+      "totalBillsCount": 8
+    },
+    "recentTransactions": []
   }
   ```

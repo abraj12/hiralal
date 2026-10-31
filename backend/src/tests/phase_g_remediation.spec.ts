@@ -218,7 +218,7 @@ async function createG3TestUser(mobile: string, fullName = 'Phase G3 User') {
       status: 'ACTIVE',
       profession: 'PLUMBER',
       isVerified: true,
-      wallet: { create: { availableBalance: 100.0, totalRedeemed: 0.0 } },
+      wallet: { create: { availableBalance: 0.0, totalRedeemed: 0.0 } },
     },
   });
 }
@@ -262,7 +262,7 @@ beforeAll(async () => {
       status: 'ACTIVE',
       profession: 'PLUMBER',
       isVerified: true,
-      wallet: { create: { availableBalance: 100.0, totalRedeemed: 0.0 } },
+      wallet: { create: { availableBalance: 0.0, totalRedeemed: 0.0 } },
     },
   });
   userId = user.id;

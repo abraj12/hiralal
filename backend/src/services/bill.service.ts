@@ -870,6 +870,10 @@ export class BillService {
       });
 
       if (!bill) throw new Error('Bill not found.');
+
+      const identity = getInvoiceIdentity(bill.invoiceNumber, bill.invoiceDate);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${identity.lockKey}))`;
+
       if (bill.status === 'APPROVED') {
         throw new Error('Approved bills cannot be rejected.');
       }
@@ -966,6 +970,10 @@ export class BillService {
       });
 
       if (!bill) throw new Error('Bill not found.');
+
+      const identity = getInvoiceIdentity(bill.invoiceNumber, bill.invoiceDate);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${identity.lockKey}))`;
+
       if (bill.status === 'APPROVED') {
         throw new Error('Approved bills cannot be cancelled.');
       }

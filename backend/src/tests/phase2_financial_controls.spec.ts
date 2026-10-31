@@ -179,9 +179,9 @@ describe('Phase 2 — financial controls (HIR-M-03, M-04, M-05, L-02)', () => {
           status: 'APPROVED',
         },
       });
-      await prisma.$executeRaw`UPDATE "Payout" SET "updatedAt" = NOW() - INTERVAL '2 hours' WHERE "id" = ${payout.id}`;
+      await prisma.$executeRaw`UPDATE "Payout" SET "updatedAt" = NOW() - INTERVAL '1 day' WHERE "id" = ${payout.id}`;
 
-      await ReconciliationWorker.flagStalledApprovedPayouts();
+      const flagged = await ReconciliationWorker.flagStalledApprovedPayouts();
 
       const after = await prisma.payout.findUnique({ where: { id: payout.id } });
       expect(after?.requiresManualReview).toBe(true);

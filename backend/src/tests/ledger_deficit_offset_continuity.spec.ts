@@ -15,7 +15,6 @@ describe('Finding 15 Regression Suite: Ledger Deficit Offset Double-Entry Contin
     const existing = await prisma.user.findMany({ where: { mobile: testMobile }, select: { id: true } });
     const ids = existing.map((u) => u.id);
     if (ids.length > 0) {
-      await prisma.auditLog.deleteMany({ where: { entityType: 'Bill' } });
       await prisma.walletTransaction.deleteMany({ where: { userId: { in: ids } } });
       await prisma.bill.deleteMany({ where: { userId: { in: ids } } });
       await prisma.wallet.deleteMany({ where: { userId: { in: ids } } });
@@ -70,7 +69,6 @@ describe('Finding 15 Regression Suite: Ledger Deficit Offset Double-Entry Contin
     const existing = await prisma.user.findMany({ where: { mobile: testMobile }, select: { id: true } });
     const ids = existing.map((u) => u.id);
     if (ids.length > 0) {
-      await prisma.auditLog.deleteMany({ where: { entityType: 'Bill' } });
       await prisma.walletTransaction.deleteMany({ where: { userId: { in: ids } } });
       await prisma.bill.deleteMany({ where: { userId: { in: ids } } });
       await prisma.wallet.deleteMany({ where: { userId: { in: ids } } });

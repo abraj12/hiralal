@@ -5,13 +5,13 @@
 const ALLOWED_DOC_HOST_PATTERNS = [
   /^localhost$/,
   /^127\.0\.0\.1$/,
-  /(\.|\b)s3\.amazonaws\.com$/,
-  /(\.|\b)r2\.cloudflarestorage\.com$/,
-  /(\.|\b)r2\.dev$/,
-  /(\.|\b)cloudfront\.net$/,
-  /(\.|\b)hsspl\.algions\.in$/,
-  /(\.|\b)hiralalandsons\.com$/,
-  /(\.|\b)hiralalandsonspvtltd\.com$/,
+  /^(?:[a-zA-Z0-9-]+\.)*s3\.amazonaws\.com$/,
+  /^(?:[a-zA-Z0-9-]+\.)*r2\.cloudflarestorage\.com$/,
+  /^(?:[a-zA-Z0-9-]+\.)*r2\.dev$/,
+  /^(?:[a-zA-Z0-9-]+\.)*cloudfront\.net$/,
+  /^(?:[a-zA-Z0-9-]+\.)*hsspl\.algions\.in$/,
+  /^(?:[a-zA-Z0-9-]+\.)*hiralalandsons\.com$/,
+  /^(?:[a-zA-Z0-9-]+\.)*hiralalandsonspvtltd\.com$/,
 ];
 
 function isAllowedDocumentUrl(url) {

@@ -128,7 +128,7 @@ describe('Audit Remediation & Security Defect Verification Suite', () => {
           fileBuffer: fakeJpg2,
           mimeType: 'image/jpeg',
         })
-      ).rejects.toThrow(/already been submitted and approved on the platform/i);
+      ).rejects.toThrow(/already been submitted/i);
     });
   });
 

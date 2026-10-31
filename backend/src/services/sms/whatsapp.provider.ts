@@ -84,6 +84,7 @@ export class WhatsAppOtpProvider implements SmsProvider {
       },
     ];
 
+    // DEFECT-INT-01: Support text-only OTP templates when buttonType is 'NONE'
     if (buttonType === 'COPY_CODE') {
       components.push({
         type: 'button',
@@ -108,6 +109,8 @@ export class WhatsAppOtpProvider implements SmsProvider {
           },
         ],
       });
+    } else if (buttonType === 'NONE') {
+      // Intentionally omit button component for text-only OTP templates
     }
 
     const payload = {
